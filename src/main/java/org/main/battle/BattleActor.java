@@ -5,9 +5,11 @@ import java.awt.image.BufferedImage;
 public class BattleActor {
     private final String name;
     private final int maxHp;
-    private int currentHp;
     private final BufferedImage image;
     private final boolean enemy;
+    private int currentHp;
+    private int slot = 0;
+    private BattleRow row = BattleRow.FRONT;
 
     public BattleActor(String name, int maxHp, int currentHp, BufferedImage image, boolean enemy) {
         this.name = name;
@@ -15,6 +17,19 @@ public class BattleActor {
         this.currentHp = currentHp;
         this.image = image;
         this.enemy = enemy;
+    }
+
+    public BattleRow getRow() {
+        return row;
+    }
+
+    public int getSlot() {
+        return slot;
+    }
+
+    public void setBattlePosition(BattleRow row, int slot) {
+        this.row = row;
+        this.slot = slot;
     }
 
     public String getName() {

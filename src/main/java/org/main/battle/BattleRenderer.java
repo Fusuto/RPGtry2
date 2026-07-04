@@ -1,5 +1,7 @@
 package org.main.battle;
 
+import org.main.engine.EntityType;
+
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.util.List;
@@ -82,36 +84,111 @@ public class BattleRenderer {
 
         drawPanelBorder(g, x, y, width, height);
 
-        drawAllies(g, encounter.getAllies(), x, y, width / 2, height);
-        drawEnemies(g, encounter.getEnemies(), x + width / 2, y, width / 2, height);
+        int halfWidth = width / 2;
+
+        drawFormation(
+                g,
+                encounter.getAllies(),
+                EntityType.ALLY,
+                x,
+                y,
+                halfWidth,
+                height
+        );
+
+        drawFormation(
+                g,
+                encounter.getEnemies(),
+                EntityType.ENEMY,
+                x + halfWidth,
+                y,
+                width - halfWidth,
+                height
+        );
     }
 
-    private void drawAllies(Graphics2D g, List<BattleActor> allies, int x, int y, int width, int height) {
-        for (int i = 0; i < allies.size(); i++) {
-            BattleActor ally = allies.get(i);
+    private void drawFormation(
+            Graphics2D g,
+            List<BattleActor> actors,
+            EntityType side,
+            int x,
+            int y,
+            int width,
+            int height
+    ) {
+        drawBattleRow(g, actors, side, BattleRow.BACK, x, y, width, height);
+        drawBattleRow(g, actors, side, BattleRow.FRONT, x, y, width, height);
+    }
 
-            int spriteSize = 96;
-            int spacing = 120;
+    private void drawBattleRow(
+            Graphics2D g,
+            List<BattleActor> actors,
+            EntityType side,
+            BattleRow row,
+            int x,
+            int y,
+            int width,
+            int height
+    ) {
+        int slots = 3;
 
-            int drawX = x + 80;
-            int drawY = y + 60 + i * spacing;
+        int frontSpriteSize = 64;
+        int backSpriteSize = 56;
 
-            drawActorSprite(g, ally, drawX, drawY, spriteSize, spriteSize);
+        int spriteSize = row == BattleRow.FRONT ? frontSpriteSize : backSpriteSize;
+
+        int verticalGap = 24;
+        int totalFormationHeight = slots * frontSpriteSize + (slots - 1) * verticalGap;
+
+        int startY = y + (height - totalFormationHeight) / 2;
+
+        int rowGap = 36;
+        int formationPadding = 80;
+
+        int backX;
+        int frontX;
+
+        if (side == EntityType.ALLY) {
+            /*
+             * Back row is farther left.
+             * Front row is closer to the center.
+             */
+            backX = x + formationPadding;
+            frontX = backX + frontSpriteSize + rowGap;
+        } else {
+            /*
+             * Front row is closer to the center.
+             * Back row is farther right.
+             */
+            frontX = x + width - formationPadding - frontSpriteSize;
+            backX = frontX - frontSpriteSize - rowGap;
         }
-    }
 
-    private void drawEnemies(Graphics2D g, List<BattleActor> enemies, int x, int y, int width, int height) {
-        for (int i = 0; i < enemies.size(); i++) {
-            BattleActor enemy = enemies.get(i);
+        int columnX = row == BattleRow.FRONT ? frontX : backX;
 
-            int spriteSize = 128;
-            int spacing = 150;
+        for (BattleActor actor : actors) {
+            if (actor.getRow() != row) {
+                continue;
+            }
 
-            int drawX = x + width - 200;
-            int drawY = y + 50 + i * spacing;
+            if (!actor.isAlive()) {
+                continue;
+            }
 
-            drawHpBar(g, drawX, drawY - 18, spriteSize, 10, enemy);
-            drawActorSprite(g, enemy, drawX, drawY, spriteSize, spriteSize);
+            int slot = actor.getSlot();
+
+            if (slot < 0 || slot >= slots) {
+                continue;
+            }
+
+            int laneY = startY + slot * (frontSpriteSize + verticalGap);
+            int laneCenterY = laneY + frontSpriteSize / 2;
+
+            int drawX = columnX + (frontSpriteSize - spriteSize) / 2;
+            int drawY = laneCenterY - spriteSize / 2;
+
+            drawHpBar(g, drawX, drawY - 18, spriteSize, 10, actor);
+            drawActorSprite(g, actor, drawX, drawY, spriteSize, spriteSize);
         }
     }
 

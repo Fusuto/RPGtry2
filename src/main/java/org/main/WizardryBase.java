@@ -263,7 +263,14 @@ public class WizardryBase extends JPanel implements KeyListener {
         }
 
         currentEnemyEntity = enemyEntity;
-        currentEncounter = BattleEncounter.fromMonster(enemyEntity.getMonster());
+        List<Monster> monsters = new ArrayList<>();
+        monsters.add(enemyEntity.getMonster());
+        monsters.add(enemyEntity.getMonster());
+        monsters.add(new Monster(MonsterType.GOBLIN));
+        monsters.add(enemyEntity.getMonster());
+        monsters.add(enemyEntity.getMonster());
+        monsters.add(new Monster(MonsterType.GOBLIN));
+        currentEncounter = BattleEncounter.fromMonster(monsters);
 
         gameMode = GameMode.BATTLE;
         repaint();

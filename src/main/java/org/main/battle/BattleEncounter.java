@@ -2,6 +2,7 @@ package org.main.battle;
 
 import org.main.monsters.Monster;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class BattleEncounter {
@@ -13,9 +14,50 @@ public class BattleEncounter {
     public BattleEncounter(List<BattleActor> allies, List<BattleActor> enemies) {
         this.allies = allies;
         this.enemies = enemies;
+
+        assignFormations();
     }
 
-    public static BattleEncounter fromMonster(Monster monster) {
+    public boolean isBlockedByFrontActor(BattleActor target) {
+        if (target.getRow() != BattleRow.BACK) {
+            return false;
+        }
+
+        List<BattleActor> sameSideActors = target.isEnemy() ? enemies : allies;
+
+        for (BattleActor actor : sameSideActors) {
+            if (!actor.isAlive()) {
+                continue;
+            }
+
+            boolean sameSlot = actor.getSlot() == target.getSlot();
+            boolean frontRow = actor.getRow() == BattleRow.FRONT;
+
+            if (sameSlot && frontRow) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void assignFormations() {
+        assignFormation(allies);
+        assignFormation(enemies);
+    }
+
+    private void assignFormation(List<BattleActor> actors) {
+        for (int i = 0; i < actors.size(); i++) {
+            BattleActor actor = actors.get(i);
+
+            int slot = i % 3;
+            BattleRow row = i < 3 ? BattleRow.FRONT : BattleRow.BACK;
+
+            actor.setBattlePosition(row, slot);
+        }
+    }
+
+    public static BattleEncounter fromMonster(List<Monster> monster) {
         BattleActor playerActor = new BattleActor(
                 "Player",
                 30,
@@ -24,18 +66,31 @@ public class BattleEncounter {
                 false
         );
 
-        BattleActor enemyActor = new BattleActor(
-                monster.getName(),
-                monster.getMaxHp(),
-                monster.getCurrentHp(),
-                monster.getType().getImg(),
-                true
-        );
+        List<BattleActor> monsterActors = new ArrayList<>();
+
+        monster.forEach(monster1 -> {
+            var enemy = new BattleActor(
+                    monster1.getName(),
+                    monster1.getMaxHp(),
+                    monster1.getCurrentHp(),
+                    monster1.getType().getImg(),
+                    true
+            );
+            monsterActors.add(enemy);
+        });
 
         return new BattleEncounter(
                 List.of(playerActor),
-                List.of(enemyActor)
+                monsterActors
         );
+    }
+
+    public boolean canTargetWithMelee(BattleActor target, boolean hasReach) {
+        if (hasReach) {
+            return true;
+        }
+
+        return !isBlockedByFrontActor(target);
     }
 
     public BattleResult handleCommand(BattleCommand command) {
