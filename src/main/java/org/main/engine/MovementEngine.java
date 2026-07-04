@@ -1,0 +1,88 @@
+package org.main.engine;
+
+import java.awt.Point;
+
+public class MovementEngine {
+    private static final int TILE_WALL = 1;
+
+    public Point move(int playerX, int playerY, int dx, int dy, DungeonMap map) {
+        int nx = playerX + dx;
+        int ny = playerY + dy;
+
+        if (map.isWalkable(nx, ny)) {
+            return new Point(nx, ny);
+        }
+
+        return new Point(playerX, playerY);
+    }
+
+    public int turnLeft(int dir) {
+        return (dir + 3) % 4;
+    }
+
+    public int turnRight(int dir) {
+        return (dir + 1) % 4;
+    }
+
+    public int forwardX(int dir) {
+        return switch (dir) {
+            case 1 -> 1;   // east
+            case 3 -> -1;  // west
+            default -> 0;
+        };
+    }
+
+    public int forwardY(int dir) {
+        return switch (dir) {
+            case 0 -> -1;  // north
+            case 2 -> 1;   // south
+            default -> 0;
+        };
+    }
+
+    public int leftX(int dir) {
+        return switch (dir) {
+            case 0 -> -1;
+            case 1 -> 0;
+            case 2 -> 1;
+            case 3 -> 0;
+            default -> 0;
+        };
+    }
+
+    public int leftY(int dir) {
+        return switch (dir) {
+            case 0 -> 0;
+            case 1 -> -1;
+            case 2 -> 0;
+            case 3 -> 1;
+            default -> 0;
+        };
+    }
+
+    public int rightX(int dir) {
+        return -leftX(dir);
+    }
+
+    public int rightY(int dir) {
+        return -leftY(dir);
+    }
+
+    public String directionName(int dir) {
+        return switch (dir) {
+            case 0 -> "North";
+            case 1 -> "East";
+            case 2 -> "South";
+            case 3 -> "West";
+            default -> "?";
+        };
+    }
+
+    private boolean isWall(int x, int y, int[][] map) {
+        if (y < 0 || y >= map.length || x < 0 || x >= map[0].length) {
+            return true;
+        }
+
+        return map[y][x] == TILE_WALL;
+    }
+}
