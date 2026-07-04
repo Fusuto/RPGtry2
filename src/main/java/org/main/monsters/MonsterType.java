@@ -1,5 +1,10 @@
 package org.main.monsters;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+
 public enum MonsterType {
     SLIME(
             "Slime",
@@ -7,7 +12,8 @@ public enum MonsterType {
             2,
             0,
             5,
-            "A quivering mass of dungeon slime."
+            "A quivering mass of dungeon slime.",
+            "src/main/java/org/main/images/monster/Nov-2015/mon/amorphous/jelly.png"
     ),
 
     GOBLIN(
@@ -16,7 +22,8 @@ public enum MonsterType {
             4,
             1,
             12,
-            "A wiry goblin clutching a crude blade."
+            "A wiry goblin clutching a crude blade.",
+            "src/main/java/org/main/images/monster/Nov-2015/mon/goblin.png"
     ),
 
     SKELETON(
@@ -25,7 +32,8 @@ public enum MonsterType {
             5,
             2,
             18,
-            "A rattling corpse animated by old magic."
+            "A rattling corpse animated by old magic.",
+            "src/main/java/org/main/images/monster/Nov-2015/mon/undead/skeletons/skeleton_humanoid_small.png"
     );
 
     private final String displayName;
@@ -34,6 +42,7 @@ public enum MonsterType {
     private final int defense;
     private final int xpReward;
     private final String description;
+    private final BufferedImage img;
 
     MonsterType(
             String displayName,
@@ -41,7 +50,8 @@ public enum MonsterType {
             int attack,
             int defense,
             int xpReward,
-            String description
+            String description,
+            String imgLocation
     ) {
         this.displayName = displayName;
         this.maxHp = maxHp;
@@ -49,6 +59,17 @@ public enum MonsterType {
         this.defense = defense;
         this.xpReward = xpReward;
         this.description = description;
+        this.img = loadImage(imgLocation);
+    }
+
+    private BufferedImage loadImage(String path) {
+        try {
+            return ImageIO.read(new File(path));
+        } catch (IOException e) {
+            System.out.println("Failed to load image: " + path);
+            e.printStackTrace();
+            return null;
+        }
     }
 
     public String getDisplayName() {
@@ -73,5 +94,9 @@ public enum MonsterType {
 
     public String getDescription() {
         return description;
+    }
+
+    public BufferedImage getImg() {
+        return img;
     }
 }

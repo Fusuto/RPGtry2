@@ -28,6 +28,7 @@ public class MapEntity {
         this.x = x;
         this.y = y;
         this.monster = monster;
+        this.staticImage = monster.getType().getImg();
     }
 
     public MapEntity(String name, EntityType type, int x, int y, SpriteAnimation idleAnimation) {
