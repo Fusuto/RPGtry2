@@ -23,7 +23,7 @@ public class BattleRenderer {
      * 1.0 means "use the full available command panel width".
      * 0.8 would mean "use 80% of the available command panel width".
      */
-    private double buttonWidthRatio = 1.0;
+    private static final double BUTTON_WIDTH_RATIO = 1.0;
 
     public BattleCommand getCommandAt(Point point) {
         for (Map.Entry<BattleCommand, Rectangle> entry : commandBounds.entrySet()) {
@@ -37,21 +37,6 @@ public class BattleRenderer {
 
     public void setAssets(BattleAssets assets) {
         this.assets = assets;
-    }
-
-    /*
-     * Kept for compatibility with earlier code.
-     *
-     * Since we no longer scale directly from the raw image size,
-     * this effectively acts as "full width" unless you replace it
-     * with setButtonWidthRatio(...).
-     */
-    public void setButtonScale(int buttonScale) {
-        this.buttonWidthRatio = Math.min(1.0, Math.max(0.1, buttonScale));
-    }
-
-    public void setButtonWidthRatio(double buttonWidthRatio) {
-        this.buttonWidthRatio = Math.min(1.0, Math.max(0.1, buttonWidthRatio));
     }
 
     public void draw(Graphics2D g, BattleEncounter encounter, int width, int height) {
@@ -227,7 +212,7 @@ public class BattleRenderer {
 
         double imageAspect = buttonImage.getHeight() / (double) buttonImage.getWidth();
 
-        int buttonWidth = (int) Math.round(availableWidth * buttonWidthRatio);
+        int buttonWidth = (int) Math.round(availableWidth * BUTTON_WIDTH_RATIO);
         int buttonHeight = (int) Math.round(buttonWidth * imageAspect);
 
         /*
