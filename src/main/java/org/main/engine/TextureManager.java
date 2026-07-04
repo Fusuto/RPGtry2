@@ -2,6 +2,7 @@ package org.main.engine;
 
 import javax.imageio.ImageIO;
 import java.awt.Image;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,9 +14,20 @@ public class TextureManager {
             String material1,
             String material2,
             String side
-    ) {}
+    ) {
+    }
 
-    private final Map<TextureKey, List<Image>> textures = new HashMap<>();
+    private static class TextureEntry {
+        BufferedImage image;
+        boolean isDefault;
+
+        TextureEntry(BufferedImage image, boolean isDefault) {
+            this.image = image;
+            this.isDefault = isDefault;
+        }
+    }
+
+    private final Map<TextureKey, List<TextureEntry>> textures = new HashMap<>();
 
     public void loadFromFolder(String folderPath) {
         Path folder = Path.of(folderPath);
@@ -63,13 +75,14 @@ public class TextureManager {
         String side = parts[3].toLowerCase(Locale.ROOT);
 
         TextureKey key = new TextureKey(location, material1, material2, side);
+        boolean isDefault = parts.length == 4;
 
         try {
-            Image image = ImageIO.read(path.toFile());
+            BufferedImage image = ImageIO.read(path.toFile());
 
             textures
                     .computeIfAbsent(key, ignored -> new ArrayList<>())
-                    .add(image);
+                    .add(new TextureEntry(image, isDefault));
 
             System.out.println("Loaded texture: " + fileName);
         } catch (IOException e) {
@@ -78,7 +91,7 @@ public class TextureManager {
         }
     }
 
-    public Image getTexture(
+    public BufferedImage getTexture(
             String location,
             String material1,
             String material2,
@@ -93,19 +106,46 @@ public class TextureManager {
                 side.toLowerCase(Locale.ROOT)
         );
 
-        List<Image> variants = textures.get(key);
+        List<TextureEntry> variants = textures.get(key);
 
         if (variants == null || variants.isEmpty()) {
             return null;
         }
 
-        // Deterministic "random".
-        // Same tile always gets the same variant.
         int index = Math.floorMod(
                 Objects.hash(location, material1, material2, side, worldX, worldY),
                 variants.size()
         );
 
-        return variants.get(index);
+        return variants.get(index).image;
+    }
+
+    public BufferedImage getDefaultTexture(
+            String location,
+            String material1,
+            String material2,
+            String side
+    ) {
+        TextureKey key = new TextureKey(
+                location.toLowerCase(Locale.ROOT),
+                material1.toLowerCase(Locale.ROOT),
+                material2.toLowerCase(Locale.ROOT),
+                side.toLowerCase(Locale.ROOT)
+        );
+
+        List<TextureEntry> variants = textures.get(key);
+
+        if (variants == null || variants.isEmpty()) {
+            return null;
+        }
+
+        for (TextureEntry entry : variants) {
+            if (entry.isDefault) {
+                return entry.image;
+            }
+        }
+
+        // Fallback if no true default exists.
+        return variants.getFirst().image;
     }
 }

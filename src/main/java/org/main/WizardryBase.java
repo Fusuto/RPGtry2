@@ -1,10 +1,16 @@
 package org.main;
 
 import org.main.engine.*;
+import org.main.monsters.Monster;
+import org.main.monsters.MonsterType;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -24,6 +30,8 @@ public class WizardryBase extends JPanel implements KeyListener {
     private int dir = 1;
 
     private final List<MapEntity> entities = new ArrayList<MapEntity>();
+    private final TextureManager textureManager = new TextureManager();
+    private long lastUpdateTime = System.currentTimeMillis();
 
     public WizardryBase() {
         setPreferredSize(new Dimension(900, 600));
@@ -31,8 +39,54 @@ public class WizardryBase extends JPanel implements KeyListener {
         setFocusable(true);
         addKeyListener(this);
 
-        // Test enemy. Move this wherever you want for testing.
-        entities.add(new MapEntity("Test Slime", EntityType.ENEMY, 3, 1));
+        textureManager.loadFromFolder("src/main/java/org/main/images/building");
+
+        dungeonRenderer.setTextureManager(textureManager);
+        dungeonRenderer.setWallTextureTheme("wall", "brick", "stone");
+        dungeonRenderer.setFloorTextureTheme("floor","wood","planks","wide");
+
+//        SpriteAnimation slimeIdle = SpriteAnimation.fromSpriteSheet(
+//                "src/main/java/org/main/images/monster/RPG Maker MV format Animated Sideview Battlers/Slime/Slime1_1.png",
+//                0,      // startX
+//                0,      // startY
+//                64,     // frame width
+//                64,     // frame height
+//                4,      // number of idle frames
+//                180     // milliseconds per frame
+//        );
+//
+//        entities.add(new MapEntity(
+//                "Test Slime",
+//                EntityType.ENEMY,
+//                4,
+//                3,
+//                slimeIdle
+//        ));
+        BufferedImage slimeImage = loadImage("src/main/java/org/main/images/monster/Frontview Batch Battlers/Slime Blue.png");
+
+        entities.add(new MapEntity(
+                "Test Slime",
+                EntityType.ENEMY,
+                4,
+                3,
+                slimeImage
+        ));
+//        entities.add(new MapEntity(new Monster(MonsterType.SLIME), 4, 3));
+        Timer timer = new Timer(16, e -> {
+            long now = System.currentTimeMillis();
+            int deltaMs = (int) (now - lastUpdateTime);
+            lastUpdateTime = now;
+
+            updateGame(deltaMs);
+            repaint();
+        });
+
+        timer.start();
+    }
+    private void updateGame(int deltaMs) {
+        for (MapEntity entity : entities) {
+            entity.update(deltaMs);
+        }
     }
 
     private boolean isPlayerAt(int x, int y) {
@@ -69,7 +123,8 @@ public class WizardryBase extends JPanel implements KeyListener {
         Graphics2D g2 = (Graphics2D) g;
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-        dungeonRenderer.draw(g2, dungeonMap, playerX, playerY, dir, getWidth(), getHeight());
+//        dungeonRenderer.draw(g2, dungeonMap, playerX, playerY, dir, getWidth(), getHeight());
+        dungeonRenderer.draw(g2, dungeonMap, entities, playerX, playerY, dir, getWidth(), getHeight());
         drawMiniMap(g2);
         drawHud(g2);
     }
@@ -101,6 +156,16 @@ public class WizardryBase extends JPanel implements KeyListener {
 
         g.setColor(Color.RED);
         g.fillOval(startX + playerX * tile + 3, startY + playerY * tile + 3, tile - 8, tile - 8);
+    }
+
+    private BufferedImage loadImage(String path) {
+        try {
+            return ImageIO.read(new File(path));
+        } catch (IOException e) {
+            System.out.println("Failed to load image: " + path);
+            e.printStackTrace();
+            return null;
+        }
     }
 
     private void drawHud(Graphics2D g) {

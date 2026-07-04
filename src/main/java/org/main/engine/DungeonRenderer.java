@@ -1,32 +1,25 @@
 package org.main.engine;
 
 import java.awt.*;
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
 public class DungeonRenderer {
-    private static final int TILE_WALL = 1;
-
     private static final int MAX_DEPTH = 5;
     private static final int SIDE_MARGIN = 1;
-
     private static final double HORIZONTAL_FOCAL_RATIO = 0.55;
     private static final double WALL_HALF_HEIGHT_RATIO = 0.48;
     private static final double NEAR_CLIP = 0.10;
-
-
     private TextureManager textureManager;
-
     private String wallLocation = "wall";
     private String wallMaterial1 = "brick";
     private String wallMaterial2 = "stone";
-
-    // Future image tile support
-    private Image wallTexture = null;
-    private Image floorTexture = null;
-
-
+    private String floorLocation = "floor";
+    private String floorMaterial1 = "brick";
+    private String floorMaterial2 = "stone";
+    private String floorType = "small";
     private DungeonMap map;
     private int playerX;
     private int playerY;
@@ -34,29 +27,49 @@ public class DungeonRenderer {
     private int viewWidth;
     private int viewHeight;
 
-
-    private enum FaceType {
-        FRONT,
-        LEFT,
-        RIGHT,
-        FLOOR
-    }
+    private enum FaceType {FRONT, LEFT, RIGHT, FLOOR, SPRITE}
 
     private static class RenderCommand {
         FaceType faceType;
         TileType tileType;
         int depth;
         int side;
+        int worldX;
+        int worldY;
         Polygon polygon;
         double sortZ;
+        BufferedImage spriteImage;
 
-        RenderCommand(FaceType faceType, TileType tileType, int depth, int side, Polygon polygon, double sortZ) {
+        RenderCommand(FaceType faceType, TileType tileType, int depth, int side, int worldX, int worldY, Polygon polygon, double sortZ) {
             this.faceType = faceType;
             this.tileType = tileType;
             this.depth = depth;
             this.side = side;
+            this.worldX = worldX;
+            this.worldY = worldY;
             this.polygon = polygon;
             this.sortZ = sortZ;
+        }
+
+        RenderCommand(BufferedImage spriteImage, int depth, int side, int worldX, int worldY, Polygon polygon, double sortZ) {
+            this.faceType = FaceType.SPRITE;
+            this.spriteImage = spriteImage;
+            this.depth = depth;
+            this.side = side;
+            this.worldX = worldX;
+            this.worldY = worldY;
+            this.polygon = polygon;
+            this.sortZ = sortZ;
+        }
+    }
+
+    private static class RelativePosition {
+        int forward;
+        int side;
+
+        RelativePosition(int forward, int side) {
+            this.forward = forward;
+            this.side = side;
         }
     }
 
@@ -70,215 +83,385 @@ public class DungeonRenderer {
         this.wallMaterial2 = material2;
     }
 
-    public void draw(
-            Graphics2D g,
-            DungeonMap map,
-            int playerX,
-            int playerY,
-            int dir,
-            int viewWidth,
-            int viewHeight
-    ) {
+    public void setFloorTextureTheme(String location, String material1, String material2, String floorType) {
+        this.floorLocation = location;
+        this.floorMaterial1 = material1;
+        this.floorMaterial2 = material2;
+        this.floorType = floorType;
+    }
+
+    public void draw(Graphics2D g, DungeonMap map, List<MapEntity> entities, int playerX, int playerY, int dir, int viewWidth, int viewHeight) {
         this.map = map;
         this.playerX = playerX;
         this.playerY = playerY;
         this.dir = dir;
         this.viewWidth = viewWidth;
         this.viewHeight = viewHeight;
-
-        drawDungeonBackground(g);
-
+        drawDungeonBackground(g); /* * Draw floors first so they never accidentally render over walls. */
         List<RenderCommand> floorCommands = buildFloorRenderCommands();
         floorCommands.sort(Comparator.comparingDouble((RenderCommand c) -> c.sortZ).reversed());
-
         for (RenderCommand command : floorCommands) {
             drawRenderCommand(g, command);
-        }
-
-        List<RenderCommand> wallCommands = buildWallRenderCommands();
-        wallCommands.sort(Comparator.comparingDouble((RenderCommand c) -> c.sortZ).reversed());
-
-        for (RenderCommand command : wallCommands) {
+        } /* * Draw walls and entities together so sprites can be depth-sorted * against wall faces. */
+        List<RenderCommand> sceneCommands = buildWallRenderCommands();
+        sceneCommands.addAll(buildEntityRenderCommands(entities));
+        sceneCommands.sort(Comparator.comparingDouble((RenderCommand c) -> c.sortZ).reversed());
+        for (RenderCommand command : sceneCommands) {
             drawRenderCommand(g, command);
         }
     }
 
+    private void drawDungeonBackground(Graphics2D g) {
+        g.setColor(new Color(10, 10, 15));
+        g.fillRect(0, 0, viewWidth, viewHeight);
+        g.setColor(new Color(20, 20, 30));
+        g.fillRect(0, 0, viewWidth, viewHeight / 2);
+        g.setColor(new Color(25, 20, 15));
+        g.fillRect(0, viewHeight / 2, viewWidth, viewHeight / 2);
+        g.setColor(new Color(35, 35, 45));
+        g.drawLine(0, viewHeight / 2, viewWidth, viewHeight / 2);
+    }
+
     private List<RenderCommand> buildFloorRenderCommands() {
         List<RenderCommand> commands = new ArrayList<>();
-
         for (int depth = 1; depth <= MAX_DEPTH; depth++) {
             int sideLimit = depth + SIDE_MARGIN;
-
             for (int side = -sideLimit; side <= sideLimit; side++) {
                 TileType tileType = getTileAtRelative(depth, side);
-
                 if (tileType.isWallLike()) {
                     continue;
                 }
-
                 commands.add(createFloorFace(depth, side, tileType));
             }
         }
-
         return commands;
     }
 
     private RenderCommand createFloorFace(int depth, int side, TileType tileType) {
         double nearZ = depth - 0.5;
         double farZ = depth + 0.5;
-
         double leftX = side - 0.5;
         double rightX = side + 0.5;
-
-        Polygon polygon = polygonFrom(
-                project(leftX, nearZ, -1.0),
-                project(rightX, nearZ, -1.0),
-                project(rightX, farZ, -1.0),
-                project(leftX, farZ, -1.0)
-        );
-
+        Point worldPoint = worldPointAtRelative(depth, side);
+        Polygon polygon = polygonFrom(project(leftX, nearZ, -1.0), project(rightX, nearZ, -1.0), project(rightX, farZ, -1.0), project(leftX, farZ, -1.0));
         double sortZ = (nearZ + farZ) / 2.0;
-
-        return new RenderCommand(FaceType.FLOOR, tileType, depth, side, polygon, sortZ);
-    }
-
-    private void drawDungeonBackground(Graphics2D g) {
-        g.setColor(new Color(10, 10, 15));
-        g.fillRect(0, 0, viewWidth, viewHeight);
-
-        g.setColor(new Color(20, 20, 30));
-        g.fillRect(0, 0, viewWidth, viewHeight / 2);
-
-        g.setColor(new Color(25, 20, 15));
-        g.fillRect(0, viewHeight / 2, viewWidth, viewHeight / 2);
-
-        g.setColor(new Color(35, 35, 45));
-        g.drawLine(0, viewHeight / 2, viewWidth, viewHeight / 2);
+        return new RenderCommand(FaceType.FLOOR, tileType, depth, side, worldPoint.x, worldPoint.y, polygon, sortZ);
     }
 
     private List<RenderCommand> buildWallRenderCommands() {
         List<RenderCommand> commands = new ArrayList<>();
-
         for (int depth = 1; depth <= MAX_DEPTH; depth++) {
             int sideLimit = depth + SIDE_MARGIN;
-
             for (int side = -sideLimit; side <= sideLimit; side++) {
-                TileType tileType = getTileAtRelative(depth, side);
-
+                Point worldPoint = worldPointAtRelative(depth, side);
+                TileType tileType = map.getTile(worldPoint.x, worldPoint.y);
                 if (!tileType.isWallLike()) {
                     continue;
                 }
-
                 if (!isWallAtRelative(depth - 1, side)) {
-                    commands.add(createFrontFace(depth, side, tileType));
+                    commands.add(createFrontFace(depth, side, worldPoint.x, worldPoint.y, tileType));
                 }
-
                 if (!isWallAtRelative(depth, side - 1)) {
-                    commands.add(createLeftFace(depth, side, tileType));
+                    commands.add(createLeftFace(depth, side, worldPoint.x, worldPoint.y, tileType));
                 }
-
                 if (!isWallAtRelative(depth, side + 1)) {
-                    commands.add(createRightFace(depth, side, tileType));
+                    commands.add(createRightFace(depth, side, worldPoint.x, worldPoint.y, tileType));
                 }
             }
         }
-
         return commands;
     }
 
-    private TileType getTileAtRelative(int forward, int side) {
-        int x = playerX
-                + forwardX() * forward
-                + rightX() * side;
-
-        int y = playerY
-                + forwardY() * forward
-                + rightY() * side;
-
-        return map.getTile(x, y);
-    }
-
-    private RenderCommand createFrontFace(int depth, int side, TileType tileType) {
+    private RenderCommand createFrontFace(int depth, int side, int worldX, int worldY, TileType tileType) {
         double z = depth - 0.5;
-
         double leftX = side - 0.5;
         double rightX = side + 0.5;
-
-        Polygon polygon = polygonFrom(
-                project(leftX, z, 1.0),
-                project(rightX, z, 1.0),
-                project(rightX, z, -1.0),
-                project(leftX, z, -1.0)
-        );
-
-        return new RenderCommand(FaceType.FRONT, tileType, depth, side, polygon, z);
+        Polygon polygon = polygonFrom(project(leftX, z, 1.0), project(rightX, z, 1.0), project(rightX, z, -1.0), project(leftX, z, -1.0));
+        return new RenderCommand(FaceType.FRONT, tileType, depth, side, worldX, worldY, polygon, z);
     }
 
-    private RenderCommand createLeftFace(int depth, int side, TileType tileType) {
+    private RenderCommand createLeftFace(int depth, int side, int worldX, int worldY, TileType tileType) {
         double x = side - 0.5;
-
         double nearZ = depth - 0.5;
         double farZ = depth + 0.5;
-
-        /*
-         * If this wall is immediately to the player's right,
-         * its left face should stretch very close to the camera.
-         * This prevents fullscreen "peeking" around the nearest wall.
-         */
-        if (depth == 1 && side > 0) {
-            nearZ = NEAR_CLIP;
-        }
-
-        Polygon polygon = polygonFrom(
-                project(x, nearZ, 1.0),
-                project(x, farZ, 1.0),
-                project(x, farZ, -1.0),
-                project(x, nearZ, -1.0)
-        );
-
+        Polygon polygon = polygonFrom(project(x, nearZ, 1.0), project(x, farZ, 1.0), project(x, farZ, -1.0), project(x, nearZ, -1.0));
         double sortZ = (nearZ + farZ) / 2.0;
-
-        return new RenderCommand(FaceType.LEFT, tileType, depth, side, polygon, sortZ);
+        return new RenderCommand(FaceType.LEFT, tileType, depth, side, worldX, worldY, polygon, sortZ);
     }
 
-    private RenderCommand createRightFace(int depth, int side, TileType tileType) {
+    private RenderCommand createRightFace(int depth, int side, int worldX, int worldY, TileType tileType) {
         double x = side + 0.5;
-
         double nearZ = depth - 0.5;
         double farZ = depth + 0.5;
-
-        /*
-         * If this wall is immediately to the player's left,
-         * its right face should stretch very close to the camera.
-         */
-        if (depth == 1 && side < 0) {
-            nearZ = NEAR_CLIP;
-        }
-
-        Polygon polygon = polygonFrom(
-                project(x, nearZ, 1.0),
-                project(x, farZ, 1.0),
-                project(x, farZ, -1.0),
-                project(x, nearZ, -1.0)
-        );
-
+        Polygon polygon = polygonFrom(project(x, nearZ, 1.0), project(x, farZ, 1.0), project(x, farZ, -1.0), project(x, nearZ, -1.0));
         double sortZ = (nearZ + farZ) / 2.0;
+        return new RenderCommand(FaceType.RIGHT, tileType, depth, side, worldX, worldY, polygon, sortZ);
+    }
 
-        return new RenderCommand(FaceType.RIGHT, tileType, depth, side, polygon, sortZ);
+    private List<RenderCommand> buildEntityRenderCommands(List<MapEntity> entities) {
+        List<RenderCommand> commands = new ArrayList<>();
+        if (entities == null) {
+            return commands;
+        }
+        for (MapEntity entity : entities) {
+            /*
+             * Animation support is staying here for later.
+             *
+             * For now, we are using a static overworld image instead.
+             */
+            BufferedImage entityImage = entity.getStaticImage();
+
+    /*
+    if (entity.getIdleAnimation() != null) {
+        entityImage = entity.getIdleAnimation().getCurrentFrame();
+    }
+    */
+
+            if (entityImage == null) {
+                continue;
+            }
+
+            RelativePosition relative = getRelativePosition(entity.getX(), entity.getY());
+            if (relative.forward <= 0 || relative.forward > MAX_DEPTH) {
+                continue;
+            }
+            int sideLimit = relative.forward + SIDE_MARGIN;
+            if (Math.abs(relative.side) > sideLimit) {
+                continue;
+            } /* * Simple visibility check: * Do not draw an entity if a wall exists on the same relative tile. * Later we can improve this into line-of-sight / occlusion. */
+            if (isWallAtRelative(relative.forward, relative.side)) {
+                continue;
+            }
+//            BufferedImage frame = entity.getIdleAnimation().getCurrentFrame();
+            double z = relative.forward;
+            double x = relative.side;
+            Point bottomCenter = project(x, z, -1.0);
+            Point topCenter = project(x, z, 0.55);
+            int spriteHeight = Math.abs(bottomCenter.y - topCenter.y);
+            int spriteWidth = spriteHeight;
+            int screenX = bottomCenter.x - spriteWidth / 2;
+            int screenY = bottomCenter.y - spriteHeight;
+            Polygon spriteBounds = rectanglePolygon(screenX, screenY, spriteWidth, spriteHeight);
+//            commands.add(new RenderCommand(frame, relative.forward, relative.side, entity.getX(), entity.getY(), spriteBounds, z));
+            commands.add(new RenderCommand(
+                    entityImage,
+                    relative.forward,
+                    relative.side,
+                    entity.getX(),
+                    entity.getY(),
+                    spriteBounds,
+                    z
+            ));
+        }
+        return commands;
+    }
+
+    private void drawRenderCommand(Graphics2D g, RenderCommand command) {
+        if (command.faceType == FaceType.SPRITE) {
+            drawSpriteCommand(g, command);
+            return;
+        }
+        Color color = getRenderColor(command);
+        BufferedImage texture = getTextureForCommand(command);
+        if (texture != null) {
+            drawTexturedFace(g, texture, command);
+        } else {
+            g.setColor(color);
+            g.fillPolygon(command.polygon);
+        }
+        g.setColor(Color.BLACK);
+        g.drawPolygon(command.polygon);
+    }
+
+    private void drawSpriteCommand(Graphics2D g, RenderCommand command) {
+        if (command.spriteImage == null) {
+            return;
+        }
+        Rectangle bounds = command.polygon.getBounds();
+        Object oldInterpolation = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        g.drawImage(command.spriteImage, bounds.x, bounds.y, bounds.width, bounds.height, null);
+        if (oldInterpolation != null) {
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, oldInterpolation);
+        }
+    }
+
+    private void drawTexturedFace(Graphics2D g, BufferedImage texture, RenderCommand command) {
+        if (command.polygon.npoints != 4) {
+            g.setColor(getRenderColor(command));
+            g.fillPolygon(command.polygon);
+            return;
+        } /* * Important: * We deliberately map the texture once. * * Repeating the closest side walls caused the exact double-texture issue * you were seeing. Decorative variants, banners, and unique wall panels * should not be tiled unless we explicitly create a separate tiling mode. */
+        drawTextureSection(g, texture, command.polygon, 0.0, 1.0);
+    }
+
+    private void drawTextureSection(Graphics2D g, BufferedImage texture, Polygon polygon, double uStart, double uEnd) {
+        Point topLeft = new Point(polygon.xpoints[0], polygon.ypoints[0]);
+        Point topRight = new Point(polygon.xpoints[1], polygon.ypoints[1]);
+        Point bottomRight = new Point(polygon.xpoints[2], polygon.ypoints[2]);
+        Point bottomLeft = new Point(polygon.xpoints[3], polygon.ypoints[3]);
+        int strips = 48;
+        Shape oldClip = g.getClip();
+        Object oldInterpolation = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        for (int i = 0; i < strips; i++) {
+            double localA = i / (double) strips;
+            double localB = (i + 1) / (double) strips;
+            double uA = lerp(uStart, uEnd, localA);
+            double uB = lerp(uStart, uEnd, localB);
+            Point stripTopLeft = lerpPoint(topLeft, topRight, uA);
+            Point stripTopRight = lerpPoint(topLeft, topRight, uB);
+            Point stripBottomRight = lerpPoint(bottomLeft, bottomRight, uB);
+            Point stripBottomLeft = lerpPoint(bottomLeft, bottomRight, uA);
+            Polygon stripPolygon = polygonFrom(stripTopLeft, stripTopRight, stripBottomRight, stripBottomLeft);
+            Rectangle bounds = stripPolygon.getBounds();
+            if (bounds.width <= 0 || bounds.height <= 0) {
+                continue;
+            }
+            int sx1 = (int) Math.round(localA * texture.getWidth());
+            int sx2 = (int) Math.round(localB * texture.getWidth());
+            sx1 = Math.max(0, Math.min(texture.getWidth() - 1, sx1));
+            sx2 = Math.max(sx1 + 1, Math.min(texture.getWidth(), sx2));
+            g.setClip(stripPolygon);
+            g.drawImage(texture, bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height, sx1, 0, sx2, texture.getHeight(), null);
+        }
+        g.setClip(oldClip);
+        if (oldInterpolation != null) {
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, oldInterpolation);
+        }
+    }
+
+    private BufferedImage getTextureForCommand(RenderCommand command) {
+        if (textureManager == null) {
+            return null;
+        }
+        if (command.faceType == FaceType.SPRITE) {
+            return null;
+        }
+        if (command.faceType == FaceType.FLOOR) {
+            return textureManager.getTexture(floorLocation, floorMaterial1, floorMaterial2, floorType, command.worldX, command.worldY);
+        }
+        String sideName = getWallTextureSideName(command);
+        boolean needsSafeTexture = shouldUseDefaultTexture(command);
+        BufferedImage texture;
+        if (needsSafeTexture) {
+            texture = textureManager.getDefaultTexture(wallLocation, wallMaterial1, wallMaterial2, sideName);
+        } else {
+            texture = textureManager.getTexture(wallLocation, wallMaterial1, wallMaterial2, sideName, command.worldX, command.worldY);
+        }
+        if (texture == null && !sideName.equals("center")) {
+            if (needsSafeTexture) {
+                texture = textureManager.getDefaultTexture(wallLocation, wallMaterial1, wallMaterial2, "center");
+            } else {
+                texture = textureManager.getTexture(wallLocation, wallMaterial1, wallMaterial2, "center", command.worldX, command.worldY);
+            }
+        }
+        return texture;
+    }
+
+    private boolean shouldUseDefaultTexture(RenderCommand command) { /* * Side wall faces are usually very large and angled. * Decorative variants like banners look bad here, so force the plain * default center texture. */
+        return command.faceType == FaceType.LEFT || command.faceType == FaceType.RIGHT;
+    }
+
+    private String getWallTextureSideName(RenderCommand command) { /* * FaceType.LEFT / FaceType.RIGHT means the physical side face of a wall block. * Your asset suffix _left / _right means a visual panel/corner variant. * Those are not the same concept. */
+        if (command.faceType == FaceType.LEFT || command.faceType == FaceType.RIGHT) {
+            return "center";
+        }
+        if (command.side < 0) {
+            return "left";
+        }
+        if (command.side > 0) {
+            return "right";
+        }
+        return "center";
+    }
+
+    private Color getRenderColor(RenderCommand command) {
+        return switch (command.faceType) {
+            case FLOOR -> getFloorColor(command);
+            case FRONT, LEFT, RIGHT -> getWallColor(command);
+            case SPRITE -> Color.MAGENTA;
+        };
+    }
+
+    private Color getFloorColor(RenderCommand command) {
+        int base = switch (command.depth) {
+            case 1 -> 65;
+            case 2 -> 55;
+            case 3 -> 45;
+            case 4 -> 35;
+            default -> 25;
+        };
+        return new Color(base, Math.max(0, base - 10), Math.max(0, base - 20));
+    }
+
+    private Color getWallColor(RenderCommand command) {
+        if (command.tileType == TileType.DOOR_CLOSED) {
+            int base = switch (command.depth) {
+                case 1 -> 110;
+                case 2 -> 85;
+                case 3 -> 65;
+                case 4 -> 50;
+                default -> 35;
+            };
+            return switch (command.faceType) {
+                case FRONT -> new Color(Math.min(255, base + 25), Math.max(0, base - 15), Math.max(0, base - 35));
+                case LEFT -> new Color(base, Math.max(0, base - 25), Math.max(0, base - 40));
+                case RIGHT -> new Color(Math.min(255, base + 10), Math.max(0, base - 20), Math.max(0, base - 35));
+                case FLOOR, SPRITE -> Color.MAGENTA;
+            };
+        }
+        int base = switch (command.depth) {
+            case 1 -> 115;
+            case 2 -> 90;
+            case 3 -> 70;
+            case 4 -> 55;
+            default -> 40;
+        };
+        return switch (command.faceType) {
+            case FRONT -> new Color(base, base, Math.min(255, base + 15));
+            case LEFT -> new Color(Math.max(0, base - 20), Math.max(0, base - 20), base);
+            case RIGHT -> new Color(Math.max(0, base - 10), Math.max(0, base - 10), Math.min(255, base + 5));
+            case FLOOR, SPRITE -> Color.MAGENTA;
+        };
+    }
+
+    private RelativePosition getRelativePosition(int worldX, int worldY) {
+        int dx = worldX - playerX;
+        int dy = worldY - playerY;
+        int forward = dx * forwardX() + dy * forwardY();
+        int side = dx * rightX() + dy * rightY();
+        return new RelativePosition(forward, side);
+    }
+
+    private Point worldPointAtRelative(int forward, int side) {
+        int x = playerX + forwardX() * forward + rightX() * side;
+        int y = playerY + forwardY() * forward + rightY() * side;
+        return new Point(x, y);
+    }
+
+    private TileType getTileAtRelative(int forward, int side) {
+        Point point = worldPointAtRelative(forward, side);
+        return map.getTile(point.x, point.y);
+    }
+
+    private boolean isWallAtRelative(int forward, int side) {
+        Point point = worldPointAtRelative(forward, side);
+        return isWall(point.x, point.y);
+    }
+
+    private boolean isWall(int x, int y) {
+        return map.isWallLike(x, y);
     }
 
     private Point project(double x, double z, double vertical) {
         z = Math.max(z, NEAR_CLIP);
-
         int centerX = viewWidth / 2;
         int horizonY = viewHeight / 2;
-
         double focalLength = getFocalLength();
         double wallHalfHeight = getWallHalfHeight();
-
         int screenX = centerX + (int) Math.round((x / z) * focalLength);
         int screenY = horizonY - (int) Math.round((vertical / z) * wallHalfHeight);
-
         return new Point(screenX, screenY);
     }
 
@@ -292,116 +475,27 @@ public class DungeonRenderer {
 
     private Polygon polygonFrom(Point... points) {
         Polygon polygon = new Polygon();
-
         for (Point point : points) {
             polygon.addPoint(point.x, point.y);
         }
-
         return polygon;
     }
 
-    private void drawRenderCommand(Graphics2D g, RenderCommand command) {
-        Color color = getRenderColor(command);
-
-        Image texture = switch (command.faceType) {
-            case FLOOR -> floorTexture;
-            default -> wallTexture;
-        };
-
-        if (texture != null) {
-            Shape oldClip = g.getClip();
-
-            Rectangle bounds = command.polygon.getBounds();
-
-            g.setClip(command.polygon);
-            g.drawImage(
-                    texture,
-                    bounds.x,
-                    bounds.y,
-                    Math.max(1, bounds.width),
-                    Math.max(1, bounds.height),
-                    null
-            );
-
-            g.setClip(oldClip);
-        } else {
-            g.setColor(color);
-            g.fillPolygon(command.polygon);
-        }
-
-        g.setColor(Color.BLACK);
-        g.drawPolygon(command.polygon);
+    private Polygon rectanglePolygon(int x, int y, int width, int height) {
+        Polygon polygon = new Polygon();
+        polygon.addPoint(x, y);
+        polygon.addPoint(x + width, y);
+        polygon.addPoint(x + width, y + height);
+        polygon.addPoint(x, y + height);
+        return polygon;
     }
 
-    private Color getRenderColor(RenderCommand command) {
-        if (command.faceType == FaceType.FLOOR) {
-            int base = switch (command.depth) {
-                case 1 -> 65;
-                case 2 -> 55;
-                case 3 -> 45;
-                case 4 -> 35;
-                default -> 25;
-            };
-
-            return new Color(base, base - 10, base - 20);
-        }
-
-        // Existing wall/door color logic goes here.
-        return getWallColor(command);
+    private double lerp(double a, double b, double t) {
+        return a + (b - a) * t;
     }
 
-    private Color getWallColor(RenderCommand command) {
-        if (command.tileType == TileType.DOOR_CLOSED) {
-            int base = switch (command.depth) {
-                case 1 -> 110;
-                case 2 -> 85;
-                case 3 -> 65;
-                case 4 -> 50;
-                default -> 35;
-            };
-
-            return switch (command.faceType) {
-                case FRONT -> new Color(base + 25, base - 15, base - 35);
-                case LEFT -> new Color(base, base - 25, base - 40);
-                case RIGHT -> new Color(base + 10, base - 20, base - 35);
-                case FLOOR -> null;
-            };
-        }
-
-        int base = switch (command.depth) {
-            case 1 -> 115;
-            case 2 -> 90;
-            case 3 -> 70;
-            case 4 -> 55;
-            default -> 40;
-        };
-
-        return switch (command.faceType) {
-            case FRONT -> new Color(base, base, base + 15);
-            case LEFT -> new Color(Math.max(0, base - 20), Math.max(0, base - 20), base);
-            case RIGHT -> new Color(Math.max(0, base - 10), Math.max(0, base - 10), base + 5);
-            case FLOOR -> null;
-        };
-    }
-
-    public void setFloorTexture(Image floorTexture) {
-        this.floorTexture = floorTexture;
-    }
-
-    private boolean isWallAtRelative(int forward, int side) {
-        int x = playerX
-                + forwardX() * forward
-                + rightX() * side;
-
-        int y = playerY
-                + forwardY() * forward
-                + rightY() * side;
-
-        return isWall(x, y);
-    }
-
-    private boolean isWall(int x, int y) {
-        return map.isWallLike(x, y);
+    private Point lerpPoint(Point a, Point b, double t) {
+        return new Point((int) Math.round(lerp(a.x, b.x, t)), (int) Math.round(lerp(a.y, b.y, t)));
     }
 
     private int forwardX() {

@@ -1,8 +1,16 @@
 package org.main.engine;
 
+import org.main.monsters.Monster;
+
+import java.awt.image.BufferedImage;
+
 public class MapEntity {
     private final String name;
     private final EntityType type;
+
+    private Monster monster;
+    private SpriteAnimation idleAnimation;
+    private BufferedImage staticImage;
 
     private int x;
     private int y;
@@ -12,6 +20,52 @@ public class MapEntity {
         this.type = type;
         this.x = x;
         this.y = y;
+    }
+
+    public MapEntity(Monster monster, int x, int y) {
+        this.name = monster.getName();
+        this.type = EntityType.ENEMY;
+        this.x = x;
+        this.y = y;
+        this.monster = monster;
+    }
+
+    public MapEntity(String name, EntityType type, int x, int y, SpriteAnimation idleAnimation) {
+        this.name = name;
+        this.type = type;
+        this.x = x;
+        this.y = y;
+        this.idleAnimation = idleAnimation;
+    }
+
+    public MapEntity(String name, EntityType type, int x, int y, BufferedImage staticImage) {
+        this.name = name;
+        this.type = type;
+        this.x = x;
+        this.y = y;
+        this.staticImage = staticImage;
+    }
+
+    public BufferedImage getStaticImage() {
+        return staticImage;
+    }
+
+    public void setStaticImage(BufferedImage staticImage) {
+        this.staticImage = staticImage;
+    }
+
+    public void update(int deltaMs) {
+        if (idleAnimation != null) {
+            idleAnimation.update(deltaMs);
+        }
+    }
+
+    public SpriteAnimation getIdleAnimation() {
+        return idleAnimation;
+    }
+
+    public Monster getMonster() {
+        return monster;
     }
 
     public String getName() {
