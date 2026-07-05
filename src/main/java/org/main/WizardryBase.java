@@ -10,6 +10,7 @@ import java.awt.*;
 import java.awt.event.*;
 import java.util.ArrayList;
 import java.util.List;
+
 import org.main.battle.BattleAssets;
 
 import java.awt.event.MouseAdapter;
@@ -28,6 +29,7 @@ public class WizardryBase extends JPanel implements KeyListener {
     private int playerY = 1;
 
     private boolean inBattle = false;
+    private BattleCommand pendingBattleCommand = null;
 
     // 0 = north, 1 = east, 2 = south, 3 = west
     private int dir = 1;
@@ -93,11 +95,41 @@ public class WizardryBase extends JPanel implements KeyListener {
             return;
         }
 
-        BattleCommand command = battleRenderer.getCommandAt(e.getPoint());
+        Point clickPoint = e.getPoint();
+
+        if (pendingBattleCommand != null) {
+            handleTargetClick(clickPoint);
+            repaint();
+            return;
+        }
+
+        BattleCommand command = battleRenderer.getCommandAt(clickPoint);
 
         if (command != null) {
             handleBattleCommand(command);
             repaint();
+        }
+    }
+
+    private void handleTargetClick(Point clickPoint) {
+        BattleActor target = battleRenderer.getActorAt(clickPoint);
+
+        if (target == null) {
+            return;
+        }
+
+        if (pendingBattleCommand == BattleCommand.ATTACK) {
+            BattleResult result = currentEncounter.handleAttack(target);
+
+            pendingBattleCommand = null;
+            battleRenderer.clearSelectableTargets();
+
+            switch (result) {
+                case CONTINUE -> {
+                }
+                case VICTORY -> endBattle(true);
+                case RAN, DEFEAT -> endBattle(false);
+            }
         }
     }
 
@@ -106,22 +138,33 @@ public class WizardryBase extends JPanel implements KeyListener {
             return;
         }
 
+        if (command == BattleCommand.ATTACK) {
+            BattleActor attacker = currentEncounter.getFirstLivingAlly();
+
+            List<BattleActor> validTargets = currentEncounter.getValidTargets(
+                    attacker,
+                    BattleTargetingMode.NORMAL_MELEE
+            );
+
+            pendingBattleCommand = BattleCommand.ATTACK;
+            battleRenderer.setSelectableTargets(validTargets);
+
+            currentEncounter.setBattleMessage("Choose a target.");
+            repaint();
+            return;
+        }
+
         BattleResult result = currentEncounter.handleCommand(command);
 
         switch (result) {
             case CONTINUE -> {
-                // Battle keeps going.
             }
-
-            case VICTORY -> {
-                endBattle(true);
-            }
-
-            case RAN, DEFEAT -> {
-                endBattle(false);
-            }
+            case VICTORY -> endBattle(true);
+            case RAN, DEFEAT -> endBattle(false);
         }
     }
+
+
 
     private void updateGame(int deltaMs) {
         for (MapEntity entity : entities) {
@@ -266,10 +309,11 @@ public class WizardryBase extends JPanel implements KeyListener {
         List<Monster> monsters = new ArrayList<>();
         monsters.add(enemyEntity.getMonster());
         monsters.add(enemyEntity.getMonster());
-        monsters.add(new Monster(MonsterType.GOBLIN));
         monsters.add(enemyEntity.getMonster());
         monsters.add(enemyEntity.getMonster());
-        monsters.add(new Monster(MonsterType.GOBLIN));
+        monsters.add(enemyEntity.getMonster());
+        monsters.add(enemyEntity.getMonster());
+
         currentEncounter = BattleEncounter.fromMonster(monsters);
 
         gameMode = GameMode.BATTLE;

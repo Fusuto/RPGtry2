@@ -4,9 +4,13 @@ import org.main.engine.EntityType;
 
 import java.awt.*;
 import java.awt.image.BufferedImage;
+import java.util.*;
 import java.util.List;
-import java.util.EnumMap;
-import java.util.Map;
+
+import java.util.Collection;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
 
 public class BattleRenderer {
 
@@ -18,6 +22,8 @@ public class BattleRenderer {
     private static final int MESSAGE_BOX_MAX_WIDTH = 520;
 
     private final Map<BattleCommand, Rectangle> commandBounds = new EnumMap<>(BattleCommand.class);
+    private final Map<BattleActor, Rectangle> actorBounds = new IdentityHashMap<>();
+    private final Set<BattleActor> selectableTargets = Collections.newSetFromMap(new IdentityHashMap<>());
 
     private BattleAssets assets;
 
@@ -41,7 +47,30 @@ public class BattleRenderer {
         this.assets = assets;
     }
 
+    public BattleActor getActorAt(Point point) {
+        for (Map.Entry<BattleActor, Rectangle> entry : actorBounds.entrySet()) {
+            if (entry.getValue().contains(point)) {
+                return entry.getKey();
+            }
+        }
+
+        return null;
+    }
+
+    public void setSelectableTargets(Collection<BattleActor> targets) {
+        selectableTargets.clear();
+
+        if (targets != null) {
+            selectableTargets.addAll(targets);
+        }
+    }
+
+    public void clearSelectableTargets() {
+        selectableTargets.clear();
+    }
+
     public void draw(Graphics2D g, BattleEncounter encounter, int width, int height) {
+        actorBounds.clear();
         commandBounds.clear();
 
         if (encounter == null) {
@@ -149,19 +178,11 @@ public class BattleRenderer {
         int frontX;
 
         if (side == EntityType.ALLY) {
-            /*
-             * Back row is farther left.
-             * Front row is closer to the center.
-             */
             backX = x + formationPadding;
             frontX = backX + frontSpriteSize + rowGap;
         } else {
-            /*
-             * Front row is closer to the center.
-             * Back row is farther right.
-             */
-            frontX = x + width - formationPadding - frontSpriteSize;
-            backX = frontX - frontSpriteSize - rowGap;
+            frontX = x + formationPadding;
+            backX = frontX + frontSpriteSize + rowGap;
         }
 
         int columnX = row == BattleRow.FRONT ? frontX : backX;
@@ -187,9 +208,26 @@ public class BattleRenderer {
             int drawX = columnX + (frontSpriteSize - spriteSize) / 2;
             int drawY = laneCenterY - spriteSize / 2;
 
+            Rectangle actorRectangle = new Rectangle(drawX, drawY, spriteSize, spriteSize);
+            actorBounds.put(actor, actorRectangle);
+
             drawHpBar(g, drawX, drawY - 18, spriteSize, 10, actor);
             drawActorSprite(g, actor, drawX, drawY, spriteSize, spriteSize);
+
+            if (selectableTargets.contains(actor)) {
+                drawTargetHighlight(g, actorRectangle);
+            }
         }
+    }
+
+    private void drawTargetHighlight(Graphics2D g, Rectangle bounds) {
+        Stroke oldStroke = g.getStroke();
+
+        g.setColor(Color.YELLOW);
+        g.setStroke(new BasicStroke(3));
+        g.drawRect(bounds.x - 3, bounds.y - 3, bounds.width + 6, bounds.height + 6);
+
+        g.setStroke(oldStroke);
     }
 
     private void drawActorSprite(Graphics2D g, BattleActor actor, int x, int y, int width, int height) {

@@ -1,5 +1,7 @@
 package org.main.battle;
 
+import org.main.engine.EntityType;
+
 import java.awt.image.BufferedImage;
 
 public class BattleActor {
@@ -10,13 +12,19 @@ public class BattleActor {
     private int currentHp;
     private int slot = 0;
     private BattleRow row = BattleRow.FRONT;
+    private final EntityType entityType;
 
-    public BattleActor(String name, int maxHp, int currentHp, BufferedImage image, boolean enemy) {
+    public BattleActor(String name, int maxHp, int currentHp, BufferedImage image, boolean enemy, EntityType entityType) {
         this.name = name;
         this.maxHp = maxHp;
         this.currentHp = currentHp;
         this.image = image;
         this.enemy = enemy;
+        this.entityType = entityType;
+    }
+
+    public EntityType getEntityType() {
+        return entityType;
     }
 
     public BattleRow getRow() {

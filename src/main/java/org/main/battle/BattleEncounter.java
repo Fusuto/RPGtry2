@@ -1,5 +1,6 @@
 package org.main.battle;
 
+import org.main.engine.EntityType;
 import org.main.monsters.Monster;
 
 import java.util.ArrayList;
@@ -16,29 +17,6 @@ public class BattleEncounter {
         this.enemies = enemies;
 
         assignFormations();
-    }
-
-    public boolean isBlockedByFrontActor(BattleActor target) {
-        if (target.getRow() != BattleRow.BACK) {
-            return false;
-        }
-
-        List<BattleActor> sameSideActors = target.isEnemy() ? enemies : allies;
-
-        for (BattleActor actor : sameSideActors) {
-            if (!actor.isAlive()) {
-                continue;
-            }
-
-            boolean sameSlot = actor.getSlot() == target.getSlot();
-            boolean frontRow = actor.getRow() == BattleRow.FRONT;
-
-            if (sameSlot && frontRow) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private void assignFormations() {
@@ -63,7 +41,8 @@ public class BattleEncounter {
                 30,
                 30,
                 null,
-                false
+                false,
+                EntityType.ALLY
         );
 
         List<BattleActor> monsterActors = new ArrayList<>();
@@ -74,7 +53,8 @@ public class BattleEncounter {
                     monster1.getMaxHp(),
                     monster1.getCurrentHp(),
                     monster1.getType().getImg(),
-                    true
+                    true,
+                    EntityType.ENEMY
             );
             monsterActors.add(enemy);
         });
@@ -99,6 +79,87 @@ public class BattleEncounter {
             case SKILL -> handleSkill();
             case RUN -> handleRun();
         };
+    }
+
+    public List<BattleActor> getValidTargets(
+            BattleActor attacker,
+            BattleTargetingMode targetingMode
+    ) {
+        List<BattleActor> validTargets = new ArrayList<>();
+
+        for (BattleActor target : getOpposingActors(attacker)) {
+            if (canTarget(attacker, target, targetingMode)) {
+                validTargets.add(target);
+            }
+        }
+
+        return validTargets;
+    }
+
+    public boolean canTarget(
+            BattleActor attacker,
+            BattleActor target,
+            BattleTargetingMode targetingMode
+    ) {
+        if (attacker == null || target == null) {
+            return false;
+        }
+
+        if (!attacker.isAlive() || !target.isAlive()) {
+            return false;
+        }
+
+        if (isSameSide(attacker, target)) {
+            return false;
+        }
+
+        return switch (targetingMode) {
+            case NORMAL_MELEE -> !isBlockedByFrontActor(target);
+            case REACH_MELEE, RANGED, MAGIC -> true;
+        };
+    }
+
+    public boolean isBlockedByFrontActor(BattleActor target) {
+        if (target.getRow() != BattleRow.BACK) {
+            return false;
+        }
+
+        List<BattleActor> sameSideActors = getActorsOnSameSide(target);
+
+        for (BattleActor actor : sameSideActors) {
+            if (!actor.isAlive()) {
+                continue;
+            }
+
+            boolean sameSlot = actor.getSlot() == target.getSlot();
+            boolean isFrontRow = actor.getRow() == BattleRow.FRONT;
+
+            if (sameSlot && isFrontRow) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private boolean isSameSide(BattleActor a, BattleActor b) {
+        return a.getEntityType() == b.getEntityType();
+    }
+
+    private List<BattleActor> getActorsOnSameSide(BattleActor actor) {
+        if (actor.isEnemy()) {
+            return enemies;
+        }
+
+        return allies;
+    }
+
+    private List<BattleActor> getOpposingActors(BattleActor actor) {
+        if (actor.isEnemy()) {
+            return allies;
+        }
+
+        return enemies;
     }
 
     private BattleResult handleAttack() {
@@ -144,7 +205,7 @@ public class BattleEncounter {
         return BattleResult.RAN;
     }
 
-    private BattleActor getFirstLivingAlly() {
+    public BattleActor getFirstLivingAlly() {
         for (BattleActor ally : allies) {
             if (ally.isAlive()) {
                 return ally;
@@ -152,6 +213,41 @@ public class BattleEncounter {
         }
 
         return null;
+    }
+
+    public void setBattleMessage(String battleMessage) {
+        this.battleMessage = battleMessage;
+    }
+
+    public BattleResult handleAttack(BattleActor target) {
+        BattleActor attacker = getFirstLivingAlly();
+
+        if (attacker == null) {
+            battleMessage = "No allies can act.";
+            return BattleResult.DEFEAT;
+        }
+
+        if (!canTarget(attacker, target, BattleTargetingMode.NORMAL_MELEE)) {
+            battleMessage = "You cannot reach " + target.getName() + ".";
+            return BattleResult.CONTINUE;
+        }
+
+        int damage = 5;
+        target.takeDamage(damage);
+
+        battleMessage = attacker.getName()
+                + " attacks "
+                + target.getName()
+                + " for "
+                + damage
+                + " damage!";
+
+        if (allEnemiesDefeated()) {
+            battleMessage = "Victory!";
+            return BattleResult.VICTORY;
+        }
+
+        return BattleResult.CONTINUE;
     }
 
     private BattleActor getFirstLivingEnemy() {
