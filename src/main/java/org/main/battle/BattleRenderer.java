@@ -24,6 +24,13 @@ public class BattleRenderer {
     private final Map<BattleCommand, Rectangle> commandBounds = new EnumMap<>(BattleCommand.class);
     private final Map<BattleActor, Rectangle> actorBounds = new IdentityHashMap<>();
     private final Set<BattleActor> selectableTargets = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Map<BattleSkill, Rectangle> skillBounds = new IdentityHashMap<>();
+
+    private BattleSkill previewSkill = null;
+    private Point mousePoint = null;
+    private boolean skillWindowOpen = false;
+    private Rectangle skillWindowBounds = new Rectangle();
+    private Rectangle skillWindowCloseBounds = new Rectangle();
 
     private BattleAssets assets;
 
@@ -41,6 +48,18 @@ public class BattleRenderer {
         }
 
         return null;
+    }
+
+    public void setMousePoint(Point mousePoint) {
+        this.mousePoint = mousePoint == null ? null : new Point(mousePoint);
+    }
+
+    public void setPreviewSkill(BattleSkill previewSkill) {
+        this.previewSkill = previewSkill;
+    }
+
+    public void clearPreviewSkill() {
+        this.previewSkill = null;
     }
 
     public void setAssets(BattleAssets assets) {
@@ -67,11 +86,45 @@ public class BattleRenderer {
 
     public void clearSelectableTargets() {
         selectableTargets.clear();
+        clearPreviewSkill();
+    }
+
+    public void openSkillWindow() {
+        skillWindowOpen = true;
+    }
+
+    public void closeSkillWindow() {
+        skillWindowOpen = false;
+        skillWindowBounds = new Rectangle();
+        skillWindowCloseBounds = new Rectangle();
+        skillBounds.clear();
+    }
+
+    public boolean isSkillWindowOpen() {
+        return skillWindowOpen;
+    }
+
+    /*
+     * Returns true if the click was consumed by the skill window.
+     * This prevents clicks from passing through to Attack/Skill/Run underneath.
+     */
+    public boolean handleSkillWindowClick(Point point) {
+        if (!skillWindowOpen) {
+            return false;
+        }
+
+        if (skillWindowCloseBounds.contains(point)) {
+            closeSkillWindow();
+            return true;
+        }
+
+        return true;
     }
 
     public void draw(Graphics2D g, BattleEncounter encounter, int width, int height) {
         actorBounds.clear();
         commandBounds.clear();
+        skillBounds.clear();
 
         if (encounter == null) {
             return;
@@ -89,6 +142,12 @@ public class BattleRenderer {
         drawBattleArea(g, encounter, 0, 0, width, battleAreaHeight);
 
         /*
+         * Actor bounds are created inside drawBattleArea(...), so skill/target
+         * highlights must be drawn after the battle area.
+         */
+        drawTargetingPreview(g);
+
+        /*
          * The battle message now floats over the battle area instead of
          * consuming space inside the command panel.
          */
@@ -96,6 +155,154 @@ public class BattleRenderer {
 
         drawCommandMenu(g, 0, battleAreaHeight, menuWidth, bottomHeight);
         drawPartyStatus(g, encounter, menuWidth, battleAreaHeight, width - menuWidth, bottomHeight);
+
+        if (skillWindowOpen) {
+            drawSkillWindow(g, encounter, width, height);
+        }
+    }
+
+    public BattleSkill getSkillAt(Point point) {
+        if (!skillWindowOpen) {
+            return null;
+        }
+
+        for (Map.Entry<BattleSkill, Rectangle> entry : skillBounds.entrySet()) {
+            if (entry.getValue().contains(point)) {
+                return entry.getKey();
+            }
+        }
+
+        return null;
+    }
+
+    public boolean isSkillWindowCloseButtonAt(Point point) {
+        return skillWindowOpen && skillWindowCloseBounds.contains(point);
+    }
+
+    private void drawSkillWindow(Graphics2D g, BattleEncounter encounter, int width, int height) {
+        BattleActor actor = getFirstLivingAlly(encounter);
+        List<BattleSkill> skills = actor != null ? actor.getSkills() : List.of();
+
+        int windowWidth = Math.min(420, width - 80);
+        int windowHeight = Math.min(320, height - 80);
+
+        int windowX = (width - windowWidth) / 2;
+        int windowY = (height - windowHeight) / 2;
+
+        skillWindowBounds = new Rectangle(windowX, windowY, windowWidth, windowHeight);
+
+        Composite oldComposite = g.getComposite();
+
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.35f));
+        g.setColor(Color.BLACK);
+        g.fillRect(0, 0, width, height);
+
+        g.setComposite(oldComposite);
+
+        g.setColor(new Color(25, 25, 25));
+        g.fillRoundRect(windowX, windowY, windowWidth, windowHeight, 14, 14);
+
+        g.setColor(Color.WHITE);
+        g.drawRoundRect(windowX, windowY, windowWidth, windowHeight, 14, 14);
+
+        drawSkillWindowTitle(g, windowX, windowY, windowWidth);
+        drawSkillWindowCloseButton(g, windowX, windowY, windowWidth);
+        drawSkillRows(g, skills, windowX, windowY, windowWidth, windowHeight);
+    }
+
+    private BattleActor getFirstLivingAlly(BattleEncounter encounter) {
+        for (BattleActor ally : encounter.getAllies()) {
+            if (ally.isAlive()) {
+                return ally;
+            }
+        }
+
+        return null;
+    }
+
+    private void drawSkillWindowTitle(Graphics2D g, int windowX, int windowY, int windowWidth) {
+        g.setColor(Color.WHITE);
+
+        Font oldFont = g.getFont();
+        g.setFont(oldFont.deriveFont(Font.BOLD, 16f));
+
+        g.drawString("Skills", windowX + 20, windowY + 30);
+
+        g.setFont(oldFont);
+
+        g.setColor(new Color(180, 180, 180));
+        g.drawLine(windowX + 16, windowY + 44, windowX + windowWidth - 16, windowY + 44);
+    }
+
+    private void drawSkillWindowCloseButton(Graphics2D g, int windowX, int windowY, int windowWidth) {
+        int closeSize = 24;
+
+        int closeX = windowX + windowWidth - closeSize - 14;
+        int closeY = windowY + 10;
+
+        skillWindowCloseBounds = new Rectangle(closeX, closeY, closeSize, closeSize);
+
+        g.setColor(new Color(60, 60, 60));
+        g.fillRect(closeX, closeY, closeSize, closeSize);
+
+        g.setColor(Color.WHITE);
+        g.drawRect(closeX, closeY, closeSize, closeSize);
+
+        FontMetrics metrics = g.getFontMetrics();
+
+        String label = "X";
+
+        int textX = closeX + (closeSize - metrics.stringWidth(label)) / 2;
+        int textY = closeY
+                + (closeSize - metrics.getHeight()) / 2
+                + metrics.getAscent();
+
+        g.drawString(label, textX, textY);
+    }
+
+    private void drawSkillRows(
+            Graphics2D g,
+            List<BattleSkill> skills,
+            int windowX,
+            int windowY,
+            int windowWidth,
+            int windowHeight
+    ) {
+        int contentX = windowX + 20;
+        int contentY = windowY + 60;
+        int contentWidth = windowWidth - 40;
+
+        int rowHeight = 34;
+        int rowGap = 8;
+
+        for (int i = 0; i < skills.size(); i++) {
+            BattleSkill skill = skills.get(i);
+
+            int rowX = contentX;
+            int rowY = contentY + i * (rowHeight + rowGap);
+
+            if (rowY + rowHeight > windowY + windowHeight - 20) {
+                break;
+            }
+
+            Rectangle rowBounds = new Rectangle(rowX, rowY, contentWidth, rowHeight);
+            skillBounds.put(skill, rowBounds);
+
+            g.setColor(new Color(45, 45, 45));
+            g.fillRect(rowX, rowY, contentWidth, rowHeight);
+
+            g.setColor(Color.WHITE);
+            g.drawRect(rowX, rowY, contentWidth, rowHeight);
+
+            FontMetrics metrics = g.getFontMetrics();
+
+            int textX = rowX + 10;
+            int textY = rowY
+                    + (rowHeight - metrics.getHeight()) / 2
+                    + metrics.getAscent();
+
+            g.drawString(skill.getName(), textX, textY);
+        }
     }
 
     private void drawBattleArea(Graphics2D g, BattleEncounter encounter, int x, int y, int width, int height) {
@@ -213,11 +420,131 @@ public class BattleRenderer {
 
             drawHpBar(g, drawX, drawY - 18, spriteSize, 10, actor);
             drawActorSprite(g, actor, drawX, drawY, spriteSize, spriteSize);
+        }
+    }
 
-            if (selectableTargets.contains(actor)) {
-                drawTargetHighlight(g, actorRectangle);
+    private void drawTargetingPreview(Graphics2D g) {
+        if (selectableTargets.isEmpty()) {
+            return;
+        }
+
+        BattleActor hoveredActor = getHoveredSelectableActor();
+
+        /*
+         * If this is normal targeting, such as basic Attack,
+         * just show all valid selectable targets.
+         */
+        if (previewSkill == null || hoveredActor == null) {
+            for (BattleActor actor : selectableTargets) {
+                Rectangle bounds = actorBounds.get(actor);
+
+                if (bounds != null) {
+                    drawSelectableTargetHighlight(g, bounds);
+                }
+            }
+
+            return;
+        }
+
+        /*
+         * If this is skill targeting and the mouse is hovering over
+         * a valid target, show the resolved skill area.
+         */
+        Set<BattleActor> previewTargets = getPreviewTargetsForSkill(hoveredActor, previewSkill);
+
+        for (BattleActor actor : selectableTargets) {
+            Rectangle bounds = actorBounds.get(actor);
+
+            if (bounds == null) {
+                continue;
+            }
+
+            if (previewTargets.contains(actor)) {
+                drawResolvedTargetHighlight(g, bounds);
+            } else {
+                drawSelectableTargetHighlight(g, bounds);
             }
         }
+    }
+
+    private BattleActor getHoveredSelectableActor() {
+        if (mousePoint == null) {
+            return null;
+        }
+
+        BattleActor hoveredActor = getActorAt(mousePoint);
+
+        if (hoveredActor == null) {
+            return null;
+        }
+
+        if (!selectableTargets.contains(hoveredActor)) {
+            return null;
+        }
+
+        return hoveredActor;
+    }
+
+    private Set<BattleActor> getPreviewTargetsForSkill(BattleActor hoveredActor, BattleSkill skill) {
+        Set<BattleActor> previewTargets = Collections.newSetFromMap(new IdentityHashMap<>());
+
+        if (hoveredActor == null || skill == null) {
+            return previewTargets;
+        }
+
+        for (BattleActor actor : selectableTargets) {
+            boolean shouldHighlight = switch (skill.getTargetShape()) {
+                case ENTIRE_SIDE -> true;
+
+                case SINGLE_TARGET -> actor == hoveredActor;
+
+                /*
+                 * Column means FRONT or BACK.
+                 */
+                case SINGLE_COLUMN -> actor.getRow() == hoveredActor.getRow();
+
+                /*
+                 * Row means vertical lane/slot 0, 1, or 2.
+                 */
+                case SINGLE_ROW -> actor.getSlot() == hoveredActor.getSlot();
+            };
+
+            if (shouldHighlight) {
+                previewTargets.add(actor);
+            }
+        }
+
+        return previewTargets;
+    }
+
+    private void drawSelectableTargetHighlight(Graphics2D g, Rectangle bounds) {
+        Stroke oldStroke = g.getStroke();
+        Composite oldComposite = g.getComposite();
+
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.55f));
+        g.setColor(Color.YELLOW);
+        g.setStroke(new BasicStroke(2));
+        g.drawRect(bounds.x - 3, bounds.y - 3, bounds.width + 6, bounds.height + 6);
+
+        g.setComposite(oldComposite);
+        g.setStroke(oldStroke);
+    }
+
+    private void drawResolvedTargetHighlight(Graphics2D g, Rectangle bounds) {
+        Stroke oldStroke = g.getStroke();
+        Composite oldComposite = g.getComposite();
+
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.28f));
+        g.setColor(Color.YELLOW);
+        g.fillRect(bounds.x - 4, bounds.y - 4, bounds.width + 8, bounds.height + 8);
+
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.95f));
+        g.setColor(Color.ORANGE);
+        g.setStroke(new BasicStroke(4));
+        g.drawRect(bounds.x - 5, bounds.y - 5, bounds.width + 10, bounds.height + 10);
+
+        g.setComposite(oldComposite);
+        g.setStroke(oldStroke);
     }
 
     private void drawTargetHighlight(Graphics2D g, Rectangle bounds) {

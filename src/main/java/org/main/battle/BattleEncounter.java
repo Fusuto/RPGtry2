@@ -45,6 +45,38 @@ public class BattleEncounter {
                 EntityType.ALLY
         );
 
+        playerActor.addSkill(new BattleSkill(
+                "Fireball",
+                "Hits every enemy.",
+                SkillTargetShape.ENTIRE_SIDE,
+                EntityType.ENEMY,
+                BattleTargetingMode.MAGIC
+        ));
+
+        playerActor.addSkill(new BattleSkill(
+                "Piercing Line",
+                "Hits one horizontal lane.",
+                SkillTargetShape.SINGLE_ROW,
+                EntityType.ENEMY,
+                BattleTargetingMode.RANGED
+        ));
+
+        playerActor.addSkill(new BattleSkill(
+                "Crush Column",
+                "Hits either the front or back column.",
+                SkillTargetShape.SINGLE_COLUMN,
+                EntityType.ENEMY,
+                BattleTargetingMode.MAGIC
+        ));
+
+        playerActor.addSkill(new BattleSkill(
+                "Heal",
+                "Targets one ally.",
+                SkillTargetShape.SINGLE_TARGET,
+                EntityType.ALLY,
+                BattleTargetingMode.MAGIC
+        ));
+
         List<BattleActor> monsterActors = new ArrayList<>();
 
         monster.forEach(monster1 -> {
@@ -63,6 +95,149 @@ public class BattleEncounter {
                 List.of(playerActor),
                 monsterActors
         );
+    }
+
+    public List<BattleActor> getSelectableActorsForSkill(
+            BattleActor caster,
+            BattleSkill skill
+    ) {
+        List<BattleActor> selectableActors = new ArrayList<>();
+
+        if (caster == null || skill == null) {
+            return selectableActors;
+        }
+
+        List<BattleActor> possibleTargets = getActorsForSkillTargetTeam(caster, skill.getTargetTeam());
+
+        for (BattleActor possibleTarget : possibleTargets) {
+            if (canSelectActorForSkill(caster, possibleTarget, skill)) {
+                selectableActors.add(possibleTarget);
+            }
+        }
+
+        return selectableActors;
+    }
+
+    public boolean canSelectActorForSkill(
+            BattleActor caster,
+            BattleActor selectedActor,
+            BattleSkill skill
+    ) {
+        if (caster == null || selectedActor == null || skill == null) {
+            return false;
+        }
+
+        if (!caster.isAlive() || !selectedActor.isAlive()) {
+            return false;
+        }
+
+        List<BattleActor> validSide = getActorsForSkillTargetTeam(caster, skill.getTargetTeam());
+
+        if (!validSide.contains(selectedActor)) {
+            return false;
+        }
+
+        /*
+         * Friendly skills should usually ignore front-row blocking.
+         * Enemy-targeting skills can use melee/reach/ranged/magic targeting rules.
+         */
+        if (skill.getTargetTeam() == EntityType.ALLY) {
+            return true;
+        }
+
+        return canTarget(caster, selectedActor, skill.getTargetingMode());
+    }
+
+    public List<BattleActor> resolveSkillTargets(
+            BattleActor caster,
+            BattleActor selectedActor,
+            BattleSkill skill
+    ) {
+        List<BattleActor> resolvedTargets = new ArrayList<>();
+
+        if (!canSelectActorForSkill(caster, selectedActor, skill)) {
+            return resolvedTargets;
+        }
+
+        List<BattleActor> possibleTargets = getActorsForSkillTargetTeam(caster, skill.getTargetTeam());
+
+        for (BattleActor actor : possibleTargets) {
+            if (!actor.isAlive()) {
+                continue;
+            }
+
+            boolean shouldInclude = switch (skill.getTargetShape()) {
+                case ENTIRE_SIDE -> true;
+
+                case SINGLE_TARGET -> actor == selectedActor;
+
+                /*
+                 * Column means FRONT or BACK.
+                 */
+                case SINGLE_COLUMN -> actor.getRow() == selectedActor.getRow();
+
+                /*
+                 * Row means vertical lane/slot 0, 1, or 2.
+                 */
+                case SINGLE_ROW -> actor.getSlot() == selectedActor.getSlot();
+            };
+
+            if (shouldInclude) {
+                resolvedTargets.add(actor);
+            }
+        }
+
+        return resolvedTargets;
+    }
+
+    private List<BattleActor> getActorsForSkillTargetTeam(
+            BattleActor caster,
+            EntityType targetTeam
+    ) {
+        if (targetTeam == EntityType.ALLY) {
+            return getActorsOnSameSide(caster);
+        }
+
+        return getOpposingActors(caster);
+    }
+
+    public BattleResult handleSkill(
+            BattleActor caster,
+            BattleSkill skill,
+            List<BattleActor> targets
+    ) {
+        if (caster == null || skill == null) {
+            battleMessage = "No skill selected.";
+            return BattleResult.CONTINUE;
+        }
+
+        if (targets == null || targets.isEmpty()) {
+            battleMessage = "No valid targets.";
+            return BattleResult.CONTINUE;
+        }
+
+        battleMessage = caster.getName()
+                + " uses "
+                + skill.getName()
+                + " on "
+                + joinActorNames(targets)
+                + ".";
+
+        return BattleResult.CONTINUE;
+    }
+
+    private String joinActorNames(List<BattleActor> actors) {
+        StringBuilder builder = new StringBuilder();
+
+        for (int i = 0; i < actors.size(); i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+
+            builder.append(actors.get(i).getName());
+        }
+
+        return builder.toString();
     }
 
     public boolean canTargetWithMelee(BattleActor target, boolean hasReach) {

@@ -3,6 +3,9 @@ package org.main.battle;
 import org.main.engine.EntityType;
 
 import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 public class BattleActor {
     private final String name;
@@ -14,6 +17,8 @@ public class BattleActor {
     private BattleRow row = BattleRow.FRONT;
     private final EntityType entityType;
 
+    private final List<BattleSkill> skills = new ArrayList<>();
+
     public BattleActor(String name, int maxHp, int currentHp, BufferedImage image, boolean enemy, EntityType entityType) {
         this.name = name;
         this.maxHp = maxHp;
@@ -21,6 +26,16 @@ public class BattleActor {
         this.image = image;
         this.enemy = enemy;
         this.entityType = entityType;
+    }
+
+    public List<BattleSkill> getSkills() {
+        return Collections.unmodifiableList(skills);
+    }
+
+    public void addSkill(BattleSkill skill) {
+        if (skill != null) {
+            skills.add(skill);
+        }
     }
 
     public EntityType getEntityType() {

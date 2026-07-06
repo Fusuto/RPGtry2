@@ -24,6 +24,7 @@ public class WizardryBase extends JPanel implements KeyListener {
     private final MovementEngine movementEngine = new MovementEngine();
     private final BattleAssets battleAssets = BattleAssets.loadDefault();
     private final DungeonMap dungeonMap = DungeonMap.testMap();
+    private BattleSkill pendingSkill = null;
 
     private int playerX = 1;
     private int playerY = 1;
@@ -69,7 +70,19 @@ public class WizardryBase extends JPanel implements KeyListener {
         addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
+                battleRenderer.setMousePoint(e.getPoint());
                 handleMouseClick(e);
+            }
+        });
+
+        addMouseMotionListener(new MouseMotionAdapter() {
+            @Override
+            public void mouseMoved(MouseEvent e) {
+                battleRenderer.setMousePoint(e.getPoint());
+
+                if (gameMode == GameMode.BATTLE) {
+                    repaint();
+                }
             }
         });
 
@@ -97,6 +110,18 @@ public class WizardryBase extends JPanel implements KeyListener {
 
         Point clickPoint = e.getPoint();
 
+        if (battleRenderer.isSkillWindowOpen()) {
+            handleSkillWindowClick(clickPoint);
+            repaint();
+            return;
+        }
+
+        if (pendingSkill != null) {
+            handleSkillTargetClick(clickPoint);
+            repaint();
+            return;
+        }
+
         if (pendingBattleCommand != null) {
             handleTargetClick(clickPoint);
             repaint();
@@ -108,6 +133,89 @@ public class WizardryBase extends JPanel implements KeyListener {
         if (command != null) {
             handleBattleCommand(command);
             repaint();
+        }
+    }
+
+    private void handleSkillWindowClick(Point clickPoint) {
+        if (battleRenderer.isSkillWindowCloseButtonAt(clickPoint)) {
+            battleRenderer.closeSkillWindow();
+            return;
+        }
+
+        BattleSkill clickedSkill = battleRenderer.getSkillAt(clickPoint);
+
+        if (clickedSkill == null) {
+            return;
+        }
+
+        beginSkillTargeting(clickedSkill);
+    }
+
+    private void beginSkillTargeting(BattleSkill skill) {
+        BattleActor caster = currentEncounter.getFirstLivingAlly();
+
+        if (caster == null) {
+            currentEncounter.setBattleMessage("No one can use that skill.");
+            battleRenderer.closeSkillWindow();
+            return;
+        }
+
+        List<BattleActor> selectableTargets = currentEncounter.getSelectableActorsForSkill(
+                caster,
+                skill
+        );
+
+        if (selectableTargets.isEmpty()) {
+            currentEncounter.setBattleMessage("No valid targets.");
+            battleRenderer.closeSkillWindow();
+            return;
+        }
+
+        pendingBattleCommand = null;
+        pendingSkill = skill;
+
+        battleRenderer.closeSkillWindow();
+        battleRenderer.setSelectableTargets(selectableTargets);
+        battleRenderer.setPreviewSkill(skill);
+
+        currentEncounter.setBattleMessage("Choose a target for " + skill.getName() + ".");
+    }
+
+    private void handleSkillTargetClick(Point clickPoint) {
+        BattleActor selectedActor = battleRenderer.getActorAt(clickPoint);
+
+        if (selectedActor == null) {
+            return;
+        }
+
+        BattleActor caster = currentEncounter.getFirstLivingAlly();
+
+        if (!currentEncounter.canSelectActorForSkill(caster, selectedActor, pendingSkill)) {
+            currentEncounter.setBattleMessage("Invalid target.");
+            return;
+        }
+
+        List<BattleActor> resolvedTargets = currentEncounter.resolveSkillTargets(
+                caster,
+                selectedActor,
+                pendingSkill
+        );
+
+        BattleResult result = currentEncounter.handleSkill(
+                caster,
+                pendingSkill,
+                resolvedTargets
+        );
+
+        pendingSkill = null;
+        battleRenderer.clearSelectableTargets();
+        battleRenderer.clearPreviewSkill();
+
+        switch (result) {
+            case CONTINUE -> {
+            }
+            case VICTORY -> endBattle(true);
+            case RAN, DEFEAT -> endBattle(false);
         }
     }
 
@@ -150,6 +258,17 @@ public class WizardryBase extends JPanel implements KeyListener {
             battleRenderer.setSelectableTargets(validTargets);
 
             currentEncounter.setBattleMessage("Choose a target.");
+            repaint();
+            return;
+        }
+
+        if (command == BattleCommand.SKILL) {
+            pendingBattleCommand = null;
+            battleRenderer.clearSelectableTargets();
+
+            battleRenderer.openSkillWindow();
+            currentEncounter.setBattleMessage("Choose a skill.");
+
             repaint();
             return;
         }
