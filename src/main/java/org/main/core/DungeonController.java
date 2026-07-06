@@ -151,6 +151,22 @@ public class DungeonController {
 
     private void interactWithEntity(MapEntity entity) {
         switch (entity.getType()) {
+            case ITEM -> {
+                if (entity.getItem() == null) {
+                    System.out.println("There is no item here.");
+                    return;
+                }
+
+                boolean added = gameState.getInventory().addItem(entity.getItem());
+
+                if (!added) {
+                    System.out.println("Inventory full.");
+                    return;
+                }
+
+                gameState.removeEntity(entity);
+                System.out.println("Picked up " + entity.getName() + ".");
+            }
             case NPC -> System.out.println("You talk to " + entity.getName() + ".");
             case ALLY -> System.out.println("You speak with " + entity.getName() + ".");
             case CHEST -> System.out.println("You inspect " + entity.getName() + ".");

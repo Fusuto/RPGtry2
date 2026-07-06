@@ -23,6 +23,8 @@ public class GameState {
 
     private BattleEncounter currentEncounter;
     private MapEntity currentEnemyEntity;
+    private final InventorySystem.Inventory inventory = new InventorySystem.Inventory();
+    private boolean inventoryOpen = false;
 
     public enum GameMode {
         DUNGEON,
@@ -35,6 +37,26 @@ public class GameState {
         public boolean isBattle() {
             return this == BATTLE;
         }
+    }
+
+    public InventorySystem.Inventory getInventory() {
+        return inventory;
+    }
+
+    public boolean isInventoryOpen() {
+        return inventoryOpen;
+    }
+
+    public void setInventoryOpen(boolean inventoryOpen) {
+        this.inventoryOpen = inventoryOpen;
+    }
+
+    public void toggleInventory() {
+        inventoryOpen = !inventoryOpen;
+    }
+
+    public void closeInventory() {
+        inventoryOpen = false;
     }
 
     public GameState(DungeonMap dungeonMap) {

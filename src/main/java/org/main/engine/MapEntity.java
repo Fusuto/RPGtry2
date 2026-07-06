@@ -2,6 +2,7 @@ package org.main.engine;
 
 import org.main.core.Library;
 import org.main.monsters.Monster;
+import org.main.core.InventorySystem;
 
 import java.awt.image.BufferedImage;
 
@@ -12,6 +13,7 @@ public class MapEntity {
     private Monster monster;
     private SpriteAnimation idleAnimation;
     private BufferedImage staticImage;
+    private InventorySystem.Item item;
 
     private int x;
     private int y;
@@ -21,6 +23,11 @@ public class MapEntity {
         this.type = type;
         this.x = x;
         this.y = y;
+    }
+
+    public MapEntity(InventorySystem.Item item, int x, int y) {
+        this(item.getName(), Library.EntityType.ITEM, x, y, item.getIcon());
+        this.item = item;
     }
 
     public MapEntity(String name, Library.EntityType type, int x, int y, SpriteAnimation idleAnimation) {
@@ -50,6 +57,10 @@ public class MapEntity {
         if (idleAnimation != null) {
             idleAnimation.update(deltaMs);
         }
+    }
+
+    public InventorySystem.Item getItem() {
+        return item;
     }
 
     public SpriteAnimation getIdleAnimation() {
