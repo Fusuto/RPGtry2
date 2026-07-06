@@ -22,29 +22,19 @@ public class MapEntity {
         this.y = y;
     }
 
-    public MapEntity(Monster monster, int x, int y) {
-        this.name = monster.getName();
-        this.type = EntityType.ENEMY;
-        this.x = x;
-        this.y = y;
-        this.monster = monster;
-        this.staticImage = monster.getType().getImg();
-    }
-
     public MapEntity(String name, EntityType type, int x, int y, SpriteAnimation idleAnimation) {
-        this.name = name;
-        this.type = type;
-        this.x = x;
-        this.y = y;
+        this(name, type, x, y);
         this.idleAnimation = idleAnimation;
     }
 
     public MapEntity(String name, EntityType type, int x, int y, BufferedImage staticImage) {
-        this.name = name;
-        this.type = type;
-        this.x = x;
-        this.y = y;
+        this(name, type, x, y);
         this.staticImage = staticImage;
+    }
+
+    public MapEntity(Monster monster, int x, int y) {
+        this(monster.getName(), EntityType.ENEMY, x, y, monster.getType().getImg());
+        this.monster = monster;
     }
 
     public BufferedImage getStaticImage() {

@@ -11,14 +11,7 @@ import java.awt.event.*;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.main.battle.BattleAssets;
-
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-
 public class WizardryBase extends JPanel implements KeyListener {
-    private static final int TILE_EMPTY = 0;
-    private static final int TILE_WALL = 1;
 
     private final DungeonRenderer dungeonRenderer = new DungeonRenderer();
     private final MovementEngine movementEngine = new MovementEngine();
@@ -29,7 +22,6 @@ public class WizardryBase extends JPanel implements KeyListener {
     private int playerX = 1;
     private int playerY = 1;
 
-    private boolean inBattle = false;
     private BattleCommand pendingBattleCommand = null;
 
     // 0 = north, 1 = east, 2 = south, 3 = west
@@ -273,7 +265,7 @@ public class WizardryBase extends JPanel implements KeyListener {
             return;
         }
 
-        BattleResult result = currentEncounter.handleCommand(command);
+        BattleResult result = currentEncounter.handleRunCommand(command);
 
         switch (result) {
             case CONTINUE -> {
@@ -282,7 +274,6 @@ public class WizardryBase extends JPanel implements KeyListener {
             case RAN, DEFEAT -> endBattle(false);
         }
     }
-
 
 
     private void updateGame(int deltaMs) {
@@ -390,10 +381,6 @@ public class WizardryBase extends JPanel implements KeyListener {
     }
 
     private void movement(int dx, int dy) {
-        if (inBattle) {
-            return;
-        }
-
         Point nextPosition = movementEngine.move(playerX, playerY, dx, dy, dungeonMap);
 
         if (nextPosition.x == playerX && nextPosition.y == playerY) {
@@ -469,10 +456,6 @@ public class WizardryBase extends JPanel implements KeyListener {
 
     private int rightY() {
         return movementEngine.rightY(dir);
-    }
-
-    private String directionName() {
-        return movementEngine.directionName(dir);
     }
 
     private void interact() {

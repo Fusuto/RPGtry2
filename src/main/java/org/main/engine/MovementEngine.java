@@ -3,7 +3,6 @@ package org.main.engine;
 import java.awt.Point;
 
 public class MovementEngine {
-    private static final int TILE_WALL = 1;
 
     public Point move(int playerX, int playerY, int dx, int dy, DungeonMap map) {
         int nx = playerX + dx;
@@ -66,23 +65,5 @@ public class MovementEngine {
 
     public int rightY(int dir) {
         return -leftY(dir);
-    }
-
-    public String directionName(int dir) {
-        return switch (dir) {
-            case 0 -> "North";
-            case 1 -> "East";
-            case 2 -> "South";
-            case 3 -> "West";
-            default -> "?";
-        };
-    }
-
-    private boolean isWall(int x, int y, int[][] map) {
-        if (y < 0 || y >= map.length || x < 0 || x >= map[0].length) {
-            return true;
-        }
-
-        return map[y][x] == TILE_WALL;
     }
 }

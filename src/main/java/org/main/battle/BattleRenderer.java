@@ -7,11 +7,6 @@ import java.awt.image.BufferedImage;
 import java.util.*;
 import java.util.List;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.IdentityHashMap;
-import java.util.Set;
-
 public class BattleRenderer {
 
     private static final int PANEL_PADDING = 24;
@@ -29,7 +24,6 @@ public class BattleRenderer {
     private BattleSkill previewSkill = null;
     private Point mousePoint = null;
     private boolean skillWindowOpen = false;
-    private Rectangle skillWindowBounds = new Rectangle();
     private Rectangle skillWindowCloseBounds = new Rectangle();
 
     private BattleAssets assets;
@@ -95,30 +89,12 @@ public class BattleRenderer {
 
     public void closeSkillWindow() {
         skillWindowOpen = false;
-        skillWindowBounds = new Rectangle();
         skillWindowCloseBounds = new Rectangle();
         skillBounds.clear();
     }
 
     public boolean isSkillWindowOpen() {
         return skillWindowOpen;
-    }
-
-    /*
-     * Returns true if the click was consumed by the skill window.
-     * This prevents clicks from passing through to Attack/Skill/Run underneath.
-     */
-    public boolean handleSkillWindowClick(Point point) {
-        if (!skillWindowOpen) {
-            return false;
-        }
-
-        if (skillWindowCloseBounds.contains(point)) {
-            closeSkillWindow();
-            return true;
-        }
-
-        return true;
     }
 
     public void draw(Graphics2D g, BattleEncounter encounter, int width, int height) {
@@ -188,8 +164,6 @@ public class BattleRenderer {
 
         int windowX = (width - windowWidth) / 2;
         int windowY = (height - windowHeight) / 2;
-
-        skillWindowBounds = new Rectangle(windowX, windowY, windowWidth, windowHeight);
 
         Composite oldComposite = g.getComposite();
 
@@ -356,6 +330,19 @@ public class BattleRenderer {
         drawBattleRow(g, actors, side, BattleRow.FRONT, x, y, width, height);
     }
 
+    protected static boolean matchesSkillShape(
+            BattleActor actor,
+            BattleActor anchor,
+            SkillTargetShape shape
+    ) {
+        return switch (shape) {
+            case ENTIRE_SIDE -> true;
+            case SINGLE_TARGET -> actor == anchor;
+            case SINGLE_COLUMN -> actor.getRow() == anchor.getRow();
+            case SINGLE_ROW -> actor.getSlot() == anchor.getSlot();
+        };
+    }
+
     private void drawBattleRow(
             Graphics2D g,
             List<BattleActor> actors,
@@ -493,21 +480,9 @@ public class BattleRenderer {
         }
 
         for (BattleActor actor : selectableTargets) {
-            boolean shouldHighlight = switch (skill.getTargetShape()) {
-                case ENTIRE_SIDE -> true;
 
-                case SINGLE_TARGET -> actor == hoveredActor;
 
-                /*
-                 * Column means FRONT or BACK.
-                 */
-                case SINGLE_COLUMN -> actor.getRow() == hoveredActor.getRow();
-
-                /*
-                 * Row means vertical lane/slot 0, 1, or 2.
-                 */
-                case SINGLE_ROW -> actor.getSlot() == hoveredActor.getSlot();
-            };
+            boolean shouldHighlight = matchesSkillShape(actor, hoveredActor, skill.getTargetShape());
 
             if (shouldHighlight) {
                 previewTargets.add(actor);
@@ -544,16 +519,6 @@ public class BattleRenderer {
         g.drawRect(bounds.x - 5, bounds.y - 5, bounds.width + 10, bounds.height + 10);
 
         g.setComposite(oldComposite);
-        g.setStroke(oldStroke);
-    }
-
-    private void drawTargetHighlight(Graphics2D g, Rectangle bounds) {
-        Stroke oldStroke = g.getStroke();
-
-        g.setColor(Color.YELLOW);
-        g.setStroke(new BasicStroke(3));
-        g.drawRect(bounds.x - 3, bounds.y - 3, bounds.width + 6, bounds.height + 6);
-
         g.setStroke(oldStroke);
     }
 

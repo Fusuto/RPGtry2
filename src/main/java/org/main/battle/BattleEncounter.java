@@ -166,21 +166,7 @@ public class BattleEncounter {
                 continue;
             }
 
-            boolean shouldInclude = switch (skill.getTargetShape()) {
-                case ENTIRE_SIDE -> true;
-
-                case SINGLE_TARGET -> actor == selectedActor;
-
-                /*
-                 * Column means FRONT or BACK.
-                 */
-                case SINGLE_COLUMN -> actor.getRow() == selectedActor.getRow();
-
-                /*
-                 * Row means vertical lane/slot 0, 1, or 2.
-                 */
-                case SINGLE_ROW -> actor.getSlot() == selectedActor.getSlot();
-            };
+            boolean shouldInclude = BattleRenderer.matchesSkillShape(actor, selectedActor, skill.getTargetShape());
 
             if (shouldInclude) {
                 resolvedTargets.add(actor);
@@ -248,12 +234,8 @@ public class BattleEncounter {
         return !isBlockedByFrontActor(target);
     }
 
-    public BattleResult handleCommand(BattleCommand command) {
-        return switch (command) {
-            case ATTACK -> handleAttack();
-            case SKILL -> handleSkill();
-            case RUN -> handleRun();
-        };
+    public BattleResult handleRunCommand(BattleCommand command) {
+            return handleRun();
     }
 
     public List<BattleActor> getValidTargets(
@@ -335,44 +317,6 @@ public class BattleEncounter {
         }
 
         return enemies;
-    }
-
-    private BattleResult handleAttack() {
-        BattleActor attacker = getFirstLivingAlly();
-        BattleActor target = getFirstLivingEnemy();
-
-        if (attacker == null) {
-            battleMessage = "No allies can act.";
-            return BattleResult.DEFEAT;
-        }
-
-        if (target == null) {
-            battleMessage = "There are no enemies left.";
-            return BattleResult.VICTORY;
-        }
-
-        int damage = 5; // placeholder until player stats exist
-
-        target.takeDamage(damage);
-
-        battleMessage = attacker.getName()
-                + " attacks "
-                + target.getName()
-                + " for "
-                + damage
-                + " damage!";
-
-        if (allEnemiesDefeated()) {
-            battleMessage = "Victory!";
-            return BattleResult.VICTORY;
-        }
-
-        return BattleResult.CONTINUE;
-    }
-
-    private BattleResult handleSkill() {
-        battleMessage = "No skills implemented yet.";
-        return BattleResult.CONTINUE;
     }
 
     private BattleResult handleRun() {

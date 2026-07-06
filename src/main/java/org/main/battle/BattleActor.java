@@ -11,7 +11,6 @@ public class BattleActor {
     private final String name;
     private final int maxHp;
     private final BufferedImage image;
-    private final boolean enemy;
     private int currentHp;
     private int slot = 0;
     private BattleRow row = BattleRow.FRONT;
@@ -24,7 +23,6 @@ public class BattleActor {
         this.maxHp = maxHp;
         this.currentHp = currentHp;
         this.image = image;
-        this.enemy = enemy;
         this.entityType = entityType;
     }
 
@@ -72,7 +70,7 @@ public class BattleActor {
     }
 
     public boolean isEnemy() {
-        return enemy;
+        return entityType == EntityType.ENEMY;
     }
 
     public void takeDamage(int amount) {
