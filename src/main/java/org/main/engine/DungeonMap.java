@@ -1,9 +1,11 @@
 package org.main.engine;
 
-public class DungeonMap {
-    private final TileType[][] tiles;
+import org.main.core.Library;
 
-    public DungeonMap(TileType[][] tiles) {
+public class DungeonMap {
+    private final Library.TileType[][] tiles;
+
+    public DungeonMap(Library.TileType[][] tiles) {
         this.tiles = tiles;
     }
 
@@ -15,9 +17,9 @@ public class DungeonMap {
         return tiles.length;
     }
 
-    public TileType getTile(int x, int y) {
+    public Library.TileType getTile(int x, int y) {
         if (isOutOfBounds(x, y)) {
-            return TileType.WALL;
+            return Library.TileType.WALL;
         }
 
         return tiles[y][x];
@@ -49,14 +51,14 @@ public class DungeonMap {
                 {1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
         };
 
-        TileType[][] tiles = new TileType[raw.length][raw[0].length];
+        Library.TileType[][] tiles = new Library.TileType[raw.length][raw[0].length];
 
         for (int y = 0; y < raw.length; y++) {
             for (int x = 0; x < raw[y].length; x++) {
                 tiles[y][x] = switch (raw[y][x]) {
-                    case 1 -> TileType.WALL;
-                    case 2 -> TileType.DOOR_CLOSED;
-                    default -> TileType.FLOOR;
+                    case 1 -> Library.TileType.WALL;
+                    case 2 -> Library.TileType.DOOR_CLOSED;
+                    default -> Library.TileType.FLOOR;
                 };
             }
         }
@@ -64,7 +66,7 @@ public class DungeonMap {
         return new DungeonMap(tiles);
     }
 
-    public void setTile(int x, int y, TileType tileType) {
+    public void setTile(int x, int y, Library.TileType tileType) {
         if (isOutOfBounds(x, y)) {
             return;
         }

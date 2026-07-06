@@ -1,12 +1,13 @@
 package org.main.engine;
 
+import org.main.core.Library;
 import org.main.monsters.Monster;
 
 import java.awt.image.BufferedImage;
 
 public class MapEntity {
     private final String name;
-    private final EntityType type;
+    private final Library.EntityType type;
 
     private Monster monster;
     private SpriteAnimation idleAnimation;
@@ -15,25 +16,25 @@ public class MapEntity {
     private int x;
     private int y;
 
-    public MapEntity(String name, EntityType type, int x, int y) {
+    public MapEntity(String name, Library.EntityType type, int x, int y) {
         this.name = name;
         this.type = type;
         this.x = x;
         this.y = y;
     }
 
-    public MapEntity(String name, EntityType type, int x, int y, SpriteAnimation idleAnimation) {
+    public MapEntity(String name, Library.EntityType type, int x, int y, SpriteAnimation idleAnimation) {
         this(name, type, x, y);
         this.idleAnimation = idleAnimation;
     }
 
-    public MapEntity(String name, EntityType type, int x, int y, BufferedImage staticImage) {
+    public MapEntity(String name, Library.EntityType type, int x, int y, BufferedImage staticImage) {
         this(name, type, x, y);
         this.staticImage = staticImage;
     }
 
     public MapEntity(Monster monster, int x, int y) {
-        this(monster.getName(), EntityType.ENEMY, x, y, monster.getType().getImg());
+        this(monster.getName(), Library.EntityType.ENEMY, x, y, monster.getType().getImg());
         this.monster = monster;
     }
 
@@ -63,7 +64,7 @@ public class MapEntity {
         return name;
     }
 
-    public EntityType getType() {
+    public Library.EntityType getType() {
         return type;
     }
 
@@ -80,10 +81,10 @@ public class MapEntity {
     }
 
     public boolean blocksMovement() {
-        return type == EntityType.ENEMY
-                || type == EntityType.ALLY
-                || type == EntityType.NPC
-                || type == EntityType.CHEST;
+        return type == Library.EntityType.ENEMY
+                || type == Library.EntityType.ALLY
+                || type == Library.EntityType.NPC
+                || type == Library.EntityType.CHEST;
     }
 
     public void setPosition(int x, int y) {

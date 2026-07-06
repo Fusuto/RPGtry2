@@ -1,5 +1,7 @@
 package org.main.engine;
 
+import org.main.core.Library;
+
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -31,7 +33,7 @@ public class DungeonRenderer {
 
     private static class RenderCommand {
         FaceType faceType;
-        TileType tileType;
+        Library.TileType tileType;
         int depth;
         int side;
         int worldX;
@@ -40,7 +42,7 @@ public class DungeonRenderer {
         double sortZ;
         BufferedImage spriteImage;
 
-        RenderCommand(FaceType faceType, TileType tileType, int depth, int side, int worldX, int worldY, Polygon polygon, double sortZ) {
+        RenderCommand(FaceType faceType, Library.TileType tileType, int depth, int side, int worldX, int worldY, Polygon polygon, double sortZ) {
             this.faceType = faceType;
             this.tileType = tileType;
             this.depth = depth;
@@ -127,7 +129,7 @@ public class DungeonRenderer {
         for (int depth = 1; depth <= MAX_DEPTH; depth++) {
             int sideLimit = depth + SIDE_MARGIN;
             for (int side = -sideLimit; side <= sideLimit; side++) {
-                TileType tileType = getTileAtRelative(depth, side);
+                Library.TileType tileType = getTileAtRelative(depth, side);
                 if (tileType.isWallLike()) {
                     continue;
                 }
@@ -137,7 +139,7 @@ public class DungeonRenderer {
         return commands;
     }
 
-    private RenderCommand createFloorFace(int depth, int side, TileType tileType) {
+    private RenderCommand createFloorFace(int depth, int side, Library.TileType tileType) {
         double nearZ = depth - 0.5;
         double farZ = depth + 0.5;
         double leftX = side - 0.5;
@@ -154,7 +156,7 @@ public class DungeonRenderer {
             int sideLimit = depth + SIDE_MARGIN;
             for (int side = -sideLimit; side <= sideLimit; side++) {
                 Point worldPoint = worldPointAtRelative(depth, side);
-                TileType tileType = map.getTile(worldPoint.x, worldPoint.y);
+                Library.TileType tileType = map.getTile(worldPoint.x, worldPoint.y);
                 if (!tileType.isWallLike()) {
                     continue;
                 }
@@ -172,7 +174,7 @@ public class DungeonRenderer {
         return commands;
     }
 
-    private RenderCommand createFrontFace(int depth, int side, int worldX, int worldY, TileType tileType) {
+    private RenderCommand createFrontFace(int depth, int side, int worldX, int worldY, Library.TileType tileType) {
         double z = depth - 0.5;
         double leftX = side - 0.5;
         double rightX = side + 0.5;
@@ -180,7 +182,7 @@ public class DungeonRenderer {
         return new RenderCommand(FaceType.FRONT, tileType, depth, side, worldX, worldY, polygon, z);
     }
 
-    private RenderCommand createLeftFace(int depth, int side, int worldX, int worldY, TileType tileType) {
+    private RenderCommand createLeftFace(int depth, int side, int worldX, int worldY, Library.TileType tileType) {
         double x = side - 0.5;
         double nearZ = depth - 0.5;
         double farZ = depth + 0.5;
@@ -189,7 +191,7 @@ public class DungeonRenderer {
         return new RenderCommand(FaceType.LEFT, tileType, depth, side, worldX, worldY, polygon, sortZ);
     }
 
-    private RenderCommand createRightFace(int depth, int side, int worldX, int worldY, TileType tileType) {
+    private RenderCommand createRightFace(int depth, int side, int worldX, int worldY, Library.TileType tileType) {
         double x = side + 0.5;
         double nearZ = depth - 0.5;
         double farZ = depth + 0.5;
@@ -396,7 +398,7 @@ public class DungeonRenderer {
     }
 
     private Color getWallColor(RenderCommand command) {
-        if (command.tileType == TileType.DOOR_CLOSED) {
+        if (command.tileType == Library.TileType.DOOR_CLOSED) {
             int base = switch (command.depth) {
                 case 1 -> 110;
                 case 2 -> 85;
@@ -440,7 +442,7 @@ public class DungeonRenderer {
         return new Point(x, y);
     }
 
-    private TileType getTileAtRelative(int forward, int side) {
+    private Library.TileType getTileAtRelative(int forward, int side) {
         Point point = worldPointAtRelative(forward, side);
         return map.getTile(point.x, point.y);
     }

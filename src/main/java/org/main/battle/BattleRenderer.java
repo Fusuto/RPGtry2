@@ -1,6 +1,6 @@
 package org.main.battle;
 
-import org.main.engine.EntityType;
+import org.main.core.Library;
 
 import java.awt.*;
 import java.awt.image.BufferedImage;
@@ -16,7 +16,7 @@ public class BattleRenderer {
     private static final int MESSAGE_BOX_MARGIN = 20;
     private static final int MESSAGE_BOX_MAX_WIDTH = 520;
 
-    private final Map<BattleCommand, Rectangle> commandBounds = new EnumMap<>(BattleCommand.class);
+    private final Map<Library.BattleCommand, Rectangle> commandBounds = new EnumMap<>(Library.BattleCommand.class);
     private final Map<BattleActor, Rectangle> actorBounds = new IdentityHashMap<>();
     private final Set<BattleActor> selectableTargets = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Map<BattleSkill, Rectangle> skillBounds = new IdentityHashMap<>();
@@ -28,14 +28,10 @@ public class BattleRenderer {
 
     private BattleAssets assets;
 
-    /*
-     * 1.0 means "use the full available command panel width".
-     * 0.8 would mean "use 80% of the available command panel width".
-     */
     private static final double BUTTON_WIDTH_RATIO = 1.0;
 
-    public BattleCommand getCommandAt(Point point) {
-        for (Map.Entry<BattleCommand, Rectangle> entry : commandBounds.entrySet()) {
+    public Library.BattleCommand getCommandAt(Point point) {
+        for (Map.Entry<Library.BattleCommand, Rectangle> entry : commandBounds.entrySet()) {
             if (entry.getValue().contains(point)) {
                 return entry.getKey();
             }
@@ -299,7 +295,7 @@ public class BattleRenderer {
         drawFormation(
                 g,
                 encounter.getAllies(),
-                EntityType.ALLY,
+                Library.EntityType.ALLY,
                 x,
                 y,
                 halfWidth,
@@ -309,7 +305,7 @@ public class BattleRenderer {
         drawFormation(
                 g,
                 encounter.getEnemies(),
-                EntityType.ENEMY,
+                Library.EntityType.ENEMY,
                 x + halfWidth,
                 y,
                 width - halfWidth,
@@ -320,34 +316,21 @@ public class BattleRenderer {
     private void drawFormation(
             Graphics2D g,
             List<BattleActor> actors,
-            EntityType side,
+            Library.EntityType side,
             int x,
             int y,
             int width,
             int height
     ) {
-        drawBattleRow(g, actors, side, BattleRow.BACK, x, y, width, height);
-        drawBattleRow(g, actors, side, BattleRow.FRONT, x, y, width, height);
-    }
-
-    protected static boolean matchesSkillShape(
-            BattleActor actor,
-            BattleActor anchor,
-            SkillTargetShape shape
-    ) {
-        return switch (shape) {
-            case ENTIRE_SIDE -> true;
-            case SINGLE_TARGET -> actor == anchor;
-            case SINGLE_COLUMN -> actor.getRow() == anchor.getRow();
-            case SINGLE_ROW -> actor.getSlot() == anchor.getSlot();
-        };
+        drawBattleRow(g, actors, side, Library.BattleRow.BACK, x, y, width, height);
+        drawBattleRow(g, actors, side, Library.BattleRow.FRONT, x, y, width, height);
     }
 
     private void drawBattleRow(
             Graphics2D g,
             List<BattleActor> actors,
-            EntityType side,
-            BattleRow row,
+            Library.EntityType side,
+            Library.BattleRow row,
             int x,
             int y,
             int width,
@@ -358,7 +341,7 @@ public class BattleRenderer {
         int frontSpriteSize = 64;
         int backSpriteSize = 56;
 
-        int spriteSize = row == BattleRow.FRONT ? frontSpriteSize : backSpriteSize;
+        int spriteSize = row == Library.BattleRow.FRONT ? frontSpriteSize : backSpriteSize;
 
         int verticalGap = 24;
         int totalFormationHeight = slots * frontSpriteSize + (slots - 1) * verticalGap;
@@ -371,7 +354,7 @@ public class BattleRenderer {
         int backX;
         int frontX;
 
-        if (side == EntityType.ALLY) {
+        if (side == Library.EntityType.ALLY) {
             backX = x + formationPadding;
             frontX = backX + frontSpriteSize + rowGap;
         } else {
@@ -379,7 +362,7 @@ public class BattleRenderer {
             backX = frontX + frontSpriteSize + rowGap;
         }
 
-        int columnX = row == BattleRow.FRONT ? frontX : backX;
+        int columnX = row == Library.BattleRow.FRONT ? frontX : backX;
 
         for (BattleActor actor : actors) {
             if (actor.getRow() != row) {
@@ -482,7 +465,7 @@ public class BattleRenderer {
         for (BattleActor actor : selectableTargets) {
 
 
-            boolean shouldHighlight = matchesSkillShape(actor, hoveredActor, skill.getTargetShape());
+            boolean shouldHighlight = BattleTargetResolver.matchesSkillShape(actor, hoveredActor, skill.getTargetShape());
 
             if (shouldHighlight) {
                 previewTargets.add(actor);
@@ -580,21 +563,21 @@ public class BattleRenderer {
 
         drawCommandButton(
                 g,
-                BattleCommand.ATTACK,
+                Library.BattleCommand.ATTACK,
                 "Attack",
                 new Rectangle(contentX, contentY, buttonWidth, buttonHeight)
         );
 
         drawCommandButton(
                 g,
-                BattleCommand.SKILL,
+                Library.BattleCommand.SKILL,
                 "Skill",
                 new Rectangle(contentX, contentY + buttonHeight + BUTTON_GAP, buttonWidth, buttonHeight)
         );
 
         drawCommandButton(
                 g,
-                BattleCommand.RUN,
+                Library.BattleCommand.RUN,
                 "Run",
                 new Rectangle(contentX, contentY + (buttonHeight + BUTTON_GAP) * 2, buttonWidth, buttonHeight)
         );
@@ -639,7 +622,7 @@ public class BattleRenderer {
 
     private void drawCommandButton(
             Graphics2D g,
-            BattleCommand command,
+            Library.BattleCommand command,
             String label,
             Rectangle bounds
     ) {

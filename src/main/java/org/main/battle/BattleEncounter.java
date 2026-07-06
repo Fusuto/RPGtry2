@@ -1,6 +1,6 @@
 package org.main.battle;
 
-import org.main.engine.EntityType;
+import org.main.core.Library;
 import org.main.monsters.Monster;
 
 import java.util.ArrayList;
@@ -29,7 +29,7 @@ public class BattleEncounter {
             BattleActor actor = actors.get(i);
 
             int slot = i % 3;
-            BattleRow row = i < 3 ? BattleRow.FRONT : BattleRow.BACK;
+            Library.BattleRow row = i < 3 ? Library.BattleRow.FRONT : Library.BattleRow.BACK;
 
             actor.setBattlePosition(row, slot);
         }
@@ -41,40 +41,39 @@ public class BattleEncounter {
                 30,
                 30,
                 null,
-                false,
-                EntityType.ALLY
+                Library.EntityType.ALLY
         );
 
         playerActor.addSkill(new BattleSkill(
                 "Fireball",
                 "Hits every enemy.",
-                SkillTargetShape.ENTIRE_SIDE,
-                EntityType.ENEMY,
-                BattleTargetingMode.MAGIC
+                Library.SkillTargetShape.ENTIRE_SIDE,
+                Library.EntityType.ENEMY,
+                Library.BattleTargetingMode.MAGIC
         ));
 
         playerActor.addSkill(new BattleSkill(
                 "Piercing Line",
                 "Hits one horizontal lane.",
-                SkillTargetShape.SINGLE_ROW,
-                EntityType.ENEMY,
-                BattleTargetingMode.RANGED
+                Library.SkillTargetShape.SINGLE_ROW,
+                Library.EntityType.ENEMY,
+                Library.BattleTargetingMode.RANGED
         ));
 
         playerActor.addSkill(new BattleSkill(
                 "Crush Column",
                 "Hits either the front or back column.",
-                SkillTargetShape.SINGLE_COLUMN,
-                EntityType.ENEMY,
-                BattleTargetingMode.MAGIC
+                Library.SkillTargetShape.SINGLE_COLUMN,
+                Library.EntityType.ENEMY,
+                Library.BattleTargetingMode.MAGIC
         ));
 
         playerActor.addSkill(new BattleSkill(
                 "Heal",
                 "Targets one ally.",
-                SkillTargetShape.SINGLE_TARGET,
-                EntityType.ALLY,
-                BattleTargetingMode.MAGIC
+                Library.SkillTargetShape.SINGLE_TARGET,
+                Library.EntityType.ALLY,
+                Library.BattleTargetingMode.MAGIC
         ));
 
         List<BattleActor> monsterActors = new ArrayList<>();
@@ -85,8 +84,7 @@ public class BattleEncounter {
                     monster1.getMaxHp(),
                     monster1.getCurrentHp(),
                     monster1.getType().getImg(),
-                    true,
-                    EntityType.ENEMY
+                    Library.EntityType.ENEMY
             );
             monsterActors.add(enemy);
         });
@@ -141,7 +139,7 @@ public class BattleEncounter {
          * Friendly skills should usually ignore front-row blocking.
          * Enemy-targeting skills can use melee/reach/ranged/magic targeting rules.
          */
-        if (skill.getTargetTeam() == EntityType.ALLY) {
+        if (skill.getTargetTeam() == Library.EntityType.ALLY) {
             return true;
         }
 
@@ -166,7 +164,7 @@ public class BattleEncounter {
                 continue;
             }
 
-            boolean shouldInclude = BattleRenderer.matchesSkillShape(actor, selectedActor, skill.getTargetShape());
+            boolean shouldInclude = BattleTargetResolver.matchesSkillShape(actor, selectedActor, skill.getTargetShape());
 
             if (shouldInclude) {
                 resolvedTargets.add(actor);
@@ -178,28 +176,28 @@ public class BattleEncounter {
 
     private List<BattleActor> getActorsForSkillTargetTeam(
             BattleActor caster,
-            EntityType targetTeam
+            Library.EntityType targetTeam
     ) {
-        if (targetTeam == EntityType.ALLY) {
+        if (targetTeam == Library.EntityType.ALLY) {
             return getActorsOnSameSide(caster);
         }
 
         return getOpposingActors(caster);
     }
 
-    public BattleResult handleSkill(
+    public Library.BattleResult handleSkill(
             BattleActor caster,
             BattleSkill skill,
             List<BattleActor> targets
     ) {
         if (caster == null || skill == null) {
             battleMessage = "No skill selected.";
-            return BattleResult.CONTINUE;
+            return Library.BattleResult.CONTINUE;
         }
 
         if (targets == null || targets.isEmpty()) {
             battleMessage = "No valid targets.";
-            return BattleResult.CONTINUE;
+            return Library.BattleResult.CONTINUE;
         }
 
         battleMessage = caster.getName()
@@ -209,7 +207,7 @@ public class BattleEncounter {
                 + joinActorNames(targets)
                 + ".";
 
-        return BattleResult.CONTINUE;
+        return Library.BattleResult.CONTINUE;
     }
 
     private String joinActorNames(List<BattleActor> actors) {
@@ -234,13 +232,13 @@ public class BattleEncounter {
         return !isBlockedByFrontActor(target);
     }
 
-    public BattleResult handleRunCommand(BattleCommand command) {
+    public Library.BattleResult handleRunCommand(Library.BattleCommand command) {
             return handleRun();
     }
 
     public List<BattleActor> getValidTargets(
             BattleActor attacker,
-            BattleTargetingMode targetingMode
+            Library.BattleTargetingMode targetingMode
     ) {
         List<BattleActor> validTargets = new ArrayList<>();
 
@@ -256,7 +254,7 @@ public class BattleEncounter {
     public boolean canTarget(
             BattleActor attacker,
             BattleActor target,
-            BattleTargetingMode targetingMode
+            Library.BattleTargetingMode targetingMode
     ) {
         if (attacker == null || target == null) {
             return false;
@@ -277,7 +275,7 @@ public class BattleEncounter {
     }
 
     public boolean isBlockedByFrontActor(BattleActor target) {
-        if (target.getRow() != BattleRow.BACK) {
+        if (target.getRow() != Library.BattleRow.BACK) {
             return false;
         }
 
@@ -289,7 +287,7 @@ public class BattleEncounter {
             }
 
             boolean sameSlot = actor.getSlot() == target.getSlot();
-            boolean isFrontRow = actor.getRow() == BattleRow.FRONT;
+            boolean isFrontRow = actor.getRow() == Library.BattleRow.FRONT;
 
             if (sameSlot && isFrontRow) {
                 return true;
@@ -319,9 +317,9 @@ public class BattleEncounter {
         return enemies;
     }
 
-    private BattleResult handleRun() {
+    private Library.BattleResult handleRun() {
         battleMessage = "You ran away.";
-        return BattleResult.RAN;
+        return Library.BattleResult.RAN;
     }
 
     public BattleActor getFirstLivingAlly() {
@@ -338,17 +336,17 @@ public class BattleEncounter {
         this.battleMessage = battleMessage;
     }
 
-    public BattleResult handleAttack(BattleActor target) {
+    public Library.BattleResult handleAttack(BattleActor target) {
         BattleActor attacker = getFirstLivingAlly();
 
         if (attacker == null) {
             battleMessage = "No allies can act.";
-            return BattleResult.DEFEAT;
+            return Library.BattleResult.DEFEAT;
         }
 
-        if (!canTarget(attacker, target, BattleTargetingMode.NORMAL_MELEE)) {
+        if (!canTarget(attacker, target, Library.BattleTargetingMode.NORMAL_MELEE)) {
             battleMessage = "You cannot reach " + target.getName() + ".";
-            return BattleResult.CONTINUE;
+            return Library.BattleResult.CONTINUE;
         }
 
         int damage = 5;
@@ -363,10 +361,10 @@ public class BattleEncounter {
 
         if (allEnemiesDefeated()) {
             battleMessage = "Victory!";
-            return BattleResult.VICTORY;
+            return Library.BattleResult.VICTORY;
         }
 
-        return BattleResult.CONTINUE;
+        return Library.BattleResult.CONTINUE;
     }
 
     private BattleActor getFirstLivingEnemy() {

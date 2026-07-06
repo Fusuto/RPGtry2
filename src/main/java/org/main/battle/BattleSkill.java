@@ -1,21 +1,21 @@
 package org.main.battle;
 
-import org.main.engine.EntityType;
+import org.main.core.Library;
 
 public class BattleSkill {
     private final String name;
     private final String description;
 
-    private final SkillTargetShape targetShape;
-    private final EntityType targetTeam;
-    private final BattleTargetingMode targetingMode;
+    private final Library.SkillTargetShape targetShape;
+    private final Library.EntityType targetTeam;
+    private final Library.BattleTargetingMode targetingMode;
 
     public BattleSkill(
             String name,
             String description,
-            SkillTargetShape targetShape,
-            EntityType targetTeam,
-            BattleTargetingMode targetingMode
+            Library.SkillTargetShape targetShape,
+            Library.EntityType targetTeam,
+            Library.BattleTargetingMode targetingMode
     ) {
         this.name = name;
         this.description = description;
@@ -26,9 +26,9 @@ public class BattleSkill {
 
     public BattleSkill(
             String name,
-            SkillTargetShape targetShape,
-            EntityType targetTeam,
-            BattleTargetingMode targetingMode
+            Library.SkillTargetShape targetShape,
+            Library.EntityType targetTeam,
+            Library.BattleTargetingMode targetingMode
     ) {
         this(name, "", targetShape, targetTeam, targetingMode);
     }
@@ -41,15 +41,33 @@ public class BattleSkill {
         return description;
     }
 
-    public SkillTargetShape getTargetShape() {
+    public Library.SkillTargetShape getTargetShape() {
         return targetShape;
     }
 
-    public EntityType getTargetTeam() {
+    public Library.EntityType getTargetTeam() {
         return targetTeam;
     }
 
-    public BattleTargetingMode getTargetingMode() {
+    public Library.BattleTargetingMode getTargetingMode() {
         return targetingMode;
+    }
+}
+
+final class BattleTargetResolver {
+    private BattleTargetResolver() {
+    }
+
+    static boolean matchesSkillShape(
+            BattleActor actor,
+            BattleActor anchor,
+            Library.SkillTargetShape shape
+    ) {
+        return switch (shape) {
+            case ENTIRE_SIDE -> true;
+            case SINGLE_TARGET -> actor == anchor;
+            case SINGLE_COLUMN -> actor.getRow() == anchor.getRow();
+            case SINGLE_ROW -> actor.getSlot() == anchor.getSlot();
+        };
     }
 }

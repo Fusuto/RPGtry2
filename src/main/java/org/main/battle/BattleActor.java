@@ -1,6 +1,6 @@
 package org.main.battle;
 
-import org.main.engine.EntityType;
+import org.main.core.Library;
 
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -13,17 +13,17 @@ public class BattleActor {
     private final BufferedImage image;
     private int currentHp;
     private int slot = 0;
-    private BattleRow row = BattleRow.FRONT;
-    private final EntityType entityType;
+    private Library.BattleRow row = Library.BattleRow.FRONT;
+    private final Library.EntityType EntityType;
 
     private final List<BattleSkill> skills = new ArrayList<>();
 
-    public BattleActor(String name, int maxHp, int currentHp, BufferedImage image, boolean enemy, EntityType entityType) {
+    public BattleActor(String name, int maxHp, int currentHp, BufferedImage image, Library.EntityType entityType) {
         this.name = name;
         this.maxHp = maxHp;
         this.currentHp = currentHp;
         this.image = image;
-        this.entityType = entityType;
+        this.EntityType = entityType;
     }
 
     public List<BattleSkill> getSkills() {
@@ -36,11 +36,11 @@ public class BattleActor {
         }
     }
 
-    public EntityType getEntityType() {
-        return entityType;
+    public Library.EntityType getEntityType() {
+        return EntityType;
     }
 
-    public BattleRow getRow() {
+    public Library.BattleRow getRow() {
         return row;
     }
 
@@ -48,7 +48,7 @@ public class BattleActor {
         return slot;
     }
 
-    public void setBattlePosition(BattleRow row, int slot) {
+    public void setBattlePosition(Library.BattleRow row, int slot) {
         this.row = row;
         this.slot = slot;
     }
@@ -70,7 +70,7 @@ public class BattleActor {
     }
 
     public boolean isEnemy() {
-        return entityType == EntityType.ENEMY;
+        return EntityType == Library.EntityType.ENEMY;
     }
 
     public void takeDamage(int amount) {
