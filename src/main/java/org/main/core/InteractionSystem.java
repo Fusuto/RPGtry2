@@ -922,9 +922,11 @@ public final class InteractionSystem {
 
             String merchantName = entity != null ? entity.getName() : "Merchant";
 
-            return prompt(
+            return dialogue(
                     merchantName,
                     "Looking to buy or sell?",
+                    null,
+                    entity != null ? entity.getStaticImage() : null,
                     option("Trade", () -> {
                         context.getGameState().openShop(
                                 ShopSystem.createBasicMerchantShop(merchantName)

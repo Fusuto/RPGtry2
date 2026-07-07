@@ -3,13 +3,10 @@ package org.main;
 import org.main.battle.*;
 import org.main.core.*;
 import org.main.engine.*;
-import org.main.monsters.Monster;
-import org.main.monsters.MonsterType;
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
-import java.awt.image.BufferedImage;
 
 public class WizardryBase extends JPanel implements KeyListener {
 
@@ -18,10 +15,8 @@ public class WizardryBase extends JPanel implements KeyListener {
 
     private final MovementEngine movementEngine = new MovementEngine();
 
-    private final BattleAssets battleAssets = BattleAssets.loadDefault();
     private final BattleRenderer battleRenderer = new BattleRenderer();
 
-    private final TextureManager textureManager = new TextureManager();
     private final InteractionSystem.InteractionWindow interactionWindow =
             new InteractionSystem.InteractionWindow();
     private final ShopSystem.ShopWindow shopWindow = new ShopSystem.ShopWindow();
@@ -56,150 +51,10 @@ public class WizardryBase extends JPanel implements KeyListener {
          */
         gameState.unlockMiniMap();
 
-        textureManager.loadFromFolder("src/main/java/org/main/images/building");
+        RendererBootstrap.configureDefaultRenderers(dungeonRenderer, battleRenderer);
+        installMouseInput();
+        GameBootstrap.seedTestContent(gameState);
 
-        dungeonRenderer.setTextureManager(textureManager);
-
-        dungeonRenderer.setWallTextureTheme("wall", "brick", "stone");
-        dungeonRenderer.setDoorTextureTheme("door", "wood", "handle");
-        dungeonRenderer.setFloorTextureTheme("floor", "wood", "planks", "wide");
-
-        battleRenderer.setAssets(battleAssets);
-
-        addMouseListener(new MouseAdapter() {
-            @Override
-            public void mousePressed(MouseEvent e) {
-                requestFocusInWindow();
-
-                if (gameState.isDungeonMode() && gameState.hasActiveInteraction()) {
-                    boolean consumed = interactionWindow.handleMousePressed(
-                            e,
-                            gameState.getActiveInteraction()
-                    );
-
-                    if (consumed) {
-                        repaint();
-                    }
-
-                    return;
-                }
-
-                if (gameState.isDungeonMode() && gameState.hasActiveShop()) {
-                    boolean consumed = shopWindow.handleMousePressed(e, gameState);
-
-                    if (consumed) {
-                        repaint();
-                    }
-
-                    return;
-                }
-
-                if (gameState.isDungeonMode() && gameState.isInventoryOpen()) {
-                    boolean consumed = inventoryPanel.handleMousePressed(e);
-
-                    if (consumed) {
-                        repaint();
-                    }
-                }
-            }
-
-            @Override
-            public void mouseReleased(MouseEvent e) {
-                if (gameState.isDungeonMode() && gameState.hasActiveInteraction()) {
-                    return;
-                }
-
-                if (gameState.isDungeonMode() && gameState.hasActiveShop()) {
-                    return;
-                }
-
-                if (gameState.isDungeonMode() && gameState.isInventoryOpen()) {
-                    boolean consumed = inventoryPanel.handleMouseReleased(e);
-
-                    if (consumed) {
-                        repaint();
-                    }
-                }
-            }
-
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                handleMouseClick(e);
-            }
-        });
-
-        addMouseMotionListener(new MouseMotionAdapter() {
-            @Override
-            public void mouseDragged(MouseEvent e) {
-                if (gameState.isDungeonMode() && gameState.hasActiveInteraction()) {
-                    return;
-                }
-
-                if (gameState.isDungeonMode() && gameState.hasActiveShop()) {
-                    return;
-                }
-
-                if (gameState.isDungeonMode() && gameState.isInventoryOpen()) {
-                    boolean consumed = inventoryPanel.handleMouseDragged(e);
-
-                    if (consumed) {
-                        repaint();
-                    }
-                }
-            }
-
-            @Override
-            public void mouseMoved(MouseEvent e) {
-                handleMouseMoved(e);
-            }
-        });
-
-        /// PAST THIS POINT I AM DIRECTLY GENERATING MOBS TO DO CHANGE HOW THIS WORKS
-
-        //Monster Example
-        gameState.addEntity(new MapEntity(new Monster(MonsterType.SLIME), 4, 3));
-
-        //NPC Example
-        gameState.addEntity(new MapEntity(new Monster(MonsterType.SKELETON), 6, 1,Library.EntityType.NPC).withInteractionId("old_guard_intro"));
-
-        //Merchant Example
-        gameState.addEntity(
-                new MapEntity(
-                        new Monster(MonsterType.GOBLIN),
-                        5,
-                        7,
-                        Library.EntityType.NPC
-                ).withInteractionId("merchant_basic")
-        );
-
-        //Item Example (on ground)
-        InventorySystem.Item potion = new InventorySystem.Item(
-                "Potion",
-                InventorySystem.ItemType.CONSUMABLE,
-                "src/main/java/org/main/images/monster/Nov-2015/item/potion/brilliant_blue.png"
-        );
-        gameState.addEntity(new MapEntity(potion, 2, 1));
-
-        //Item example (add to inventory)
-        gameState.getInventory().addItem(new InventorySystem.Item(
-                "Iron Sword",
-                InventorySystem.ItemType.WEAPON,
-                "src/main/java/org/main/images/monster/Nov-2015/item/weapon/long_sword1.png"
-        ));
-
-        gameState.getInventory().addItem(new InventorySystem.Item(
-                "Leather Cap",
-                InventorySystem.ItemType.HEAD_GEAR,
-                "src/main/java/org/main/images/monster/Nov-2015/item/armour/headgear/elven_leather_helm.png"
-        ));
-
-        gameState.getInventory().addItem(new InventorySystem.Item(
-                "Silver Ring",
-                InventorySystem.ItemType.RING,
-                "src/main/java/org/main/images/monster/Nov-2015/item/ring/artefact/urand_shadows.png"
-        ));
-
-        /// END OF THE EXAMPLE
         Timer timer = new Timer(16, e -> {
             long now = System.currentTimeMillis();
             int deltaMs = (int) (now - lastUpdateTime);
@@ -212,24 +67,15 @@ public class WizardryBase extends JPanel implements KeyListener {
         timer.start();
     }
 
-    private void handleMouseClick(MouseEvent e) {
-        requestFocusInWindow();
-
-        if (!gameState.isBattleMode()) {
-            return;
-        }
-
-        battleController.handleMouseClick(e.getPoint());
-        repaint();
-    }
-
-    private void handleMouseMoved(MouseEvent e) {
-        if (!gameState.isBattleMode()) {
-            return;
-        }
-
-        battleController.handleMouseMoved(e.getPoint());
-        repaint();
+    private void installMouseInput() {
+        new GameMouseInputRouter(
+                this,
+                gameState,
+                battleController,
+                interactionWindow,
+                shopWindow,
+                inventoryPanel
+        ).install();
     }
 
     private void updateGame(int deltaMs) {

@@ -536,7 +536,12 @@ public final class ShopSystem {
             int listY = windowBounds.y + 100;
             int listWidth = windowBounds.width - 44;
 
-            drawSectionLabel(g, "Click an item to buy.", listX, listY - 12);
+            drawSectionLabelRightAligned(
+                    g,
+                    "Click an item to buy.",
+                    windowBounds.x + windowBounds.width - 22,
+                    listY - 12
+            );
 
             List<ShopStockItem> stock = shop.getStock();
 
@@ -618,7 +623,12 @@ public final class ShopSystem {
             int gridX = windowBounds.x + (windowBounds.width - gridWidth) / 2;
             int gridY = windowBounds.y + 112;
 
-            drawSectionLabel(g, "Click an inventory item to sell.", windowBounds.x + 22, windowBounds.y + 88);
+            drawSectionLabelRightAligned(
+                    g,
+                    "Click an inventory item to sell.",
+                    windowBounds.x + windowBounds.width - 22,
+                    windowBounds.y + 88
+            );
 
             for (int i = 0; i < InventorySystem.Inventory.SLOT_COUNT; i++) {
                 int row = i / INVENTORY_GRID_COLUMNS;
@@ -651,12 +661,14 @@ public final class ShopSystem {
             }
         }
 
-        private void drawSectionLabel(Graphics2D g, String label, int x, int y) {
+        private void drawSectionLabelRightAligned(Graphics2D g, String label, int rightX, int y) {
             Font oldFont = g.getFont();
 
             g.setFont(oldFont.deriveFont(Font.BOLD, 13f));
             g.setColor(new Color(220, 220, 230));
-            g.drawString(label, x, y);
+
+            FontMetrics metrics = g.getFontMetrics();
+            g.drawString(label, rightX - metrics.stringWidth(label), y);
 
             g.setFont(oldFont);
         }
