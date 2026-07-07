@@ -2,6 +2,7 @@ package org.main.core;
 
 import org.main.content.DialogueLibrary;
 import org.main.engine.MapEntity;
+import org.main.engine.SoundSystem;
 
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
@@ -17,6 +18,7 @@ import java.awt.Stroke;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
+import javax.swing.SwingUtilities;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -71,6 +73,10 @@ public final class InteractionSystem {
         return new Interaction(new ConversationInteractionContent(conversation));
     }
 
+    public static Interaction configMenu(SoundSystem soundSystem, Runnable exitAction) {
+        return new Interaction(new ConfigInteractionContent(soundSystem, exitAction));
+    }
+
     public static InteractionOption closeOption(String label) {
         return new InteractionOption(label, null, true);
     }
@@ -81,6 +87,14 @@ public final class InteractionSystem {
 
     public static InteractionOption stayOpenOption(String label, Runnable action) {
         return new InteractionOption(label, action, false);
+    }
+
+    public static InteractionOption stayOpenOption(
+            String label,
+            Runnable action,
+            Runnable alternateAction
+    ) {
+        return new InteractionOption(label, action, alternateAction, false);
     }
 
     public static class Interaction {
@@ -96,11 +110,15 @@ public final class InteractionSystem {
         }
 
         public void selectOption(int optionIndex) {
+            selectOption(optionIndex, false);
+        }
+
+        public void selectOption(int optionIndex, boolean alternateAction) {
             if (closed) {
                 return;
             }
 
-            content.selectOption(optionIndex, this);
+            content.selectOption(optionIndex, this, alternateAction);
         }
 
         public void close() {
@@ -115,7 +133,7 @@ public final class InteractionSystem {
     private interface InteractionContent {
         InteractionModel getModel();
 
-        void selectOption(int optionIndex, Interaction interaction);
+        void selectOption(int optionIndex, Interaction interaction, boolean alternateAction);
     }
 
     private static class StaticInteractionContent implements InteractionContent {
@@ -131,13 +149,13 @@ public final class InteractionSystem {
         }
 
         @Override
-        public void selectOption(int optionIndex, Interaction interaction) {
+        public void selectOption(int optionIndex, Interaction interaction, boolean alternateAction) {
             if (optionIndex < 0 || optionIndex >= model.getOptions().size()) {
                 return;
             }
 
             InteractionOption option = model.getOptions().get(optionIndex);
-            option.run();
+            option.run(alternateAction);
 
             if (option.shouldCloseAfterSelection()) {
                 interaction.close();
@@ -188,7 +206,7 @@ public final class InteractionSystem {
         }
 
         @Override
-        public void selectOption(int optionIndex, Interaction interaction) {
+        public void selectOption(int optionIndex, Interaction interaction, boolean alternateAction) {
             conversation.choose(optionIndex, interaction);
         }
     }
@@ -259,11 +277,22 @@ public final class InteractionSystem {
     public static class InteractionOption {
         private final String label;
         private final Runnable action;
+        private final Runnable alternateAction;
         private final boolean closeAfterSelection;
 
         public InteractionOption(String label, Runnable action, boolean closeAfterSelection) {
+            this(label, action, null, closeAfterSelection);
+        }
+
+        public InteractionOption(
+                String label,
+                Runnable action,
+                Runnable alternateAction,
+                boolean closeAfterSelection
+        ) {
             this.label = label == null ? "" : label;
             this.action = action;
+            this.alternateAction = alternateAction;
             this.closeAfterSelection = closeAfterSelection;
         }
 
@@ -272,6 +301,15 @@ public final class InteractionSystem {
         }
 
         public void run() {
+            run(false);
+        }
+
+        public void run(boolean alternateActionRequested) {
+            if (alternateActionRequested && alternateAction != null) {
+                alternateAction.run();
+                return;
+            }
+
             if (action != null) {
                 action.run();
             }
@@ -484,7 +522,7 @@ public final class InteractionSystem {
                 Rectangle bounds = optionBounds.get(i);
 
                 if (bounds.contains(point)) {
-                    interaction.selectOption(i);
+                    interaction.selectOption(i, SwingUtilities.isRightMouseButton(e));
                     return true;
                 }
             }
@@ -589,8 +627,13 @@ public final class InteractionSystem {
                     PORTRAIT_SIZE
             );
 
-            drawPortrait(g, model.getLeftPortrait(), model.getLeftPortraitLabel(), leftBounds);
-            drawPortrait(g, model.getRightPortrait(), model.getRightPortraitLabel(), rightBounds);
+            if (model.getLeftPortrait() != null) {
+                drawPortrait(g, model.getLeftPortrait(), model.getLeftPortraitLabel(), leftBounds);
+            }
+
+            if (model.getRightPortrait() != null) {
+                drawPortrait(g, model.getRightPortrait(), model.getRightPortraitLabel(), rightBounds);
+            }
         }
 
         private void drawPortrait(
@@ -614,8 +657,6 @@ public final class InteractionSystem {
                         bounds.height - 8,
                         null
                 );
-            } else {
-                drawFallbackPortrait(g, label, bounds);
             }
 
             if (label != null && !label.isBlank()) {
@@ -633,34 +674,17 @@ public final class InteractionSystem {
             }
         }
 
-        private void drawFallbackPortrait(Graphics2D g, String label, Rectangle bounds) {
-            String text = "?";
-
-            if (label != null && !label.isBlank()) {
-                text = label.substring(0, 1).toUpperCase();
-            }
-
-            Font oldFont = g.getFont();
-            g.setFont(oldFont.deriveFont(Font.BOLD, 34f));
-
-            FontMetrics metrics = g.getFontMetrics();
-
-            int textX = bounds.x + (bounds.width - metrics.stringWidth(text)) / 2;
-            int textY = bounds.y + (bounds.height - metrics.getHeight()) / 2 + metrics.getAscent();
-
-            g.setColor(new Color(90, 90, 110));
-            g.fillRoundRect(bounds.x + 4, bounds.y + 4, bounds.width - 8, bounds.height - 8, 8, 8);
-
-            g.setColor(Color.WHITE);
-            g.drawString(text, textX, textY);
-
-            g.setFont(oldFont);
-        }
-
         private void drawText(Graphics2D g, InteractionModel model, Rectangle windowBounds) {
-            int textX = windowBounds.x + CONTENT_PADDING + PORTRAIT_SIZE + 24;
+            int leftInset = model.getLeftPortrait() == null
+                    ? CONTENT_PADDING
+                    : CONTENT_PADDING + PORTRAIT_SIZE + 24;
+            int rightInset = model.getRightPortrait() == null
+                    ? CONTENT_PADDING
+                    : CONTENT_PADDING + PORTRAIT_SIZE + 24;
+
+            int textX = windowBounds.x + leftInset;
             int textY = windowBounds.y + CONTENT_PADDING;
-            int textWidth = windowBounds.width - (CONTENT_PADDING + PORTRAIT_SIZE + 24) * 2;
+            int textWidth = windowBounds.width - leftInset - rightInset;
 
             Font oldFont = g.getFont();
 
@@ -694,8 +718,15 @@ public final class InteractionSystem {
                 return;
             }
 
-            int textX = windowBounds.x + CONTENT_PADDING + PORTRAIT_SIZE + 24;
-            int optionWidth = windowBounds.width - (CONTENT_PADDING + PORTRAIT_SIZE + 24) * 2;
+            int leftInset = model.getLeftPortrait() == null
+                    ? CONTENT_PADDING
+                    : CONTENT_PADDING + PORTRAIT_SIZE + 24;
+            int rightInset = model.getRightPortrait() == null
+                    ? CONTENT_PADDING
+                    : CONTENT_PADDING + PORTRAIT_SIZE + 24;
+
+            int textX = windowBounds.x + leftInset;
+            int optionWidth = windowBounds.width - leftInset - rightInset;
 
             int totalOptionHeight = options.size() * OPTION_HEIGHT
                     + Math.max(0, options.size() - 1) * OPTION_GAP;
@@ -871,6 +902,103 @@ public final class InteractionSystem {
             }
 
             return registry;
+        }
+    }
+
+    private static class ConfigInteractionContent implements InteractionContent {
+        private static final double VOLUME_STEP = 0.10;
+
+        private final SoundSystem soundSystem;
+        private final Runnable exitAction;
+
+        private ConfigInteractionContent(SoundSystem soundSystem, Runnable exitAction) {
+            this.soundSystem = soundSystem;
+            this.exitAction = exitAction;
+        }
+
+        @Override
+        public InteractionModel getModel() {
+            int ambiencePercent = toPercent(soundSystem != null ? soundSystem.getAmbienceVolume() : 1.0);
+            int musicPercent = toPercent(soundSystem != null ? soundSystem.getMusicVolume() : 1.0);
+
+            return new InteractionModel(
+                    "Configuration",
+                    "Left click a volume bar to raise it. Right click to lower it.",
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    List.of(
+                            stayOpenOption(
+                                    volumeLabel("Ambience", ambiencePercent),
+                                    () -> adjustAmbience(VOLUME_STEP),
+                                    () -> adjustAmbience(-VOLUME_STEP)
+                            ),
+                            stayOpenOption(
+                                    volumeLabel("Combat Music", musicPercent),
+                                    () -> adjustMusic(VOLUME_STEP),
+                                    () -> adjustMusic(-VOLUME_STEP)
+                            ),
+                            option("Exit Game", () -> {
+                                if (soundSystem != null) {
+                                    soundSystem.stopAll();
+                                }
+
+                                if (exitAction != null) {
+                                    exitAction.run();
+                                }
+                            }),
+                            closeOption("Close")
+                    )
+            );
+        }
+
+        @Override
+        public void selectOption(int optionIndex, Interaction interaction, boolean alternateAction) {
+            InteractionModel model = getModel();
+
+            if (optionIndex < 0 || optionIndex >= model.getOptions().size()) {
+                return;
+            }
+
+            InteractionOption option = model.getOptions().get(optionIndex);
+            option.run(alternateAction);
+
+            if (option.shouldCloseAfterSelection()) {
+                interaction.close();
+            }
+        }
+
+        private void adjustAmbience(double amount) {
+            if (soundSystem != null) {
+                soundSystem.adjustAmbienceVolume(amount);
+            }
+        }
+
+        private void adjustMusic(double amount) {
+            if (soundSystem != null) {
+                soundSystem.adjustMusicVolume(amount);
+            }
+        }
+
+        private int toPercent(double volume) {
+            return (int) Math.round(volume * 100.0);
+        }
+
+        private String volumeLabel(String label, int percent) {
+            int filledBlocks = Math.max(0, Math.min(10, percent / 10));
+            StringBuilder bar = new StringBuilder("[");
+
+            for (int i = 0; i < 10; i++) {
+                bar.append(i < filledBlocks ? "#" : ".");
+            }
+
+            bar.append("] ");
+            bar.append(percent);
+            bar.append("%");
+
+            return label + " " + bar;
         }
     }
 }

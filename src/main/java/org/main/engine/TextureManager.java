@@ -8,6 +8,12 @@ import java.nio.file.Path;
 import java.util.*;
 
 public class TextureManager {
+    public record SelectedTexture(
+            BufferedImage image,
+            boolean defaultTexture
+    ) {
+    }
+
     private record TextureKey(
             String location,
             String material1,
@@ -98,6 +104,18 @@ public class TextureManager {
             int worldX,
             int worldY
     ) {
+        SelectedTexture selectedTexture = getSelectedTexture(location, material1, material2, side, worldX, worldY);
+        return selectedTexture == null ? null : selectedTexture.image();
+    }
+
+    public SelectedTexture getSelectedTexture(
+            String location,
+            String material1,
+            String material2,
+            String side,
+            int worldX,
+            int worldY
+    ) {
         TextureKey key = new TextureKey(
                 location.toLowerCase(Locale.ROOT),
                 material1.toLowerCase(Locale.ROOT),
@@ -116,7 +134,8 @@ public class TextureManager {
                 variants.size()
         );
 
-        return variants.get(index).image;
+        TextureEntry entry = variants.get(index);
+        return new SelectedTexture(entry.image, entry.isDefault);
     }
 
     public BufferedImage getDefaultTexture(

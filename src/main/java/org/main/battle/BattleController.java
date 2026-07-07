@@ -2,6 +2,8 @@ package org.main.battle;
 
 import org.main.core.GameState;
 import org.main.core.Library;
+import org.main.content.EnvironmentLibrary;
+import org.main.engine.SoundSystem;
 
 import java.awt.Point;
 import java.awt.event.KeyEvent;
@@ -10,13 +12,26 @@ import java.util.List;
 public class BattleController {
     private final GameState gameState;
     private final BattleRenderer battleRenderer;
+    private final SoundSystem soundSystem;
+    private final EnvironmentLibrary environment;
 
     private BattleSkill pendingSkill = null;
     private Library.BattleCommand pendingBattleCommand = null;
 
     public BattleController(GameState gameState, BattleRenderer battleRenderer) {
+        this(gameState, battleRenderer, null, null);
+    }
+
+    public BattleController(
+            GameState gameState,
+            BattleRenderer battleRenderer,
+            SoundSystem soundSystem,
+            EnvironmentLibrary environment
+    ) {
         this.gameState = gameState;
         this.battleRenderer = battleRenderer;
+        this.soundSystem = soundSystem;
+        this.environment = environment;
     }
 
     public void handleMouseMoved(Point point) {
@@ -245,5 +260,13 @@ public class BattleController {
         battleRenderer.clearPreviewSkill();
 
         gameState.clearBattleState();
+
+        if (soundSystem != null) {
+            soundSystem.stopMusic();
+
+            if (environment != null) {
+                soundSystem.playAmbience(environment.getAmbienceSoundPath());
+            }
+        }
     }
 }

@@ -15,6 +15,7 @@ public class MapEntity {
     private BufferedImage staticImage;
     private InventorySystem.Item item;
     private String interactionId;
+    private String talkSoundPath;
 
     private int x;
     private int y;
@@ -79,6 +80,19 @@ public class MapEntity {
 
     public MapEntity withInteractionId(String interactionId) {
         this.interactionId = interactionId;
+        return this;
+    }
+
+    public String getTalkSoundPath() {
+        return talkSoundPath;
+    }
+
+    public void setTalkSoundPath(String talkSoundPath) {
+        this.talkSoundPath = talkSoundPath;
+    }
+
+    public MapEntity withTalkSoundPath(String talkSoundPath) {
+        this.talkSoundPath = talkSoundPath;
         return this;
     }
 

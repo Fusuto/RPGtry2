@@ -9,28 +9,48 @@ public class BattleSkill {
     private final Library.SkillTargetShape targetShape;
     private final Library.EntityType targetTeam;
     private final Library.BattleTargetingMode targetingMode;
+    private final Library.EffectType effectType;
+    private final String useSoundPath;
+    private final int damage;
 
     public BattleSkill(
             String name,
             String description,
             Library.SkillTargetShape targetShape,
             Library.EntityType targetTeam,
-            Library.BattleTargetingMode targetingMode
+            Library.BattleTargetingMode targetingMode,
+            Library.EffectType effectType, int damage
+    ) {
+        this(name, description, targetShape, targetTeam, targetingMode, null, effectType, damage);
+    }
+
+    public BattleSkill(
+            String name,
+            String description,
+            Library.SkillTargetShape targetShape,
+            Library.EntityType targetTeam,
+            Library.BattleTargetingMode targetingMode,
+            String useSoundPath,
+            Library.EffectType effectType,
+            int damage
     ) {
         this.name = name;
         this.description = description;
         this.targetShape = targetShape;
         this.targetTeam = targetTeam;
         this.targetingMode = targetingMode;
+        this.effectType = effectType;
+        this.useSoundPath = useSoundPath;
+        this.damage = damage;
     }
 
     public BattleSkill(
             String name,
             Library.SkillTargetShape targetShape,
             Library.EntityType targetTeam,
-            Library.BattleTargetingMode targetingMode
+            Library.BattleTargetingMode targetingMode, Library.EffectType effectType, int damage
     ) {
-        this(name, "", targetShape, targetTeam, targetingMode);
+        this(name, "", targetShape, targetTeam, targetingMode, effectType, damage);
     }
 
     public String getName() {
@@ -51,6 +71,18 @@ public class BattleSkill {
 
     public Library.BattleTargetingMode getTargetingMode() {
         return targetingMode;
+    }
+
+    public String getUseSoundPath() {
+        return useSoundPath;
+    }
+
+    public Library.EffectType getEffectType() {
+        return effectType;
+    }
+
+    public int getDamage() {
+        return damage;
     }
 }
 

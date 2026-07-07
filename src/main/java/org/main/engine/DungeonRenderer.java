@@ -15,19 +15,9 @@ public class DungeonRenderer {
     private static final double WALL_HALF_HEIGHT_RATIO = 0.48;
     private static final double NEAR_CLIP = 0.10;
     private TextureManager textureManager;
-    private String wallLocation = "wall";
-    private String wallMaterial1 = "brick";
-    private String wallMaterial2 = "stone";
-
-    private String doorLocation = "door";
-    private String doorMaterial1 = "wood";
-    private String doorMaterial2 = "oak";
-    private String doorSide = "center";
-
-    private String floorLocation = "floor";
-    private String floorMaterial1 = "brick";
-    private String floorMaterial2 = "stone";
-    private String floorType = "small";
+    private List<EnvironmentTheme> environmentThemes = new ArrayList<>(
+            List.of(EnvironmentTheme.defaultTheme())
+    );
 
     private static final double DOOR_OVERLAY_LEFT = 0.23;
     private static final double DOOR_OVERLAY_RIGHT = 0.77;
@@ -90,31 +80,42 @@ public class DungeonRenderer {
         this.textureManager = textureManager;
     }
 
+    public void setEnvironmentThemes(List<EnvironmentTheme> environmentThemes) {
+        if (environmentThemes == null || environmentThemes.isEmpty()) {
+            this.environmentThemes = new ArrayList<>(List.of(EnvironmentTheme.defaultTheme()));
+            return;
+        }
+
+        this.environmentThemes = new ArrayList<>(environmentThemes);
+    }
+
     public void setWallTextureTheme(String location, String material1, String material2) {
-        this.wallLocation = location;
-        this.wallMaterial1 = material1;
-        this.wallMaterial2 = material2;
+        setPrimaryEnvironmentTheme(getPrimaryEnvironmentTheme().withWall(location, material1, material2));
     }
 
     public void setDoorTextureTheme(String location, String material1, String material2) {
-        this.doorLocation = location;
-        this.doorMaterial1 = material1;
-        this.doorMaterial2 = material2;
-        this.doorSide = "center";
+        setDoorTextureTheme(location, material1, material2, "center");
     }
 
     public void setDoorTextureTheme(String location, String material1, String material2, String side) {
-        this.doorLocation = location;
-        this.doorMaterial1 = material1;
-        this.doorMaterial2 = material2;
-        this.doorSide = side;
+        setPrimaryEnvironmentTheme(getPrimaryEnvironmentTheme().withDoor(location, material1, material2, side));
     }
 
     public void setFloorTextureTheme(String location, String material1, String material2, String floorType) {
-        this.floorLocation = location;
-        this.floorMaterial1 = material1;
-        this.floorMaterial2 = material2;
-        this.floorType = floorType;
+        setPrimaryEnvironmentTheme(getPrimaryEnvironmentTheme().withFloor(location, material1, material2, floorType));
+    }
+
+    private EnvironmentTheme getPrimaryEnvironmentTheme() {
+        return getEnvironmentTheme(0);
+    }
+
+    private void setPrimaryEnvironmentTheme(EnvironmentTheme environmentTheme) {
+        if (environmentThemes.isEmpty()) {
+            environmentThemes.add(environmentTheme);
+            return;
+        }
+
+        environmentThemes.set(0, environmentTheme);
     }
 
     public void draw(Graphics2D g, DungeonMap map, List<MapEntity> entities, int playerX, int playerY, int dir, int viewWidth, int viewHeight) {
@@ -298,14 +299,44 @@ public class DungeonRenderer {
 
     private void drawBaseTileFace(Graphics2D g, RenderCommand command) {
         Color color = getRenderColor(command);
-        BufferedImage texture = getTextureForCommand(command);
+        TextureManager.SelectedTexture texture = getTextureForCommand(command);
 
         if (texture != null) {
-            drawTexturedFace(g, texture, command);
+            drawSelectedTexture(g, texture, command, color);
         } else {
             g.setColor(color);
             g.fillPolygon(command.polygon);
         }
+    }
+
+    private void drawSelectedTexture(
+            Graphics2D g,
+            TextureManager.SelectedTexture texture,
+            RenderCommand command,
+            Color fallbackColor
+    ) {
+        if (!shouldDrawSideVariantInset(command, texture)) {
+            drawTexturedFace(g, texture.image(), command);
+            return;
+        }
+
+        BufferedImage baseTexture = getDefaultWallTexture(command);
+        if (baseTexture != null) {
+            drawTexturedFace(g, baseTexture, command);
+        } else {
+            g.setColor(fallbackColor);
+            g.fillPolygon(command.polygon);
+        }
+
+        drawTextureSection(g, texture.image(), createSideVariantOverlayPolygon(command.polygon, texture.image()), 0.0, 1.0);
+    }
+
+    private boolean shouldDrawSideVariantInset(RenderCommand command, TextureManager.SelectedTexture texture) {
+        if (texture.defaultTexture()) {
+            return false;
+        }
+
+        return command.faceType == FaceType.LEFT || command.faceType == FaceType.RIGHT;
     }
 
     private void drawDoorOverlayIfNeeded(Graphics2D g, RenderCommand command) {
@@ -321,7 +352,7 @@ public class DungeonRenderer {
             return;
         }
 
-        BufferedImage doorTexture = getDoorOverlayTexture();
+        BufferedImage doorTexture = getDoorOverlayTexture(command);
 
         if (doorTexture == null) {
             return;
@@ -332,23 +363,25 @@ public class DungeonRenderer {
         drawTextureSection(g, doorTexture, doorPolygon, 0.0, 1.0);
     }
 
-    private BufferedImage getDoorOverlayTexture() {
+    private BufferedImage getDoorOverlayTexture(RenderCommand command) {
         if (textureManager == null) {
             return null;
         }
 
+        EnvironmentTheme.TextureTheme doorTheme = getEnvironmentTheme(command).door();
+
         BufferedImage texture = textureManager.getDefaultTexture(
-                doorLocation,
-                doorMaterial1,
-                doorMaterial2,
-                doorSide
+                doorTheme.location(),
+                doorTheme.material1(),
+                doorTheme.material2(),
+                doorTheme.side()
         );
 
-        if (texture == null && !"center".equals(doorSide)) {
+        if (texture == null && !"center".equals(doorTheme.side())) {
             texture = textureManager.getDefaultTexture(
-                    doorLocation,
-                    doorMaterial1,
-                    doorMaterial2,
+                    doorTheme.location(),
+                    doorTheme.material1(),
+                    doorTheme.material2(),
                     "center"
             );
         }
@@ -419,6 +452,79 @@ public class DungeonRenderer {
                 doorBottomRight,
                 doorBottomLeft
         );
+    }
+
+    private Polygon createSideVariantOverlayPolygon(Polygon wallPolygon, BufferedImage texture) {
+        if (wallPolygon == null || wallPolygon.npoints != 4) {
+            return wallPolygon;
+        }
+
+        Point topLeft = new Point(wallPolygon.xpoints[0], wallPolygon.ypoints[0]);
+        Point topRight = new Point(wallPolygon.xpoints[1], wallPolygon.ypoints[1]);
+        Point bottomRight = new Point(wallPolygon.xpoints[2], wallPolygon.ypoints[2]);
+        Point bottomLeft = new Point(wallPolygon.xpoints[3], wallPolygon.ypoints[3]);
+
+        double wallHeight = (
+                distance(topLeft, bottomLeft)
+                        + distance(topRight, bottomRight)
+        ) / 2.0;
+        double wallWidth = (
+                distance(topLeft, topRight)
+                        + distance(bottomLeft, bottomRight)
+        ) / 2.0;
+        double textureAspect = texture.getWidth() / (double) texture.getHeight();
+        double horizontalSpan = wallWidth <= 0.0
+                ? 1.0
+                : Math.min(1.0, (wallHeight * textureAspect) / wallWidth);
+        double overlayLeft = (1.0 - horizontalSpan) / 2.0;
+        double overlayRight = overlayLeft + horizontalSpan;
+
+        Point overlayTopLeft = pointOnQuad(
+                topLeft,
+                topRight,
+                bottomRight,
+                bottomLeft,
+                overlayLeft,
+                0.0
+        );
+
+        Point overlayTopRight = pointOnQuad(
+                topLeft,
+                topRight,
+                bottomRight,
+                bottomLeft,
+                overlayRight,
+                0.0
+        );
+
+        Point overlayBottomRight = pointOnQuad(
+                topLeft,
+                topRight,
+                bottomRight,
+                bottomLeft,
+                overlayRight,
+                1.0
+        );
+
+        Point overlayBottomLeft = pointOnQuad(
+                topLeft,
+                topRight,
+                bottomRight,
+                bottomLeft,
+                overlayLeft,
+                1.0
+        );
+
+        return polygonFrom(
+                overlayTopLeft,
+                overlayTopRight,
+                overlayBottomRight,
+                overlayBottomLeft
+        );
+    }
+
+    private double distance(Point first, Point second) {
+        return Math.hypot(first.x - second.x, first.y - second.y);
     }
 
     private Point pointOnQuad(
@@ -493,39 +599,101 @@ public class DungeonRenderer {
         }
     }
 
-    private BufferedImage getTextureForCommand(RenderCommand command) {
+    private TextureManager.SelectedTexture getTextureForCommand(RenderCommand command) {
         if (textureManager == null) {
             return null;
         }
         if (command.faceType == FaceType.SPRITE) {
             return null;
         }
+        EnvironmentTheme environmentTheme = getEnvironmentTheme(command);
         if (command.faceType == FaceType.FLOOR) {
-            return textureManager.getTexture(floorLocation, floorMaterial1, floorMaterial2, floorType, command.worldX, command.worldY);
+            EnvironmentTheme.TextureTheme floorTheme = environmentTheme.floor();
+            return textureManager.getSelectedTexture(
+                    floorTheme.location(),
+                    floorTheme.material1(),
+                    floorTheme.material2(),
+                    floorTheme.side(),
+                    command.worldX,
+                    command.worldY
+            );
         }
+        EnvironmentTheme.TextureTheme wallTheme = environmentTheme.wall();
         String sideName = getWallTextureSideName(command);
-        boolean needsSafeTexture = shouldUseDefaultTexture(command);
-        BufferedImage texture;
-        if (needsSafeTexture) {
-            texture = textureManager.getDefaultTexture(wallLocation, wallMaterial1, wallMaterial2, sideName);
-        } else {
-            texture = textureManager.getTexture(wallLocation, wallMaterial1, wallMaterial2, sideName, command.worldX, command.worldY);
-        }
+        TextureManager.SelectedTexture texture = textureManager.getSelectedTexture(
+                wallTheme.location(),
+                wallTheme.material1(),
+                wallTheme.material2(),
+                sideName,
+                command.worldX,
+                command.worldY
+        );
+
         if (texture == null && !sideName.equals("center")) {
-            if (needsSafeTexture) {
-                texture = textureManager.getDefaultTexture(wallLocation, wallMaterial1, wallMaterial2, "center");
-            } else {
-                texture = textureManager.getTexture(wallLocation, wallMaterial1, wallMaterial2, "center", command.worldX, command.worldY);
-            }
+            texture = textureManager.getSelectedTexture(
+                    wallTheme.location(),
+                    wallTheme.material1(),
+                    wallTheme.material2(),
+                    "center",
+                    command.worldX,
+                    command.worldY
+            );
         }
         return texture;
     }
 
-    private boolean shouldUseDefaultTexture(RenderCommand command) { /* * Side wall faces are usually very large and angled. * Decorative variants like banners look bad here, so force the plain * default center texture. */
-        return command.faceType == FaceType.LEFT || command.faceType == FaceType.RIGHT;
+    private BufferedImage getDefaultWallTexture(RenderCommand command) {
+        if (textureManager == null) {
+            return null;
+        }
+
+        EnvironmentTheme.TextureTheme wallTheme = getEnvironmentTheme(command).wall();
+        String sideName = getWallTextureSideName(command);
+        BufferedImage texture = textureManager.getDefaultTexture(
+                wallTheme.location(),
+                wallTheme.material1(),
+                wallTheme.material2(),
+                sideName
+        );
+
+        if (texture == null && !sideName.equals("center")) {
+            texture = textureManager.getDefaultTexture(
+                    wallTheme.location(),
+                    wallTheme.material1(),
+                    wallTheme.material2(),
+                    "center"
+            );
+        }
+
+        return texture;
     }
 
-    private String getWallTextureSideName(RenderCommand command) { /* * FaceType.LEFT / FaceType.RIGHT means the physical side face of a wall block. * Your asset suffix _left / _right means a visual panel/corner variant. * Those are not the same concept. */
+    private EnvironmentTheme getEnvironmentTheme(RenderCommand command) {
+        if (map == null || command == null) {
+            return getEnvironmentTheme(0);
+        }
+
+        return getEnvironmentTheme(map.getEnvironmentThemeIndex(command.worldX, command.worldY));
+    }
+
+    private EnvironmentTheme getEnvironmentTheme(int environmentThemeIndex) {
+        if (environmentThemes.isEmpty()) {
+            return EnvironmentTheme.defaultTheme();
+        }
+
+        if (environmentThemeIndex < 0 || environmentThemeIndex >= environmentThemes.size()) {
+            return environmentThemes.getFirst();
+        }
+
+        return environmentThemes.get(environmentThemeIndex);
+    }
+
+    private String getWallTextureSideName(RenderCommand command) {
+        /*
+         * FaceType.LEFT / FaceType.RIGHT means the physical side face of a wall block.
+         * Your asset suffix _left / _right means a visual panel/corner variant.
+         * Those are not the same concept.
+         */
         if (command.faceType == FaceType.LEFT || command.faceType == FaceType.RIGHT) {
             return "center";
         }

@@ -1,9 +1,11 @@
 package org.main.core;
 
 import org.main.battle.BattleEncounter;
+import org.main.content.EnvironmentLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 import org.main.engine.MovementEngine;
+import org.main.engine.SoundSystem;
 import org.main.monsters.Monster;
 
 import java.awt.Point;
@@ -15,15 +17,29 @@ public class DungeonController {
     private final GameState gameState;
     private final MovementEngine movementEngine;
     private final InteractionSystem.InteractionRegistry interactionRegistry;
+    private final SoundSystem soundSystem;
+    private final EnvironmentLibrary environment;
 
     public DungeonController(
             GameState gameState,
             MovementEngine movementEngine,
             InteractionSystem.InteractionRegistry interactionRegistry
     ) {
+        this(gameState, movementEngine, interactionRegistry, null, null);
+    }
+
+    public DungeonController(
+            GameState gameState,
+            MovementEngine movementEngine,
+            InteractionSystem.InteractionRegistry interactionRegistry,
+            SoundSystem soundSystem,
+            EnvironmentLibrary environment
+    ) {
         this.gameState = gameState;
         this.movementEngine = movementEngine;
         this.interactionRegistry = interactionRegistry;
+        this.soundSystem = soundSystem;
+        this.environment = environment;
     }
 
     public void handleInput(KeyEvent e) {
@@ -82,6 +98,7 @@ public class DungeonController {
                 return;
             }
 
+            playTalkSound(targetEntity);
             interactWithEntity(targetEntity);
             return;
         }
@@ -129,6 +146,15 @@ public class DungeonController {
         }
 
         gameState.setPlayerPosition(nextPosition.x, nextPosition.y);
+        playFootstepSound();
+    }
+
+    private void playFootstepSound() {
+        if (soundSystem == null || environment == null) {
+            return;
+        }
+
+        soundSystem.playSound(environment.getFootstepSoundPath());
     }
 
     private void startBattle(MapEntity enemyEntity) {
@@ -151,8 +177,18 @@ public class DungeonController {
         monsters.add(enemyEntity.getMonster());
         monsters.add(enemyEntity.getMonster());
 
-        gameState.setCurrentEncounter(BattleEncounter.fromMonster(monsters));
+        gameState.setCurrentEncounter(BattleEncounter.fromMonster(
+                monsters,
+                gameState.getInventory(),
+                soundSystem,
+                environment
+        ));
         gameState.setGameMode(GameState.GameMode.BATTLE);
+
+        if (soundSystem != null && environment != null) {
+            soundSystem.stopAmbience();
+            soundSystem.playMusic(environment.getCombatMusicPath());
+        }
     }
 
     private void interactWithEntity(MapEntity entity) {
@@ -183,6 +219,19 @@ public class DungeonController {
             case TRAP -> System.out.println("You examine " + entity.getName() + ".");
             default -> System.out.println("You interact with " + entity.getName() + ".");
         }
+    }
+
+    private void playTalkSound(MapEntity entity) {
+        if (soundSystem == null || entity == null) {
+            return;
+        }
+
+        if (entity.getType() != Library.EntityType.NPC
+                && entity.getType() != Library.EntityType.ALLY) {
+            return;
+        }
+
+        soundSystem.playSound(entity.getTalkSoundPath());
     }
 
     private boolean tryOpenRegisteredInteraction(MapEntity entity) {

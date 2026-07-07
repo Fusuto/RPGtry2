@@ -8,20 +8,24 @@ import org.main.monsters.MonsterType;
 public enum NpcLibrary {
     OLD_GUARD(
             MonsterType.SKELETON,
-            "old_guard_intro"
+            "old_guard_intro",
+            "src/main/java/org/main/sounds/generated/skelle_talk.wav"
     ),
 
     GOBLIN_MERCHANT(
             MonsterType.GOBLIN,
-            "merchant_basic"
+            "merchant_basic",
+            "src/main/java/org/main/sounds/generated/gobbo_talk.wav"
     );
 
     private final MonsterType monsterType;
     private final String interactionId;
+    private final String talkSoundPath;
 
-    NpcLibrary(MonsterType monsterType, String interactionId) {
+    NpcLibrary(MonsterType monsterType, String interactionId, String talkSoundPath) {
         this.monsterType = monsterType;
         this.interactionId = interactionId;
+        this.talkSoundPath = talkSoundPath;
     }
 
     public MapEntity createEntity(int x, int y) {
@@ -36,6 +40,10 @@ public enum NpcLibrary {
             entity.withInteractionId(interactionId);
         }
 
+        if (talkSoundPath != null && !talkSoundPath.isBlank()) {
+            entity.withTalkSoundPath(talkSoundPath);
+        }
+
         return entity;
     }
 
@@ -45,5 +53,9 @@ public enum NpcLibrary {
 
     public String getInteractionId() {
         return interactionId;
+    }
+
+    public String getTalkSoundPath() {
+        return talkSoundPath;
     }
 }

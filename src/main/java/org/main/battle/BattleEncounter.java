@@ -1,6 +1,10 @@
 package org.main.battle;
 
+import org.main.content.EnvironmentLibrary;
+import org.main.content.SkillLibrary;
+import org.main.core.InventorySystem;
 import org.main.core.Library;
+import org.main.engine.SoundSystem;
 import org.main.monsters.Monster;
 
 import java.util.ArrayList;
@@ -9,12 +13,18 @@ import java.util.List;
 public class BattleEncounter {
     private final List<BattleActor> allies;
     private final List<BattleActor> enemies;
+    private final SoundSystem soundSystem;
 
     private String battleMessage = "Battle begins!";
 
     public BattleEncounter(List<BattleActor> allies, List<BattleActor> enemies) {
+        this(allies, enemies, null);
+    }
+
+    public BattleEncounter(List<BattleActor> allies, List<BattleActor> enemies, SoundSystem soundSystem) {
         this.allies = allies;
         this.enemies = enemies;
+        this.soundSystem = soundSystem;
 
         assignFormations();
     }
@@ -36,45 +46,44 @@ public class BattleEncounter {
     }
 
     public static BattleEncounter fromMonster(List<Monster> monster) {
+        return fromMonster(monster, null, null, null);
+    }
+
+    public static BattleEncounter fromMonster(
+            List<Monster> monster,
+            InventorySystem.Inventory inventory,
+            SoundSystem soundSystem
+    ) {
+        return fromMonster(monster, inventory, soundSystem, null);
+    }
+
+    public static BattleEncounter fromMonster(
+            List<Monster> monster,
+            InventorySystem.Inventory inventory,
+            SoundSystem soundSystem,
+            EnvironmentLibrary environment
+    ) {
         BattleActor playerActor = new BattleActor(
                 "Player",
                 30,
                 30,
                 null,
-                Library.EntityType.ALLY
-        );
-
-        playerActor.addSkill(new BattleSkill(
-                "Fireball",
-                "Hits every enemy.",
-                Library.SkillTargetShape.ENTIRE_SIDE,
-                Library.EntityType.ENEMY,
-                Library.BattleTargetingMode.MAGIC
-        ));
-
-        playerActor.addSkill(new BattleSkill(
-                "Piercing Line",
-                "Hits one horizontal lane.",
-                Library.SkillTargetShape.SINGLE_ROW,
-                Library.EntityType.ENEMY,
-                Library.BattleTargetingMode.RANGED
-        ));
-
-        playerActor.addSkill(new BattleSkill(
-                "Crush Column",
-                "Hits either the front or back column.",
-                Library.SkillTargetShape.SINGLE_COLUMN,
-                Library.EntityType.ENEMY,
-                Library.BattleTargetingMode.MAGIC
-        ));
-
-        playerActor.addSkill(new BattleSkill(
-                "Heal",
-                "Targets one ally.",
-                Library.SkillTargetShape.SINGLE_TARGET,
                 Library.EntityType.ALLY,
-                Library.BattleTargetingMode.MAGIC
-        ));
+                5
+        );
+        playerActor.setHitSoundPath(environment == null ? null : environment.getPlayerHitSoundPath());
+
+        for (BattleSkill skill : SkillLibrary.createDefaultPlayerSkills()) {
+            playerActor.addSkill(skill);
+        }
+
+        if (inventory != null) {
+            InventorySystem.Item weapon = inventory.getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
+
+            if (weapon != null) {
+                playerActor.setAttackSoundPath(weapon.getUseSoundPath());
+            }
+        }
 
         List<BattleActor> monsterActors = new ArrayList<>();
 
@@ -84,14 +93,18 @@ public class BattleEncounter {
                     monster1.getMaxHp(),
                     monster1.getCurrentHp(),
                     monster1.getType().getImg(),
-                    Library.EntityType.ENEMY
+                    Library.EntityType.ENEMY,
+                    monster1.getAttack()
             );
+            enemy.setAttackSoundPath(monster1.getType().getAttackSoundPath());
+            enemy.setHitSoundPath(monster1.getType().getDamageSoundPath());
             monsterActors.add(enemy);
         });
 
         return new BattleEncounter(
                 List.of(playerActor),
-                monsterActors
+                monsterActors,
+                soundSystem
         );
     }
 
@@ -207,6 +220,17 @@ public class BattleEncounter {
                 + joinActorNames(targets)
                 + ".";
 
+        targets.forEach(target -> {
+            if (skill.getEffectType().equals(Library.EffectType.DAMAGE)) {
+                target.takeDamage(skill.getDamage());
+                playSound(target.getHitSoundPath());
+            } else if (skill.getEffectType().equals(Library.EffectType.HEAL)) {
+                target.healDamage(skill.getDamage());
+            }
+        });
+
+        playSound(skill.getUseSoundPath());
+
         return Library.BattleResult.CONTINUE;
     }
 
@@ -233,7 +257,7 @@ public class BattleEncounter {
     }
 
     public Library.BattleResult handleRunCommand(Library.BattleCommand command) {
-            return handleRun();
+        return handleRun();
     }
 
     public List<BattleActor> getValidTargets(
@@ -349,8 +373,9 @@ public class BattleEncounter {
             return Library.BattleResult.CONTINUE;
         }
 
-        int damage = 5;
+        int damage = attacker.getAttackDamage();
         target.takeDamage(damage);
+        playSound(attacker.getAttackSoundPath());
 
         battleMessage = attacker.getName()
                 + " attacks "
@@ -362,6 +387,40 @@ public class BattleEncounter {
         if (allEnemiesDefeated()) {
             battleMessage = "Victory!";
             return Library.BattleResult.VICTORY;
+        }
+
+        return handleEnemyAttack();
+    }
+
+    private Library.BattleResult handleEnemyAttack() {
+        BattleActor attacker = getFirstLivingEnemy();
+        BattleActor target = getFirstLivingAlly();
+
+        if (attacker == null) {
+            return Library.BattleResult.CONTINUE;
+        }
+
+        if (target == null) {
+            return Library.BattleResult.DEFEAT;
+        }
+
+        int damage = attacker.getAttackDamage();
+        playSound(attacker.getAttackSoundPath());
+        target.takeDamage(damage);
+        playSound(target.getHitSoundPath());
+
+        battleMessage = battleMessage
+                + " "
+                + attacker.getName()
+                + " hits "
+                + target.getName()
+                + " for "
+                + damage
+                + " damage!";
+
+        if (!target.isAlive()) {
+            battleMessage = "Defeat!";
+            return Library.BattleResult.DEFEAT;
         }
 
         return Library.BattleResult.CONTINUE;
@@ -397,5 +456,11 @@ public class BattleEncounter {
 
     public String getBattleMessage() {
         return battleMessage;
+    }
+
+    private void playSound(String soundPath) {
+        if (soundSystem != null) {
+            soundSystem.playSound(soundPath);
+        }
     }
 }

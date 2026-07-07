@@ -13,7 +13,9 @@ public enum MonsterType {
             0,
             5,
             "A quivering mass of dungeon slime.",
-            "src/main/java/org/main/images/monster/Nov-2015/mon/amorphous/jelly.png"
+            "src/main/java/org/main/images/monster/Nov-2015/mon/amorphous/jelly.png",
+            "src/main/java/org/main/sounds/generated/enemy_attack.wav",
+            "src/main/java/org/main/sounds/generated/player_hit.wav"
     ),
 
     GOBLIN(
@@ -23,7 +25,9 @@ public enum MonsterType {
             1,
             12,
             "A wiry goblin clutching a crude blade.",
-            "src/main/java/org/main/images/monster/Nov-2015/mon/goblin.png"
+            "src/main/java/org/main/images/monster/Nov-2015/mon/goblin.png",
+            "src/main/java/org/main/sounds/generated/enemy_attack.wav",
+            "src/main/java/org/main/sounds/generated/player_hit.wav"
     ),
 
     SKELETON(
@@ -33,7 +37,9 @@ public enum MonsterType {
             2,
             18,
             "A rattling corpse animated by old magic.",
-            "src/main/java/org/main/images/monster/Nov-2015/mon/undead/skeletons/skeleton_humanoid_small.png"
+            "src/main/java/org/main/images/monster/Nov-2015/mon/undead/skeletons/skeleton_humanoid_small.png",
+            "src/main/java/org/main/sounds/generated/enemy_attack.wav",
+            "src/main/java/org/main/sounds/generated/player_hit.wav"
     );
 
     private final String displayName;
@@ -43,6 +49,8 @@ public enum MonsterType {
     private final int xpReward;
     private final String description;
     private final BufferedImage img;
+    private final String attackSoundPath;
+    private final String damageSoundPath;
 
     MonsterType(
             String displayName,
@@ -51,7 +59,8 @@ public enum MonsterType {
             int defense,
             int xpReward,
             String description,
-            String imgLocation
+            String imgLocation,
+            String attackSoundPath, String damageSoundPath
     ) {
         this.displayName = displayName;
         this.maxHp = maxHp;
@@ -60,6 +69,8 @@ public enum MonsterType {
         this.xpReward = xpReward;
         this.description = description;
         this.img = loadImage(imgLocation);
+        this.attackSoundPath = attackSoundPath;
+        this.damageSoundPath = damageSoundPath;
     }
 
     private BufferedImage loadImage(String path) {
@@ -98,5 +109,13 @@ public enum MonsterType {
 
     public BufferedImage getImg() {
         return img;
+    }
+
+    public String getAttackSoundPath() {
+        return attackSoundPath;
+    }
+
+    public String getDamageSoundPath() {
+        return damageSoundPath;
     }
 }

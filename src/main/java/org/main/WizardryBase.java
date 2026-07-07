@@ -1,6 +1,7 @@
 package org.main;
 
 import org.main.battle.*;
+import org.main.content.EnvironmentLibrary;
 import org.main.core.*;
 import org.main.engine.*;
 
@@ -14,6 +15,8 @@ public class WizardryBase extends JPanel implements KeyListener {
     private final MiniMapRenderer miniMapRenderer = new MiniMapRenderer();
 
     private final MovementEngine movementEngine = new MovementEngine();
+    private final SoundSystem soundSystem = new SoundSystem();
+    private final EnvironmentLibrary environment = EnvironmentLibrary.STARTER_DUNGEON;
 
     private final BattleRenderer battleRenderer = new BattleRenderer();
 
@@ -38,10 +41,12 @@ public class WizardryBase extends JPanel implements KeyListener {
         dungeonController = new DungeonController(
                 gameState,
                 movementEngine,
-                interactionRegistry
+                interactionRegistry,
+                soundSystem,
+                environment
         );
 
-        battleController = new BattleController(gameState, battleRenderer);
+        battleController = new BattleController(gameState, battleRenderer, soundSystem, environment);
         inventoryPanel = new InventorySystem.InventoryPanel(gameState.getInventory());
 
         /*
@@ -54,6 +59,7 @@ public class WizardryBase extends JPanel implements KeyListener {
         RendererBootstrap.configureDefaultRenderers(dungeonRenderer, battleRenderer);
         installMouseInput();
         GameBootstrap.seedTestContent(gameState);
+        soundSystem.playAmbience(environment.getAmbienceSoundPath());
 
         Timer timer = new Timer(16, e -> {
             long now = System.currentTimeMillis();
@@ -167,6 +173,12 @@ public class WizardryBase extends JPanel implements KeyListener {
             return;
         }
 
+        if (e.getKeyCode() == KeyEvent.VK_ESCAPE && gameState.isDungeonMode()) {
+            openConfigMenu();
+            repaint();
+            return;
+        }
+
         if (e.getKeyCode() == KeyEvent.VK_I && gameState.isDungeonMode()) {
             gameState.toggleInventory();
             repaint();
@@ -185,6 +197,21 @@ public class WizardryBase extends JPanel implements KeyListener {
 
         dungeonController.handleInput(e);
         repaint();
+    }
+
+    private void openConfigMenu() {
+        gameState.openInteraction(InteractionSystem.configMenu(
+                soundSystem,
+                () -> {
+                    Window window = SwingUtilities.getWindowAncestor(this);
+
+                    if (window != null) {
+                        window.dispose();
+                    }
+
+                    System.exit(0);
+                }
+        ));
     }
 
     @Override

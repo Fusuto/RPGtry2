@@ -46,15 +46,25 @@ public final class InventorySystem {
         private final String name;
         private final ItemType itemType;
         private final BufferedImage icon;
+        private final String useSoundPath;
 
         public Item(String name, ItemType itemType, BufferedImage icon) {
+            this(name, itemType, icon, null);
+        }
+
+        public Item(String name, ItemType itemType, BufferedImage icon, String useSoundPath) {
             this.name = name;
             this.itemType = itemType;
             this.icon = icon;
+            this.useSoundPath = useSoundPath;
         }
 
         public Item(String name, ItemType itemType, String iconPath) {
-            this(name, itemType, loadIcon(iconPath));
+            this(name, itemType, iconPath, null);
+        }
+
+        public Item(String name, ItemType itemType, String iconPath, String useSoundPath) {
+            this(name, itemType, loadIcon(iconPath), useSoundPath);
         }
 
         private static BufferedImage loadIcon(String iconPath) {
@@ -88,6 +98,10 @@ public final class InventorySystem {
 
         public BufferedImage getIcon() {
             return icon;
+        }
+
+        public String getUseSoundPath() {
+            return useSoundPath;
         }
 
         public boolean isEquippable() {

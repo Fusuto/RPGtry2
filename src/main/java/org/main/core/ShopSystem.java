@@ -131,7 +131,8 @@ public final class ShopSystem {
             return new InventorySystem.Item(
                     item.getName(),
                     item.getItemType(),
-                    item.getIcon()
+                    item.getIcon(),
+                    item.getUseSoundPath()
             );
         }
     }
