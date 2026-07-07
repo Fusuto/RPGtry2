@@ -1,5 +1,6 @@
 package org.main.core;
 
+import org.main.content.DialogueLibrary;
 import org.main.engine.MapEntity;
 
 import java.awt.AlphaComposite;
@@ -865,105 +866,11 @@ public final class InteractionSystem {
         public static InteractionRegistry createDefault() {
             InteractionRegistry registry = new InteractionRegistry();
 
-            registry.register("old_guard_intro", InteractionRegistry::createOldGuardIntro);
-            registry.register("merchant_basic", InteractionRegistry::createMerchantBasic);
-            registry.register("chest_basic", InteractionRegistry::createChestBasic);
-            registry.register("dungeon_exit", InteractionRegistry::createDungeonExitPrompt);
+            for (DialogueLibrary dialogue : DialogueLibrary.values()) {
+                registry.register(dialogue.getInteractionId(), dialogue::create);
+            }
 
             return registry;
         }
-
-        private static Interaction createOldGuardIntro(InteractionContext context) {
-            MapEntity entity = context.getEntity();
-
-            String npcName = entity != null ? entity.getName() : "Old Guard";
-
-            Conversation conversation =
-                    new Conversation("start")
-                            .addNode(new ConversationNode(
-                                    "start",
-                                    npcName,
-                                    "You look new here. Are you heading deeper into the dungeon?",
-                                    null,
-                                    entity != null ? entity.getStaticImage() : null,
-                                    "Player",
-                                    npcName,
-                                    new ConversationChoice("Who are you?", "who_are_you"),
-                                    new ConversationChoice("What is below?", "below"),
-                                    new ConversationChoice("Goodbye.", null)
-                            ))
-                            .addNode(new ConversationNode(
-                                    "who_are_you",
-                                    npcName,
-                                    "I used to guard the lower floors. Now I mostly warn fools away from them.",
-                                    null,
-                                    entity != null ? entity.getStaticImage() : null,
-                                    "Player",
-                                    npcName,
-                                    new ConversationChoice("What is below?", "below"),
-                                    new ConversationChoice("Goodbye.", null)
-                            ))
-                            .addNode(new ConversationNode(
-                                    "below",
-                                    npcName,
-                                    "Old things. Hungry things. If you go down there, keep your weapon close.",
-                                    null,
-                                    entity != null ? entity.getStaticImage() : null,
-                                    "Player",
-                                    npcName,
-                                    new ConversationChoice("I understand.", null)
-                            ));
-
-            return conversation(conversation);
-        }
-
-        private static Interaction createMerchantBasic(InteractionContext context) {
-            MapEntity entity = context.getEntity();
-
-            String merchantName = entity != null ? entity.getName() : "Merchant";
-
-            return dialogue(
-                    merchantName,
-                    "Looking to buy or sell?",
-                    null,
-                    entity != null ? entity.getStaticImage() : null,
-                    option("Trade", () -> {
-                        context.getGameState().openShop(
-                                ShopSystem.createBasicMerchantShop(merchantName)
-                        );
-                    }),
-                    closeOption("Leave")
-            );
-        }
-
-        private static Interaction createChestBasic(InteractionContext context) {
-            MapEntity entity = context.getEntity();
-
-            String chestName = entity != null ? entity.getName() : "Chest";
-
-            return prompt(
-                    chestName,
-                    "Open the chest?",
-                    option("Open", () -> {
-                        System.out.println("Opened " + chestName + ".");
-                        // Later: add loot here, then maybe remove or mark chest opened.
-                    }),
-                    closeOption("Leave")
-            );
-        }
-
-        private static Interaction createDungeonExitPrompt(InteractionContext context) {
-            return prompt(
-                    "Dungeon Exit",
-                    "Leave the dungeon?",
-                    option("Yes", () -> {
-                        System.out.println("Leaving dungeon...");
-                        // Later: change area / load town / return to menu.
-                    }),
-                    closeOption("No")
-            );
-        }
-
-
     }
 }

@@ -1,5 +1,7 @@
 package org.main.core;
 
+import org.main.content.ItemLibrary;
+
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
@@ -36,44 +38,28 @@ public final class ShopSystem {
         );
 
         shop.addStock(new ShopStockItem(
-                new InventorySystem.Item(
-                        "Potion",
-                        InventorySystem.ItemType.CONSUMABLE,
-                        "src/main/java/org/main/images/monster/Nov-2015/item/potion/brilliant_blue.png"
-                ),
+                ItemLibrary.POTION.createItem(),
                 15,
                 5,
                 -1
         ));
 
         shop.addStock(new ShopStockItem(
-                new InventorySystem.Item(
-                        "Iron Sword",
-                        InventorySystem.ItemType.WEAPON,
-                        "src/main/java/org/main/images/monster/Nov-2015/item/weapon/long_sword1.png"
-                ),
+                ItemLibrary.IRON_SWORD.createItem(),
                 85,
                 28,
                 3
         ));
 
         shop.addStock(new ShopStockItem(
-                new InventorySystem.Item(
-                        "Leather Cap",
-                        InventorySystem.ItemType.HEAD_GEAR,
-                        "src/main/java/org/main/images/monster/Nov-2015/item/armour/headgear/elven_leather_helm.png"
-                ),
+                ItemLibrary.LEATHER_CAP.createItem(),
                 40,
                 13,
                 2
         ));
 
         shop.addStock(new ShopStockItem(
-                new InventorySystem.Item(
-                        "Silver Ring",
-                        InventorySystem.ItemType.RING,
-                        "src/main/java/org/main/images/monster/Nov-2015/item/ring/artefact/urand_shadows.png"
-                ),
+                ItemLibrary.SILVER_RING.createItem(),
                 120,
                 40,
                 1
