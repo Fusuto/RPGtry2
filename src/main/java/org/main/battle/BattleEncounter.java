@@ -231,7 +231,12 @@ public class BattleEncounter {
 
         playSound(skill.getUseSoundPath());
 
-        return Library.BattleResult.CONTINUE;
+        if (allEnemiesDefeated()) {
+            battleMessage = "Victory!";
+            return Library.BattleResult.VICTORY;
+        }
+
+        return handleEnemyTurn();
     }
 
     private String joinActorNames(List<BattleActor> actors) {
@@ -376,6 +381,7 @@ public class BattleEncounter {
         int damage = attacker.getAttackDamage();
         target.takeDamage(damage);
         playSound(attacker.getAttackSoundPath());
+        playSound(target.getHitSoundPath());
 
         battleMessage = attacker.getName()
                 + " attacks "
@@ -389,40 +395,45 @@ public class BattleEncounter {
             return Library.BattleResult.VICTORY;
         }
 
-        return handleEnemyAttack();
+        return handleEnemyTurn();
     }
 
-    private Library.BattleResult handleEnemyAttack() {
-        BattleActor attacker = getFirstLivingEnemy();
-        BattleActor target = getFirstLivingAlly();
+    private Library.BattleResult handleEnemyTurn() {
+        StringBuilder turnSummary = new StringBuilder(battleMessage);
 
-        if (attacker == null) {
-            return Library.BattleResult.CONTINUE;
+        for (BattleActor attacker : enemies) {
+            if (!attacker.isAlive()) {
+                continue;
+            }
+
+            BattleActor target = getFirstLivingAlly();
+
+            if (target == null) {
+                battleMessage = "Defeat!";
+                return Library.BattleResult.DEFEAT;
+            }
+
+            int damage = attacker.getAttackDamage();
+            playSound(attacker.getAttackSoundPath());
+            target.takeDamage(damage);
+            playSound(target.getHitSoundPath());
+
+            turnSummary
+                    .append(" ")
+                    .append(attacker.getName())
+                    .append(" hits ")
+                    .append(target.getName())
+                    .append(" for ")
+                    .append(damage)
+                    .append(" damage!");
+
+            if (!target.isAlive()) {
+                battleMessage = "Defeat!";
+                return Library.BattleResult.DEFEAT;
+            }
         }
 
-        if (target == null) {
-            return Library.BattleResult.DEFEAT;
-        }
-
-        int damage = attacker.getAttackDamage();
-        playSound(attacker.getAttackSoundPath());
-        target.takeDamage(damage);
-        playSound(target.getHitSoundPath());
-
-        battleMessage = battleMessage
-                + " "
-                + attacker.getName()
-                + " hits "
-                + target.getName()
-                + " for "
-                + damage
-                + " damage!";
-
-        if (!target.isAlive()) {
-            battleMessage = "Defeat!";
-            return Library.BattleResult.DEFEAT;
-        }
-
+        battleMessage = turnSummary.toString();
         return Library.BattleResult.CONTINUE;
     }
 
