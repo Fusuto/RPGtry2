@@ -24,9 +24,9 @@ public class WizardryBase extends JPanel implements KeyListener {
     private final TextureManager textureManager = new TextureManager();
     private final InteractionSystem.InteractionWindow interactionWindow =
             new InteractionSystem.InteractionWindow();
+    private final ShopSystem.ShopWindow shopWindow = new ShopSystem.ShopWindow();
     private final InteractionSystem.InteractionRegistry interactionRegistry =
             InteractionSystem.InteractionRegistry.createDefault();
-
     private final GameState gameState = new GameState(DungeonMap.testMap());
     private final DungeonController dungeonController;
     private final BattleController battleController;
@@ -59,7 +59,9 @@ public class WizardryBase extends JPanel implements KeyListener {
         textureManager.loadFromFolder("src/main/java/org/main/images/building");
 
         dungeonRenderer.setTextureManager(textureManager);
+
         dungeonRenderer.setWallTextureTheme("wall", "brick", "stone");
+        dungeonRenderer.setDoorTextureTheme("door", "wood", "handle");
         dungeonRenderer.setFloorTextureTheme("floor", "wood", "planks", "wide");
 
         battleRenderer.setAssets(battleAssets);
@@ -82,6 +84,16 @@ public class WizardryBase extends JPanel implements KeyListener {
                     return;
                 }
 
+                if (gameState.isDungeonMode() && gameState.hasActiveShop()) {
+                    boolean consumed = shopWindow.handleMousePressed(e, gameState);
+
+                    if (consumed) {
+                        repaint();
+                    }
+
+                    return;
+                }
+
                 if (gameState.isDungeonMode() && gameState.isInventoryOpen()) {
                     boolean consumed = inventoryPanel.handleMousePressed(e);
 
@@ -94,6 +106,10 @@ public class WizardryBase extends JPanel implements KeyListener {
             @Override
             public void mouseReleased(MouseEvent e) {
                 if (gameState.isDungeonMode() && gameState.hasActiveInteraction()) {
+                    return;
+                }
+
+                if (gameState.isDungeonMode() && gameState.hasActiveShop()) {
                     return;
                 }
 
@@ -119,6 +135,10 @@ public class WizardryBase extends JPanel implements KeyListener {
                     return;
                 }
 
+                if (gameState.isDungeonMode() && gameState.hasActiveShop()) {
+                    return;
+                }
+
                 if (gameState.isDungeonMode() && gameState.isInventoryOpen()) {
                     boolean consumed = inventoryPanel.handleMouseDragged(e);
 
@@ -134,9 +154,25 @@ public class WizardryBase extends JPanel implements KeyListener {
             }
         });
 
+        /// PAST THIS POINT I AM DIRECTLY GENERATING MOBS TO DO CHANGE HOW THIS WORKS
+
+        //Monster Example
         gameState.addEntity(new MapEntity(new Monster(MonsterType.SLIME), 4, 3));
+
+        //NPC Example
         gameState.addEntity(new MapEntity(new Monster(MonsterType.SKELETON), 6, 1,Library.EntityType.NPC).withInteractionId("old_guard_intro"));
 
+        //Merchant Example
+        gameState.addEntity(
+                new MapEntity(
+                        new Monster(MonsterType.GOBLIN),
+                        5,
+                        7,
+                        Library.EntityType.NPC
+                ).withInteractionId("merchant_basic")
+        );
+
+        //Item Example (on ground)
         InventorySystem.Item potion = new InventorySystem.Item(
                 "Potion",
                 InventorySystem.ItemType.CONSUMABLE,
@@ -144,7 +180,7 @@ public class WizardryBase extends JPanel implements KeyListener {
         );
         gameState.addEntity(new MapEntity(potion, 2, 1));
 
-
+        //Item example (add to inventory)
         gameState.getInventory().addItem(new InventorySystem.Item(
                 "Iron Sword",
                 InventorySystem.ItemType.WEAPON,
@@ -163,6 +199,7 @@ public class WizardryBase extends JPanel implements KeyListener {
                 "src/main/java/org/main/images/monster/Nov-2015/item/ring/artefact/urand_shadows.png"
         ));
 
+        /// END OF THE EXAMPLE
         Timer timer = new Timer(16, e -> {
             long now = System.currentTimeMillis();
             int deltaMs = (int) (now - lastUpdateTime);
@@ -235,6 +272,10 @@ public class WizardryBase extends JPanel implements KeyListener {
                 inventoryPanel.draw(g2, getWidth(), getHeight());
             }
 
+            if (gameState.hasActiveShop()) {
+                shopWindow.draw(g2, gameState, getWidth(), getHeight());
+            }
+
             if (gameState.hasActiveInteraction()) {
                 interactionWindow.draw(
                         g2,
@@ -262,6 +303,16 @@ public class WizardryBase extends JPanel implements KeyListener {
                     e,
                     gameState.getActiveInteraction()
             );
+
+            if (consumed) {
+                repaint();
+            }
+
+            return;
+        }
+
+        if (gameState.isDungeonMode() && gameState.hasActiveShop()) {
+            boolean consumed = shopWindow.handleKeyPressed(e, gameState);
 
             if (consumed) {
                 repaint();

@@ -18,10 +18,21 @@ public class DungeonRenderer {
     private String wallLocation = "wall";
     private String wallMaterial1 = "brick";
     private String wallMaterial2 = "stone";
+
+    private String doorLocation = "door";
+    private String doorMaterial1 = "wood";
+    private String doorMaterial2 = "oak";
+    private String doorSide = "center";
+
     private String floorLocation = "floor";
     private String floorMaterial1 = "brick";
     private String floorMaterial2 = "stone";
     private String floorType = "small";
+
+    private static final double DOOR_OVERLAY_LEFT = 0.23;
+    private static final double DOOR_OVERLAY_RIGHT = 0.77;
+    private static final double DOOR_OVERLAY_TOP = 0.16;
+    private static final double DOOR_OVERLAY_BOTTOM = 0.98;
     private DungeonMap map;
     private int playerX;
     private int playerY;
@@ -83,6 +94,20 @@ public class DungeonRenderer {
         this.wallLocation = location;
         this.wallMaterial1 = material1;
         this.wallMaterial2 = material2;
+    }
+
+    public void setDoorTextureTheme(String location, String material1, String material2) {
+        this.doorLocation = location;
+        this.doorMaterial1 = material1;
+        this.doorMaterial2 = material2;
+        this.doorSide = "center";
+    }
+
+    public void setDoorTextureTheme(String location, String material1, String material2, String side) {
+        this.doorLocation = location;
+        this.doorMaterial1 = material1;
+        this.doorMaterial2 = material2;
+        this.doorSide = side;
     }
 
     public void setFloorTextureTheme(String location, String material1, String material2, String floorType) {
@@ -263,16 +288,151 @@ public class DungeonRenderer {
             drawSpriteCommand(g, command);
             return;
         }
+
+        drawBaseTileFace(g, command);
+        drawDoorOverlayIfNeeded(g, command);
+
+        g.setColor(Color.BLACK);
+        g.drawPolygon(command.polygon);
+    }
+
+    private void drawBaseTileFace(Graphics2D g, RenderCommand command) {
         Color color = getRenderColor(command);
         BufferedImage texture = getTextureForCommand(command);
+
         if (texture != null) {
             drawTexturedFace(g, texture, command);
         } else {
             g.setColor(color);
             g.fillPolygon(command.polygon);
         }
-        g.setColor(Color.BLACK);
-        g.drawPolygon(command.polygon);
+    }
+
+    private void drawDoorOverlayIfNeeded(Graphics2D g, RenderCommand command) {
+        if (command.tileType != Library.TileType.DOOR_CLOSED) {
+            return;
+        }
+
+        /*
+         * Only front-facing closed doors get the visible door overlay.
+         * Side faces remain normal wall texture, which looks better in perspective.
+         */
+        if (command.faceType != FaceType.FRONT) {
+            return;
+        }
+
+        BufferedImage doorTexture = getDoorOverlayTexture();
+
+        if (doorTexture == null) {
+            return;
+        }
+
+        Polygon doorPolygon = createDoorOverlayPolygon(command.polygon);
+
+        drawTextureSection(g, doorTexture, doorPolygon, 0.0, 1.0);
+    }
+
+    private BufferedImage getDoorOverlayTexture() {
+        if (textureManager == null) {
+            return null;
+        }
+
+        BufferedImage texture = textureManager.getDefaultTexture(
+                doorLocation,
+                doorMaterial1,
+                doorMaterial2,
+                doorSide
+        );
+
+        if (texture == null && !"center".equals(doorSide)) {
+            texture = textureManager.getDefaultTexture(
+                    doorLocation,
+                    doorMaterial1,
+                    doorMaterial2,
+                    "center"
+            );
+        }
+
+        return texture;
+    }
+
+    private Polygon createDoorOverlayPolygon(Polygon wallPolygon) {
+        if (wallPolygon == null || wallPolygon.npoints != 4) {
+            return wallPolygon;
+        }
+
+        /*
+         * Expected polygon point order:
+         *
+         * 0 = top-left
+         * 1 = top-right
+         * 2 = bottom-right
+         * 3 = bottom-left
+         *
+         * This creates a smaller rectangle inside the wall face.
+         * The transparent door PNG is then perspective-mapped onto that rectangle.
+         */
+        Point topLeft = new Point(wallPolygon.xpoints[0], wallPolygon.ypoints[0]);
+        Point topRight = new Point(wallPolygon.xpoints[1], wallPolygon.ypoints[1]);
+        Point bottomRight = new Point(wallPolygon.xpoints[2], wallPolygon.ypoints[2]);
+        Point bottomLeft = new Point(wallPolygon.xpoints[3], wallPolygon.ypoints[3]);
+
+        Point doorTopLeft = pointOnQuad(
+                topLeft,
+                topRight,
+                bottomRight,
+                bottomLeft,
+                DOOR_OVERLAY_LEFT,
+                DOOR_OVERLAY_TOP
+        );
+
+        Point doorTopRight = pointOnQuad(
+                topLeft,
+                topRight,
+                bottomRight,
+                bottomLeft,
+                DOOR_OVERLAY_RIGHT,
+                DOOR_OVERLAY_TOP
+        );
+
+        Point doorBottomRight = pointOnQuad(
+                topLeft,
+                topRight,
+                bottomRight,
+                bottomLeft,
+                DOOR_OVERLAY_RIGHT,
+                DOOR_OVERLAY_BOTTOM
+        );
+
+        Point doorBottomLeft = pointOnQuad(
+                topLeft,
+                topRight,
+                bottomRight,
+                bottomLeft,
+                DOOR_OVERLAY_LEFT,
+                DOOR_OVERLAY_BOTTOM
+        );
+
+        return polygonFrom(
+                doorTopLeft,
+                doorTopRight,
+                doorBottomRight,
+                doorBottomLeft
+        );
+    }
+
+    private Point pointOnQuad(
+            Point topLeft,
+            Point topRight,
+            Point bottomRight,
+            Point bottomLeft,
+            double horizontalPercent,
+            double verticalPercent
+    ) {
+        Point top = lerpPoint(topLeft, topRight, horizontalPercent);
+        Point bottom = lerpPoint(bottomLeft, bottomRight, horizontalPercent);
+
+        return lerpPoint(top, bottom, verticalPercent);
     }
 
     private void drawSpriteCommand(Graphics2D g, RenderCommand command) {

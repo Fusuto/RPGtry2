@@ -925,8 +925,11 @@ public final class InteractionSystem {
             return prompt(
                     merchantName,
                     "Looking to buy or sell?",
-                    option("Buy", () -> System.out.println("Open buy menu later.")),
-                    option("Sell", () -> System.out.println("Open sell menu later.")),
+                    option("Trade", () -> {
+                        context.getGameState().openShop(
+                                ShopSystem.createBasicMerchantShop(merchantName)
+                        );
+                    }),
                     closeOption("Leave")
             );
         }
@@ -958,5 +961,7 @@ public final class InteractionSystem {
                     closeOption("No")
             );
         }
+
+
     }
 }

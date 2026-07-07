@@ -134,6 +134,37 @@ public final class InventorySystem {
             return false;
         }
 
+        public Item removeItem(int index) {
+            if (!isValidInventoryIndex(index)) {
+                return null;
+            }
+
+            Item removedItem = items[index];
+            items[index] = null;
+
+            return removedItem;
+        }
+
+        public boolean hasFreeSlot() {
+            for (Item item : items) {
+                if (item == null) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public int getFirstFreeSlotIndex() {
+            for (int i = 0; i < items.length; i++) {
+                if (items[i] == null) {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
         public boolean addItemAt(Item item, int index) {
             if (item == null || !isValidInventoryIndex(index) || items[index] != null) {
                 return false;

@@ -26,6 +26,8 @@ public class GameState {
     private final InventorySystem.Inventory inventory = new InventorySystem.Inventory();
     private boolean inventoryOpen = false;
     private InteractionSystem.Interaction activeInteraction;
+    private ShopSystem.ShopSession activeShop;
+    private int gold = 100;
 
     public enum GameMode {
         DUNGEON,
@@ -157,6 +159,55 @@ public class GameState {
     public void setPlayerPosition(int playerX, int playerY) {
         this.playerX = playerX;
         this.playerY = playerY;
+    }
+
+    public int getGold() {
+        return gold;
+    }
+
+    public void addGold(int amount) {
+        if (amount <= 0) {
+            return;
+        }
+
+        gold += amount;
+    }
+
+    public boolean canSpendGold(int amount) {
+        return amount >= 0 && gold >= amount;
+    }
+
+    public boolean spendGold(int amount) {
+        if (!canSpendGold(amount)) {
+            return false;
+        }
+
+        gold -= amount;
+        return true;
+    }
+
+    public ShopSystem.ShopSession getActiveShop() {
+        return activeShop;
+    }
+
+    public boolean hasActiveShop() {
+        return activeShop != null;
+    }
+
+    public void openShop(ShopSystem.ShopSession shopSession) {
+        activeShop = shopSession;
+
+        closeInventory();
+
+        if (activeInteraction != null) {
+            activeInteraction.close();
+        }
+
+        activeInteraction = null;
+    }
+
+    public void closeShop() {
+        activeShop = null;
     }
 
     public int getDirection() {
