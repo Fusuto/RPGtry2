@@ -1,10 +1,7 @@
 package org.main;
 
 import org.main.battle.*;
-import org.main.core.GameState;
-import org.main.core.DungeonController;
-import org.main.core.InventorySystem;
-import org.main.core.MiniMapRenderer;
+import org.main.core.*;
 import org.main.engine.*;
 import org.main.monsters.Monster;
 import org.main.monsters.MonsterType;
@@ -25,6 +22,10 @@ public class WizardryBase extends JPanel implements KeyListener {
     private final BattleRenderer battleRenderer = new BattleRenderer();
 
     private final TextureManager textureManager = new TextureManager();
+    private final InteractionSystem.InteractionWindow interactionWindow =
+            new InteractionSystem.InteractionWindow();
+    private final InteractionSystem.InteractionRegistry interactionRegistry =
+            InteractionSystem.InteractionRegistry.createDefault();
 
     private final GameState gameState = new GameState(DungeonMap.testMap());
     private final DungeonController dungeonController;
@@ -39,7 +40,12 @@ public class WizardryBase extends JPanel implements KeyListener {
         setFocusable(true);
         addKeyListener(this);
 
-        dungeonController = new DungeonController(gameState, movementEngine);
+        dungeonController = new DungeonController(
+                gameState,
+                movementEngine,
+                interactionRegistry
+        );
+
         battleController = new BattleController(gameState, battleRenderer);
         inventoryPanel = new InventorySystem.InventoryPanel(gameState.getInventory());
 
@@ -63,6 +69,19 @@ public class WizardryBase extends JPanel implements KeyListener {
             public void mousePressed(MouseEvent e) {
                 requestFocusInWindow();
 
+                if (gameState.isDungeonMode() && gameState.hasActiveInteraction()) {
+                    boolean consumed = interactionWindow.handleMousePressed(
+                            e,
+                            gameState.getActiveInteraction()
+                    );
+
+                    if (consumed) {
+                        repaint();
+                    }
+
+                    return;
+                }
+
                 if (gameState.isDungeonMode() && gameState.isInventoryOpen()) {
                     boolean consumed = inventoryPanel.handleMousePressed(e);
 
@@ -74,6 +93,10 @@ public class WizardryBase extends JPanel implements KeyListener {
 
             @Override
             public void mouseReleased(MouseEvent e) {
+                if (gameState.isDungeonMode() && gameState.hasActiveInteraction()) {
+                    return;
+                }
+
                 if (gameState.isDungeonMode() && gameState.isInventoryOpen()) {
                     boolean consumed = inventoryPanel.handleMouseReleased(e);
 
@@ -92,6 +115,10 @@ public class WizardryBase extends JPanel implements KeyListener {
         addMouseMotionListener(new MouseMotionAdapter() {
             @Override
             public void mouseDragged(MouseEvent e) {
+                if (gameState.isDungeonMode() && gameState.hasActiveInteraction()) {
+                    return;
+                }
+
                 if (gameState.isDungeonMode() && gameState.isInventoryOpen()) {
                     boolean consumed = inventoryPanel.handleMouseDragged(e);
 
@@ -108,7 +135,8 @@ public class WizardryBase extends JPanel implements KeyListener {
         });
 
         gameState.addEntity(new MapEntity(new Monster(MonsterType.SLIME), 4, 3));
-        gameState.addEntity(new MapEntity(new Monster(MonsterType.SKELETON), 6, 1));
+        gameState.addEntity(new MapEntity(new Monster(MonsterType.SKELETON), 6, 1,Library.EntityType.NPC).withInteractionId("old_guard_intro"));
+
         InventorySystem.Item potion = new InventorySystem.Item(
                 "Potion",
                 InventorySystem.ItemType.CONSUMABLE,
@@ -202,8 +230,18 @@ public class WizardryBase extends JPanel implements KeyListener {
             );
 
             miniMapRenderer.draw(g2, gameState);
+
             if (gameState.isInventoryOpen()) {
                 inventoryPanel.draw(g2, getWidth(), getHeight());
+            }
+
+            if (gameState.hasActiveInteraction()) {
+                interactionWindow.draw(
+                        g2,
+                        gameState.getActiveInteraction(),
+                        getWidth(),
+                        getHeight()
+                );
             }
         }
 
@@ -219,6 +257,19 @@ public class WizardryBase extends JPanel implements KeyListener {
 
     @Override
     public void keyPressed(KeyEvent e) {
+        if (gameState.isDungeonMode() && gameState.hasActiveInteraction()) {
+            boolean consumed = interactionWindow.handleKeyPressed(
+                    e,
+                    gameState.getActiveInteraction()
+            );
+
+            if (consumed) {
+                repaint();
+            }
+
+            return;
+        }
+
         if (e.getKeyCode() == KeyEvent.VK_I && gameState.isDungeonMode()) {
             gameState.toggleInventory();
             repaint();
@@ -231,10 +282,6 @@ public class WizardryBase extends JPanel implements KeyListener {
             return;
         }
 
-        /*
-         * While the inventory is open, dungeon movement is paused.
-         * This prevents WASD movement while the player is managing items.
-         */
         if (gameState.isInventoryOpen()) {
             return;
         }

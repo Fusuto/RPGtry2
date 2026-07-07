@@ -14,10 +14,16 @@ import java.util.List;
 public class DungeonController {
     private final GameState gameState;
     private final MovementEngine movementEngine;
+    private final InteractionSystem.InteractionRegistry interactionRegistry;
 
-    public DungeonController(GameState gameState, MovementEngine movementEngine) {
+    public DungeonController(
+            GameState gameState,
+            MovementEngine movementEngine,
+            InteractionSystem.InteractionRegistry interactionRegistry
+    ) {
         this.gameState = gameState;
         this.movementEngine = movementEngine;
+        this.interactionRegistry = interactionRegistry;
     }
 
     public void handleInput(KeyEvent e) {
@@ -150,6 +156,10 @@ public class DungeonController {
     }
 
     private void interactWithEntity(MapEntity entity) {
+        if (tryOpenRegisteredInteraction(entity)) {
+            return;
+        }
+
         switch (entity.getType()) {
             case ITEM -> {
                 if (entity.getItem() == null) {
@@ -173,6 +183,29 @@ public class DungeonController {
             case TRAP -> System.out.println("You examine " + entity.getName() + ".");
             default -> System.out.println("You interact with " + entity.getName() + ".");
         }
+    }
+
+    private boolean tryOpenRegisteredInteraction(MapEntity entity) {
+        if (entity == null || !entity.hasInteractionId()) {
+            return false;
+        }
+
+        if (interactionRegistry == null) {
+            return false;
+        }
+
+        InteractionSystem.Interaction interaction = interactionRegistry.create(
+                entity.getInteractionId(),
+                gameState,
+                entity
+        );
+
+        if (interaction == null) {
+            return false;
+        }
+
+        gameState.openInteraction(interaction);
+        return true;
     }
 
     private boolean isPlayerAt(int x, int y) {

@@ -25,6 +25,7 @@ public class GameState {
     private MapEntity currentEnemyEntity;
     private final InventorySystem.Inventory inventory = new InventorySystem.Inventory();
     private boolean inventoryOpen = false;
+    private InteractionSystem.Interaction activeInteraction;
 
     public enum GameMode {
         DUNGEON,
@@ -37,6 +38,30 @@ public class GameState {
         public boolean isBattle() {
             return this == BATTLE;
         }
+    }
+
+    public InteractionSystem.Interaction getActiveInteraction() {
+        if (activeInteraction != null && activeInteraction.isClosed()) {
+            activeInteraction = null;
+        }
+
+        return activeInteraction;
+    }
+
+    public boolean hasActiveInteraction() {
+        return getActiveInteraction() != null;
+    }
+
+    public void openInteraction(InteractionSystem.Interaction interaction) {
+        activeInteraction = interaction;
+    }
+
+    public void closeInteraction() {
+        if (activeInteraction != null) {
+            activeInteraction.close();
+        }
+
+        activeInteraction = null;
     }
 
     public InventorySystem.Inventory getInventory() {

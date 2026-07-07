@@ -14,6 +14,7 @@ public class MapEntity {
     private SpriteAnimation idleAnimation;
     private BufferedImage staticImage;
     private InventorySystem.Item item;
+    private String interactionId;
 
     private int x;
     private int y;
@@ -45,6 +46,11 @@ public class MapEntity {
         this.monster = monster;
     }
 
+    public MapEntity(Monster monster, int x, int y, Library.EntityType type) {
+        this(monster.getName(), type, x, y, monster.getType().getImg());
+        this.monster = monster;
+    }
+
     public BufferedImage getStaticImage() {
         return staticImage;
     }
@@ -57,6 +63,23 @@ public class MapEntity {
         if (idleAnimation != null) {
             idleAnimation.update(deltaMs);
         }
+    }
+
+    public String getInteractionId() {
+        return interactionId;
+    }
+
+    public void setInteractionId(String interactionId) {
+        this.interactionId = interactionId;
+    }
+
+    public boolean hasInteractionId() {
+        return interactionId != null && !interactionId.isBlank();
+    }
+
+    public MapEntity withInteractionId(String interactionId) {
+        this.interactionId = interactionId;
+        return this;
     }
 
     public InventorySystem.Item getItem() {
