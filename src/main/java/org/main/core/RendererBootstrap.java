@@ -15,7 +15,7 @@ public final class RendererBootstrap {
             BattleRenderer battleRenderer
     ) {
         TextureManager textureManager = new TextureManager();
-        textureManager.loadFromFolder("src/main/java/org/main/images/building");
+        textureManager.loadFromFolder("assets/images/building");
 
         dungeonRenderer.setTextureManager(textureManager);
         dungeonRenderer.setEnvironmentThemes(EnvironmentLibrary.STARTER_DUNGEON.getThemes());

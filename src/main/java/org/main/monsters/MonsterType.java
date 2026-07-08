@@ -1,9 +1,8 @@
 package org.main.monsters;
 
-import javax.imageio.ImageIO;
+import org.main.engine.AssetLoader;
+
 import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
 
 public enum MonsterType {
     SLIME(
@@ -13,9 +12,9 @@ public enum MonsterType {
             0,
             5,
             "A quivering mass of dungeon slime.",
-            "src/main/java/org/main/images/monster/Nov-2015/mon/amorphous/jelly.png",
-            "src/main/java/org/main/sounds/generated/enemy_attack.wav",
-            "src/main/java/org/main/sounds/generated/player_hit.wav"
+            "assets/images/monster/Nov-2015/mon/amorphous/jelly.png",
+            "assets/sounds/generated/enemy_attack.wav",
+            "assets/sounds/generated/player_hit.wav"
     ),
 
     GOBLIN(
@@ -25,9 +24,9 @@ public enum MonsterType {
             1,
             12,
             "A wiry goblin clutching a crude blade.",
-            "src/main/java/org/main/images/monster/Nov-2015/mon/goblin.png",
-            "src/main/java/org/main/sounds/generated/enemy_attack.wav",
-            "src/main/java/org/main/sounds/generated/player_hit.wav"
+            "assets/images/monster/Nov-2015/mon/goblin.png",
+            "assets/sounds/generated/enemy_attack.wav",
+            "assets/sounds/generated/player_hit.wav"
     ),
 
     SKELETON(
@@ -37,9 +36,9 @@ public enum MonsterType {
             2,
             18,
             "A rattling corpse animated by old magic.",
-            "src/main/java/org/main/images/monster/Nov-2015/mon/undead/skeletons/skeleton_humanoid_small.png",
-            "src/main/java/org/main/sounds/generated/enemy_attack.wav",
-            "src/main/java/org/main/sounds/generated/player_hit.wav"
+            "assets/images/monster/Nov-2015/mon/undead/skeletons/skeleton_humanoid_small.png",
+            "assets/sounds/generated/enemy_attack.wav",
+            "assets/sounds/generated/player_hit.wav"
     );
 
     private final String displayName;
@@ -74,13 +73,7 @@ public enum MonsterType {
     }
 
     private BufferedImage loadImage(String path) {
-        try {
-            return ImageIO.read(new File(path));
-        } catch (IOException e) {
-            System.out.println("Failed to load image: " + path);
-            e.printStackTrace();
-            return null;
-        }
+        return AssetLoader.loadImage(path);
     }
 
     public String getDisplayName() {

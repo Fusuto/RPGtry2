@@ -1,9 +1,8 @@
 package org.main.battle;
 
-import javax.imageio.ImageIO;
+import org.main.engine.AssetLoader;
+
 import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
 
 public class BattleAssets {
     private BufferedImage battleBackground;
@@ -17,32 +16,19 @@ public class BattleAssets {
     public static BattleAssets loadDefault() {
         BattleAssets assets = new BattleAssets();
 
-        assets.battleBackground = loadImage("src/main/java/org/main/images/battle_backgrounds/Willibab's Pixel Battle Backgrounds/320x240/Dungeon/Ruins_1.png");
+        assets.battleBackground = loadImage("assets/images/battle_backgrounds/Willibab's Pixel Battle Backgrounds/320x240/Dungeon/Ruins_1.png");
 
-        assets.commandPanelBackground = loadImage("src/main/java/org/main/images/ui/01_UI_Resources/04MainMenu/menu_character_bg.png");
-        assets.statusPanelBackground = loadImage("src/main/java/org/main/images/ui/01_UI_Resources/04MainMenu/menu_character_bg.png");
+        assets.commandPanelBackground = loadImage("assets/images/ui/01_UI_Resources/04MainMenu/menu_character_bg.png");
+        assets.statusPanelBackground = loadImage("assets/images/ui/01_UI_Resources/04MainMenu/menu_character_bg.png");
 
-        assets.buttonNormal = loadImage("src/main/java/org/main/images/ui/01_UI_Resources/03CommonPopup + Button/common_btn.png");
-        assets.buttonHover = loadImage("src/main/java/org/main/images/ui/01_UI_Resources/03CommonPopup + Button/common_btn_choice.png");
+        assets.buttonNormal = loadImage("assets/images/ui/01_UI_Resources/03CommonPopup + Button/common_btn.png");
+        assets.buttonHover = loadImage("assets/images/ui/01_UI_Resources/03CommonPopup + Button/common_btn_choice.png");
 
         return assets;
     }
 
     private static BufferedImage loadImage(String path) {
-        try {
-            File file = new File(path);
-
-            if (!file.exists()) {
-                System.out.println("Battle asset not found: " + path);
-                return null;
-            }
-
-            return ImageIO.read(file);
-        } catch (IOException e) {
-            System.out.println("Failed to load battle asset: " + path);
-            e.printStackTrace();
-            return null;
-        }
+        return AssetLoader.loadImage(path);
     }
 
     public BufferedImage getBattleBackground() {

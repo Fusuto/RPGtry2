@@ -1,11 +1,10 @@
 package org.main.core;
 
-import javax.imageio.ImageIO;
+import org.main.engine.AssetLoader;
+
 import java.awt.*;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
 import java.util.EnumMap;
 import java.util.Map;
 
@@ -72,20 +71,7 @@ public final class InventorySystem {
                 return null;
             }
 
-            try {
-                File file = new File(iconPath);
-
-                if (!file.exists()) {
-                    System.out.println("Item icon not found: " + iconPath);
-                    return null;
-                }
-
-                return ImageIO.read(file);
-            } catch (IOException e) {
-                System.out.println("Failed to load item icon: " + iconPath);
-                e.printStackTrace();
-                return null;
-            }
+            return AssetLoader.loadImage(iconPath);
         }
 
         public String getName() {

@@ -12,7 +12,7 @@ public enum SkillLibrary {
             Library.SkillTargetShape.ENTIRE_SIDE,
             Library.EntityType.ENEMY,
             Library.BattleTargetingMode.MAGIC,
-            "src/main/java/org/main/sounds/generated/thrown_fireball.wav",
+            "assets/sounds/generated/thrown_fireball.wav",
             5,
             Library.EffectType.DAMAGE
     ),
@@ -45,7 +45,7 @@ public enum SkillLibrary {
             Library.SkillTargetShape.SINGLE_TARGET,
             Library.EntityType.ALLY,
             Library.BattleTargetingMode.MAGIC,
-            "src/main/java/org/main/sounds/generated/fire_wave.wav",
+            "assets/sounds/generated/fire_wave.wav",
             5,
             Library.EffectType.HEAL
     );

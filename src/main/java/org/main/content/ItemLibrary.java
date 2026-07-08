@@ -6,28 +6,28 @@ public enum ItemLibrary {
     POTION(
             "Potion",
             InventorySystem.ItemType.CONSUMABLE,
-            "src/main/java/org/main/images/monster/Nov-2015/item/potion/brilliant_blue.png",
+            "assets/images/monster/Nov-2015/item/potion/brilliant_blue.png",
             null
     ),
 
     IRON_SWORD(
             "Iron Sword",
             InventorySystem.ItemType.WEAPON,
-            "src/main/java/org/main/images/monster/Nov-2015/item/weapon/long_sword1.png",
+            "assets/images/monster/Nov-2015/item/weapon/long_sword1.png",
             null
     ),
 
     LEATHER_CAP(
             "Leather Cap",
             InventorySystem.ItemType.HEAD_GEAR,
-            "src/main/java/org/main/images/monster/Nov-2015/item/armour/headgear/elven_leather_helm.png",
+            "assets/images/monster/Nov-2015/item/armour/headgear/elven_leather_helm.png",
             null
     ),
 
     SILVER_RING(
             "Silver Ring",
             InventorySystem.ItemType.RING,
-            "src/main/java/org/main/images/monster/Nov-2015/item/ring/artefact/urand_shadows.png",
+            "assets/images/monster/Nov-2015/item/ring/artefact/urand_shadows.png",
             null
     );
 

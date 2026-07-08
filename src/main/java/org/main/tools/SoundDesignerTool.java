@@ -1,5 +1,7 @@
 package org.main.tools;
 
+import org.main.engine.AssetLoader;
+
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioInputStream;
@@ -39,7 +41,7 @@ public class SoundDesignerTool extends JFrame {
     private static final int STEP_COUNT = 32;
     private static final int MIN_NOTE = 24;
     private static final int MAX_NOTE = 84;
-    private static final Path OUTPUT_FOLDER = Path.of("src/main/java/org/main/sounds/generated");
+    private static final Path OUTPUT_FOLDER = AssetLoader.generatedSoundsFolder();
 
     private final int[] notes = new int[STEP_COUNT];
     private final PitchGrid pitchGrid = new PitchGrid(notes);

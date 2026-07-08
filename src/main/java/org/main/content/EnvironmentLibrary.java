@@ -16,10 +16,10 @@ public enum EnvironmentLibrary {
                     EnvironmentTheme.texture("door", "metal", "gate", "lock"),
                     EnvironmentTheme.texture("floor", "tiles", "sand", "small")
             ),
-            "src/main/java/org/main/sounds/generated/Bryan stuff 11.wav",
-            "src/main/java/org/main/sounds/generated/Concept 4.wav",
-            "src/main/java/org/main/sounds/generated/footstep.wav",
-            "src/main/java/org/main/sounds/generated/player_hit.wav"
+            "assets/sounds/generated/Bryan stuff 11.wav",
+            "assets/sounds/generated/Concept 4.wav",
+            "assets/sounds/generated/footstep.wav",
+            "assets/sounds/generated/player_hit.wav"
     );
 
     private final List<EnvironmentTheme> themes;

@@ -6,7 +6,6 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
 import javax.sound.sampled.FloatControl;
 import javax.sound.sampled.LineEvent;
-import java.io.File;
 
 public class SoundSystem {
     private static final double DEFAULT_VOLUME = 0.20;
@@ -127,14 +126,7 @@ public class SoundSystem {
 
     private Clip loadClip(String soundPath) {
         try {
-            File file = new File(soundPath);
-
-            if (!file.exists()) {
-                System.out.println("Sound not found: " + soundPath);
-                return null;
-            }
-
-            AudioInputStream audioInputStream = createPlayableAudioStream(file);
+            AudioInputStream audioInputStream = createPlayableAudioStream(soundPath);
             Clip clip = AudioSystem.getClip();
             clip.open(audioInputStream);
             return clip;
@@ -145,8 +137,8 @@ public class SoundSystem {
         }
     }
 
-    private AudioInputStream createPlayableAudioStream(File file) throws Exception {
-        AudioInputStream sourceStream = AudioSystem.getAudioInputStream(file);
+    private AudioInputStream createPlayableAudioStream(String soundPath) throws Exception {
+        AudioInputStream sourceStream = AssetLoader.openAudioStream(soundPath);
         AudioFormat sourceFormat = sourceStream.getFormat();
 
         if (isClipFriendlyFormat(sourceFormat)) {

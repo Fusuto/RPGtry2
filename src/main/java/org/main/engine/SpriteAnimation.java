@@ -1,9 +1,6 @@
 package org.main.engine;
 
-import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
 
 public class SpriteAnimation {
     private final BufferedImage[] frames;
@@ -26,8 +23,13 @@ public class SpriteAnimation {
             int frameCount,
             int frameDurationMs
     ) {
+        BufferedImage sheet = AssetLoader.loadImage(path);
+
+        if (sheet == null) {
+            throw new RuntimeException("Failed to load sprite sheet: " + path);
+        }
+
         try {
-            BufferedImage sheet = ImageIO.read(new File(path));
             BufferedImage[] frames = new BufferedImage[frameCount];
 
             for (int i = 0; i < frameCount; i++) {
@@ -40,7 +42,7 @@ public class SpriteAnimation {
             }
 
             return new SpriteAnimation(frames, frameDurationMs);
-        } catch (IOException e) {
+        } catch (RuntimeException e) {
             throw new RuntimeException("Failed to load sprite sheet: " + path, e);
         }
     }

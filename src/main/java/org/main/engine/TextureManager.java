@@ -1,10 +1,6 @@
 package org.main.engine;
 
-import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.*;
 
 public class TextureManager {
@@ -35,24 +31,19 @@ public class TextureManager {
     private final Map<TextureKey, List<TextureEntry>> textures = new HashMap<>();
 
     public void loadFromFolder(String folderPath) {
-        Path folder = Path.of(folderPath);
+        List<AssetLoader.ImageAsset> imageAssets = AssetLoader.loadImagesFromFolder(folderPath);
 
-        if (!Files.exists(folder)) {
-            System.out.println("Texture folder not found: " + folder.toAbsolutePath());
+        if (imageAssets.isEmpty()) {
+            System.out.println("Texture folder not found or empty: " + folderPath);
             return;
         }
 
-        try {
-            Files.list(folder)
-                    .filter(Files::isRegularFile)
-                    .forEach(this::loadTextureFile);
-        } catch (IOException e) {
-            e.printStackTrace();
+        for (AssetLoader.ImageAsset imageAsset : imageAssets) {
+            loadTexture(imageAsset.fileName(), imageAsset.image());
         }
     }
 
-    private void loadTextureFile(Path path) {
-        String fileName = path.getFileName().toString();
+    private void loadTexture(String fileName, BufferedImage image) {
         String lowerName = fileName.toLowerCase(Locale.ROOT);
 
         if (!lowerName.endsWith(".png")
@@ -82,18 +73,16 @@ public class TextureManager {
         TextureKey key = new TextureKey(location, material1, material2, side);
         boolean isDefault = parts.length == 4;
 
-        try {
-            BufferedImage image = ImageIO.read(path.toFile());
-
-            textures
-                    .computeIfAbsent(key, ignored -> new ArrayList<>())
-                    .add(new TextureEntry(image, isDefault));
-
-            System.out.println("Loaded texture: " + fileName);
-        } catch (IOException e) {
-            System.out.println("Failed to load texture: " + fileName);
-            e.printStackTrace();
+        if (image == null) {
+            System.out.println("Skipping unreadable texture: " + fileName);
+            return;
         }
+
+        textures
+                .computeIfAbsent(key, ignored -> new ArrayList<>())
+                .add(new TextureEntry(image, isDefault));
+
+        System.out.println("Loaded texture: " + fileName);
     }
 
     public BufferedImage getTexture(

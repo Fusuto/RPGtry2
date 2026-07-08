@@ -9,13 +9,13 @@ public enum NpcLibrary {
     OLD_GUARD(
             MonsterType.SKELETON,
             "old_guard_intro",
-            "src/main/java/org/main/sounds/generated/skelle_talk.wav"
+            "assets/sounds/generated/skelle_talk.wav"
     ),
 
     GOBLIN_MERCHANT(
             MonsterType.GOBLIN,
             "merchant_basic",
-            "src/main/java/org/main/sounds/generated/gobbo_talk.wav"
+            "assets/sounds/generated/gobbo_talk.wav"
     );
 
     private final MonsterType monsterType;
