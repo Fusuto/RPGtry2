@@ -43,14 +43,25 @@ public class DungeonController {
     }
 
     public void handleInput(KeyEvent e) {
-        switch (e.getKeyCode()) {
-            case KeyEvent.VK_W, KeyEvent.VK_NUMPAD8 -> moveForward();
-            case KeyEvent.VK_A, KeyEvent.VK_NUMPAD4 -> strafeLeft();
-            case KeyEvent.VK_D, KeyEvent.VK_NUMPAD6 -> strafeRight();
-            case KeyEvent.VK_S, KeyEvent.VK_NUMPAD2 -> moveBackward();
-            case KeyEvent.VK_Q, KeyEvent.VK_NUMPAD7 -> turnLeft();
-            case KeyEvent.VK_E, KeyEvent.VK_NUMPAD9 -> turnRight();
-            case KeyEvent.VK_F, KeyEvent.VK_ENTER, KeyEvent.VK_SPACE -> interact();
+        InputBindings bindings = gameState.getInputBindings();
+        int keyCode = e.getKeyCode();
+
+        if (bindings.matches(InputBindings.Action.MOVE_FORWARD, keyCode) || keyCode == KeyEvent.VK_NUMPAD8) {
+            moveForward();
+        } else if (bindings.matches(InputBindings.Action.STRAFE_LEFT, keyCode) || keyCode == KeyEvent.VK_NUMPAD4) {
+            strafeLeft();
+        } else if (bindings.matches(InputBindings.Action.STRAFE_RIGHT, keyCode) || keyCode == KeyEvent.VK_NUMPAD6) {
+            strafeRight();
+        } else if (bindings.matches(InputBindings.Action.MOVE_BACKWARD, keyCode) || keyCode == KeyEvent.VK_NUMPAD2) {
+            moveBackward();
+        } else if (bindings.matches(InputBindings.Action.TURN_LEFT, keyCode) || keyCode == KeyEvent.VK_NUMPAD7) {
+            turnLeft();
+        } else if (bindings.matches(InputBindings.Action.TURN_RIGHT, keyCode) || keyCode == KeyEvent.VK_NUMPAD9) {
+            turnRight();
+        } else if (bindings.matches(InputBindings.Action.INTERACT, keyCode)
+                || keyCode == KeyEvent.VK_ENTER
+                || keyCode == KeyEvent.VK_SPACE) {
+            interact();
         }
     }
 
@@ -179,7 +190,7 @@ public class DungeonController {
 
         gameState.setCurrentEncounter(BattleEncounter.fromMonster(
                 monsters,
-                gameState.getInventory(),
+                gameState.getPlayerCharacter(),
                 soundSystem,
                 environment
         ));

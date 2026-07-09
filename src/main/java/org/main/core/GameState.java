@@ -10,6 +10,7 @@ import java.util.List;
 public class GameState {
     private final DungeonMap dungeonMap;
     private final List<MapEntity> entities = new ArrayList<>();
+    private final InputBindings inputBindings = new InputBindings();
 
     private GameMode gameMode = GameMode.DUNGEON;
 
@@ -23,8 +24,9 @@ public class GameState {
 
     private BattleEncounter currentEncounter;
     private MapEntity currentEnemyEntity;
-    private final InventorySystem.Inventory inventory = new InventorySystem.Inventory();
+    private final PlayerCharacter playerCharacter;
     private boolean inventoryOpen = false;
+    private boolean skillsOpen = false;
     private InteractionSystem.Interaction activeInteraction;
     private ShopSystem.ShopSession activeShop;
     private int gold = 100;
@@ -55,6 +57,9 @@ public class GameState {
     }
 
     public void openInteraction(InteractionSystem.Interaction interaction) {
+        closeInventory();
+        closeSkills();
+        closeShop();
         activeInteraction = interaction;
     }
 
@@ -66,8 +71,12 @@ public class GameState {
         activeInteraction = null;
     }
 
+    public PlayerCharacter getPlayerCharacter() {
+        return playerCharacter;
+    }
+
     public InventorySystem.Inventory getInventory() {
-        return inventory;
+        return playerCharacter.getInventory();
     }
 
     public boolean isInventoryOpen() {
@@ -75,19 +84,54 @@ public class GameState {
     }
 
     public void setInventoryOpen(boolean inventoryOpen) {
+        if (inventoryOpen) {
+            closeSkills();
+            closeShop();
+            closeInteraction();
+        }
+
         this.inventoryOpen = inventoryOpen;
     }
 
     public void toggleInventory() {
-        inventoryOpen = !inventoryOpen;
+        setInventoryOpen(!inventoryOpen);
     }
 
     public void closeInventory() {
         inventoryOpen = false;
     }
 
+    public boolean isSkillsOpen() {
+        return skillsOpen;
+    }
+
+    public void setSkillsOpen(boolean skillsOpen) {
+        if (skillsOpen) {
+            closeInventory();
+            closeShop();
+            closeInteraction();
+        }
+
+        this.skillsOpen = skillsOpen;
+    }
+
+    public void toggleSkills() {
+        setSkillsOpen(!skillsOpen);
+    }
+
+    public void closeSkills() {
+        skillsOpen = false;
+    }
+
     public GameState(DungeonMap dungeonMap) {
+        this(dungeonMap, GameBootstrap.createDefaultPlayerCharacter());
+    }
+
+    public GameState(DungeonMap dungeonMap, PlayerCharacter playerCharacter) {
         this.dungeonMap = dungeonMap;
+        this.playerCharacter = playerCharacter == null
+                ? GameBootstrap.createDefaultPlayerCharacter()
+                : playerCharacter;
     }
 
     public boolean isMiniMapUnlocked() {
@@ -108,6 +152,10 @@ public class GameState {
 
     public DungeonMap getDungeonMap() {
         return dungeonMap;
+    }
+
+    public InputBindings getInputBindings() {
+        return inputBindings;
     }
 
     public List<MapEntity> getEntities() {
@@ -198,6 +246,7 @@ public class GameState {
         activeShop = shopSession;
 
         closeInventory();
+        closeSkills();
 
         if (activeInteraction != null) {
             activeInteraction.close();

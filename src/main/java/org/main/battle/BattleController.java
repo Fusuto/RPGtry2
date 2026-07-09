@@ -248,6 +248,8 @@ public class BattleController {
     }
 
     private void endBattle(boolean removeEnemy) {
+        syncPlayerCharacterHp();
+
         if (removeEnemy && gameState.getCurrentEnemyEntity() != null) {
             gameState.removeEntity(gameState.getCurrentEnemyEntity());
         }
@@ -268,5 +270,16 @@ public class BattleController {
                 soundSystem.playAmbience(environment.getAmbienceSoundPath());
             }
         }
+    }
+
+    private void syncPlayerCharacterHp() {
+        BattleEncounter currentEncounter = gameState.getCurrentEncounter();
+
+        if (currentEncounter == null || currentEncounter.getAllies().isEmpty()) {
+            return;
+        }
+
+        BattleActor playerActor = currentEncounter.getAllies().get(0);
+        gameState.getPlayerCharacter().setCurrHp(playerActor.getCurrentHp());
     }
 }

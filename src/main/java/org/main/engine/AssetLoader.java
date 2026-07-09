@@ -5,6 +5,7 @@ import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import java.awt.image.BufferedImage;
 import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -53,8 +54,7 @@ public final class AssetLoader {
             }
         }
 
-        String resourcePath = normalizeResourcePath(assetPath);
-        try (InputStream stream = CLASS_LOADER.getResourceAsStream(resourcePath)) {
+        try (InputStream stream = openResourceStream(normalizeResourcePath(assetPath))) {
             if (stream == null) {
                 System.out.println("Image resource not found: " + assetPath);
                 return null;
@@ -74,8 +74,7 @@ public final class AssetLoader {
             return AudioSystem.getAudioInputStream(externalPath.toFile());
         }
 
-        String resourcePath = normalizeResourcePath(assetPath);
-        InputStream stream = CLASS_LOADER.getResourceAsStream(resourcePath);
+        InputStream stream = openResourceStream(normalizeResourcePath(assetPath));
         if (stream == null) {
             throw new IOException("Audio resource not found: " + assetPath);
         }
@@ -116,7 +115,7 @@ public final class AssetLoader {
                 continue;
             }
 
-            try (InputStream stream = CLASS_LOADER.getResourceAsStream(resourcePath)) {
+            try (InputStream stream = openResourceStream(resourcePath)) {
                 if (stream != null) {
                     assets.add(new ImageAsset(fileName, ImageIO.read(stream)));
                     loadedFileNames.add(fileName);
@@ -131,7 +130,11 @@ public final class AssetLoader {
     }
 
     public static Path generatedSoundsFolder() {
-        return DATA_FOLDER.resolve("sounds").resolve("generated");
+        return ApplicationPaths.dataFolder().resolve("sounds").resolve("generated");
+    }
+
+    public static Path assetPacksFolder() {
+        return ApplicationPaths.dataFolder().resolve("asset-packs");
     }
 
     private static Path resolveExternalPath(String assetPath) {
@@ -151,11 +154,11 @@ public final class AssetLoader {
         }
 
         if (normalizedPath.startsWith("sounds/generated/")) {
-            return DATA_FOLDER.resolve(normalizedPath);
+            return generatedSoundsFolder().resolve(normalizedPath.substring("sounds/generated/".length()));
         }
 
         if (normalizedPath.startsWith("data/")) {
-            return Path.of(normalizedPath);
+            return ApplicationPaths.resolveApplicationPath(normalizedPath);
         }
 
         return directPath;
@@ -218,12 +221,57 @@ public final class AssetLoader {
                     collectJarEntries(jarFile, normalizedFolder, resourcePaths);
                 }
             }
+
+            for (Path assetPack : listExternalAssetPacks()) {
+                try (JarFile jarFile = new JarFile(assetPack.toFile())) {
+                    collectJarEntries(jarFile, normalizedFolder, resourcePaths);
+                }
+            }
         } catch (IOException | URISyntaxException e) {
             System.out.println("Failed to list resource folder: " + folderPath);
             e.printStackTrace();
         }
 
         return new ArrayList<>(resourcePaths);
+    }
+
+    private static InputStream openResourceStream(String resourcePath) throws IOException {
+        for (Path assetPack : listExternalAssetPacks()) {
+            try (JarFile jarFile = new JarFile(assetPack.toFile())) {
+                JarEntry entry = jarFile.getJarEntry(resourcePath);
+                if (entry == null || entry.isDirectory()) {
+                    continue;
+                }
+
+                try (InputStream stream = jarFile.getInputStream(entry)) {
+                    return new ByteArrayInputStream(stream.readAllBytes());
+                }
+            }
+        }
+
+        InputStream bundledStream = CLASS_LOADER.getResourceAsStream(resourcePath);
+        if (bundledStream != null) {
+            return bundledStream;
+        }
+
+        return null;
+    }
+
+    private static List<Path> listExternalAssetPacks() {
+        if (!Files.isDirectory(assetPacksFolder())) {
+            return List.of();
+        }
+
+        try {
+            return Files.list(assetPacksFolder())
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jar"))
+                    .toList();
+        } catch (IOException e) {
+            System.out.println("Failed to list asset packs: " + assetPacksFolder());
+            e.printStackTrace();
+            return List.of();
+        }
     }
 
     private static void collectJarEntries(JarFile jarFile, String folderPath, Set<String> resourcePaths) {

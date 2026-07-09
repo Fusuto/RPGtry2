@@ -14,9 +14,11 @@ import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.Shape;
 import java.awt.Stroke;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
+import java.awt.event.MouseWheelEvent;
 import java.awt.image.BufferedImage;
 import javax.swing.SwingUtilities;
 import java.util.ArrayList;
@@ -74,7 +76,20 @@ public final class InteractionSystem {
     }
 
     public static Interaction configMenu(SoundSystem soundSystem, Runnable exitAction) {
-        return new Interaction(new ConfigInteractionContent(soundSystem, exitAction));
+        return configMenu(soundSystem, null, exitAction, null);
+    }
+
+    public static Interaction configMenu(
+            SoundSystem soundSystem,
+            InputBindings inputBindings,
+            Runnable exitAction,
+            Runnable controlsAction
+    ) {
+        return new Interaction(new ConfigInteractionContent(soundSystem, inputBindings, exitAction, controlsAction));
+    }
+
+    public static Interaction controlsMenu(InputBindings inputBindings) {
+        return new Interaction(new ControlsInteractionContent(inputBindings));
     }
 
     public static InteractionOption closeOption(String label) {
@@ -121,6 +136,10 @@ public final class InteractionSystem {
             content.selectOption(optionIndex, this, alternateAction);
         }
 
+        private boolean handleKeyPressed(KeyEvent e) {
+            return content.handleKeyPressed(e, this);
+        }
+
         public void close() {
             closed = true;
         }
@@ -134,6 +153,10 @@ public final class InteractionSystem {
         InteractionModel getModel();
 
         void selectOption(int optionIndex, Interaction interaction, boolean alternateAction);
+
+        default boolean handleKeyPressed(KeyEvent e, Interaction interaction) {
+            return false;
+        }
     }
 
     private static class StaticInteractionContent implements InteractionContent {
@@ -219,6 +242,7 @@ public final class InteractionSystem {
         private final String leftPortraitLabel;
         private final String rightPortraitLabel;
         private final boolean escapeCloses;
+        private final boolean menu;
         private final List<InteractionOption> options;
 
         public InteractionModel(
@@ -231,6 +255,30 @@ public final class InteractionSystem {
                 boolean escapeCloses,
                 List<InteractionOption> options
         ) {
+            this(
+                    title,
+                    bodyText,
+                    leftPortrait,
+                    rightPortrait,
+                    leftPortraitLabel,
+                    rightPortraitLabel,
+                    escapeCloses,
+                    false,
+                    options
+            );
+        }
+
+        public InteractionModel(
+                String title,
+                String bodyText,
+                BufferedImage leftPortrait,
+                BufferedImage rightPortrait,
+                String leftPortraitLabel,
+                String rightPortraitLabel,
+                boolean escapeCloses,
+                boolean menu,
+                List<InteractionOption> options
+        ) {
             this.title = title == null ? "" : title;
             this.bodyText = bodyText == null ? "" : bodyText;
             this.leftPortrait = leftPortrait;
@@ -238,6 +286,7 @@ public final class InteractionSystem {
             this.leftPortraitLabel = leftPortraitLabel;
             this.rightPortraitLabel = rightPortraitLabel;
             this.escapeCloses = escapeCloses;
+            this.menu = menu;
             this.options = options == null ? List.of() : List.copyOf(options);
         }
 
@@ -267,6 +316,10 @@ public final class InteractionSystem {
 
         public boolean isEscapeCloses() {
             return escapeCloses;
+        }
+
+        public boolean isMenu() {
+            return menu;
         }
 
         public List<InteractionOption> getOptions() {
@@ -475,11 +528,20 @@ public final class InteractionSystem {
 
         private static final int OPTION_HEIGHT = 32;
         private static final int OPTION_GAP = 7;
+        private static final int SCROLL_STEP = 28;
 
         private final List<Rectangle> optionBounds = new ArrayList<>();
+        private final List<Integer> optionIndexes = new ArrayList<>();
+        private int bodyScrollOffset = 0;
+        private int optionScrollOffset = 0;
+        private Rectangle lastBodyClip = new Rectangle();
+        private Rectangle lastOptionsClip = new Rectangle();
+        private int lastBodyContentHeight = 0;
+        private int lastOptionsContentHeight = 0;
 
         public void draw(Graphics2D g, Interaction interaction, int panelWidth, int panelHeight) {
             optionBounds.clear();
+            optionIndexes.clear();
 
             if (interaction == null || interaction.isClosed()) {
                 return;
@@ -499,7 +561,7 @@ public final class InteractionSystem {
 
             drawDimBackground(g, panelWidth, panelHeight);
 
-            Rectangle windowBounds = calculateWindowBounds(panelWidth, panelHeight);
+            Rectangle windowBounds = calculateWindowBounds(panelWidth, panelHeight, model);
 
             drawWindowBackground(g, windowBounds);
             drawPortraits(g, model, windowBounds);
@@ -522,9 +584,56 @@ public final class InteractionSystem {
                 Rectangle bounds = optionBounds.get(i);
 
                 if (bounds.contains(point)) {
-                    interaction.selectOption(i, SwingUtilities.isRightMouseButton(e));
+                    interaction.selectOption(optionIndexes.get(i), SwingUtilities.isRightMouseButton(e));
                     return true;
                 }
+            }
+
+            return false;
+        }
+
+        public boolean handleMouseWheelMoved(MouseWheelEvent e, Interaction interaction) {
+            if (interaction == null || interaction.isClosed()) {
+                return false;
+            }
+
+            Point point = e.getPoint();
+            int amount = e.getWheelRotation() * SCROLL_STEP;
+
+            if (lastOptionsClip.contains(point) && canScrollOptions()) {
+                optionScrollOffset = clampScroll(
+                        optionScrollOffset + amount,
+                        lastOptionsContentHeight,
+                        lastOptionsClip.height
+                );
+                return true;
+            }
+
+            if (lastBodyClip.contains(point) && canScrollBody()) {
+                bodyScrollOffset = clampScroll(
+                        bodyScrollOffset + amount,
+                        lastBodyContentHeight,
+                        lastBodyClip.height
+                );
+                return true;
+            }
+
+            if (canScrollOptions()) {
+                optionScrollOffset = clampScroll(
+                        optionScrollOffset + amount,
+                        lastOptionsContentHeight,
+                        lastOptionsClip.height
+                );
+                return true;
+            }
+
+            if (canScrollBody()) {
+                bodyScrollOffset = clampScroll(
+                        bodyScrollOffset + amount,
+                        lastBodyContentHeight,
+                        lastBodyClip.height
+                );
+                return true;
             }
 
             return false;
@@ -533,6 +642,10 @@ public final class InteractionSystem {
         public boolean handleKeyPressed(KeyEvent e, Interaction interaction) {
             if (interaction == null || interaction.isClosed()) {
                 return false;
+            }
+
+            if (interaction.handleKeyPressed(e)) {
+                return true;
             }
 
             InteractionModel model = interaction.getModel();
@@ -558,6 +671,44 @@ public final class InteractionSystem {
                 return true;
             }
 
+            if (handleScrollKey(e)) {
+                return true;
+            }
+
+            return false;
+        }
+
+        private boolean handleScrollKey(KeyEvent e) {
+            int direction = switch (e.getKeyCode()) {
+                case KeyEvent.VK_DOWN -> 1;
+                case KeyEvent.VK_UP -> -1;
+                case KeyEvent.VK_PAGE_DOWN -> 4;
+                case KeyEvent.VK_PAGE_UP -> -4;
+                default -> 0;
+            };
+
+            if (direction == 0) {
+                return false;
+            }
+
+            if (canScrollOptions()) {
+                optionScrollOffset = clampScroll(
+                        optionScrollOffset + direction * SCROLL_STEP,
+                        lastOptionsContentHeight,
+                        lastOptionsClip.height
+                );
+                return true;
+            }
+
+            if (canScrollBody()) {
+                bodyScrollOffset = clampScroll(
+                        bodyScrollOffset + direction * SCROLL_STEP,
+                        lastBodyContentHeight,
+                        lastBodyClip.height
+                );
+                return true;
+            }
+
             return false;
         }
 
@@ -576,14 +727,87 @@ public final class InteractionSystem {
             };
         }
 
-        private Rectangle calculateWindowBounds(int panelWidth, int panelHeight) {
-            int width = Math.min(780, panelWidth - WINDOW_MARGIN * 2);
-            int height = Math.min(WINDOW_HEIGHT, panelHeight - WINDOW_MARGIN * 2);
+        private Rectangle calculateWindowBounds(int panelWidth, int panelHeight, InteractionModel model) {
+            int margin = model != null && model.isMenu()
+                    ? 18
+                    : WINDOW_MARGIN;
+            int width = model != null && model.isMenu()
+                    ? panelWidth - margin * 2
+                    : Math.min(780, panelWidth - margin * 2);
+            int height = model != null && model.isMenu()
+                    ? panelHeight - margin * 2
+                    : Math.min(WINDOW_HEIGHT, panelHeight - margin * 2);
 
             int x = (panelWidth - width) / 2;
-            int y = panelHeight - height - WINDOW_MARGIN;
+            int y = model != null && model.isMenu()
+                    ? margin
+                    : panelHeight - height - margin;
 
             return new Rectangle(x, y, width, height);
+        }
+
+        private Rectangle calculateBodyClip(
+                InteractionModel model,
+                Rectangle windowBounds,
+                int textX,
+                int textY,
+                int textWidth
+        ) {
+            int portraitBottom = windowBounds.y + CONTENT_PADDING + 34 + PORTRAIT_SIZE + 18;
+            int optionsTop = calculateOptionsClip(windowBounds, textX, textWidth).y;
+            int clipY = textY + 40;
+            int clipBottom = Math.max(clipY + 24, optionsTop - 10);
+
+            if (model.getLeftPortrait() != null || model.getRightPortrait() != null) {
+                clipBottom = Math.max(clipBottom, portraitBottom);
+            }
+
+            return new Rectangle(textX, clipY, textWidth, Math.max(24, clipBottom - clipY));
+        }
+
+        private Rectangle calculateOptionsClip(Rectangle windowBounds, int x, int width) {
+            int y = windowBounds.y + windowBounds.height - CONTENT_PADDING - 118;
+            int height = 118;
+
+            return new Rectangle(x, y, width, height);
+        }
+
+        private boolean canScrollBody() {
+            return lastBodyContentHeight > lastBodyClip.height;
+        }
+
+        private boolean canScrollOptions() {
+            return lastOptionsContentHeight > lastOptionsClip.height;
+        }
+
+        private int clampScroll(int offset, int contentHeight, int viewportHeight) {
+            int maxOffset = Math.max(0, contentHeight - viewportHeight);
+            return Math.max(0, Math.min(offset, maxOffset));
+        }
+
+        private void drawScrollBar(Graphics2D g, Rectangle clip, int contentHeight, int scrollOffset) {
+            if (contentHeight <= clip.height || clip.height <= 0) {
+                return;
+            }
+
+            int trackWidth = 5;
+            int trackX = clip.x + clip.width - trackWidth - 2;
+            int trackY = clip.y + 2;
+            int trackHeight = clip.height - 4;
+            int thumbHeight = Math.max(18, (int) Math.round((double) trackHeight * clip.height / contentHeight));
+            int maxOffset = Math.max(1, contentHeight - clip.height);
+            int maxThumbY = Math.max(trackY, trackY + trackHeight - thumbHeight);
+            int thumbY = trackY + (int) Math.round((double) scrollOffset / maxOffset * (maxThumbY - trackY));
+
+            Composite oldComposite = g.getComposite();
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.45f));
+            g.setColor(new Color(10, 10, 14));
+            g.fillRoundRect(trackX, trackY, trackWidth, trackHeight, 4, 4);
+
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.9f));
+            g.setColor(new Color(210, 210, 220));
+            g.fillRoundRect(trackX, thumbY, trackWidth, thumbHeight, 4, 4);
+            g.setComposite(oldComposite);
         }
 
         private void drawDimBackground(Graphics2D g, int panelWidth, int panelHeight) {
@@ -685,6 +909,8 @@ public final class InteractionSystem {
             int textX = windowBounds.x + leftInset;
             int textY = windowBounds.y + CONTENT_PADDING;
             int textWidth = windowBounds.width - leftInset - rightInset;
+            Rectangle bodyClip = calculateBodyClip(model, windowBounds, textX, textY, textWidth);
+            lastBodyClip = bodyClip;
 
             Font oldFont = g.getFont();
 
@@ -695,18 +921,20 @@ public final class InteractionSystem {
             g.setFont(oldFont.deriveFont(14f));
 
             List<String> lines = wrapText(g, model.getBodyText(), textWidth);
+            lastBodyContentHeight = lines.size() * 19;
+            bodyScrollOffset = clampScroll(bodyScrollOffset, lastBodyContentHeight, bodyClip.height);
 
-            int lineY = textY + 48;
+            Shape oldClip = g.getClip();
+            g.setClip(bodyClip);
 
+            int lineY = bodyClip.y + 14 - bodyScrollOffset;
             for (String line : lines) {
-                if (lineY > windowBounds.y + windowBounds.height - 115) {
-                    g.drawString("...", textX, lineY);
-                    break;
-                }
-
                 g.drawString(line, textX, lineY);
                 lineY += 19;
             }
+
+            g.setClip(oldClip);
+            drawScrollBar(g, bodyClip, lastBodyContentHeight, bodyScrollOffset);
 
             g.setFont(oldFont);
         }
@@ -731,7 +959,15 @@ public final class InteractionSystem {
             int totalOptionHeight = options.size() * OPTION_HEIGHT
                     + Math.max(0, options.size() - 1) * OPTION_GAP;
 
-            int startY = windowBounds.y + windowBounds.height - CONTENT_PADDING - totalOptionHeight;
+            Rectangle optionsClip = calculateOptionsClip(windowBounds, textX, optionWidth);
+            lastOptionsClip = optionsClip;
+            lastOptionsContentHeight = totalOptionHeight;
+            optionScrollOffset = clampScroll(optionScrollOffset, lastOptionsContentHeight, optionsClip.height);
+
+            Shape oldClip = g.getClip();
+            g.setClip(optionsClip);
+
+            int startY = optionsClip.y - optionScrollOffset;
 
             for (int i = 0; i < options.size(); i++) {
                 InteractionOption option = options.get(i);
@@ -743,10 +979,15 @@ public final class InteractionSystem {
                         OPTION_HEIGHT
                 );
 
-                this.optionBounds.add(optionBounds);
-
-                drawOption(g, i, option, optionBounds);
+                if (optionBounds.intersects(optionsClip)) {
+                    this.optionBounds.add(optionBounds);
+                    this.optionIndexes.add(i);
+                    drawOption(g, i, option, optionBounds);
+                }
             }
+
+            g.setClip(oldClip);
+            drawScrollBar(g, optionsClip, lastOptionsContentHeight, optionScrollOffset);
         }
 
         private void drawOption(
@@ -910,10 +1151,17 @@ public final class InteractionSystem {
 
         private final SoundSystem soundSystem;
         private final Runnable exitAction;
+        private final Runnable controlsAction;
 
-        private ConfigInteractionContent(SoundSystem soundSystem, Runnable exitAction) {
+        private ConfigInteractionContent(
+                SoundSystem soundSystem,
+                InputBindings inputBindings,
+                Runnable exitAction,
+                Runnable controlsAction
+        ) {
             this.soundSystem = soundSystem;
             this.exitAction = exitAction;
+            this.controlsAction = controlsAction;
         }
 
         @Override
@@ -929,6 +1177,7 @@ public final class InteractionSystem {
                     null,
                     null,
                     true,
+                    true,
                     List.of(
                             stayOpenOption(
                                     volumeLabel("Ambience", ambiencePercent),
@@ -940,6 +1189,7 @@ public final class InteractionSystem {
                                     () -> adjustMusic(VOLUME_STEP),
                                     () -> adjustMusic(-VOLUME_STEP)
                             ),
+                            option("Controls", controlsAction),
                             option("Exit Game", () -> {
                                 if (soundSystem != null) {
                                     soundSystem.stopAll();
@@ -999,6 +1249,90 @@ public final class InteractionSystem {
             bar.append("%");
 
             return label + " " + bar;
+        }
+    }
+
+    private static class ControlsInteractionContent implements InteractionContent {
+        private final InputBindings inputBindings;
+        private InputBindings.Action pendingAction;
+        private String statusMessage = "Choose an action to reassign, then press the next key you want to use.";
+
+        private ControlsInteractionContent(InputBindings inputBindings) {
+            this.inputBindings = inputBindings == null ? new InputBindings() : inputBindings;
+        }
+
+        @Override
+        public InteractionModel getModel() {
+            List<InteractionOption> options = new ArrayList<>();
+
+            for (InputBindings.Action action : InputBindings.Action.values()) {
+                options.add(stayOpenOption(controlLabel(action), () -> pendingAction = action));
+            }
+
+            options.add(closeOption("Close"));
+
+            return new InteractionModel(
+                    "Controls",
+                    statusMessage,
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    true,
+                    options
+            );
+        }
+
+        @Override
+        public void selectOption(int optionIndex, Interaction interaction, boolean alternateAction) {
+            InteractionModel model = getModel();
+
+            if (optionIndex < 0 || optionIndex >= model.getOptions().size()) {
+                return;
+            }
+
+            InteractionOption option = model.getOptions().get(optionIndex);
+            option.run(alternateAction);
+
+            if (pendingAction != null && !option.shouldCloseAfterSelection()) {
+                statusMessage = "Press a key for " + pendingAction.getLabel() + ".";
+            }
+
+            if (option.shouldCloseAfterSelection()) {
+                interaction.close();
+            }
+        }
+
+        @Override
+        public boolean handleKeyPressed(KeyEvent e, Interaction interaction) {
+            if (pendingAction == null) {
+                return false;
+            }
+
+            int keyCode = e.getKeyCode();
+
+            if (keyCode == KeyEvent.VK_ESCAPE) {
+                pendingAction = null;
+                statusMessage = "Assignment cancelled.";
+                return true;
+            }
+
+            inputBindings.assignKey(pendingAction, keyCode);
+            statusMessage = pendingAction.getLabel()
+                    + " assigned to "
+                    + KeyEvent.getKeyText(keyCode)
+                    + ".";
+            pendingAction = null;
+            return true;
+        }
+
+        private String controlLabel(InputBindings.Action action) {
+            String keyText = inputBindings.getKeyCode(action) == KeyEvent.VK_UNDEFINED
+                    ? "Unassigned"
+                    : inputBindings.getKeyText(action);
+
+            return action.getLabel() + " [ " + keyText + " ] [Assign new button]";
         }
     }
 }

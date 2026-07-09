@@ -7,7 +7,7 @@ public enum ItemLibrary {
             "Potion",
             InventorySystem.ItemType.CONSUMABLE,
             "assets/images/monster/Nov-2015/item/potion/brilliant_blue.png",
-            null
+            "assets/sounds/generated/drink_potion.wav"
     ),
 
     IRON_SWORD(

@@ -2,8 +2,10 @@ package org.main.battle;
 
 import org.main.content.EnvironmentLibrary;
 import org.main.content.SkillLibrary;
+import org.main.core.GameBootstrap;
 import org.main.core.InventorySystem;
 import org.main.core.Library;
+import org.main.core.PlayerCharacter;
 import org.main.engine.SoundSystem;
 import org.main.monsters.Monster;
 
@@ -46,7 +48,7 @@ public class BattleEncounter {
     }
 
     public static BattleEncounter fromMonster(List<Monster> monster) {
-        return fromMonster(monster, null, null, null);
+        return fromMonster(monster, (PlayerCharacter) null, null, null);
     }
 
     public static BattleEncounter fromMonster(
@@ -63,10 +65,36 @@ public class BattleEncounter {
             SoundSystem soundSystem,
             EnvironmentLibrary environment
     ) {
+        PlayerCharacter playerCharacter = GameBootstrap.createDefaultPlayerCharacter();
+
+        if (inventory != null) {
+            playerCharacter = new PlayerCharacter(
+                    playerCharacter.getName(),
+                    playerCharacter.getMaxHp(),
+                    playerCharacter.getCurrHp(),
+                    inventory,
+                    playerCharacter.getSkills(),
+                    playerCharacter.getPortraitPath()
+            );
+        }
+
+        return fromMonster(monster, playerCharacter, soundSystem, environment);
+    }
+
+    public static BattleEncounter fromMonster(
+            List<Monster> monster,
+            PlayerCharacter playerCharacter,
+            SoundSystem soundSystem,
+            EnvironmentLibrary environment
+    ) {
+        if (playerCharacter == null) {
+            playerCharacter = GameBootstrap.createDefaultPlayerCharacter();
+        }
+
         BattleActor playerActor = new BattleActor(
-                "Player",
-                30,
-                30,
+                playerCharacter.getName(),
+                playerCharacter.getMaxHp(),
+                playerCharacter.getCurrHp(),
                 null,
                 Library.EntityType.ALLY,
                 5
@@ -77,8 +105,8 @@ public class BattleEncounter {
             playerActor.addSkill(skill);
         }
 
-        if (inventory != null) {
-            InventorySystem.Item weapon = inventory.getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
+        if (playerCharacter.getInventory() != null) {
+            InventorySystem.Item weapon = playerCharacter.getInventory().getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
 
             if (weapon != null) {
                 playerActor.setAttackSoundPath(weapon.getUseSoundPath());

@@ -13,6 +13,7 @@ public class WizardryBase extends JPanel implements KeyListener {
 
     private final DungeonRenderer dungeonRenderer = new DungeonRenderer();
     private final MiniMapRenderer miniMapRenderer = new MiniMapRenderer();
+    private final OverworldHud overworldHud = new OverworldHud();
 
     private final MovementEngine movementEngine = new MovementEngine();
     private final SoundSystem soundSystem = new SoundSystem();
@@ -25,7 +26,10 @@ public class WizardryBase extends JPanel implements KeyListener {
     private final ShopSystem.ShopWindow shopWindow = new ShopSystem.ShopWindow();
     private final InteractionSystem.InteractionRegistry interactionRegistry =
             InteractionSystem.InteractionRegistry.createDefault();
-    private final GameState gameState = new GameState(DungeonMap.testMap());
+    private final GameState gameState = new GameState(
+            DungeonMap.testMap(),
+            GameBootstrap.createDefaultPlayerCharacter()
+    );
     private final DungeonController dungeonController;
     private final BattleController battleController;
     private final InventorySystem.InventoryPanel inventoryPanel;
@@ -80,7 +84,9 @@ public class WizardryBase extends JPanel implements KeyListener {
                 battleController,
                 interactionWindow,
                 shopWindow,
-                inventoryPanel
+                inventoryPanel,
+                overworldHud,
+                this::openConfigMenu
         ).install();
     }
 
@@ -121,8 +127,14 @@ public class WizardryBase extends JPanel implements KeyListener {
             miniMapRenderer.draw(g2, gameState);
 
             if (gameState.isInventoryOpen()) {
-                inventoryPanel.draw(g2, getWidth(), getHeight());
+                inventoryPanel.draw(
+                        g2,
+                        getWidth(),
+                        getHeight() - overworldHud.getBottomReservedHeight()
+                );
             }
+
+            overworldHud.draw(g2, gameState, getWidth(), getHeight());
 
             if (gameState.hasActiveShop()) {
                 shopWindow.draw(g2, gameState, getWidth(), getHeight());
@@ -133,7 +145,7 @@ public class WizardryBase extends JPanel implements KeyListener {
                         g2,
                         gameState.getActiveInteraction(),
                         getWidth(),
-                        getHeight()
+                        getHeight() - overworldHud.getBottomReservedHeight()
                 );
             }
         }
@@ -173,14 +185,23 @@ public class WizardryBase extends JPanel implements KeyListener {
             return;
         }
 
-        if (e.getKeyCode() == KeyEvent.VK_ESCAPE && gameState.isDungeonMode()) {
+        InputBindings bindings = gameState.getInputBindings();
+        int keyCode = e.getKeyCode();
+
+        if (bindings.matches(InputBindings.Action.ESCAPE_MENU, keyCode) && gameState.isDungeonMode()) {
             openConfigMenu();
             repaint();
             return;
         }
 
-        if (e.getKeyCode() == KeyEvent.VK_I && gameState.isDungeonMode()) {
+        if (bindings.matches(InputBindings.Action.INVENTORY, keyCode) && gameState.isDungeonMode()) {
             gameState.toggleInventory();
+            repaint();
+            return;
+        }
+
+        if (bindings.matches(InputBindings.Action.SKILLS, keyCode) && gameState.isDungeonMode()) {
+            gameState.toggleSkills();
             repaint();
             return;
         }
@@ -202,6 +223,7 @@ public class WizardryBase extends JPanel implements KeyListener {
     private void openConfigMenu() {
         gameState.openInteraction(InteractionSystem.configMenu(
                 soundSystem,
+                gameState.getInputBindings(),
                 () -> {
                     Window window = SwingUtilities.getWindowAncestor(this);
 
@@ -210,7 +232,8 @@ public class WizardryBase extends JPanel implements KeyListener {
                     }
 
                     System.exit(0);
-                }
+                },
+                () -> gameState.openInteraction(InteractionSystem.controlsMenu(gameState.getInputBindings()))
         ));
     }
 

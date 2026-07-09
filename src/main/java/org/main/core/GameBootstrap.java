@@ -10,6 +10,17 @@ public final class GameBootstrap {
     private GameBootstrap() {
     }
 
+    public static PlayerCharacter createDefaultPlayerCharacter() {
+        return new PlayerCharacter(
+                "Player",
+                30,
+                30,
+                new InventorySystem.Inventory(),
+                PlayerCharacter.createDefaultSkills(),
+                "assets/images/monster/Nov-2015/player/base/human_m.png"
+        );
+    }
+
     public static void seedTestContent(GameState gameState) {
         if (gameState == null) {
             return;

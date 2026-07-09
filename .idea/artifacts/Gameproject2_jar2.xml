@@ -1,8 +1,0 @@
-<component name="ArtifactManager">
-  <artifact type="jar" name="Gameproject2:jar2">
-    <output-path>$PROJECT_DIR$/out/artifacts/Game-sounds_jar</output-path>
-    <root id="archive" name="Gameproject2.jar">
-      <element id="module-output" name="Gameproject2" />
-    </root>
-  </artifact>
-</component>
