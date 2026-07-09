@@ -29,6 +29,7 @@ public final class GameBootstrap {
         gameState.addEntity(new MapEntity(new Monster(MonsterType.SLIME), 4, 3));
         gameState.addEntity(NpcLibrary.OLD_GUARD.createEntity(6, 1));
         gameState.addEntity(NpcLibrary.GOBLIN_MERCHANT.createEntity(5, 7));
+        gameState.setTileInteractionId(5, 8, "generated_dungeon_gate");
 
         gameState.addEntity(new MapEntity(ItemLibrary.POTION.createItem(), 2, 1));
 

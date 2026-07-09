@@ -12,20 +12,25 @@ public class MiniMapRenderer {
     private static final int START_Y = 20;
 
     public void draw(Graphics2D g, GameState gameState) {
-        if (!gameState.isMiniMapUnlocked()) {
+        if (!gameState.isMiniMapVisible()
+                || (!gameState.isMiniMapUnlocked() && !gameState.isMiniMapDebugMode())) {
             return;
         }
 
         DungeonMap dungeonMap = gameState.getDungeonMap();
 
-        drawMapTiles(g, dungeonMap);
+        drawMapTiles(g, dungeonMap, gameState);
         drawEntities(g, gameState);
         drawPlayer(g, gameState);
     }
 
-    private void drawMapTiles(Graphics2D g, DungeonMap dungeonMap) {
+    private void drawMapTiles(Graphics2D g, DungeonMap dungeonMap, GameState gameState) {
         for (int y = 0; y < dungeonMap.getHeight(); y++) {
             for (int x = 0; x < dungeonMap.getWidth(); x++) {
+                if (!gameState.isMiniMapTileDiscovered(x, y)) {
+                    continue;
+                }
+
                 Library.TileType tileType = dungeonMap.getTile(x, y);
 
                 g.setColor(tileType.isWallLike() ? Color.DARK_GRAY : Color.GRAY);
@@ -41,6 +46,10 @@ public class MiniMapRenderer {
 
     private void drawEntities(Graphics2D g, GameState gameState) {
         for (MapEntity entity : gameState.getEntities()) {
+            if (!gameState.isMiniMapTileDiscovered(entity.getX(), entity.getY())) {
+                continue;
+            }
+
             g.setColor(entity.getType() == Library.EntityType.ENEMY ? Color.MAGENTA : Color.CYAN);
 
             g.fillOval(

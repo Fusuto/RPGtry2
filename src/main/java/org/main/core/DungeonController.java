@@ -117,6 +117,10 @@ public class DungeonController {
         DungeonMap dungeonMap = gameState.getDungeonMap();
         Library.TileType targetTile = dungeonMap.getTile(targetX, targetY);
 
+        if (tryOpenRegisteredTileInteraction(targetX, targetY)) {
+            return;
+        }
+
         if (targetTile == Library.TileType.DOOR_CLOSED) {
             dungeonMap.setTile(targetX, targetY, Library.TileType.DOOR_OPEN);
             return;
@@ -181,11 +185,6 @@ public class DungeonController {
         gameState.setCurrentEnemyEntity(enemyEntity);
 
         List<Monster> monsters = new ArrayList<>();
-        monsters.add(enemyEntity.getMonster());
-        monsters.add(enemyEntity.getMonster());
-        monsters.add(enemyEntity.getMonster());
-        monsters.add(enemyEntity.getMonster());
-        monsters.add(enemyEntity.getMonster());
         monsters.add(enemyEntity.getMonster());
 
         gameState.setCurrentEncounter(BattleEncounter.fromMonster(
@@ -258,6 +257,29 @@ public class DungeonController {
                 entity.getInteractionId(),
                 gameState,
                 entity
+        );
+
+        if (interaction == null) {
+            return false;
+        }
+
+        gameState.openInteraction(interaction);
+        return true;
+    }
+
+    private boolean tryOpenRegisteredTileInteraction(int x, int y) {
+        if (!gameState.hasTileInteractionId(x, y)) {
+            return false;
+        }
+
+        if (interactionRegistry == null) {
+            return false;
+        }
+
+        InteractionSystem.Interaction interaction = interactionRegistry.create(
+                gameState.getTileInteractionId(x, y),
+                gameState,
+                null
         );
 
         if (interaction == null) {

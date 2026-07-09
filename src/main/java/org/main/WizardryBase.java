@@ -51,7 +51,7 @@ public class WizardryBase extends JPanel implements KeyListener {
         );
 
         battleController = new BattleController(gameState, battleRenderer, soundSystem, environment);
-        inventoryPanel = new InventorySystem.InventoryPanel(gameState.getInventory());
+        inventoryPanel = new InventorySystem.InventoryPanel(gameState.getInventory(), gameState, soundSystem);
 
         /*
          * Temporary debug unlock.
@@ -223,7 +223,7 @@ public class WizardryBase extends JPanel implements KeyListener {
     private void openConfigMenu() {
         gameState.openInteraction(InteractionSystem.configMenu(
                 soundSystem,
-                gameState.getInputBindings(),
+                gameState,
                 () -> {
                     Window window = SwingUtilities.getWindowAncestor(this);
 

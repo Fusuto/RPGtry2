@@ -81,11 +81,11 @@ public final class InteractionSystem {
 
     public static Interaction configMenu(
             SoundSystem soundSystem,
-            InputBindings inputBindings,
+            GameState gameState,
             Runnable exitAction,
             Runnable controlsAction
     ) {
-        return new Interaction(new ConfigInteractionContent(soundSystem, inputBindings, exitAction, controlsAction));
+        return new Interaction(new ConfigInteractionContent(soundSystem, gameState, exitAction, controlsAction));
     }
 
     public static Interaction controlsMenu(InputBindings inputBindings) {
@@ -1031,31 +1031,37 @@ public final class InteractionSystem {
 
             FontMetrics metrics = g.getFontMetrics();
 
-            String[] words = text.split("\\s+");
-            StringBuilder currentLine = new StringBuilder();
+            for (String paragraph : text.split("\\R")) {
+                String[] words = paragraph.split("\\s+");
+                StringBuilder currentLine = new StringBuilder();
 
-            for (String word : words) {
-                String candidate;
-
-                if (currentLine.isEmpty()) {
-                    candidate = word;
-                } else {
-                    candidate = currentLine + " " + word;
-                }
-
-                if (metrics.stringWidth(candidate) <= maxWidth) {
-                    currentLine = new StringBuilder(candidate);
-                } else {
-                    if (!currentLine.isEmpty()) {
-                        lines.add(currentLine.toString());
+                for (String word : words) {
+                    if (word.isBlank()) {
+                        continue;
                     }
 
-                    currentLine = new StringBuilder(word);
-                }
-            }
+                    String candidate;
 
-            if (!currentLine.isEmpty()) {
-                lines.add(currentLine.toString());
+                    if (currentLine.isEmpty()) {
+                        candidate = word;
+                    } else {
+                        candidate = currentLine + " " + word;
+                    }
+
+                    if (metrics.stringWidth(candidate) <= maxWidth) {
+                        currentLine = new StringBuilder(candidate);
+                    } else {
+                        if (!currentLine.isEmpty()) {
+                            lines.add(currentLine.toString());
+                        }
+
+                        currentLine = new StringBuilder(word);
+                    }
+                }
+
+                if (!currentLine.isEmpty()) {
+                    lines.add(currentLine.toString());
+                }
             }
 
             return lines;
@@ -1142,6 +1148,16 @@ public final class InteractionSystem {
                 registry.register(dialogue.getInteractionId(), dialogue::create);
             }
 
+            registry.register("generated_dungeon_gate", context -> prompt(
+                    "Dungeon Gate",
+                    "Go one floor deeper into a newly generated dungeon?",
+                    option("Enter", () -> {
+                        GeneratedDungeon generatedDungeon = new DungeonGenerator().generate();
+                        context.getGameState().changeDungeon(generatedDungeon);
+                    }),
+                    closeOption("Stay")
+            ));
+
             return registry;
         }
     }
@@ -1150,16 +1166,18 @@ public final class InteractionSystem {
         private static final double VOLUME_STEP = 0.10;
 
         private final SoundSystem soundSystem;
+        private final GameState gameState;
         private final Runnable exitAction;
         private final Runnable controlsAction;
 
         private ConfigInteractionContent(
                 SoundSystem soundSystem,
-                InputBindings inputBindings,
+                GameState gameState,
                 Runnable exitAction,
                 Runnable controlsAction
         ) {
             this.soundSystem = soundSystem;
+            this.gameState = gameState;
             this.exitAction = exitAction;
             this.controlsAction = controlsAction;
         }
@@ -1189,6 +1207,7 @@ public final class InteractionSystem {
                                     () -> adjustMusic(VOLUME_STEP),
                                     () -> adjustMusic(-VOLUME_STEP)
                             ),
+                            stayOpenOption(miniMapLabel(), this::toggleMiniMap),
                             option("Controls", controlsAction),
                             option("Exit Game", () -> {
                                 if (soundSystem != null) {
@@ -1217,6 +1236,24 @@ public final class InteractionSystem {
 
             if (option.shouldCloseAfterSelection()) {
                 interaction.close();
+            }
+        }
+
+        private String miniMapLabel() {
+            if (gameState == null) {
+                return "Minimap [OFF]";
+            }
+
+            return switch (gameState.getMiniMapMode()) {
+                case OFF -> "Minimap [OFF]";
+                case DISCOVERED -> "Minimap [DISCOVERED]";
+                case DEBUG -> "Minimap [DEBUG]";
+            };
+        }
+
+        private void toggleMiniMap() {
+            if (gameState != null) {
+                gameState.cycleMiniMapMode();
             }
         }
 
@@ -1273,7 +1310,7 @@ public final class InteractionSystem {
 
             return new InteractionModel(
                     "Controls",
-                    statusMessage,
+                    statusMessage + "\n\n" + controlsSummary(),
                     null,
                     null,
                     null,
@@ -1333,6 +1370,25 @@ public final class InteractionSystem {
                     : inputBindings.getKeyText(action);
 
             return action.getLabel() + " [ " + keyText + " ] [Assign new button]";
+        }
+
+        private String controlsSummary() {
+            StringBuilder builder = new StringBuilder();
+
+            for (InputBindings.Action action : InputBindings.Action.values()) {
+                if (!builder.isEmpty()) {
+                    builder.append('\n');
+                }
+
+                builder
+                        .append(action.getLabel())
+                        .append(": ")
+                        .append(inputBindings.getKeyCode(action) == KeyEvent.VK_UNDEFINED
+                                ? "Unassigned"
+                                : inputBindings.getKeyText(action));
+            }
+
+            return builder.toString();
         }
     }
 }

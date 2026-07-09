@@ -5,11 +5,14 @@ import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class GameState {
-    private final DungeonMap dungeonMap;
+    private DungeonMap dungeonMap;
     private final List<MapEntity> entities = new ArrayList<>();
+    private final Map<String, String> tileInteractionIds = new HashMap<>();
     private final InputBindings inputBindings = new InputBindings();
 
     private GameMode gameMode = GameMode.DUNGEON;
@@ -18,6 +21,8 @@ public class GameState {
     private int playerY = 1;
 
     private boolean miniMapUnlocked = false;
+    private MiniMapMode miniMapMode = MiniMapMode.DISCOVERED;
+    private boolean[][] discoveredMiniMapTiles = new boolean[0][0];
 
     // 0 = north, 1 = east, 2 = south, 3 = west
     private int direction = 1;
@@ -132,6 +137,8 @@ public class GameState {
         this.playerCharacter = playerCharacter == null
                 ? GameBootstrap.createDefaultPlayerCharacter()
                 : playerCharacter;
+        resetMiniMapDiscovery();
+        revealMiniMapTile(playerX, playerY);
     }
 
     public boolean isMiniMapUnlocked() {
@@ -150,8 +157,122 @@ public class GameState {
         miniMapUnlocked = false;
     }
 
+    public boolean isMiniMapVisible() {
+        return miniMapMode != MiniMapMode.OFF;
+    }
+
+    public void setMiniMapVisible(boolean miniMapVisible) {
+        miniMapMode = miniMapVisible ? MiniMapMode.DISCOVERED : MiniMapMode.OFF;
+    }
+
+    public void toggleMiniMapVisible() {
+        cycleMiniMapMode();
+    }
+
+    public MiniMapMode getMiniMapMode() {
+        return miniMapMode;
+    }
+
+    public void setMiniMapMode(MiniMapMode miniMapMode) {
+        this.miniMapMode = miniMapMode == null ? MiniMapMode.OFF : miniMapMode;
+    }
+
+    public void cycleMiniMapMode() {
+        miniMapMode = switch (miniMapMode) {
+            case OFF -> MiniMapMode.DISCOVERED;
+            case DISCOVERED -> MiniMapMode.DEBUG;
+            case DEBUG -> MiniMapMode.OFF;
+        };
+    }
+
+    public boolean isMiniMapDebugMode() {
+        return miniMapMode == MiniMapMode.DEBUG;
+    }
+
+    public boolean isMiniMapTileDiscovered(int x, int y) {
+        if (isMiniMapDebugMode()) {
+            return true;
+        }
+
+        return y >= 0
+                && y < discoveredMiniMapTiles.length
+                && x >= 0
+                && discoveredMiniMapTiles.length > 0
+                && x < discoveredMiniMapTiles[y].length
+                && discoveredMiniMapTiles[y][x];
+    }
+
     public DungeonMap getDungeonMap() {
         return dungeonMap;
+    }
+
+    public void changeDungeon(GeneratedDungeon generatedDungeon) {
+        if (generatedDungeon == null) {
+            return;
+        }
+
+        changeDungeon(
+                generatedDungeon.dungeonMap(),
+                generatedDungeon.playerX(),
+                generatedDungeon.playerY(),
+                generatedDungeon.entities()
+        );
+
+        for (GeneratedDungeon.TileInteraction tileInteraction : generatedDungeon.tileInteractions()) {
+            setTileInteractionId(tileInteraction.x(), tileInteraction.y(), tileInteraction.interactionId());
+        }
+    }
+
+    public enum MiniMapMode {
+        OFF,
+        DISCOVERED,
+        DEBUG
+    }
+
+    public void changeDungeon(DungeonMap dungeonMap, int playerX, int playerY, List<MapEntity> newEntities) {
+        if (dungeonMap == null) {
+            return;
+        }
+
+        this.dungeonMap = dungeonMap;
+        entities.clear();
+        tileInteractionIds.clear();
+        resetMiniMapDiscovery();
+
+        if (newEntities != null) {
+            for (MapEntity entity : newEntities) {
+                addEntity(entity);
+            }
+        }
+
+        setPlayerPosition(playerX, playerY);
+        closeInventory();
+        closeSkills();
+        closeShop();
+        closeInteraction();
+        clearBattleState();
+    }
+
+    public void setTileInteractionId(int x, int y, String interactionId) {
+        if (interactionId == null || interactionId.isBlank()) {
+            tileInteractionIds.remove(tileKey(x, y));
+            return;
+        }
+
+        tileInteractionIds.put(tileKey(x, y), interactionId);
+    }
+
+    public String getTileInteractionId(int x, int y) {
+        return tileInteractionIds.get(tileKey(x, y));
+    }
+
+    public boolean hasTileInteractionId(int x, int y) {
+        String interactionId = getTileInteractionId(x, y);
+        return interactionId != null && !interactionId.isBlank();
+    }
+
+    private String tileKey(int x, int y) {
+        return x + "," + y;
     }
 
     public InputBindings getInputBindings() {
@@ -194,6 +315,7 @@ public class GameState {
 
     public void setPlayerX(int playerX) {
         this.playerX = playerX;
+        revealMiniMapTile(this.playerX, this.playerY);
     }
 
     public int getPlayerY() {
@@ -202,11 +324,39 @@ public class GameState {
 
     public void setPlayerY(int playerY) {
         this.playerY = playerY;
+        revealMiniMapTile(this.playerX, this.playerY);
     }
 
     public void setPlayerPosition(int playerX, int playerY) {
         this.playerX = playerX;
         this.playerY = playerY;
+        revealMiniMapTile(playerX, playerY);
+    }
+
+    private void resetMiniMapDiscovery() {
+        if (dungeonMap == null) {
+            discoveredMiniMapTiles = new boolean[0][0];
+            return;
+        }
+
+        discoveredMiniMapTiles = new boolean[dungeonMap.getHeight()][dungeonMap.getWidth()];
+    }
+
+    private void revealMiniMapTile(int centerX, int centerY) {
+        if (discoveredMiniMapTiles.length == 0) {
+            return;
+        }
+
+        for (int y = centerY - 1; y <= centerY + 1; y++) {
+            for (int x = centerX - 1; x <= centerX + 1; x++) {
+                if (y >= 0
+                        && y < discoveredMiniMapTiles.length
+                        && x >= 0
+                        && x < discoveredMiniMapTiles[y].length) {
+                    discoveredMiniMapTiles[y][x] = true;
+                }
+            }
+        }
     }
 
     public int getGold() {

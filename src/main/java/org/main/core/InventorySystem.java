@@ -1,6 +1,7 @@
 package org.main.core;
 
 import org.main.engine.AssetLoader;
+import org.main.engine.SoundSystem;
 
 import java.awt.*;
 import java.awt.event.MouseEvent;
@@ -46,24 +47,34 @@ public final class InventorySystem {
         private final ItemType itemType;
         private final BufferedImage icon;
         private final String useSoundPath;
+        private final int healAmount;
 
         public Item(String name, ItemType itemType, BufferedImage icon) {
-            this(name, itemType, icon, null);
+            this(name, itemType, icon, null, 0);
         }
 
         public Item(String name, ItemType itemType, BufferedImage icon, String useSoundPath) {
+            this(name, itemType, icon, useSoundPath, 0);
+        }
+
+        public Item(String name, ItemType itemType, BufferedImage icon, String useSoundPath, int healAmount) {
             this.name = name;
             this.itemType = itemType;
             this.icon = icon;
             this.useSoundPath = useSoundPath;
+            this.healAmount = Math.max(0, healAmount);
         }
 
         public Item(String name, ItemType itemType, String iconPath) {
-            this(name, itemType, iconPath, null);
+            this(name, itemType, iconPath, null, 0);
         }
 
         public Item(String name, ItemType itemType, String iconPath, String useSoundPath) {
-            this(name, itemType, loadIcon(iconPath), useSoundPath);
+            this(name, itemType, iconPath, useSoundPath, 0);
+        }
+
+        public Item(String name, ItemType itemType, String iconPath, String useSoundPath, int healAmount) {
+            this(name, itemType, loadIcon(iconPath), useSoundPath, healAmount);
         }
 
         private static BufferedImage loadIcon(String iconPath) {
@@ -88,6 +99,10 @@ public final class InventorySystem {
 
         public String getUseSoundPath() {
             return useSoundPath;
+        }
+
+        public int getHealAmount() {
+            return healAmount;
         }
 
         public boolean isEquippable() {
@@ -363,6 +378,8 @@ public final class InventorySystem {
         private static final int EQUIPMENT_TO_GRID_GAP = 18;
 
         private final Inventory inventory;
+        private final GameState gameState;
+        private final SoundSystem soundSystem;
         private EquipmentSlot draggedEquipmentSlot = null;
 
         private final Rectangle[] inventorySlotBounds = new Rectangle[Inventory.SLOT_COUNT];
@@ -373,7 +390,13 @@ public final class InventorySystem {
         private Point mousePoint;
 
         public InventoryPanel(Inventory inventory) {
+            this(inventory, null, null);
+        }
+
+        public InventoryPanel(Inventory inventory, GameState gameState, SoundSystem soundSystem) {
             this.inventory = inventory;
+            this.gameState = gameState;
+            this.soundSystem = soundSystem;
         }
 
         public void draw(Graphics2D g, int panelWidth, int panelHeight) {
@@ -397,7 +420,9 @@ public final class InventorySystem {
                 }
 
                 if (e.getClickCount() >= 2) {
-                    inventory.equipFromInventory(inventoryIndex);
+                    if (!useItem(inventoryIndex)) {
+                        inventory.equipFromInventory(inventoryIndex);
+                    }
                     clearDrag();
                     return true;
                 }
@@ -430,6 +455,34 @@ public final class InventorySystem {
             }
 
             return false;
+        }
+
+        private boolean useItem(int inventoryIndex) {
+            Item item = inventory.getItem(inventoryIndex);
+
+            if (item == null || item.getItemType() != ItemType.CONSUMABLE) {
+                return false;
+            }
+
+            boolean used = false;
+
+            if (item.getHealAmount() > 0 && gameState != null) {
+                PlayerCharacter playerCharacter = gameState.getPlayerCharacter();
+                int beforeHp = playerCharacter.getCurrHp();
+                playerCharacter.heal(item.getHealAmount());
+                used = playerCharacter.getCurrHp() > beforeHp;
+            }
+
+            if (!used) {
+                return false;
+            }
+
+            if (soundSystem != null) {
+                soundSystem.playSound(item.getUseSoundPath());
+            }
+
+            inventory.removeItem(inventoryIndex);
+            return true;
         }
 
         public boolean handleMouseDragged(MouseEvent e) {

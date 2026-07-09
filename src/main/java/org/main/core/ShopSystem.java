@@ -132,7 +132,8 @@ public final class ShopSystem {
                     item.getName(),
                     item.getItemType(),
                     item.getIcon(),
-                    item.getUseSoundPath()
+                    item.getUseSoundPath(),
+                    item.getHealAmount()
             );
         }
     }
