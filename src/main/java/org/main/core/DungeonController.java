@@ -14,6 +14,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class DungeonController {
+    private static final String DEFAULT_PICKUP_SOUND_PATH = "assets/sounds/generated/pickup_sound.wav";
+
     private final GameState gameState;
     private final MovementEngine movementEngine;
     private final InteractionSystem.InteractionRegistry interactionRegistry;
@@ -43,6 +45,10 @@ public class DungeonController {
     }
 
     public void handleInput(KeyEvent e) {
+        if (gameState.isCameraAnimating()) {
+            return;
+        }
+
         InputBindings bindings = gameState.getInputBindings();
         int keyCode = e.getKeyCode();
 
@@ -82,15 +88,17 @@ public class DungeonController {
     }
 
     public void turnLeft() {
-        gameState.setDirection(
-                movementEngine.turnLeft(gameState.getDirection())
-        );
+        int previousDirection = gameState.getDirection();
+        int nextDirection = movementEngine.turnLeft(previousDirection);
+        gameState.setDirection(nextDirection);
+        gameState.startRotationAnimation(previousDirection, nextDirection);
     }
 
     public void turnRight() {
-        gameState.setDirection(
-                movementEngine.turnRight(gameState.getDirection())
-        );
+        int previousDirection = gameState.getDirection();
+        int nextDirection = movementEngine.turnRight(previousDirection);
+        gameState.setDirection(nextDirection);
+        gameState.startRotationAnimation(previousDirection, nextDirection);
     }
 
     public void interact() {
@@ -137,16 +145,18 @@ public class DungeonController {
     }
 
     private void move(int dx, int dy) {
+        int previousX = gameState.getPlayerX();
+        int previousY = gameState.getPlayerY();
         Point nextPosition = movementEngine.move(
-                gameState.getPlayerX(),
-                gameState.getPlayerY(),
+                previousX,
+                previousY,
                 dx,
                 dy,
                 gameState.getDungeonMap()
         );
 
-        if (nextPosition.x == gameState.getPlayerX()
-                && nextPosition.y == gameState.getPlayerY()) {
+        if (nextPosition.x == previousX
+                && nextPosition.y == previousY) {
             return;
         }
 
@@ -161,6 +171,7 @@ public class DungeonController {
         }
 
         gameState.setPlayerPosition(nextPosition.x, nextPosition.y);
+        gameState.startMovementAnimation(previousX, previousY, nextPosition.x, nextPosition.y);
         playFootstepSound();
     }
 
@@ -221,6 +232,7 @@ public class DungeonController {
                 }
 
                 gameState.removeEntity(entity);
+                playPickupSound();
                 System.out.println("Picked up " + entity.getName() + ".");
             }
             case NPC -> System.out.println("You talk to " + entity.getName() + ".");
@@ -228,6 +240,12 @@ public class DungeonController {
             case CHEST -> System.out.println("You inspect " + entity.getName() + ".");
             case TRAP -> System.out.println("You examine " + entity.getName() + ".");
             default -> System.out.println("You interact with " + entity.getName() + ".");
+        }
+    }
+
+    private void playPickupSound() {
+        if (soundSystem != null) {
+            soundSystem.playSound(DEFAULT_PICKUP_SOUND_PATH);
         }
     }
 

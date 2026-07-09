@@ -35,6 +35,9 @@ public class WizardryBase extends JPanel implements KeyListener {
     private final InventorySystem.InventoryPanel inventoryPanel;
 
     private long lastUpdateTime = System.currentTimeMillis();
+    private double averageFrameMs = 16.0;
+    private double lastUpdateMs = 0.0;
+    private double lastRenderMs = 0.0;
 
     public WizardryBase() {
         setPreferredSize(new Dimension(900, 600));
@@ -91,9 +94,16 @@ public class WizardryBase extends JPanel implements KeyListener {
     }
 
     private void updateGame(int deltaMs) {
+        long updateStart = System.nanoTime();
+        averageFrameMs = averageFrameMs * 0.90 + deltaMs * 0.10;
+
+        gameState.updateMovementAnimation(deltaMs);
+
         for (MapEntity entity : gameState.getEntities()) {
             entity.update(deltaMs);
         }
+
+        lastUpdateMs = (System.nanoTime() - updateStart) / 1_000_000.0;
     }
 
     public static void main(String[] args) {
@@ -107,6 +117,7 @@ public class WizardryBase extends JPanel implements KeyListener {
 
     @Override
     protected void paintComponent(Graphics g) {
+        long renderStart = System.nanoTime();
         super.paintComponent(g);
 
         Graphics2D g2 = (Graphics2D) g;
@@ -121,7 +132,10 @@ public class WizardryBase extends JPanel implements KeyListener {
                     gameState.getPlayerY(),
                     gameState.getDirection(),
                     getWidth(),
-                    getHeight()
+                    getHeight(),
+                    gameState.getCameraOffsetForward(),
+                    gameState.getCameraOffsetSide(),
+                    gameState.getCameraRotationRadians()
             );
 
             miniMapRenderer.draw(g2, gameState);
@@ -158,6 +172,45 @@ public class WizardryBase extends JPanel implements KeyListener {
                     getHeight()
             );
         }
+
+        lastRenderMs = (System.nanoTime() - renderStart) / 1_000_000.0;
+        drawPerformanceOverlay(g2);
+    }
+
+    private void drawPerformanceOverlay(Graphics2D g) {
+        int fps = averageFrameMs <= 0.0 ? 0 : (int) Math.round(1000.0 / averageFrameMs);
+        String[] lines = {
+                "FPS " + fps,
+                String.format("Frame %.1f ms", averageFrameMs),
+                String.format("Update %.2f ms", lastUpdateMs),
+                String.format("Render %.2f ms", lastRenderMs),
+                "Entities " + gameState.getEntities().size(),
+                "Map " + gameState.getDungeonMap().getWidth() + "x" + gameState.getDungeonMap().getHeight()
+        };
+
+        Font previousFont = g.getFont();
+        g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        FontMetrics metrics = g.getFontMetrics();
+        int lineHeight = metrics.getHeight();
+        int width = 0;
+
+        for (String line : lines) {
+            width = Math.max(width, metrics.stringWidth(line));
+        }
+
+        int x = getWidth() - width - 18;
+        int y = 14;
+        int height = lineHeight * lines.length + 8;
+
+        g.setColor(new Color(0, 0, 0, 150));
+        g.fillRect(x - 6, y - 2, width + 12, height);
+        g.setColor(new Color(220, 240, 220));
+
+        for (int i = 0; i < lines.length; i++) {
+            g.drawString(lines[i], x, y + lineHeight * (i + 1));
+        }
+
+        g.setFont(previousFont);
     }
 
     @Override
