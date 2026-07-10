@@ -1314,6 +1314,7 @@ public final class InteractionSystem {
                     true,
                     List.of(
                             stayOpenOption(miniMapLabel(), this::toggleMiniMap),
+                            stayOpenOption(cameraMovementLabel(), this::toggleCameraMovement),
                             option("Controls", controlsAction()),
                             volumeOption(),
                             backToConfigOption(),
@@ -1332,6 +1333,23 @@ public final class InteractionSystem {
                 case DISCOVERED -> "Minimap [DISCOVERED]";
                 case DEBUG -> "Minimap [DEBUG]";
             };
+        }
+
+        private String cameraMovementLabel() {
+            if (gameState() == null) {
+                return "Movement [STATIC]";
+            }
+
+            return switch (gameState().getCameraMovementMode()) {
+                case STATIC -> "Movement [STATIC]";
+                case FLUID -> "Movement [FLUID]";
+            };
+        }
+
+        private void toggleCameraMovement() {
+            if (gameState() != null) {
+                gameState().toggleCameraMovementMode();
+            }
         }
 
         private void toggleMiniMap() {
