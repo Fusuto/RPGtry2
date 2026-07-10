@@ -1,15 +1,16 @@
 package org.main.battle;
 
 import org.main.content.EnvironmentLibrary;
-import org.main.content.SkillLibrary;
 import org.main.core.GameBootstrap;
 import org.main.core.InventorySystem;
 import org.main.core.Library;
 import org.main.core.PlayerCharacter;
+import org.main.core.PlayerStat;
 import org.main.engine.SoundSystem;
 import org.main.monsters.Monster;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 public class BattleEncounter {
@@ -91,17 +92,25 @@ public class BattleEncounter {
             playerCharacter = GameBootstrap.createDefaultPlayerCharacter();
         }
 
+        int equipmentAttackBonus = playerCharacter.getInventory() == null
+                ? 0
+                : playerCharacter.getInventory().getWeaponStatBonus();
+        int equipmentDefenseBonus = playerCharacter.getInventory() == null
+                ? 0
+                : playerCharacter.getInventory().getArmorStatBonus();
+
         BattleActor playerActor = new BattleActor(
                 playerCharacter.getName(),
                 playerCharacter.getMaxHp(),
                 playerCharacter.getCurrHp(),
                 null,
                 Library.EntityType.ALLY,
-                5
+                5 + playerCharacter.getStat(PlayerStat.STRENGTH) + equipmentAttackBonus,
+                playerCharacter.getStat(PlayerStat.DEFENSE) + equipmentDefenseBonus
         );
         playerActor.setHitSoundPath(environment == null ? null : environment.getPlayerHitSoundPath());
 
-        for (BattleSkill skill : SkillLibrary.createDefaultPlayerSkills()) {
+        for (BattleSkill skill : playerCharacter.getBattleSkills()) {
             playerActor.addSkill(skill);
         }
 
@@ -126,6 +135,10 @@ public class BattleEncounter {
             );
             enemy.setAttackSoundPath(monster1.getType().getAttackSoundPath());
             enemy.setHitSoundPath(monster1.getType().getDamageSoundPath());
+            enemy.setIntelligence(monster1.getType().getIntelligence());
+            enemy.setSpeciesId(monster1.getType().name());
+            enemy.setExperienceReward(monster1.getType().getXpReward());
+            monster1.getType().getSkills().forEach(skill -> enemy.addSkill(skill.createSkill()));
             monsterActors.add(enemy);
         });
 
@@ -248,14 +261,26 @@ public class BattleEncounter {
                 + joinActorNames(targets)
                 + ".";
 
-        targets.forEach(target -> {
+        int totalDamage = 0;
+
+        for (BattleActor target : targets) {
             if (skill.getEffectType().equals(Library.EffectType.DAMAGE)) {
-                target.takeDamage(skill.getDamage());
+                totalDamage += target.takeDamage(skill.getDamage());
                 playSound(target.getHitSoundPath());
+
+                if (skill.getStunTurns() > 0 && Math.random() < skill.getStunChance()) {
+                    target.applyStun(skill.getStunTurns());
+                }
             } else if (skill.getEffectType().equals(Library.EffectType.HEAL)) {
                 target.healDamage(skill.getDamage());
+            } else if (skill.getEffectType().equals(Library.EffectType.DEFEND)) {
+                target.applyDefend(skill.getDefendTurns(), skill.getDamageReduction());
             }
-        });
+        }
+
+        if (skill.healsCasterFromDamage() && totalDamage > 0) {
+            caster.healDamage((int) Math.ceil(totalDamage * skill.getSelfHealPercent()));
+        }
 
         playSound(skill.getUseSoundPath());
 
@@ -434,11 +459,35 @@ public class BattleEncounter {
                 continue;
             }
 
+            if (attacker.isStunned()) {
+                turnSummary
+                        .append(" ")
+                        .append(attacker.getName())
+                        .append(" is stunned!");
+                attacker.tickStatusDurations();
+                continue;
+            }
+
             BattleActor target = getFirstLivingAlly();
 
             if (target == null) {
                 battleMessage = "Defeat!";
                 return Library.BattleResult.DEFEAT;
+            }
+
+            BattleSkill selectedSkill = chooseEnemySkill(attacker);
+
+            if (selectedSkill != null) {
+                String skillSummary = resolveEnemySkill(attacker, selectedSkill);
+                turnSummary.append(" ").append(skillSummary);
+
+                if (getFirstLivingAlly() == null) {
+                    battleMessage = "Defeat!";
+                    return Library.BattleResult.DEFEAT;
+                }
+
+                attacker.tickStatusDurations();
+                continue;
             }
 
             int damage = attacker.getAttackDamage();
@@ -459,10 +508,94 @@ public class BattleEncounter {
                 battleMessage = "Defeat!";
                 return Library.BattleResult.DEFEAT;
             }
+
+            attacker.tickStatusDurations();
         }
 
+        allies.forEach(BattleActor::tickStatusDurations);
         battleMessage = turnSummary.toString();
         return Library.BattleResult.CONTINUE;
+    }
+
+    private BattleSkill chooseEnemySkill(BattleActor attacker) {
+        if (attacker == null || attacker.getIntelligence() <= 0 || attacker.getSkills().isEmpty()) {
+            return null;
+        }
+
+        double skillChance = attacker.getIntelligence() / 10.0;
+
+        if (Math.random() > skillChance) {
+            return null;
+        }
+
+        List<BattleSkill> usableSkills = attacker.getSkills().stream()
+                .filter(skill -> !getSelectableActorsForSkill(attacker, skill).isEmpty())
+                .toList();
+
+        if (usableSkills.isEmpty()) {
+            return null;
+        }
+
+        BattleSkill drainSkill = usableSkills.stream()
+                .filter(BattleSkill::healsCasterFromDamage)
+                .findFirst()
+                .orElse(null);
+
+        if (drainSkill != null && attacker.getCurrentHp() < attacker.getMaxHp()) {
+            return drainSkill;
+        }
+
+        return usableSkills.getFirst();
+    }
+
+    private String resolveEnemySkill(BattleActor attacker, BattleSkill skill) {
+        List<BattleActor> targets = getSelectableActorsForSkill(attacker, skill);
+
+        if (targets.isEmpty()) {
+            return attacker.getName() + " hesitates.";
+        }
+
+        BattleActor target = selectEnemySkillTarget(attacker, skill, targets);
+        List<BattleActor> resolvedTargets = resolveSkillTargets(attacker, target, skill);
+
+        if (resolvedTargets.isEmpty()) {
+            return attacker.getName() + " hesitates.";
+        }
+
+        int totalDamage = 0;
+
+        for (BattleActor resolvedTarget : resolvedTargets) {
+            if (skill.getEffectType().equals(Library.EffectType.DAMAGE)) {
+                totalDamage += resolvedTarget.takeDamage(skill.getDamage());
+                playSound(resolvedTarget.getHitSoundPath());
+            } else if (skill.getEffectType().equals(Library.EffectType.HEAL)) {
+                resolvedTarget.healDamage(skill.getDamage());
+            } else if (skill.getEffectType().equals(Library.EffectType.DEFEND)) {
+                resolvedTarget.applyDefend(skill.getDefendTurns(), skill.getDamageReduction());
+            }
+        }
+
+        if (skill.healsCasterFromDamage() && totalDamage > 0) {
+            attacker.healDamage((int) Math.ceil(totalDamage * skill.getSelfHealPercent()));
+        }
+
+        playSound(skill.getUseSoundPath());
+        return attacker.getName()
+                + " uses "
+                + skill.getName()
+                + " on "
+                + joinActorNames(resolvedTargets)
+                + "!";
+    }
+
+    private BattleActor selectEnemySkillTarget(BattleActor attacker, BattleSkill skill, List<BattleActor> targets) {
+        if (attacker.getIntelligence() >= 7 && skill.getEffectType() == Library.EffectType.DAMAGE) {
+            return targets.stream()
+                    .min(Comparator.comparingInt(BattleActor::getCurrentHp))
+                    .orElse(targets.getFirst());
+        }
+
+        return targets.getFirst();
     }
 
     private BattleActor getFirstLivingEnemy() {
@@ -495,6 +628,18 @@ public class BattleEncounter {
 
     public String getBattleMessage() {
         return battleMessage;
+    }
+
+    public int getDefeatedEnemyExperienceReward() {
+        int reward = 0;
+
+        for (BattleActor enemy : enemies) {
+            if (!enemy.isAlive()) {
+                reward += enemy.getExperienceReward();
+            }
+        }
+
+        return reward;
     }
 
     private void playSound(String soundPath) {

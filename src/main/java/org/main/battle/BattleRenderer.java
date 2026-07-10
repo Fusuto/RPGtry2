@@ -389,6 +389,7 @@ public class BattleRenderer {
             actorBounds.put(actor, actorRectangle);
 
             drawHpBar(g, drawX, drawY - 18, spriteSize, 10, actor);
+            drawStatusIcons(g, actor, drawX, drawY - 34);
             drawActorSprite(g, actor, drawX, drawY, spriteSize, spriteSize);
         }
     }
@@ -730,8 +731,34 @@ public class BattleRenderer {
                     12,
                     ally
             );
+            drawStatusIcons(g, ally, contentX + 100, currentY + 4);
 
             currentY += 35;
+        }
+    }
+
+    private void drawStatusIcons(Graphics2D g, BattleActor actor, int x, int y) {
+        int iconSize = 14;
+        int gap = 3;
+        int index = 0;
+
+        for (BattleStatus status : actor.getStatuses()) {
+            BattleStatusType type = status.getType();
+            int iconX = x + index * (iconSize + gap);
+            BufferedImage icon = type.getIcon();
+
+            if (icon != null) {
+                g.drawImage(icon, iconX, y, iconSize, iconSize, null);
+            } else {
+                g.setColor(new Color(85, 85, 95));
+                g.fillRect(iconX, y, iconSize, iconSize);
+                g.setColor(Color.WHITE);
+                g.drawRect(iconX, y, iconSize, iconSize);
+            }
+
+            g.setColor(Color.WHITE);
+            g.drawString(String.valueOf(status.getRemainingTurns()), iconX + iconSize - 5, y + iconSize - 2);
+            index++;
         }
     }
 

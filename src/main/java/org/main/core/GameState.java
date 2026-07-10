@@ -1,24 +1,30 @@
 package org.main.core;
 
 import org.main.battle.BattleEncounter;
+import org.main.content.QuestLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class GameState {
     private DungeonMap dungeonMap;
     private final List<MapEntity> entities = new ArrayList<>();
     private final Map<String, String> tileInteractionIds = new HashMap<>();
+    private final Set<String> removedEntityKeys = new HashSet<>();
+    private final Map<String, Integer> questStages = new HashMap<>();
     private final InputBindings inputBindings = new InputBindings();
 
-    private GameMode gameMode = GameMode.DUNGEON;
+    private GameMode gameMode = GameMode.START_MENU;
 
     private int playerX = 1;
     private int playerY = 1;
+    private int currentFloor = 1;
     private double movementStartX = 1.0;
     private double movementStartY = 1.0;
     private double movementProgress = 1.0;
@@ -37,14 +43,18 @@ public class GameState {
 
     private BattleEncounter currentEncounter;
     private MapEntity currentEnemyEntity;
-    private final PlayerCharacter playerCharacter;
+    private PlayerCharacter playerCharacter;
     private boolean inventoryOpen = false;
     private boolean skillsOpen = false;
+    private boolean questsOpen = false;
+    private String selectedQuestId;
     private InteractionSystem.Interaction activeInteraction;
     private ShopSystem.ShopSession activeShop;
     private int gold = 100;
 
     public enum GameMode {
+        START_MENU,
+        CHARACTER_CREATION,
         DUNGEON,
         BATTLE;
 
@@ -72,6 +82,7 @@ public class GameState {
     public void openInteraction(InteractionSystem.Interaction interaction) {
         closeInventory();
         closeSkills();
+        closeQuests();
         closeShop();
         activeInteraction = interaction;
     }
@@ -88,6 +99,12 @@ public class GameState {
         return playerCharacter;
     }
 
+    public void setPlayerCharacter(PlayerCharacter playerCharacter) {
+        this.playerCharacter = playerCharacter == null
+                ? GameBootstrap.createDefaultPlayerCharacter()
+                : playerCharacter;
+    }
+
     public InventorySystem.Inventory getInventory() {
         return playerCharacter.getInventory();
     }
@@ -99,6 +116,7 @@ public class GameState {
     public void setInventoryOpen(boolean inventoryOpen) {
         if (inventoryOpen) {
             closeSkills();
+            closeQuests();
             closeShop();
             closeInteraction();
         }
@@ -121,6 +139,7 @@ public class GameState {
     public void setSkillsOpen(boolean skillsOpen) {
         if (skillsOpen) {
             closeInventory();
+            closeQuests();
             closeShop();
             closeInteraction();
         }
@@ -134,6 +153,37 @@ public class GameState {
 
     public void closeSkills() {
         skillsOpen = false;
+    }
+
+    public boolean isQuestsOpen() {
+        return questsOpen;
+    }
+
+    public void setQuestsOpen(boolean questsOpen) {
+        if (questsOpen) {
+            closeInventory();
+            closeSkills();
+            closeShop();
+            closeInteraction();
+        }
+
+        this.questsOpen = questsOpen;
+    }
+
+    public void toggleQuests() {
+        setQuestsOpen(!questsOpen);
+    }
+
+    public void closeQuests() {
+        questsOpen = false;
+    }
+
+    public String getSelectedQuestId() {
+        return selectedQuestId;
+    }
+
+    public void setSelectedQuestId(String selectedQuestId) {
+        this.selectedQuestId = selectedQuestId;
     }
 
     public GameState(DungeonMap dungeonMap) {
@@ -261,6 +311,7 @@ public class GameState {
         setPlayerPosition(playerX, playerY);
         closeInventory();
         closeSkills();
+        closeQuests();
         closeShop();
         closeInteraction();
         clearBattleState();
@@ -302,8 +353,42 @@ public class GameState {
         }
     }
 
+    public void addEntityUnlessRemoved(MapEntity entity) {
+        if (entity != null && !isEntityRemoved(entity)) {
+            addEntity(entity);
+        }
+    }
+
     public void removeEntity(MapEntity entity) {
-        entities.remove(entity);
+        if (entity != null && entities.remove(entity)) {
+            removedEntityKeys.add(entityKey(entity));
+        }
+    }
+
+    public boolean isEntityRemoved(MapEntity entity) {
+        return entity != null && removedEntityKeys.contains(entityKey(entity));
+    }
+
+    public Set<String> getRemovedEntityKeysView() {
+        return Set.copyOf(removedEntityKeys);
+    }
+
+    public void setRemovedEntityKeys(Set<String> removedEntityKeys) {
+        this.removedEntityKeys.clear();
+
+        if (removedEntityKeys != null) {
+            this.removedEntityKeys.addAll(removedEntityKeys);
+        }
+    }
+
+    private String entityKey(MapEntity entity) {
+        return entity.getName()
+                + "|"
+                + entity.getType()
+                + "|"
+                + entity.getX()
+                + "|"
+                + entity.getY();
     }
 
     public GameMode getGameMode() {
@@ -320,6 +405,14 @@ public class GameState {
 
     public boolean isBattleMode() {
         return gameMode == GameMode.BATTLE;
+    }
+
+    public boolean isStartMenuMode() {
+        return gameMode == GameMode.START_MENU;
+    }
+
+    public boolean isCharacterCreationMode() {
+        return gameMode == GameMode.CHARACTER_CREATION;
     }
 
     public int getPlayerX() {
@@ -344,6 +437,14 @@ public class GameState {
         this.playerX = playerX;
         this.playerY = playerY;
         revealMiniMapTile(playerX, playerY);
+    }
+
+    public int getCurrentFloor() {
+        return currentFloor;
+    }
+
+    public void setCurrentFloor(int currentFloor) {
+        this.currentFloor = Math.max(1, currentFloor);
     }
 
     public void startMovementAnimation(int fromX, int fromY, int toX, int toY) {
@@ -483,6 +584,77 @@ public class GameState {
                     discoveredMiniMapTiles[y][x] = true;
                 }
             }
+        }
+    }
+
+    public Set<String> getDiscoveredMiniMapTileKeys() {
+        Set<String> discovered = new HashSet<>();
+
+        for (int y = 0; y < discoveredMiniMapTiles.length; y++) {
+            for (int x = 0; x < discoveredMiniMapTiles[y].length; x++) {
+                if (discoveredMiniMapTiles[y][x]) {
+                    discovered.add(tileKey(x, y));
+                }
+            }
+        }
+
+        return discovered;
+    }
+
+    public void setDiscoveredMiniMapTileKeys(Set<String> discoveredTileKeys) {
+        resetMiniMapDiscovery();
+
+        if (discoveredTileKeys == null) {
+            revealMiniMapTile(playerX, playerY);
+            return;
+        }
+
+        for (String key : discoveredTileKeys) {
+            String[] parts = key.split(",");
+
+            if (parts.length != 2) {
+                continue;
+            }
+
+            try {
+                int x = Integer.parseInt(parts[0]);
+                int y = Integer.parseInt(parts[1]);
+
+                if (y >= 0
+                        && y < discoveredMiniMapTiles.length
+                        && x >= 0
+                        && x < discoveredMiniMapTiles[y].length) {
+                    discoveredMiniMapTiles[y][x] = true;
+                }
+            } catch (NumberFormatException ignored) {
+                // Ignore malformed save entries.
+            }
+        }
+    }
+
+    public int getQuestStage(QuestLibrary quest) {
+        return quest == null ? 0 : questStages.getOrDefault(quest.getId(), 0);
+    }
+
+    public void setQuestStage(QuestLibrary quest, int stage) {
+        if (quest != null) {
+            questStages.put(quest.getId(), Math.max(0, Math.min(quest.getMaxStage(), stage)));
+        }
+    }
+
+    public Map<String, Integer> getQuestStagesView() {
+        return Map.copyOf(questStages);
+    }
+
+    public void setQuestStages(Map<String, Integer> questStages) {
+        this.questStages.clear();
+
+        if (questStages != null) {
+            questStages.forEach((id, stage) -> {
+                if (id != null && stage != null) {
+                    this.questStages.put(id, Math.max(0, stage));
+                }
+            });
         }
     }
 

@@ -6,6 +6,17 @@ import org.main.core.Library;
 import java.util.List;
 
 public enum SkillLibrary {
+    WAIT(
+            "Wait",
+            "Deals tiny damage and ends your turn.",
+            Library.SkillTargetShape.SINGLE_TARGET,
+            Library.EntityType.ENEMY,
+            Library.BattleTargetingMode.MAGIC,
+            null,
+            2,
+            Library.EffectType.DAMAGE
+    ),
+
     FIREBALL(
             "Fireball",
             "Hits every enemy.",
@@ -48,13 +59,50 @@ public enum SkillLibrary {
             "assets/sounds/generated/fire_wave.wav",
             5,
             Library.EffectType.HEAL
+    ),
+
+    DEFEND(
+            "Defend",
+            "Reduces incoming damage for 2 turns.",
+            Library.SkillTargetShape.SINGLE_TARGET,
+            Library.EntityType.ALLY,
+            Library.BattleTargetingMode.MAGIC,
+            null,
+            0,
+            Library.EffectType.DEFEND,
+            0.0,
+            0,
+            2,
+            0.5,
+            0.0
+    ),
+
+    BASH(
+            "Bash",
+            "Deals damage and has a chance to stun.",
+            Library.SkillTargetShape.SINGLE_TARGET,
+            Library.EntityType.ENEMY,
+            Library.BattleTargetingMode.NORMAL_MELEE,
+            null,
+            4,
+            Library.EffectType.DAMAGE,
+            0.45,
+            1,
+            0,
+            0.0,
+            0.0
     );
 
     private static final List<SkillLibrary> DEFAULT_PLAYER_SKILLS = List.of(
+            WAIT,
             FIREBALL,
             PIERCING_LINE,
             CRUSH_COLUMN,
             HEAL
+    );
+
+    private static final List<SkillLibrary> UNIVERSAL_PLAYER_SKILLS = List.of(
+            WAIT
     );
 
     private final String displayName;
@@ -65,6 +113,11 @@ public enum SkillLibrary {
     private final String useSoundPath;
     private final int damage;
     private final Library.EffectType effectType;
+    private final double stunChance;
+    private final int stunTurns;
+    private final int defendTurns;
+    private final double damageReduction;
+    private final double selfHealPercent;
 
     SkillLibrary(
             String displayName,
@@ -74,6 +127,38 @@ public enum SkillLibrary {
             Library.BattleTargetingMode targetingMode,
             String useSoundPath, int damage, Library.EffectType effectType
     ) {
+        this(
+                displayName,
+                description,
+                targetShape,
+                targetTeam,
+                targetingMode,
+                useSoundPath,
+                damage,
+                effectType,
+                0.0,
+                0,
+                0,
+                0.0,
+                0.0
+        );
+    }
+
+    SkillLibrary(
+            String displayName,
+            String description,
+            Library.SkillTargetShape targetShape,
+            Library.EntityType targetTeam,
+            Library.BattleTargetingMode targetingMode,
+            String useSoundPath,
+            int damage,
+            Library.EffectType effectType,
+            double stunChance,
+            int stunTurns,
+            int defendTurns,
+            double damageReduction,
+            double selfHealPercent
+    ) {
         this.displayName = displayName;
         this.description = description;
         this.targetShape = targetShape;
@@ -82,6 +167,11 @@ public enum SkillLibrary {
         this.useSoundPath = useSoundPath;
         this.damage = damage;
         this.effectType = effectType;
+        this.stunChance = stunChance;
+        this.stunTurns = stunTurns;
+        this.defendTurns = defendTurns;
+        this.damageReduction = damageReduction;
+        this.selfHealPercent = selfHealPercent;
     }
 
     public BattleSkill createSkill() {
@@ -93,12 +183,23 @@ public enum SkillLibrary {
                 targetingMode,
                 useSoundPath,
                 effectType,
-                damage
+                damage,
+                stunChance,
+                stunTurns,
+                defendTurns,
+                damageReduction,
+                selfHealPercent
         );
     }
 
     public static List<BattleSkill> createDefaultPlayerSkills() {
         return DEFAULT_PLAYER_SKILLS.stream()
+                .map(SkillLibrary::createSkill)
+                .toList();
+    }
+
+    public static List<BattleSkill> createUniversalPlayerSkills() {
+        return UNIVERSAL_PLAYER_SKILLS.stream()
                 .map(SkillLibrary::createSkill)
                 .toList();
     }

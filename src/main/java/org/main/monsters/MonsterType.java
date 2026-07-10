@@ -1,8 +1,10 @@
 package org.main.monsters;
 
+import org.main.content.EnemySkillLibrary;
 import org.main.engine.AssetLoader;
 
 import java.awt.image.BufferedImage;
+import java.util.List;
 
 public enum MonsterType {
     SLIME(
@@ -14,7 +16,9 @@ public enum MonsterType {
             "A quivering mass of dungeon slime.",
             "assets/images/monster/Nov-2015/mon/amorphous/jelly.png",
             "assets/sounds/generated/enemy_attack.wav",
-            "assets/sounds/generated/player_hit.wav"
+            "assets/sounds/generated/player_hit.wav",
+            5,
+            List.of(EnemySkillLibrary.ABSORB)
     ),
 
     GOBLIN(
@@ -26,7 +30,9 @@ public enum MonsterType {
             "A wiry goblin clutching a crude blade.",
             "assets/images/monster/Nov-2015/mon/goblin.png",
             "assets/sounds/generated/enemy_attack.wav",
-            "assets/sounds/generated/player_hit.wav"
+            "assets/sounds/generated/player_hit.wav",
+            4,
+            List.of()
     ),
 
     SKELETON(
@@ -38,7 +44,9 @@ public enum MonsterType {
             "A rattling corpse animated by old magic.",
             "assets/images/monster/Nov-2015/mon/undead/skeletons/skeleton_humanoid_small.png",
             "assets/sounds/generated/enemy_attack.wav",
-            "assets/sounds/generated/player_hit.wav"
+            "assets/sounds/generated/player_hit.wav",
+            2,
+            List.of()
     );
 
     private final String displayName;
@@ -50,6 +58,8 @@ public enum MonsterType {
     private final BufferedImage img;
     private final String attackSoundPath;
     private final String damageSoundPath;
+    private final int intelligence;
+    private final List<EnemySkillLibrary> skills;
 
     MonsterType(
             String displayName,
@@ -59,7 +69,10 @@ public enum MonsterType {
             int xpReward,
             String description,
             String imgLocation,
-            String attackSoundPath, String damageSoundPath
+            String attackSoundPath,
+            String damageSoundPath,
+            int intelligence,
+            List<EnemySkillLibrary> skills
     ) {
         this.displayName = displayName;
         this.maxHp = maxHp;
@@ -70,6 +83,8 @@ public enum MonsterType {
         this.img = loadImage(imgLocation);
         this.attackSoundPath = attackSoundPath;
         this.damageSoundPath = damageSoundPath;
+        this.intelligence = Math.max(0, Math.min(10, intelligence));
+        this.skills = List.copyOf(skills);
     }
 
     private BufferedImage loadImage(String path) {
@@ -110,5 +125,13 @@ public enum MonsterType {
 
     public String getDamageSoundPath() {
         return damageSoundPath;
+    }
+
+    public int getIntelligence() {
+        return intelligence;
+    }
+
+    public List<EnemySkillLibrary> getSkills() {
+        return skills;
     }
 }

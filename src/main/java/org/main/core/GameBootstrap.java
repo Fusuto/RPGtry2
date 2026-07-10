@@ -2,22 +2,42 @@ package org.main.core;
 
 import org.main.content.ItemLibrary;
 import org.main.content.NpcLibrary;
+import org.main.content.PlayerClassLibrary;
+import org.main.content.SkillLibrary;
 import org.main.engine.MapEntity;
 import org.main.monsters.Monster;
 import org.main.monsters.MonsterType;
+
+import java.util.ArrayList;
+import java.util.EnumMap;
 
 public final class GameBootstrap {
     private GameBootstrap() {
     }
 
     public static PlayerCharacter createDefaultPlayerCharacter() {
+        return createPlayerCharacter("Player", PlayerClassLibrary.WARRIOR);
+    }
+
+    public static PlayerCharacter createPlayerCharacter(String name, PlayerClassLibrary playerClass) {
+        PlayerClassLibrary selectedClass = playerClass == null ? PlayerClassLibrary.WARRIOR : playerClass;
+        EnumMap<PlayerStat, Integer> stats = PlayerCharacter.createDefaultStats();
+        selectedClass.getPreferredStatGrowth().forEach((stat, amount) -> stats.put(stat, stats.get(stat) + amount));
+        var battleSkills = new ArrayList<>(SkillLibrary.createUniversalPlayerSkills());
+        battleSkills.addAll(selectedClass.getStarterSkills().stream()
+                .map(skill -> skill.createSkill())
+                .toList());
+
         return new PlayerCharacter(
-                "Player",
-                30,
-                30,
+                name,
+                20 + stats.get(PlayerStat.VITALITY) * 5,
+                20 + stats.get(PlayerStat.VITALITY) * 5,
                 new InventorySystem.Inventory(),
                 PlayerCharacter.createDefaultSkills(),
-                "assets/images/monster/Nov-2015/player/base/human_m.png"
+                "assets/images/monster/Nov-2015/player/base/human_m.png",
+                selectedClass,
+                stats,
+                battleSkills
         );
     }
 
@@ -26,15 +46,14 @@ public final class GameBootstrap {
             return;
         }
 
-        gameState.addEntity(new MapEntity(new Monster(MonsterType.SLIME), 4, 3));
-        gameState.addEntity(NpcLibrary.OLD_GUARD.createEntity(6, 1));
-        gameState.addEntity(NpcLibrary.GOBLIN_MERCHANT.createEntity(5, 7));
+        gameState.addEntityUnlessRemoved(new MapEntity(new Monster(MonsterType.SLIME), 4, 3));
+        gameState.addEntityUnlessRemoved(NpcLibrary.OLD_GUARD.createEntity(6, 1));
+        gameState.addEntityUnlessRemoved(NpcLibrary.GOBLIN_MERCHANT.createEntity(5, 7));
         gameState.setTileInteractionId(5, 8, "generated_dungeon_gate");
 
-        gameState.addEntity(new MapEntity(ItemLibrary.POTION.createItem(), 2, 1));
+        gameState.addEntityUnlessRemoved(new MapEntity(ItemLibrary.POTION.createItem(), 2, 1));
 
         gameState.getInventory().addItem(ItemLibrary.IRON_SWORD.createItem());
-        gameState.getInventory().addItem(ItemLibrary.LEATHER_CAP.createItem());
         gameState.getInventory().addItem(ItemLibrary.SILVER_RING.createItem());
     }
 }

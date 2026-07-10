@@ -48,6 +48,9 @@ public final class InventorySystem {
         private final BufferedImage icon;
         private final String useSoundPath;
         private final int healAmount;
+        private final GearMaterial material;
+        private final GearDurability durability;
+        private final int baseGoldValue;
 
         public Item(String name, ItemType itemType, BufferedImage icon) {
             this(name, itemType, icon, null, 0);
@@ -58,11 +61,27 @@ public final class InventorySystem {
         }
 
         public Item(String name, ItemType itemType, BufferedImage icon, String useSoundPath, int healAmount) {
+            this(name, itemType, icon, useSoundPath, healAmount, GearMaterial.NONE, GearDurability.PERFECT, 10);
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                BufferedImage icon,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue
+        ) {
             this.name = name;
             this.itemType = itemType;
             this.icon = icon;
             this.useSoundPath = useSoundPath;
             this.healAmount = Math.max(0, healAmount);
+            this.material = material == null ? GearMaterial.NONE : material;
+            this.durability = durability == null ? GearDurability.PERFECT : durability;
+            this.baseGoldValue = Math.max(1, baseGoldValue);
         }
 
         public Item(String name, ItemType itemType, String iconPath) {
@@ -75,6 +94,19 @@ public final class InventorySystem {
 
         public Item(String name, ItemType itemType, String iconPath, String useSoundPath, int healAmount) {
             this(name, itemType, loadIcon(iconPath), useSoundPath, healAmount);
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                String iconPath,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue
+        ) {
+            this(name, itemType, loadIcon(iconPath), useSoundPath, healAmount, material, durability, baseGoldValue);
         }
 
         private static BufferedImage loadIcon(String iconPath) {
@@ -105,12 +137,57 @@ public final class InventorySystem {
             return healAmount;
         }
 
+        public GearMaterial getMaterial() {
+            return material;
+        }
+
+        public GearDurability getDurability() {
+            return durability;
+        }
+
+        public int getBaseGoldValue() {
+            return baseGoldValue;
+        }
+
+        public int getEffectiveStatBonus() {
+            if (!isEquippable()) {
+                return 0;
+            }
+
+            return (int) Math.round(material.getStatBonus() * durability.getStatMultiplier());
+        }
+
+        public int getCalculatedBuyPrice() {
+            return Math.max(1, (int) Math.round(
+                    baseGoldValue
+                            * material.getPriceMultiplier()
+                            * durability.getPriceMultiplier()
+            ));
+        }
+
+        public int getCalculatedSellPrice() {
+            return Math.max(1, (int) Math.floor(getCalculatedBuyPrice() * 0.35));
+        }
+
         public boolean isEquippable() {
             return itemType == ItemType.HEAD_GEAR
                     || itemType == ItemType.CHEST_ARMOR
                     || itemType == ItemType.LEG_ARMOR
                     || itemType == ItemType.RING
                     || itemType == ItemType.WEAPON;
+        }
+
+        public Item copy() {
+            return new Item(
+                    name,
+                    itemType,
+                    icon,
+                    useSoundPath,
+                    healAmount,
+                    material,
+                    durability,
+                    baseGoldValue
+            );
         }
     }
 
@@ -132,6 +209,35 @@ public final class InventorySystem {
 
         public Item getEquippedItem(EquipmentSlot slot) {
             return equippedItems.get(slot);
+        }
+
+        public int getTotalEquipmentStatBonus() {
+            int total = 0;
+
+            for (Item item : equippedItems.values()) {
+                if (item != null) {
+                    total += item.getEffectiveStatBonus();
+                }
+            }
+
+            return total;
+        }
+
+        public int getWeaponStatBonus() {
+            Item weapon = equippedItems.get(EquipmentSlot.WEAPON);
+            return weapon == null ? 0 : weapon.getEffectiveStatBonus();
+        }
+
+        public int getArmorStatBonus() {
+            int total = 0;
+
+            for (Map.Entry<EquipmentSlot, Item> entry : equippedItems.entrySet()) {
+                if (entry.getKey() != EquipmentSlot.WEAPON && entry.getValue() != null) {
+                    total += entry.getValue().getEffectiveStatBonus();
+                }
+            }
+
+            return total;
         }
 
         public boolean addItem(Item item) {
@@ -158,6 +264,79 @@ public final class InventorySystem {
             items[index] = null;
 
             return removedItem;
+        }
+
+        public boolean removeFirstItemNamed(String itemName) {
+            if (itemName == null || itemName.isBlank()) {
+                return false;
+            }
+
+            for (int i = 0; i < items.length; i++) {
+                Item item = items[i];
+
+                if (item != null && itemName.equalsIgnoreCase(item.getName())) {
+                    items[i] = null;
+                    return true;
+                }
+            }
+
+            for (EquipmentSlot slot : EquipmentSlot.values()) {
+                Item item = equippedItems.get(slot);
+
+                if (item != null && itemName.equalsIgnoreCase(item.getName())) {
+                    equippedItems.remove(slot);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public boolean hasItemNamed(String itemName) {
+            if (itemName == null || itemName.isBlank()) {
+                return false;
+            }
+
+            for (Item item : items) {
+                if (item != null && itemName.equalsIgnoreCase(item.getName())) {
+                    return true;
+                }
+            }
+
+            for (Item item : equippedItems.values()) {
+                if (item != null && itemName.equalsIgnoreCase(item.getName())) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public void clear() {
+            for (int i = 0; i < items.length; i++) {
+                items[i] = null;
+            }
+
+            equippedItems.clear();
+        }
+
+        public Map<EquipmentSlot, Item> getEquippedItemsView() {
+            return Map.copyOf(equippedItems);
+        }
+
+        public void setEquippedItem(EquipmentSlot slot, Item item) {
+            if (slot == null) {
+                return;
+            }
+
+            if (item == null) {
+                equippedItems.remove(slot);
+                return;
+            }
+
+            if (canEquipToSlot(item, slot)) {
+                equippedItems.put(slot, item);
+            }
         }
 
         public boolean hasFreeSlot() {
@@ -399,6 +578,10 @@ public final class InventorySystem {
             this.soundSystem = soundSystem;
         }
 
+        private Inventory inventory() {
+            return gameState == null ? inventory : gameState.getInventory();
+        }
+
         public void draw(Graphics2D g, int panelWidth, int panelHeight) {
             calculateBounds(panelWidth, panelHeight);
 
@@ -413,7 +596,7 @@ public final class InventorySystem {
             int inventoryIndex = getInventorySlotAt(mousePoint);
 
             if (inventoryIndex >= 0) {
-                Item item = inventory.getItem(inventoryIndex);
+                Item item = inventory().getItem(inventoryIndex);
 
                 if (item == null) {
                     return false;
@@ -421,7 +604,7 @@ public final class InventorySystem {
 
                 if (e.getClickCount() >= 2) {
                     if (!useItem(inventoryIndex)) {
-                        inventory.equipFromInventory(inventoryIndex);
+                        inventory().equipFromInventory(inventoryIndex);
                     }
                     clearDrag();
                     return true;
@@ -436,14 +619,14 @@ public final class InventorySystem {
             EquipmentSlot equipmentSlot = getEquipmentSlotAt(mousePoint);
 
             if (equipmentSlot != null) {
-                Item equippedItem = inventory.getEquippedItem(equipmentSlot);
+                Item equippedItem = inventory().getEquippedItem(equipmentSlot);
 
                 if (equippedItem == null) {
                     return false;
                 }
 
                 if (e.getClickCount() >= 2) {
-                    inventory.unequipToInventory(equipmentSlot);
+                    inventory().unequipToInventory(equipmentSlot);
                     clearDrag();
                     return true;
                 }
@@ -458,7 +641,7 @@ public final class InventorySystem {
         }
 
         private boolean useItem(int inventoryIndex) {
-            Item item = inventory.getItem(inventoryIndex);
+            Item item = inventory().getItem(inventoryIndex);
 
             if (item == null || item.getItemType() != ItemType.CONSUMABLE) {
                 return false;
@@ -481,7 +664,7 @@ public final class InventorySystem {
                 soundSystem.playSound(item.getUseSoundPath());
             }
 
-            inventory.removeItem(inventoryIndex);
+            inventory().removeItem(inventoryIndex);
             return true;
         }
 
@@ -517,7 +700,7 @@ public final class InventorySystem {
             EquipmentSlot targetEquipmentSlot = getEquipmentSlotAt(mousePoint);
 
             if (targetEquipmentSlot != null) {
-                inventory.equipFromInventory(draggedInventoryIndex, targetEquipmentSlot);
+                inventory().equipFromInventory(draggedInventoryIndex, targetEquipmentSlot);
                 clearDrag();
                 return true;
             }
@@ -525,7 +708,7 @@ public final class InventorySystem {
             int targetInventoryIndex = getInventorySlotAt(mousePoint);
 
             if (targetInventoryIndex >= 0) {
-                inventory.swapInventorySlots(draggedInventoryIndex, targetInventoryIndex);
+                inventory().swapInventorySlots(draggedInventoryIndex, targetInventoryIndex);
                 clearDrag();
                 return true;
             }
@@ -538,7 +721,7 @@ public final class InventorySystem {
             EquipmentSlot targetEquipmentSlot = getEquipmentSlotAt(mousePoint);
 
             if (targetEquipmentSlot != null) {
-                inventory.moveEquippedItem(draggedEquipmentSlot, targetEquipmentSlot);
+                inventory().moveEquippedItem(draggedEquipmentSlot, targetEquipmentSlot);
                 clearDrag();
                 return true;
             }
@@ -546,7 +729,7 @@ public final class InventorySystem {
             int targetInventoryIndex = getInventorySlotAt(mousePoint);
 
             if (targetInventoryIndex >= 0) {
-                inventory.unequipToInventory(draggedEquipmentSlot, targetInventoryIndex);
+                inventory().unequipToInventory(draggedEquipmentSlot, targetInventoryIndex);
                 clearDrag();
                 return true;
             }
@@ -612,7 +795,7 @@ public final class InventorySystem {
 
                 drawSlot(g, bounds, null);
 
-                Item item = inventory.getItem(i);
+                Item item = inventory().getItem(i);
 
                 if (item != null && i != draggedInventoryIndex) {
                     drawItem(g, item, bounds);
@@ -627,13 +810,13 @@ public final class InventorySystem {
 
                 drawSlot(g, bounds, slot.getLabel());
 
-                Item equippedItem = inventory.getEquippedItem(slot);
+                Item equippedItem = inventory().getEquippedItem(slot);
 
                 if (equippedItem != null && slot != draggedEquipmentSlot) {
                     drawItem(g, equippedItem, bounds);
                 }
 
-                if (draggedItem != null && inventory.canEquipToSlot(draggedItem, slot)) {
+                if (draggedItem != null && inventory().canEquipToSlot(draggedItem, slot)) {
                     drawValidEquipmentHint(g, bounds);
                 }
             }

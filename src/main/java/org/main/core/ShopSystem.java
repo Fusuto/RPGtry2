@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 public final class ShopSystem {
     private ShopSystem() {
@@ -37,33 +38,51 @@ public final class ShopSystem {
                         : merchantName
         );
 
-        shop.addStock(new ShopStockItem(
-                ItemLibrary.POTION.createItem(),
-                15,
-                5,
-                -1
-        ));
+        shop.addStock(ShopStockItem.fromItem(ItemLibrary.POTION.createItem(), -1));
+        shop.addStock(ShopStockItem.fromItem(ItemLibrary.IRON_SWORD.createItem(), 3));
+        shop.addStock(ShopStockItem.fromItem(ItemLibrary.LEATHER_CAP.createItem(), 2));
+        shop.addStock(ShopStockItem.fromItem(ItemLibrary.SILVER_RING.createItem(), 1));
 
-        shop.addStock(new ShopStockItem(
-                ItemLibrary.IRON_SWORD.createItem(),
-                85,
-                28,
-                3
-        ));
+        return shop;
+    }
 
-        shop.addStock(new ShopStockItem(
-                ItemLibrary.LEATHER_CAP.createItem(),
-                40,
-                13,
-                2
-        ));
+    public static ShopSession createRandomMerchantShop(String merchantName, int stockCount) {
+        ShopSession shop = new ShopSession(
+                merchantName == null || merchantName.isBlank()
+                        ? "Merchant"
+                        : merchantName
+        );
+        Random random = new Random();
+        ItemLibrary[] items = ItemLibrary.values();
+        int count = Math.max(1, stockCount);
 
-        shop.addStock(new ShopStockItem(
-                ItemLibrary.SILVER_RING.createItem(),
-                120,
-                40,
-                1
-        ));
+        for (int i = 0; i < count; i++) {
+            ItemLibrary item = items[random.nextInt(items.length)];
+            int quantity = item.getItemType() == InventorySystem.ItemType.CONSUMABLE
+                    ? -1
+                    : 1 + random.nextInt(3);
+            shop.addStock(ShopStockItem.fromItem(item.createItem(), quantity));
+        }
+
+        return shop;
+    }
+
+    public static ShopSession createMerchantShop(String merchantName, List<ItemLibrary> setInventory) {
+        if (setInventory == null || setInventory.isEmpty()) {
+            return createRandomMerchantShop(merchantName, 4);
+        }
+
+        ShopSession shop = new ShopSession(
+                merchantName == null || merchantName.isBlank()
+                        ? "Merchant"
+                        : merchantName
+        );
+
+        for (ItemLibrary item : setInventory) {
+            if (item != null) {
+                shop.addStock(ShopStockItem.fromItem(item.createItem(), 1));
+            }
+        }
 
         return shop;
     }
@@ -91,6 +110,19 @@ public final class ShopSystem {
             this.buyPrice = Math.max(0, buyPrice);
             this.sellPrice = Math.max(0, sellPrice);
             this.quantity = quantity;
+        }
+
+        public static ShopStockItem fromItem(InventorySystem.Item item, int quantity) {
+            if (item == null) {
+                return new ShopStockItem(null, 0, 0, 0);
+            }
+
+            return new ShopStockItem(
+                    item,
+                    item.getCalculatedBuyPrice(),
+                    item.getCalculatedSellPrice(),
+                    quantity
+            );
         }
 
         public InventorySystem.Item getItem() {
@@ -128,13 +160,7 @@ public final class ShopSystem {
                 return null;
             }
 
-            return new InventorySystem.Item(
-                    item.getName(),
-                    item.getItemType(),
-                    item.getIcon(),
-                    item.getUseSoundPath(),
-                    item.getHealAmount()
-            );
+            return item.copy();
         }
     }
 
@@ -249,18 +275,9 @@ public final class ShopSystem {
                 }
             }
 
-            return getDefaultSellPrice(item);
+            return item.getCalculatedSellPrice();
         }
 
-        private int getDefaultSellPrice(InventorySystem.Item item) {
-            return switch (item.getItemType()) {
-                case WEAPON -> 20;
-                case HEAD_GEAR, CHEST_ARMOR, LEG_ARMOR -> 12;
-                case RING -> 25;
-                case CONSUMABLE -> 4;
-                case MISC -> 3;
-            };
-        }
     }
 
     public static class ShopWindow {
@@ -582,6 +599,16 @@ public final class ShopSystem {
             String name = stockItem.getItem().getName();
             g.drawString(name, bounds.x + 48, bounds.y + 25);
 
+            String details = getItemDetails(stockItem.getItem());
+
+            if (!details.isBlank()) {
+                Font oldFont = g.getFont();
+                g.setFont(oldFont.deriveFont(Font.PLAIN, 10f));
+                g.setColor(new Color(180, 180, 190));
+                g.drawString(details, bounds.x + 48, bounds.y + 38);
+                g.setFont(oldFont);
+            }
+
             String price = stockItem.getBuyPrice() + "g";
 
             if (!stockItem.hasStock()) {
@@ -731,6 +758,18 @@ public final class ShopSystem {
                 case CONSUMABLE -> new Color(120, 180, 120);
                 case MISC -> new Color(150, 150, 150);
             };
+        }
+
+        private String getItemDetails(InventorySystem.Item item) {
+            if (item == null || !item.isEquippable()) {
+                return "";
+            }
+
+            return item.getMaterial().getDisplayName()
+                    + " / "
+                    + item.getDurability().getDisplayName()
+                    + " / +"
+                    + item.getEffectiveStatBonus();
         }
 
         private void drawSmallPriceTag(Graphics2D g, String text, Rectangle slotBounds) {

@@ -76,7 +76,7 @@ public final class InteractionSystem {
     }
 
     public static Interaction configMenu(SoundSystem soundSystem, Runnable exitAction) {
-        return configMenu(soundSystem, null, exitAction, null);
+        return configMenu(soundSystem, null, exitAction, null, null, null);
     }
 
     public static Interaction configMenu(
@@ -85,7 +85,18 @@ public final class InteractionSystem {
             Runnable exitAction,
             Runnable controlsAction
     ) {
-        return new Interaction(new ConfigInteractionContent(soundSystem, gameState, exitAction, controlsAction));
+        return configMenu(soundSystem, gameState, exitAction, controlsAction, null, null);
+    }
+
+    public static Interaction configMenu(
+            SoundSystem soundSystem,
+            GameState gameState,
+            Runnable exitAction,
+            Runnable controlsAction,
+            Runnable saveAction,
+            Runnable loadAction
+    ) {
+        return new Interaction(new ConfigInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction));
     }
 
     public static Interaction settingsMenu(
@@ -94,7 +105,18 @@ public final class InteractionSystem {
             Runnable exitAction,
             Runnable controlsAction
     ) {
-        return new Interaction(new SettingsInteractionContent(soundSystem, gameState, exitAction, controlsAction));
+        return settingsMenu(soundSystem, gameState, exitAction, controlsAction, null, null);
+    }
+
+    private static Interaction settingsMenu(
+            SoundSystem soundSystem,
+            GameState gameState,
+            Runnable exitAction,
+            Runnable controlsAction,
+            Runnable saveAction,
+            Runnable loadAction
+    ) {
+        return new Interaction(new SettingsInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction));
     }
 
     public static Interaction volumeMenu(
@@ -103,7 +125,18 @@ public final class InteractionSystem {
             Runnable exitAction,
             Runnable controlsAction
     ) {
-        return new Interaction(new VolumeInteractionContent(soundSystem, gameState, exitAction, controlsAction));
+        return volumeMenu(soundSystem, gameState, exitAction, controlsAction, null, null);
+    }
+
+    private static Interaction volumeMenu(
+            SoundSystem soundSystem,
+            GameState gameState,
+            Runnable exitAction,
+            Runnable controlsAction,
+            Runnable saveAction,
+            Runnable loadAction
+    ) {
+        return new Interaction(new VolumeInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction));
     }
 
     public static Interaction controlsMenu(InputBindings inputBindings) {
@@ -1171,6 +1204,7 @@ public final class InteractionSystem {
                     "Go one floor deeper into a newly generated dungeon?",
                     option("Enter", () -> {
                         GeneratedDungeon generatedDungeon = new DungeonGenerator().generate();
+                        context.getGameState().setCurrentFloor(context.getGameState().getCurrentFloor() + 1);
                         context.getGameState().changeDungeon(generatedDungeon);
                     }),
                     closeOption("Stay")
@@ -1185,17 +1219,23 @@ public final class InteractionSystem {
         private final GameState gameState;
         private final Runnable exitAction;
         private final Runnable controlsAction;
+        private final Runnable saveAction;
+        private final Runnable loadAction;
 
         private SettingsMenuContent(
                 SoundSystem soundSystem,
                 GameState gameState,
                 Runnable exitAction,
-                Runnable controlsAction
+                Runnable controlsAction,
+                Runnable saveAction,
+                Runnable loadAction
         ) {
             this.soundSystem = soundSystem;
             this.gameState = gameState;
             this.exitAction = exitAction;
             this.controlsAction = controlsAction;
+            this.saveAction = saveAction;
+            this.loadAction = loadAction;
         }
 
         protected SoundSystem soundSystem() {
@@ -1210,20 +1250,28 @@ public final class InteractionSystem {
             return controlsAction;
         }
 
+        protected Runnable saveAction() {
+            return saveAction;
+        }
+
+        protected Runnable loadAction() {
+            return loadAction;
+        }
+
         protected Runnable exitAction() {
             return exitAction;
         }
 
         protected InteractionOption backToConfigOption() {
-            return option("Back", () -> openInteraction(configMenu(soundSystem, gameState, exitAction, controlsAction)));
+            return option("Back", () -> openInteraction(configMenu(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction)));
         }
 
         protected InteractionOption settingsOption() {
-            return option("Settings", () -> openInteraction(settingsMenu(soundSystem, gameState, exitAction, controlsAction)));
+            return option("Settings", () -> openInteraction(settingsMenu(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction)));
         }
 
         protected InteractionOption volumeOption() {
-            return option("Volume", () -> openInteraction(volumeMenu(soundSystem, gameState, exitAction, controlsAction)));
+            return option("Volume", () -> openInteraction(volumeMenu(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction)));
         }
 
         protected InteractionOption exitGameOption() {
@@ -1266,9 +1314,11 @@ public final class InteractionSystem {
                 SoundSystem soundSystem,
                 GameState gameState,
                 Runnable exitAction,
-                Runnable controlsAction
+                Runnable controlsAction,
+                Runnable saveAction,
+                Runnable loadAction
         ) {
-            super(soundSystem, gameState, exitAction, controlsAction);
+            super(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction);
         }
 
         @Override
@@ -1283,6 +1333,8 @@ public final class InteractionSystem {
                     true,
                     true,
                     List.of(
+                            option("Save", saveAction()),
+                            option("Load", loadAction()),
                             settingsOption(),
                             exitGameOption(),
                             closeOption("Close")
@@ -1296,9 +1348,11 @@ public final class InteractionSystem {
                 SoundSystem soundSystem,
                 GameState gameState,
                 Runnable exitAction,
-                Runnable controlsAction
+                Runnable controlsAction,
+                Runnable saveAction,
+                Runnable loadAction
         ) {
-            super(soundSystem, gameState, exitAction, controlsAction);
+            super(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction);
         }
 
         @Override
@@ -1366,9 +1420,11 @@ public final class InteractionSystem {
                 SoundSystem soundSystem,
                 GameState gameState,
                 Runnable exitAction,
-                Runnable controlsAction
+                Runnable controlsAction,
+                Runnable saveAction,
+                Runnable loadAction
         ) {
-            super(soundSystem, gameState, exitAction, controlsAction);
+            super(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction);
         }
 
         @Override
@@ -1413,7 +1469,9 @@ public final class InteractionSystem {
                     soundSystem(),
                     gameState(),
                     exitAction(),
-                    controlsAction()
+                    controlsAction(),
+                    saveAction(),
+                    loadAction()
             )));
         }
 

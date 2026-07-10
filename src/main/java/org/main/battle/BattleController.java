@@ -2,6 +2,7 @@ package org.main.battle;
 
 import org.main.core.GameState;
 import org.main.core.Library;
+import org.main.content.QuestLibrary;
 import org.main.content.EnvironmentLibrary;
 import org.main.engine.SoundSystem;
 
@@ -248,10 +249,26 @@ public class BattleController {
     }
 
     private void endBattle(boolean removeEnemy) {
+        int experienceReward = 0;
+
+        if (removeEnemy && gameState.getCurrentEncounter() != null) {
+            experienceReward = gameState.getCurrentEncounter().getDefeatedEnemyExperienceReward();
+        }
+
         syncPlayerCharacterHp();
 
         if (removeEnemy && gameState.getCurrentEnemyEntity() != null) {
+            if (gameState.getCurrentEnemyEntity().getMonster() != null
+                    && "SLIME".equals(gameState.getCurrentEnemyEntity().getMonster().getType().name())
+                    && gameState.getQuestStage(QuestLibrary.SKELETON_HAT) == 1) {
+                gameState.setQuestStage(QuestLibrary.SKELETON_HAT, 2);
+            }
+
             gameState.removeEntity(gameState.getCurrentEnemyEntity());
+        }
+
+        if (removeEnemy && experienceReward > 0) {
+            gameState.getPlayerCharacter().addClassExperience(experienceReward);
         }
 
         pendingSkill = null;

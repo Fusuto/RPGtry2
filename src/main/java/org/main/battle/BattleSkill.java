@@ -12,6 +12,11 @@ public class BattleSkill {
     private final Library.EffectType effectType;
     private final String useSoundPath;
     private final int damage;
+    private final double stunChance;
+    private final int stunTurns;
+    private final int defendTurns;
+    private final double damageReduction;
+    private final double selfHealPercent;
 
     public BattleSkill(
             String name,
@@ -34,6 +39,24 @@ public class BattleSkill {
             Library.EffectType effectType,
             int damage
     ) {
+        this(name, description, targetShape, targetTeam, targetingMode, useSoundPath, effectType, damage, 0.0, 0, 0, 0.0, 0.0);
+    }
+
+    public BattleSkill(
+            String name,
+            String description,
+            Library.SkillTargetShape targetShape,
+            Library.EntityType targetTeam,
+            Library.BattleTargetingMode targetingMode,
+            String useSoundPath,
+            Library.EffectType effectType,
+            int damage,
+            double stunChance,
+            int stunTurns,
+            int defendTurns,
+            double damageReduction,
+            double selfHealPercent
+    ) {
         this.name = name;
         this.description = description;
         this.targetShape = targetShape;
@@ -42,6 +65,11 @@ public class BattleSkill {
         this.effectType = effectType;
         this.useSoundPath = useSoundPath;
         this.damage = damage;
+        this.stunChance = Math.max(0.0, Math.min(1.0, stunChance));
+        this.stunTurns = Math.max(0, stunTurns);
+        this.defendTurns = Math.max(0, defendTurns);
+        this.damageReduction = Math.max(0.0, Math.min(0.95, damageReduction));
+        this.selfHealPercent = Math.max(0.0, selfHealPercent);
     }
 
     public BattleSkill(
@@ -83,6 +111,30 @@ public class BattleSkill {
 
     public int getDamage() {
         return damage;
+    }
+
+    public double getStunChance() {
+        return stunChance;
+    }
+
+    public int getStunTurns() {
+        return stunTurns;
+    }
+
+    public int getDefendTurns() {
+        return defendTurns;
+    }
+
+    public double getDamageReduction() {
+        return damageReduction;
+    }
+
+    public double getSelfHealPercent() {
+        return selfHealPercent;
+    }
+
+    public boolean healsCasterFromDamage() {
+        return selfHealPercent > 0.0;
     }
 }
 

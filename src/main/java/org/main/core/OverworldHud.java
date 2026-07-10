@@ -1,6 +1,7 @@
 package org.main.core;
 
 import org.main.engine.AssetLoader;
+import org.main.content.QuestLibrary;
 
 import java.awt.AlphaComposite;
 import java.awt.Color;
@@ -27,6 +28,7 @@ public class OverworldHud {
     private static final int BOTTOM_BAR_OVERSCAN = 8;
     private static final int BUTTON_SIZE = 58;
     private static final int BUTTON_CENTER_GAP = 112;
+    private static final int FOUR_BUTTON_GAP = 84;
     private static final int BUTTON_ICON_SIZE = 32;
     private static final int CORNER_SIZE = 96;
     private static final int SKILL_PANEL_WIDTH = 210;
@@ -38,6 +40,8 @@ public class OverworldHud {
     private static final int PORTRAIT_SIZE = 62;
     private static final int HP_BAR_WIDTH = 150;
     private static final int HP_BAR_HEIGHT = 12;
+    private static final int QUEST_PANEL_WIDTH = 430;
+    private static final int QUEST_PANEL_HEIGHT = 190;
 
     private final BufferedImage bottomPanel = AssetLoader.loadImage(FOOZLE_PATH + "Panel_2.png");
     private final BufferedImage corner = AssetLoader.loadImage(FOOZLE_PATH + "Corner.png");
@@ -49,13 +53,16 @@ public class OverworldHud {
 
     private final BufferedImage inventoryIcon = AssetLoader.loadImage(A1_ICON_PATH + "BodyArmor.png");
     private final BufferedImage skillsIcon = AssetLoader.loadImage(A1_ICON_PATH + "Skill.png");
+    private final BufferedImage questsIcon = AssetLoader.loadImage(A1_ICON_PATH + "AskAround.png");
     private final BufferedImage escapeIcon = AssetLoader.loadImage(A1_ICON_PATH + "SavePoint.png");
 
     private final Map<CharacterSkill, BufferedImage> skillIcons = new EnumMap<>(CharacterSkill.class);
     private final Map<String, BufferedImage> portraitCache = new HashMap<>();
     private final Rectangle inventoryButtonBounds = new Rectangle();
     private final Rectangle skillsButtonBounds = new Rectangle();
+    private final Rectangle questsButtonBounds = new Rectangle();
     private final Rectangle escapeButtonBounds = new Rectangle();
+    private final Map<QuestLibrary, Rectangle> questRowBounds = new EnumMap<>(QuestLibrary.class);
 
     public OverworldHud() {
         skillIcons.put(CharacterSkill.MINING, AssetLoader.loadImage(SKILL_ICON_PATH + "mining.png"));
@@ -85,8 +92,13 @@ public class OverworldHud {
             drawCharacterStatus(g, gameState, width, height);
         }
 
+        if (gameState.isQuestsOpen()) {
+            drawQuestPanel(g, gameState, width, height);
+        }
+
         drawButton(g, inventoryButtonBounds, inventoryIcon);
         drawButton(g, skillsButtonBounds, skillsIcon);
+        drawButton(g, questsButtonBounds, questsIcon);
         drawButton(g, escapeButtonBounds, escapeIcon);
     }
 
@@ -113,9 +125,19 @@ public class OverworldHud {
             return true;
         }
 
+        if (questsButtonBounds.contains(point)) {
+            gameState.toggleQuests();
+            return true;
+        }
+
+        if (gameState.isQuestsOpen() && handleQuestPanelClick(point, gameState, width, height)) {
+            return true;
+        }
+
         if (escapeButtonBounds.contains(point)) {
             gameState.closeInventory();
             gameState.closeSkills();
+            gameState.closeQuests();
 
             if (escapeMenuAction != null) {
                 escapeMenuAction.run();
@@ -131,9 +153,10 @@ public class OverworldHud {
         int y = height - BOTTOM_BAR_HEIGHT + (BOTTOM_BAR_HEIGHT - BUTTON_SIZE) / 2;
         int centerX = Math.max(BUTTON_SIZE, width / 2);
 
-        setCenteredBounds(inventoryButtonBounds, centerX - BUTTON_CENTER_GAP, y, BUTTON_SIZE);
-        setCenteredBounds(skillsButtonBounds, centerX, y, BUTTON_SIZE);
-        setCenteredBounds(escapeButtonBounds, centerX + BUTTON_CENTER_GAP, y, BUTTON_SIZE);
+        setCenteredBounds(inventoryButtonBounds, centerX - FOUR_BUTTON_GAP - FOUR_BUTTON_GAP / 2, y, BUTTON_SIZE);
+        setCenteredBounds(skillsButtonBounds, centerX - FOUR_BUTTON_GAP / 2, y, BUTTON_SIZE);
+        setCenteredBounds(questsButtonBounds, centerX + FOUR_BUTTON_GAP / 2, y, BUTTON_SIZE);
+        setCenteredBounds(escapeButtonBounds, centerX + FOUR_BUTTON_GAP + FOUR_BUTTON_GAP / 2, y, BUTTON_SIZE);
     }
 
     private void setCenteredBounds(Rectangle bounds, int centerX, int y, int size) {
@@ -230,6 +253,133 @@ public class OverworldHud {
         g.drawString(hpText, hpX + 48, hpY + 11);
         g.setColor(new Color(120, 245, 91));
         g.drawString(hpText, hpX + 47, hpY + 10);
+    }
+
+    private void drawQuestPanel(Graphics2D g, GameState gameState, int width, int height) {
+        int x = Math.max(18, width - QUEST_PANEL_WIDTH - 28);
+        int y = Math.max(62, height - BOTTOM_BAR_HEIGHT - QUEST_PANEL_HEIGHT - 16);
+
+        g.setColor(new Color(8, 9, 13, 220));
+        g.fillRoundRect(x, y, QUEST_PANEL_WIDTH, QUEST_PANEL_HEIGHT, 8, 8);
+        g.setColor(new Color(112, 92, 58));
+        g.drawRoundRect(x, y, QUEST_PANEL_WIDTH, QUEST_PANEL_HEIGHT, 8, 8);
+
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 17f));
+        g.setColor(new Color(238, 228, 190));
+        g.drawString("Quests", x + 18, y + 28);
+
+        int rowY = y + 52;
+        int selectedStage = 0;
+        QuestLibrary selectedQuest = null;
+
+        for (QuestLibrary quest : QuestLibrary.values()) {
+            int stage = gameState.getQuestStage(quest);
+            boolean selected = quest.getId().equals(gameState.getSelectedQuestId());
+
+            if (selected || selectedQuest == null) {
+                selectedQuest = quest;
+                selectedStage = stage;
+            }
+
+            Rectangle rowBounds = new Rectangle(x + 18, rowY - 16, 168, 24);
+            questRowBounds.put(quest, rowBounds);
+
+            g.setColor(selected ? new Color(42, 44, 52, 210) : new Color(0, 0, 0, 0));
+            g.fillRoundRect(rowBounds.x, rowBounds.y, rowBounds.width, rowBounds.height, 4, 4);
+
+            g.setColor(questColor(quest, stage));
+            g.setFont(g.getFont().deriveFont(Font.BOLD, 13f));
+            g.drawString(quest.getDisplayName(), x + 26, rowY);
+            rowY += 28;
+        }
+
+        if (selectedQuest == null) {
+            return;
+        }
+
+        int textX = x + 205;
+        int textY = y + 56;
+
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 15f));
+        g.setColor(new Color(238, 228, 190));
+        g.drawString(selectedQuest.getDisplayName(), textX, textY);
+
+        g.setFont(g.getFont().deriveFont(Font.PLAIN, 13f));
+        g.setColor(new Color(210, 204, 178));
+        drawWrappedText(
+                g,
+                selectedQuest.getStageDescription(selectedStage),
+                textX,
+                textY + 26,
+                QUEST_PANEL_WIDTH - 225,
+                18
+        );
+    }
+
+    private boolean handleQuestPanelClick(Point point, GameState gameState, int width, int height) {
+        drawQuestPanelLayoutOnly(gameState, width, height);
+
+        for (Map.Entry<QuestLibrary, Rectangle> entry : questRowBounds.entrySet()) {
+            if (entry.getValue().contains(point)) {
+                gameState.setSelectedQuestId(entry.getKey().getId());
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void drawQuestPanelLayoutOnly(GameState gameState, int width, int height) {
+        questRowBounds.clear();
+        int x = Math.max(18, width - QUEST_PANEL_WIDTH - 28);
+        int y = Math.max(62, height - BOTTOM_BAR_HEIGHT - QUEST_PANEL_HEIGHT - 16);
+        int rowY = y + 52;
+
+        for (QuestLibrary quest : QuestLibrary.values()) {
+            questRowBounds.put(quest, new Rectangle(x + 18, rowY - 16, 168, 24));
+            rowY += 28;
+
+            if (gameState.getSelectedQuestId() == null) {
+                gameState.setSelectedQuestId(quest.getId());
+            }
+        }
+    }
+
+    private Color questColor(QuestLibrary quest, int stage) {
+        if (quest.isComplete(stage)) {
+            return new Color(92, 225, 112);
+        }
+
+        if (stage > 0) {
+            return new Color(245, 166, 72);
+        }
+
+        return new Color(224, 74, 74);
+    }
+
+    private void drawWrappedText(Graphics2D g, String text, int x, int y, int maxWidth, int lineHeight) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+
+        FontMetrics metrics = g.getFontMetrics();
+        StringBuilder line = new StringBuilder();
+
+        for (String word : text.split("\\s+")) {
+            String candidate = line.isEmpty() ? word : line + " " + word;
+
+            if (metrics.stringWidth(candidate) > maxWidth && !line.isEmpty()) {
+                g.drawString(line.toString(), x, y);
+                y += lineHeight;
+                line = new StringBuilder(word);
+            } else {
+                line = new StringBuilder(candidate);
+            }
+        }
+
+        if (!line.isEmpty()) {
+            g.drawString(line.toString(), x, y);
+        }
     }
 
     private void drawPortrait(Graphics2D g, String portraitPath, Rectangle bounds) {
