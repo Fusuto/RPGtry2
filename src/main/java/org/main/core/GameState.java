@@ -19,6 +19,14 @@ public class GameState {
 
     private int playerX = 1;
     private int playerY = 1;
+    private double movementStartX = 1.0;
+    private double movementStartY = 1.0;
+    private double movementProgress = 1.0;
+    private static final int MOVEMENT_ANIMATION_DURATION_MS = 160;
+    private double rotationStartOffsetRadians = 0.0;
+    private double rotationProgress = 1.0;
+    private static final int ROTATION_ANIMATION_DURATION_MS = 220;
+    private CameraMovementMode cameraMovementMode = CameraMovementMode.FLUID;
 
     private boolean miniMapUnlocked = false;
     private MiniMapMode miniMapMode = MiniMapMode.DISCOVERED;
@@ -229,6 +237,11 @@ public class GameState {
         DEBUG
     }
 
+    public enum CameraMovementMode {
+        STATIC,
+        FLUID
+    }
+
     public void changeDungeon(DungeonMap dungeonMap, int playerX, int playerY, List<MapEntity> newEntities) {
         if (dungeonMap == null) {
             return;
@@ -333,6 +346,120 @@ public class GameState {
         revealMiniMapTile(playerX, playerY);
     }
 
+    public void startMovementAnimation(int fromX, int fromY, int toX, int toY) {
+        if (!isFluidCameraMovement()) {
+            movementProgress = 1.0;
+            return;
+        }
+
+        movementStartX = fromX;
+        movementStartY = fromY;
+        movementProgress = fromX == toX && fromY == toY ? 1.0 : 0.0;
+    }
+
+    public void updateMovementAnimation(int deltaMs) {
+        if (!isFluidCameraMovement()) {
+            movementProgress = 1.0;
+            rotationProgress = 1.0;
+            return;
+        }
+
+        if (isMovementAnimating()) {
+            movementProgress = Math.min(
+                    1.0,
+                    movementProgress + (double) Math.max(0, deltaMs) / MOVEMENT_ANIMATION_DURATION_MS
+            );
+        }
+
+        if (isRotationAnimating()) {
+            rotationProgress = Math.min(
+                    1.0,
+                    rotationProgress + (double) Math.max(0, deltaMs) / ROTATION_ANIMATION_DURATION_MS
+            );
+        }
+    }
+
+    public boolean isMovementAnimating() {
+        return movementProgress < 1.0;
+    }
+
+    public boolean isRotationAnimating() {
+        return rotationProgress < 1.0;
+    }
+
+    public boolean isCameraAnimating() {
+        return isFluidCameraMovement() && (isMovementAnimating() || isRotationAnimating());
+    }
+
+    public double getCameraOffsetForward() {
+        if (!isFluidCameraMovement()) {
+            return 0.0;
+        }
+
+        double renderX = interpolate(movementStartX, playerX, movementProgress);
+        double renderY = interpolate(movementStartY, playerY, movementProgress);
+        double offsetX = renderX - playerX;
+        double offsetY = renderY - playerY;
+        return offsetX * forwardX() + offsetY * forwardY();
+    }
+
+    public double getCameraOffsetSide() {
+        if (!isFluidCameraMovement()) {
+            return 0.0;
+        }
+
+        double renderX = interpolate(movementStartX, playerX, movementProgress);
+        double renderY = interpolate(movementStartY, playerY, movementProgress);
+        double offsetX = renderX - playerX;
+        double offsetY = renderY - playerY;
+        return offsetX * rightX() + offsetY * rightY();
+    }
+
+    public double getCameraRotationRadians() {
+        if (!isFluidCameraMovement()) {
+            return 0.0;
+        }
+
+        return interpolate(rotationStartOffsetRadians, 0.0, rotationProgress);
+    }
+
+    private double interpolate(double start, double end, double progress) {
+        double easedProgress = 1.0 - Math.pow(1.0 - progress, 3.0);
+        return start + (end - start) * easedProgress;
+    }
+
+    private int forwardX() {
+        return switch (direction) {
+            case 1 -> 1;
+            case 3 -> -1;
+            default -> 0;
+        };
+    }
+
+    private int forwardY() {
+        return switch (direction) {
+            case 0 -> -1;
+            case 2 -> 1;
+            default -> 0;
+        };
+    }
+
+    private int rightX() {
+        return switch (direction) {
+            case 0 -> 1;
+            case 2 -> -1;
+            default -> 0;
+        };
+    }
+
+    private int rightY() {
+        return switch (direction) {
+            case 1 -> 1;
+            case 3 -> -1;
+            default -> 0;
+        };
+    }
+
     private void resetMiniMapDiscovery() {
         if (dungeonMap == null) {
             discoveredMiniMapTiles = new boolean[0][0];
@@ -415,6 +542,46 @@ public class GameState {
 
     public void setDirection(int direction) {
         this.direction = direction;
+    }
+
+    public void startRotationAnimation(int previousDirection, int nextDirection) {
+        if (!isFluidCameraMovement()) {
+            rotationProgress = 1.0;
+            return;
+        }
+
+        int turnDelta = Math.floorMod(nextDirection - previousDirection, 4);
+
+        rotationStartOffsetRadians = switch (turnDelta) {
+            case 1 -> -Math.PI / 2.0;
+            case 3 -> Math.PI / 2.0;
+            case 2 -> Math.PI;
+            default -> 0.0;
+        };
+        rotationProgress = rotationStartOffsetRadians == 0.0 ? 1.0 : 0.0;
+    }
+
+    public CameraMovementMode getCameraMovementMode() {
+        return cameraMovementMode;
+    }
+
+    public void setCameraMovementMode(CameraMovementMode cameraMovementMode) {
+        this.cameraMovementMode = cameraMovementMode == null ? CameraMovementMode.STATIC : cameraMovementMode;
+
+        if (!isFluidCameraMovement()) {
+            movementProgress = 1.0;
+            rotationProgress = 1.0;
+        }
+    }
+
+    public void toggleCameraMovementMode() {
+        setCameraMovementMode(isFluidCameraMovement()
+                ? CameraMovementMode.STATIC
+                : CameraMovementMode.FLUID);
+    }
+
+    public boolean isFluidCameraMovement() {
+        return cameraMovementMode == CameraMovementMode.FLUID;
     }
 
     public BattleEncounter getCurrentEncounter() {

@@ -109,6 +109,18 @@ public class SoundSystem {
         setMusicVolume(musicVolume + amount);
     }
 
+    public double getSoundEffectVolume() {
+        return soundEffectVolume;
+    }
+
+    public void setSoundEffectVolume(double soundEffectVolume) {
+        this.soundEffectVolume = clampVolume(soundEffectVolume);
+    }
+
+    public void adjustSoundEffectVolume(double amount) {
+        setSoundEffectVolume(soundEffectVolume + amount);
+    }
+
     private Clip loadLoopingClip(String soundPath) {
         if (isBlank(soundPath)) {
             return null;

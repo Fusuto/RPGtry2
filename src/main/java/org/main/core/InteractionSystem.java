@@ -88,6 +88,24 @@ public final class InteractionSystem {
         return new Interaction(new ConfigInteractionContent(soundSystem, gameState, exitAction, controlsAction));
     }
 
+    public static Interaction settingsMenu(
+            SoundSystem soundSystem,
+            GameState gameState,
+            Runnable exitAction,
+            Runnable controlsAction
+    ) {
+        return new Interaction(new SettingsInteractionContent(soundSystem, gameState, exitAction, controlsAction));
+    }
+
+    public static Interaction volumeMenu(
+            SoundSystem soundSystem,
+            GameState gameState,
+            Runnable exitAction,
+            Runnable controlsAction
+    ) {
+        return new Interaction(new VolumeInteractionContent(soundSystem, gameState, exitAction, controlsAction));
+    }
+
     public static Interaction controlsMenu(InputBindings inputBindings) {
         return new Interaction(new ControlsInteractionContent(inputBindings));
     }
@@ -1162,15 +1180,13 @@ public final class InteractionSystem {
         }
     }
 
-    private static class ConfigInteractionContent implements InteractionContent {
-        private static final double VOLUME_STEP = 0.10;
-
+    private abstract static class SettingsMenuContent implements InteractionContent {
         private final SoundSystem soundSystem;
         private final GameState gameState;
         private final Runnable exitAction;
         private final Runnable controlsAction;
 
-        private ConfigInteractionContent(
+        private SettingsMenuContent(
                 SoundSystem soundSystem,
                 GameState gameState,
                 Runnable exitAction,
@@ -1182,45 +1198,50 @@ public final class InteractionSystem {
             this.controlsAction = controlsAction;
         }
 
-        @Override
-        public InteractionModel getModel() {
-            int ambiencePercent = toPercent(soundSystem != null ? soundSystem.getAmbienceVolume() : 1.0);
-            int musicPercent = toPercent(soundSystem != null ? soundSystem.getMusicVolume() : 1.0);
+        protected SoundSystem soundSystem() {
+            return soundSystem;
+        }
 
-            return new InteractionModel(
-                    "Configuration",
-                    "Left click a volume bar to raise it. Right click to lower it.",
-                    null,
-                    null,
-                    null,
-                    null,
-                    true,
-                    true,
-                    List.of(
-                            stayOpenOption(
-                                    volumeLabel("Ambience", ambiencePercent),
-                                    () -> adjustAmbience(VOLUME_STEP),
-                                    () -> adjustAmbience(-VOLUME_STEP)
-                            ),
-                            stayOpenOption(
-                                    volumeLabel("Combat Music", musicPercent),
-                                    () -> adjustMusic(VOLUME_STEP),
-                                    () -> adjustMusic(-VOLUME_STEP)
-                            ),
-                            stayOpenOption(miniMapLabel(), this::toggleMiniMap),
-                            option("Controls", controlsAction),
-                            option("Exit Game", () -> {
-                                if (soundSystem != null) {
-                                    soundSystem.stopAll();
-                                }
+        protected GameState gameState() {
+            return gameState;
+        }
 
-                                if (exitAction != null) {
-                                    exitAction.run();
-                                }
-                            }),
-                            closeOption("Close")
-                    )
-            );
+        protected Runnable controlsAction() {
+            return controlsAction;
+        }
+
+        protected Runnable exitAction() {
+            return exitAction;
+        }
+
+        protected InteractionOption backToConfigOption() {
+            return option("Back", () -> openInteraction(configMenu(soundSystem, gameState, exitAction, controlsAction)));
+        }
+
+        protected InteractionOption settingsOption() {
+            return option("Settings", () -> openInteraction(settingsMenu(soundSystem, gameState, exitAction, controlsAction)));
+        }
+
+        protected InteractionOption volumeOption() {
+            return option("Volume", () -> openInteraction(volumeMenu(soundSystem, gameState, exitAction, controlsAction)));
+        }
+
+        protected InteractionOption exitGameOption() {
+            return option("Exit Game", () -> {
+                if (soundSystem != null) {
+                    soundSystem.stopAll();
+                }
+
+                if (exitAction != null) {
+                    exitAction.run();
+                }
+            });
+        }
+
+        protected void openInteraction(Interaction interaction) {
+            if (gameState != null) {
+                gameState.openInteraction(interaction);
+            }
         }
 
         @Override
@@ -1238,34 +1259,179 @@ public final class InteractionSystem {
                 interaction.close();
             }
         }
+    }
+
+    private static class ConfigInteractionContent extends SettingsMenuContent {
+        private ConfigInteractionContent(
+                SoundSystem soundSystem,
+                GameState gameState,
+                Runnable exitAction,
+                Runnable controlsAction
+        ) {
+            super(soundSystem, gameState, exitAction, controlsAction);
+        }
+
+        @Override
+        public InteractionModel getModel() {
+            return new InteractionModel(
+                    "Escape",
+                    "Pause menu",
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    true,
+                    List.of(
+                            settingsOption(),
+                            exitGameOption(),
+                            closeOption("Close")
+                    )
+            );
+        }
+    }
+
+    private static class SettingsInteractionContent extends SettingsMenuContent {
+        private SettingsInteractionContent(
+                SoundSystem soundSystem,
+                GameState gameState,
+                Runnable exitAction,
+                Runnable controlsAction
+        ) {
+            super(soundSystem, gameState, exitAction, controlsAction);
+        }
+
+        @Override
+        public InteractionModel getModel() {
+            return new InteractionModel(
+                    "Settings",
+                    "Choose a settings category.",
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    true,
+                    List.of(
+                            stayOpenOption(miniMapLabel(), this::toggleMiniMap),
+                            stayOpenOption(cameraMovementLabel(), this::toggleCameraMovement),
+                            option("Controls", controlsAction()),
+                            volumeOption(),
+                            backToConfigOption(),
+                            closeOption("Close")
+                    )
+            );
+        }
 
         private String miniMapLabel() {
-            if (gameState == null) {
+            if (gameState() == null) {
                 return "Minimap [OFF]";
             }
 
-            return switch (gameState.getMiniMapMode()) {
+            return switch (gameState().getMiniMapMode()) {
                 case OFF -> "Minimap [OFF]";
                 case DISCOVERED -> "Minimap [DISCOVERED]";
                 case DEBUG -> "Minimap [DEBUG]";
             };
         }
 
+        private String cameraMovementLabel() {
+            if (gameState() == null) {
+                return "Movement [STATIC]";
+            }
+
+            return switch (gameState().getCameraMovementMode()) {
+                case STATIC -> "Movement [STATIC]";
+                case FLUID -> "Movement [FLUID]";
+            };
+        }
+
+        private void toggleCameraMovement() {
+            if (gameState() != null) {
+                gameState().toggleCameraMovementMode();
+            }
+        }
+
         private void toggleMiniMap() {
-            if (gameState != null) {
-                gameState.cycleMiniMapMode();
+            if (gameState() != null) {
+                gameState().cycleMiniMapMode();
+            }
+        }
+    }
+
+    private static class VolumeInteractionContent extends SettingsMenuContent {
+        private static final double VOLUME_STEP = 0.10;
+
+        private VolumeInteractionContent(
+                SoundSystem soundSystem,
+                GameState gameState,
+                Runnable exitAction,
+                Runnable controlsAction
+        ) {
+            super(soundSystem, gameState, exitAction, controlsAction);
+        }
+
+        @Override
+        public InteractionModel getModel() {
+            int soundEffectPercent = toPercent(soundSystem() != null ? soundSystem().getSoundEffectVolume() : 1.0);
+            int ambiencePercent = toPercent(soundSystem() != null ? soundSystem().getAmbienceVolume() : 1.0);
+            int musicPercent = toPercent(soundSystem() != null ? soundSystem().getMusicVolume() : 1.0);
+
+            return new InteractionModel(
+                    "Volume",
+                    "Left click a volume bar to raise it. Right click to lower it.",
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    true,
+                    List.of(
+                            stayOpenOption(
+                                    volumeLabel("Sound Effects", soundEffectPercent),
+                                    () -> adjustSoundEffects(VOLUME_STEP),
+                                    () -> adjustSoundEffects(-VOLUME_STEP)
+                            ),
+                            stayOpenOption(
+                                    volumeLabel("Overworld", ambiencePercent),
+                                    () -> adjustAmbience(VOLUME_STEP),
+                                    () -> adjustAmbience(-VOLUME_STEP)
+                            ),
+                            stayOpenOption(
+                                    volumeLabel("Combat Music", musicPercent),
+                                    () -> adjustMusic(VOLUME_STEP),
+                                    () -> adjustMusic(-VOLUME_STEP)
+                            ),
+                            backToSettingsOption(),
+                            closeOption("Close")
+                    )
+            );
+        }
+
+        private InteractionOption backToSettingsOption() {
+            return option("Back", () -> openInteraction(settingsMenu(
+                    soundSystem(),
+                    gameState(),
+                    exitAction(),
+                    controlsAction()
+            )));
+        }
+
+        private void adjustSoundEffects(double amount) {
+            if (soundSystem() != null) {
+                soundSystem().adjustSoundEffectVolume(amount);
             }
         }
 
         private void adjustAmbience(double amount) {
-            if (soundSystem != null) {
-                soundSystem.adjustAmbienceVolume(amount);
+            if (soundSystem() != null) {
+                soundSystem().adjustAmbienceVolume(amount);
             }
         }
 
         private void adjustMusic(double amount) {
-            if (soundSystem != null) {
-                soundSystem.adjustMusicVolume(amount);
+            if (soundSystem() != null) {
+                soundSystem().adjustMusicVolume(amount);
             }
         }
 

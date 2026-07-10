@@ -14,6 +14,8 @@ public class DungeonRenderer {
     private static final double HORIZONTAL_FOCAL_RATIO = 0.55;
     private static final double WALL_HALF_HEIGHT_RATIO = 0.48;
     private static final double NEAR_CLIP = 0.10;
+    private static final int MAX_TEXTURE_STRIPS = 48;
+    private static final int MIN_TEXTURE_STRIPS = 8;
     private TextureManager textureManager;
     private List<EnvironmentTheme> environmentThemes = new ArrayList<>(
             List.of(EnvironmentTheme.defaultTheme())
@@ -29,6 +31,9 @@ public class DungeonRenderer {
     private int dir;
     private int viewWidth;
     private int viewHeight;
+    private double cameraOffsetForward;
+    private double cameraOffsetSide;
+    private double cameraRotationRadians;
 
     private enum FaceType {FRONT, LEFT, RIGHT, FLOOR, SPRITE}
 
@@ -119,12 +124,31 @@ public class DungeonRenderer {
     }
 
     public void draw(Graphics2D g, DungeonMap map, List<MapEntity> entities, int playerX, int playerY, int dir, int viewWidth, int viewHeight) {
+        draw(g, map, entities, playerX, playerY, dir, viewWidth, viewHeight, 0.0, 0.0, 0.0);
+    }
+
+    public void draw(
+            Graphics2D g,
+            DungeonMap map,
+            List<MapEntity> entities,
+            int playerX,
+            int playerY,
+            int dir,
+            int viewWidth,
+            int viewHeight,
+            double cameraOffsetForward,
+            double cameraOffsetSide,
+            double cameraRotationRadians
+    ) {
         this.map = map;
         this.playerX = playerX;
         this.playerY = playerY;
         this.dir = dir;
         this.viewWidth = viewWidth;
         this.viewHeight = viewHeight;
+        this.cameraOffsetForward = cameraOffsetForward;
+        this.cameraOffsetSide = cameraOffsetSide;
+        this.cameraRotationRadians = cameraRotationRadians;
         drawDungeonBackground(g); /* * Draw floors first so they never accidentally render over walls. */
         List<RenderCommand> floorCommands = buildFloorRenderCommands();
         floorCommands.sort(Comparator.comparingDouble((RenderCommand c) -> c.sortZ).reversed());
@@ -152,14 +176,17 @@ public class DungeonRenderer {
 
     private List<RenderCommand> buildFloorRenderCommands() {
         List<RenderCommand> commands = new ArrayList<>();
-        for (int depth = 1; depth <= MAX_DEPTH; depth++) {
-            int sideLimit = depth + SIDE_MARGIN;
+        for (int depth = getMinimumRenderDepth(); depth <= MAX_DEPTH; depth++) {
+            int sideLimit = getSideRenderLimit(depth);
             for (int side = -sideLimit; side <= sideLimit; side++) {
                 Library.TileType tileType = getTileAtRelative(depth, side);
                 if (tileType.isWallLike()) {
                     continue;
                 }
-                commands.add(createFloorFace(depth, side, tileType));
+                RenderCommand command = createFloorFace(depth, side, tileType);
+                if (command != null) {
+                    commands.add(command);
+                }
             }
         }
         return commands;
@@ -170,6 +197,9 @@ public class DungeonRenderer {
         double farZ = depth + 0.5;
         double leftX = side - 0.5;
         double rightX = side + 0.5;
+        if (shouldCullFace(leftX, nearZ, rightX, nearZ, rightX, farZ, leftX, farZ)) {
+            return null;
+        }
         Point worldPoint = worldPointAtRelative(depth, side);
         Polygon polygon = polygonFrom(project(leftX, nearZ, -1.0), project(rightX, nearZ, -1.0), project(rightX, farZ, -1.0), project(leftX, farZ, -1.0));
         double sortZ = (nearZ + farZ) / 2.0;
@@ -178,32 +208,66 @@ public class DungeonRenderer {
 
     private List<RenderCommand> buildWallRenderCommands() {
         List<RenderCommand> commands = new ArrayList<>();
-        for (int depth = 1; depth <= MAX_DEPTH; depth++) {
-            int sideLimit = depth + SIDE_MARGIN;
+        for (int depth = getMinimumRenderDepth(); depth <= MAX_DEPTH; depth++) {
+            int sideLimit = getSideRenderLimit(depth);
             for (int side = -sideLimit; side <= sideLimit; side++) {
                 Point worldPoint = worldPointAtRelative(depth, side);
                 Library.TileType tileType = map.getTile(worldPoint.x, worldPoint.y);
                 if (!tileType.isWallLike()) {
                     continue;
                 }
-                if (!isWallAtRelative(depth - 1, side)) {
-                    commands.add(createFrontFace(depth, side, worldPoint.x, worldPoint.y, tileType));
+                if (depth > 0 && !isWallAtRelative(depth - 1, side)) {
+                    RenderCommand command = createFrontFace(depth, side, worldPoint.x, worldPoint.y, tileType);
+                    if (command != null) {
+                        commands.add(command);
+                    }
                 }
                 if (!isWallAtRelative(depth, side - 1)) {
-                    commands.add(createLeftFace(depth, side, worldPoint.x, worldPoint.y, tileType));
+                    RenderCommand command = createLeftFace(depth, side, worldPoint.x, worldPoint.y, tileType);
+                    if (command != null) {
+                        commands.add(command);
+                    }
                 }
                 if (!isWallAtRelative(depth, side + 1)) {
-                    commands.add(createRightFace(depth, side, worldPoint.x, worldPoint.y, tileType));
+                    RenderCommand command = createRightFace(depth, side, worldPoint.x, worldPoint.y, tileType);
+                    if (command != null) {
+                        commands.add(command);
+                    }
                 }
             }
         }
         return commands;
     }
 
+    private int getMinimumRenderDepth() {
+        return isCameraTransitionActive() ? 0 : 1;
+    }
+
+    private int getSideRenderLimit(int depth) {
+        if (isCameraRotationActive()) {
+            return MAX_DEPTH + SIDE_MARGIN;
+        }
+
+        return depth + SIDE_MARGIN;
+    }
+
+    private boolean isCameraTransitionActive() {
+        return Math.abs(cameraOffsetForward) > 0.001
+                || Math.abs(cameraOffsetSide) > 0.001
+                || isCameraRotationActive();
+    }
+
+    private boolean isCameraRotationActive() {
+        return Math.abs(cameraRotationRadians) > 0.001;
+    }
+
     private RenderCommand createFrontFace(int depth, int side, int worldX, int worldY, Library.TileType tileType) {
         double z = depth - 0.5;
         double leftX = side - 0.5;
         double rightX = side + 0.5;
+        if (shouldCullFace(leftX, z, rightX, z, rightX, z, leftX, z)) {
+            return null;
+        }
         Polygon polygon = polygonFrom(project(leftX, z, 1.0), project(rightX, z, 1.0), project(rightX, z, -1.0), project(leftX, z, -1.0));
         return new RenderCommand(FaceType.FRONT, tileType, depth, side, worldX, worldY, polygon, z);
     }
@@ -212,6 +276,9 @@ public class DungeonRenderer {
         double x = side - 0.5;
         double nearZ = depth - 0.5;
         double farZ = depth + 0.5;
+        if (shouldCullFace(x, nearZ, x, farZ, x, farZ, x, nearZ)) {
+            return null;
+        }
         Polygon polygon = polygonFrom(project(x, nearZ, 1.0), project(x, farZ, 1.0), project(x, farZ, -1.0), project(x, nearZ, -1.0));
         double sortZ = (nearZ + farZ) / 2.0;
         return new RenderCommand(FaceType.LEFT, tileType, depth, side, worldX, worldY, polygon, sortZ);
@@ -221,6 +288,9 @@ public class DungeonRenderer {
         double x = side + 0.5;
         double nearZ = depth - 0.5;
         double farZ = depth + 0.5;
+        if (shouldCullFace(x, nearZ, x, farZ, x, farZ, x, nearZ)) {
+            return null;
+        }
         Polygon polygon = polygonFrom(project(x, nearZ, 1.0), project(x, farZ, 1.0), project(x, farZ, -1.0), project(x, nearZ, -1.0));
         double sortZ = (nearZ + farZ) / 2.0;
         return new RenderCommand(FaceType.RIGHT, tileType, depth, side, worldX, worldY, polygon, sortZ);
@@ -263,6 +333,9 @@ public class DungeonRenderer {
 //            BufferedImage frame = entity.getIdleAnimation().getCurrentFrame();
             double z = relative.forward;
             double x = relative.side;
+            if (transformDepth(x, z) <= NEAR_CLIP) {
+                continue;
+            }
             Point bottomCenter = project(x, z, -1.0);
             Point topCenter = project(x, z, 0.55);
             int spriteHeight = Math.abs(bottomCenter.y - topCenter.y);
@@ -568,7 +641,7 @@ public class DungeonRenderer {
         Point topRight = new Point(polygon.xpoints[1], polygon.ypoints[1]);
         Point bottomRight = new Point(polygon.xpoints[2], polygon.ypoints[2]);
         Point bottomLeft = new Point(polygon.xpoints[3], polygon.ypoints[3]);
-        int strips = 48;
+        int strips = textureStripCount(polygon);
         Shape oldClip = g.getClip();
         Object oldInterpolation = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
@@ -597,6 +670,13 @@ public class DungeonRenderer {
         if (oldInterpolation != null) {
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, oldInterpolation);
         }
+    }
+
+    private int textureStripCount(Polygon polygon) {
+        Rectangle bounds = polygon.getBounds();
+        int majorAxis = Math.max(bounds.width, bounds.height);
+        int widthBasedStrips = Math.max(MIN_TEXTURE_STRIPS, majorAxis / 14);
+        return Math.min(MAX_TEXTURE_STRIPS, widthBasedStrips);
     }
 
     private TextureManager.SelectedTexture getTextureForCommand(RenderCommand command) {
@@ -784,7 +864,48 @@ public class DungeonRenderer {
         return map.isWallLike(x, y);
     }
 
+    private boolean shouldCullFace(double... coordinates) {
+        boolean anyBehind = false;
+        boolean anyVisible = false;
+
+        for (int i = 0; i < coordinates.length; i += 2) {
+            double depth = transformDepth(coordinates[i], coordinates[i + 1]);
+
+            if (depth <= NEAR_CLIP) {
+                anyBehind = true;
+            } else {
+                anyVisible = true;
+            }
+        }
+
+        return !anyVisible || (isCameraRotationActive() && anyBehind);
+    }
+
+    private double transformDepth(double x, double z) {
+        z -= cameraOffsetForward;
+
+        if (isCameraRotationActive()) {
+            double sin = Math.sin(cameraRotationRadians);
+            double cos = Math.cos(cameraRotationRadians);
+            return (x - cameraOffsetSide) * sin + z * cos;
+        }
+
+        return z;
+    }
+
     private Point project(double x, double z, double vertical) {
+        x -= cameraOffsetSide;
+        z -= cameraOffsetForward;
+
+        if (isCameraRotationActive()) {
+            double cos = Math.cos(cameraRotationRadians);
+            double sin = Math.sin(cameraRotationRadians);
+            double rotatedX = x * cos - z * sin;
+            double rotatedZ = x * sin + z * cos;
+            x = rotatedX;
+            z = rotatedZ;
+        }
+
         z = Math.max(z, NEAR_CLIP);
         int centerX = viewWidth / 2;
         int horizonY = viewHeight / 2;
