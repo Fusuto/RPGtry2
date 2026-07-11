@@ -16,6 +16,9 @@ public class SoundSystem {
     private Clip musicClip;
     private String musicPath;
 
+    private Clip loopingSoundClip;
+    private String loopingSoundPath;
+
     private double ambienceVolume = DEFAULT_VOLUME;
     private double musicVolume = DEFAULT_VOLUME;
     private double soundEffectVolume = DEFAULT_VOLUME;
@@ -40,6 +43,24 @@ public class SoundSystem {
         });
 
         clip.start();
+    }
+
+    public void playLoopingSound(String soundPath) {
+        if (samePath(loopingSoundPath, soundPath) && isClipRunning(loopingSoundClip)) {
+            return;
+        }
+
+        stopLoopingSound();
+
+        loopingSoundPath = soundPath;
+        loopingSoundClip = loadLoopingClip(soundPath);
+        applyVolume(loopingSoundClip, soundEffectVolume);
+    }
+
+    public void stopLoopingSound() {
+        stopClip(loopingSoundClip);
+        loopingSoundClip = null;
+        loopingSoundPath = null;
     }
 
     public void playAmbience(String soundPath) {
@@ -81,6 +102,7 @@ public class SoundSystem {
     public void stopAll() {
         stopAmbience();
         stopMusic();
+        stopLoopingSound();
     }
 
     public double getAmbienceVolume() {
@@ -115,6 +137,7 @@ public class SoundSystem {
 
     public void setSoundEffectVolume(double soundEffectVolume) {
         this.soundEffectVolume = clampVolume(soundEffectVolume);
+        applyVolume(loopingSoundClip, this.soundEffectVolume);
     }
 
     public void adjustSoundEffectVolume(double amount) {

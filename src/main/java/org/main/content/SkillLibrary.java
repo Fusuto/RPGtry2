@@ -7,14 +7,25 @@ import java.util.List;
 
 public enum SkillLibrary {
     WAIT(
-            "Wait",
-            "Deals tiny damage and ends your turn.",
+            "Skip Turn",
+            "Debug: ends your turn without doing anything.",
             Library.SkillTargetShape.SINGLE_TARGET,
-            Library.EntityType.ENEMY,
+            Library.EntityType.ALLY,
             Library.BattleTargetingMode.MAGIC,
             null,
-            2,
-            Library.EffectType.DAMAGE
+            0,
+            Library.EffectType.DEFEND
+    ),
+
+    DEBUG_DROP_HP(
+            "Drop HP to 10%",
+            "Debug: drops the player to 10% HP to test the warning loop.",
+            Library.SkillTargetShape.SINGLE_TARGET,
+            Library.EntityType.ALLY,
+            Library.BattleTargetingMode.MAGIC,
+            null,
+            0,
+            Library.EffectType.DEFEND
     ),
 
     FIREBALL(
@@ -102,6 +113,10 @@ public enum SkillLibrary {
     );
 
     private static final List<SkillLibrary> UNIVERSAL_PLAYER_SKILLS = List.of(
+    );
+
+    private static final List<SkillLibrary> DEBUG_PLAYER_SKILLS = List.of(
+            DEBUG_DROP_HP,
             WAIT
     );
 
@@ -202,6 +217,16 @@ public enum SkillLibrary {
         return UNIVERSAL_PLAYER_SKILLS.stream()
                 .map(SkillLibrary::createSkill)
                 .toList();
+    }
+
+    public static List<BattleSkill> createDebugPlayerSkills() {
+        return DEBUG_PLAYER_SKILLS.stream()
+                .map(SkillLibrary::createSkill)
+                .toList();
+    }
+
+    public static boolean isDebugDropHpSkill(BattleSkill skill) {
+        return skill != null && DEBUG_DROP_HP.displayName.equals(skill.getName());
     }
 
     public String getDisplayName() {

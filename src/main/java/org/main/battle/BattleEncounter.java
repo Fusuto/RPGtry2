@@ -92,12 +92,8 @@ public class BattleEncounter {
             playerCharacter = GameBootstrap.createDefaultPlayerCharacter();
         }
 
-        int equipmentAttackBonus = playerCharacter.getInventory() == null
-                ? 0
-                : playerCharacter.getInventory().getWeaponStatBonus();
-        int equipmentDefenseBonus = playerCharacter.getInventory() == null
-                ? 0
-                : playerCharacter.getInventory().getArmorStatBonus();
+        int equipmentAttackBonus = playerCharacter.getInventory() == null ? 0 : playerCharacter.getUsableWeaponStatBonus();
+        int equipmentDefenseBonus = playerCharacter.getInventory() == null ? 0 : playerCharacter.getUsableArmorStatBonus();
 
         BattleActor playerActor = new BattleActor(
                 playerCharacter.getName(),
@@ -447,6 +443,19 @@ public class BattleEncounter {
             return Library.BattleResult.VICTORY;
         }
 
+        return handleEnemyTurn();
+    }
+
+    public Library.BattleResult handleDebugDropHp(BattleActor target) {
+        if (target == null || !target.isAlive()) {
+            battleMessage = "No valid debug target.";
+            return Library.BattleResult.CONTINUE;
+        }
+
+        int criticalHp = Math.max(1, (int) Math.ceil(target.getMaxHp() * 0.10));
+        target.setCurrentHp(criticalHp);
+        target.applyDefend(1, 1.0);
+        battleMessage = target.getName() + " drops to critical HP.";
         return handleEnemyTurn();
     }
 

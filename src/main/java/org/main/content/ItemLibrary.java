@@ -13,7 +13,8 @@ public enum ItemLibrary {
             5,
             GearMaterial.NONE,
             GearDurability.PERFECT,
-            15
+            15,
+            "A bright blue potion with a clean medicinal smell. Restores 5 HP when used."
     ),
 
     BONES(
@@ -24,7 +25,8 @@ public enum ItemLibrary {
             0,
             GearMaterial.NONE,
             GearDurability.PERFECT,
-            3
+            3,
+            "Dry bones from something that did not stay buried. Mostly useful as proof that trouble was here."
     ),
 
     SLIME(
@@ -35,7 +37,8 @@ public enum ItemLibrary {
             0,
             GearMaterial.NONE,
             GearDurability.PERFECT,
-            2
+            2,
+            "A cool wobbling lump of dungeon slime. It twitches faintly when held near magic."
     ),
 
     RAW_FISH(
@@ -46,7 +49,8 @@ public enum ItemLibrary {
             0,
             GearMaterial.NONE,
             GearDurability.PERFECT,
-            4
+            4,
+            "A freshly caught fish from shallow dungeon water. Not very useful until someone cooks it."
     ),
 
     IRON_SWORD(
@@ -57,7 +61,8 @@ public enum ItemLibrary {
             0,
             GearMaterial.IRON,
             GearDurability.GOOD,
-            60
+            60,
+            "A plain iron blade with a steady weight. Requires working arms to wield."
     ),
 
     LEATHER_CAP(
@@ -68,7 +73,8 @@ public enum ItemLibrary {
             0,
             GearMaterial.LEATHER,
             GearDurability.GOOD,
-            40
+            40,
+            "A soft leather cap. It will not stop a warhammer, but it does make a skeleton feel dignified."
     ),
 
     SILVER_RING(
@@ -79,7 +85,8 @@ public enum ItemLibrary {
             0,
             GearMaterial.SILVER,
             GearDurability.PERFECT,
-            75
+            75,
+            "A polished silver ring. It hums softly, as if remembering moonlight."
     );
 
     private final String displayName;
@@ -90,6 +97,7 @@ public enum ItemLibrary {
     private final GearMaterial material;
     private final GearDurability durability;
     private final int baseGoldValue;
+    private final String examineText;
 
     ItemLibrary(
             String displayName,
@@ -99,7 +107,8 @@ public enum ItemLibrary {
             int healAmount,
             GearMaterial material,
             GearDurability durability,
-            int baseGoldValue
+            int baseGoldValue,
+            String examineText
     ) {
         this.displayName = displayName;
         this.itemType = itemType;
@@ -109,10 +118,11 @@ public enum ItemLibrary {
         this.material = material == null ? GearMaterial.NONE : material;
         this.durability = durability == null ? GearDurability.PERFECT : durability;
         this.baseGoldValue = Math.max(1, baseGoldValue);
+        this.examineText = examineText == null ? "" : examineText;
     }
 
     public InventorySystem.Item createItem() {
-        return new InventorySystem.Item(displayName, itemType, iconPath, useSoundPath, healAmount, material, durability, baseGoldValue);
+        return new InventorySystem.Item(displayName, itemType, iconPath, useSoundPath, healAmount, material, durability, baseGoldValue, examineText);
     }
 
     public String getDisplayName() {

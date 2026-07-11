@@ -3,6 +3,11 @@ package org.main.content;
 import org.main.core.InteractionSystem;
 import org.main.core.InventorySystem;
 import org.main.core.ShopSystem;
+import org.main.core.ButcherySystem;
+import org.main.core.CharacterSkill;
+import org.main.core.GearDurability;
+import org.main.core.LimbItem;
+import org.main.core.LimbSlot;
 import org.main.engine.MapEntity;
 import org.main.monsters.Monster;
 import org.main.monsters.MonsterType;
@@ -52,19 +57,27 @@ public enum DialogueLibrary {
             if (questStage == 4) {
                 InventorySystem.Inventory inventory = context.getGameState().getInventory();
                 boolean hasHat = inventory.hasItemNamed(ItemLibrary.LEATHER_CAP.getDisplayName());
+                LimbItem rewardLimb = ButcherySystem.recreateLimb(MonsterType.SKELETON, LimbSlot.HEAD, GearDurability.GOOD);
+                String rewardText = "\n\nRewards:\n"
+                        + QuestLibrary.skillExperienceRewardText(CharacterSkill.BUTCHERING, 45)
+                        + "\n"
+                        + QuestLibrary.skillExperienceRewardText(CharacterSkill.GRAFTING, 45)
+                        + "\n"
+                        + QuestLibrary.limbRewardText(rewardLimb);
 
                 return InteractionSystem.dialogue(
                         npcName,
                         hasHat
-                                ? "That cap! At last, I can be dead serious and properly dressed."
+                                ? "That cap! At last, I can be dead serious and properly dressed." + rewardText
                                 : "I still feel a chilling draft where my dignity should be.",
                         null,
                         entity != null ? entity.getStaticImage() : null,
                         hasHat
                                 ? InteractionSystem.option("Give the hat.", () -> {
                                     inventory.removeFirstItemNamed(ItemLibrary.LEATHER_CAP.getDisplayName());
-                                    int levelsGained = context.getGameState().getPlayerCharacter().addClassExperience(90);
-                                    context.getGameState().setLevelUpPending(levelsGained > 0);
+                                    context.getGameState().getPlayerCharacter().addSkillExperience(CharacterSkill.BUTCHERING, 45);
+                                    context.getGameState().getPlayerCharacter().addSkillExperience(CharacterSkill.GRAFTING, 45);
+                                    context.getGameState().getInventory().addItem(rewardLimb);
                                     context.getGameState().setQuestStage(QuestLibrary.SKELETON_HAT, 5);
                                 })
                                 : InteractionSystem.closeOption("I'll find it."),

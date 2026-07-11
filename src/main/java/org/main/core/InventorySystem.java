@@ -23,6 +23,7 @@ public final class InventorySystem {
         LEG_ARMOR,
         RING,
         WEAPON,
+        LIMB,
         MISC,
         CONSUMABLE
     }
@@ -55,6 +56,7 @@ public final class InventorySystem {
         private final GearMaterial material;
         private final GearDurability durability;
         private final int baseGoldValue;
+        private final String examineText;
 
         public Item(String name, ItemType itemType, BufferedImage icon) {
             this(name, itemType, icon, null, 0);
@@ -65,7 +67,7 @@ public final class InventorySystem {
         }
 
         public Item(String name, ItemType itemType, BufferedImage icon, String useSoundPath, int healAmount) {
-            this(name, itemType, icon, useSoundPath, healAmount, GearMaterial.NONE, GearDurability.PERFECT, 10);
+            this(name, itemType, icon, useSoundPath, healAmount, GearMaterial.NONE, GearDurability.PERFECT, 10, "");
         }
 
         public Item(
@@ -78,6 +80,20 @@ public final class InventorySystem {
                 GearDurability durability,
                 int baseGoldValue
         ) {
+            this(name, itemType, icon, useSoundPath, healAmount, material, durability, baseGoldValue, "");
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                BufferedImage icon,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText
+        ) {
             this.name = name;
             this.itemType = itemType;
             this.icon = icon;
@@ -86,6 +102,9 @@ public final class InventorySystem {
             this.material = material == null ? GearMaterial.NONE : material;
             this.durability = durability == null ? GearDurability.PERFECT : durability;
             this.baseGoldValue = Math.max(1, baseGoldValue);
+            this.examineText = examineText == null || examineText.isBlank()
+                    ? "There is nothing unusual about it."
+                    : examineText;
         }
 
         public Item(String name, ItemType itemType, String iconPath) {
@@ -111,6 +130,20 @@ public final class InventorySystem {
                 int baseGoldValue
         ) {
             this(name, itemType, loadIcon(iconPath), useSoundPath, healAmount, material, durability, baseGoldValue);
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                String iconPath,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText
+        ) {
+            this(name, itemType, loadIcon(iconPath), useSoundPath, healAmount, material, durability, baseGoldValue, examineText);
         }
 
         private static BufferedImage loadIcon(String iconPath) {
@@ -153,6 +186,10 @@ public final class InventorySystem {
             return baseGoldValue;
         }
 
+        public String getExamineText() {
+            return examineText;
+        }
+
         public int getEffectiveStatBonus() {
             if (!isEquippable()) {
                 return 0;
@@ -190,7 +227,8 @@ public final class InventorySystem {
                     healAmount,
                     material,
                     durability,
-                    baseGoldValue
+                    baseGoldValue,
+                    examineText
             );
         }
     }
@@ -515,7 +553,7 @@ public final class InventorySystem {
                 case LEG_ARMOR -> slot == EquipmentSlot.LEGS;
                 case RING -> slot == EquipmentSlot.RING_LEFT || slot == EquipmentSlot.RING_RIGHT;
                 case WEAPON -> slot == EquipmentSlot.WEAPON;
-                case MISC, CONSUMABLE -> false;
+                case LIMB, MISC, CONSUMABLE -> false;
             };
         }
 
@@ -530,7 +568,7 @@ public final class InventorySystem {
                 case LEG_ARMOR -> EquipmentSlot.LEGS;
                 case WEAPON -> EquipmentSlot.WEAPON;
                 case RING -> getPreferredRingSlot();
-                case MISC, CONSUMABLE -> null;
+                case LIMB, MISC, CONSUMABLE -> null;
             };
         }
 
@@ -560,6 +598,8 @@ public final class InventorySystem {
         private static final int EQUIPMENT_GAP = 10;
         private static final int EQUIPMENT_TO_GRID_GAP = 18;
         private static final int STAT_PREVIEW_HEIGHT = 78;
+        private static final int LIMB_PANEL_WIDTH = 360;
+        private static final int LIMB_PANEL_HEIGHT = 116;
 
         private final Inventory inventory;
         private final GameState gameState;
@@ -570,6 +610,7 @@ public final class InventorySystem {
         private final Map<EquipmentSlot, Rectangle> equipmentSlotBounds = new EnumMap<>(EquipmentSlot.class);
         private final List<ContextMenuOption> contextMenuOptions = new ArrayList<>();
         private final Rectangle contextMenuBounds = new Rectangle();
+        private InteractionSystem.Interaction examineInteraction;
 
         private Item draggedItem;
         private int draggedInventoryIndex = -1;
@@ -594,9 +635,11 @@ public final class InventorySystem {
             calculateBounds(panelWidth, panelHeight);
 
             drawStatPreview(g);
+            drawLimbPanel(g, panelWidth);
             drawEquipmentSlots(g);
             drawInventoryGrid(g);
             drawContextMenu(g);
+            drawHoverTooltip(g, panelWidth, panelHeight);
             drawDraggedItem(g);
         }
 
@@ -629,7 +672,10 @@ public final class InventorySystem {
 
                 if (e.getClickCount() >= 2) {
                     if (!useItem(inventoryIndex)) {
-                        inventory().equipFromInventory(inventoryIndex);
+                        EquipmentSlot slot = inventory().getPreferredEquipmentSlot(item);
+                        if (canWearItem(item, slot)) {
+                            inventory().equipFromInventory(inventoryIndex);
+                        }
                     }
                     clearDrag();
                     return true;
@@ -677,10 +723,30 @@ public final class InventorySystem {
 
             if (item.isEquippable()) {
                 contextMenuOptions.add(new ContextMenuOption("Wear", () -> {
-                    inventory().equipFromInventory(contextInventoryIndex);
+                    EquipmentSlot slot = inventory().getPreferredEquipmentSlot(item);
+                    if (canWearItem(item, slot)) {
+                        inventory().equipFromInventory(contextInventoryIndex);
+                    }
                     closeContextMenu();
                 }));
             }
+
+            if (item instanceof LimbItem limb && gameState != null) {
+                contextMenuOptions.add(new ContextMenuOption("Graft", () -> {
+                    int indexToRemove = contextInventoryIndex;
+                    gameState.openInteraction(InteractionSystem.graftMenu(
+                            gameState,
+                            limb,
+                            () -> inventory().removeItem(indexToRemove)
+                    ));
+                    closeContextMenu();
+                }));
+            }
+
+            contextMenuOptions.add(new ContextMenuOption("Examine", () -> {
+                examineInteraction = createExamineInteraction(item);
+                closeContextMenu();
+            }));
 
             contextMenuOptions.add(new ContextMenuOption("Use", () -> {
                 useItem(contextInventoryIndex);
@@ -804,6 +870,15 @@ public final class InventorySystem {
             return true;
         }
 
+        public boolean handleMouseMoved(MouseEvent e) {
+            if (e == null) {
+                return false;
+            }
+
+            mousePoint = e.getPoint();
+            return true;
+        }
+
         public boolean handleMouseReleased(MouseEvent e) {
             if (draggedItem == null) {
                 return false;
@@ -827,7 +902,9 @@ public final class InventorySystem {
             EquipmentSlot targetEquipmentSlot = getEquipmentSlotAt(mousePoint);
 
             if (targetEquipmentSlot != null) {
-                inventory().equipFromInventory(draggedInventoryIndex, targetEquipmentSlot);
+                if (canWearItem(draggedItem, targetEquipmentSlot)) {
+                    inventory().equipFromInventory(draggedInventoryIndex, targetEquipmentSlot);
+                }
                 clearDrag();
                 return true;
             }
@@ -943,10 +1020,22 @@ public final class InventorySystem {
                     drawItem(g, equippedItem, bounds);
                 }
 
-                if (draggedItem != null && inventory().canEquipToSlot(draggedItem, slot)) {
+                if (draggedItem != null && canWearItem(draggedItem, slot)) {
                     drawValidEquipmentHint(g, bounds);
                 }
             }
+        }
+
+        private boolean canWearItem(Item item, EquipmentSlot slot) {
+            if (item == null || slot == null || !inventory().canEquipToSlot(item, slot)) {
+                return false;
+            }
+
+            if (gameState == null || gameState.getPlayerCharacter() == null) {
+                return true;
+            }
+
+            return gameState.getPlayerCharacter().canUseEquipmentSlot(slot);
         }
 
         private void drawContextMenu(Graphics2D g) {
@@ -991,14 +1080,106 @@ public final class InventorySystem {
             g.setFont(oldFont);
         }
 
+        private InteractionSystem.Interaction createExamineInteraction(Item item) {
+            if (item instanceof LimbItem limb) {
+                return InteractionSystem.prompt("Examine", limbExamineText(limb), InteractionSystem.closeOption("Close"));
+            }
+
+            return InteractionSystem.prompt(
+                    item == null ? "Examine" : item.getName(),
+                    item == null ? "There is nothing to examine." : item.getExamineText(),
+                    InteractionSystem.closeOption("Close")
+            );
+        }
+
+        private String limbExamineText(LimbItem limb) {
+            PlayerCharacter player = gameState == null ? null : gameState.getPlayerCharacter();
+            LimbItem currentLimb = player == null ? null : player.getEquippedLimb(limb.getLimbSlot());
+            StringBuilder builder = new StringBuilder();
+
+            builder.append(limb.getName())
+                    .append(" was cut from ")
+                    .append(limb.getMonsterType() == null ? "an unknown creature" : limb.getMonsterType().getDisplayName())
+                    .append(".\nCondition: ")
+                    .append(limb.getCondition().getDisplayName())
+                    .append("\nSlot: ")
+                    .append(limb.getLimbSlot().getDisplayName())
+                    .append("\n\nStats vs current limb:");
+
+            for (PlayerStat stat : PlayerStat.values()) {
+                int next = limb.getEffectiveStat(stat);
+                int current = currentLimb == null ? 0 : currentLimb.getEffectiveStat(stat);
+
+                if (next != 0 || current != 0) {
+                    int delta = next - current;
+                    builder.append("\n")
+                            .append(stat.getDisplayName())
+                            .append(" ")
+                            .append(next)
+                            .append(delta == 0 ? "" : " (" + (delta > 0 ? "+" : "") + delta + ")");
+                }
+            }
+
+            if (limb.getSkills().isEmpty()) {
+                builder.append("\n\nAbilities: None");
+            } else {
+                builder.append("\n\nAbilities:");
+
+                for (var skill : limb.getSkills()) {
+                    builder.append("\n+ ").append(skill.getName());
+                }
+            }
+
+            return builder.toString();
+        }
+
+        private void drawLimbPanel(Graphics2D g, int panelWidth) {
+            if (gameState == null || gameState.getPlayerCharacter() == null) {
+                return;
+            }
+
+            PlayerCharacter player = gameState.getPlayerCharacter();
+            int x = Math.max(18, panelWidth - LIMB_PANEL_WIDTH - 24);
+            int y = 24;
+
+            Composite oldComposite = g.getComposite();
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.82f));
+            g.setColor(new Color(8, 9, 13));
+            g.fillRoundRect(x, y, LIMB_PANEL_WIDTH, LIMB_PANEL_HEIGHT, 8, 8);
+            g.setComposite(oldComposite);
+
+            g.setColor(new Color(112, 92, 58));
+            g.drawRoundRect(x, y, LIMB_PANEL_WIDTH, LIMB_PANEL_HEIGHT, 8, 8);
+
+            Font oldFont = g.getFont();
+            g.setFont(oldFont.deriveFont(Font.BOLD, 14f));
+            g.setColor(new Color(238, 228, 190));
+            g.drawString("Grafted Limbs", x + 14, y + 24);
+
+            g.setFont(oldFont.deriveFont(Font.PLAIN, 12f));
+            int lineY = y + 46;
+
+            for (LimbSlot slot : LimbSlot.values()) {
+                LimbItem limb = player.getEquippedLimb(slot);
+                String text = slot.getDisplayName() + ": "
+                        + (limb == null ? "None" : limb.getName() + " (" + limb.getCondition().getDisplayName() + ")");
+                g.setColor(limb == null || limb.isBroken() ? new Color(224, 110, 100) : new Color(210, 204, 178));
+                g.drawString(text, x + 14, lineY);
+                lineY += 14;
+            }
+
+            g.setFont(oldFont);
+        }
+
         private void drawStatPreview(Graphics2D g) {
             if (gameState == null) {
                 return;
             }
 
             PlayerCharacter player = gameState.getPlayerCharacter();
-            int currentAttack = 5 + player.getStat(PlayerStat.STRENGTH) + inventory().getWeaponStatBonus();
-            int currentDefense = player.getStat(PlayerStat.DEFENSE) + inventory().getArmorStatBonus();
+            int currentWeaponBonus = player.getUsableWeaponStatBonus();
+            int currentAttack = 5 + player.getStat(PlayerStat.STRENGTH) + currentWeaponBonus;
+            int currentDefense = player.getStat(PlayerStat.DEFENSE) + player.getUsableArmorStatBonus();
             int previewAttack = currentAttack;
             int previewDefense = currentDefense;
 
@@ -1012,19 +1193,15 @@ public final class InventorySystem {
                     EquipmentSlot slot = previewSlotForItem(draggedItem);
                     Item currentArmor = slot == null ? null : inventory().getEquippedItem(slot);
                     previewDefense = player.getStat(PlayerStat.DEFENSE)
-                            + inventory().getArmorStatBonus()
+                            + player.getUsableArmorStatBonus()
                             - (currentArmor == null ? 0 : currentArmor.getEffectiveStatBonus())
                             + draggedItem.getEffectiveStatBonus();
                 }
             }
 
-            Rectangle anchor = equipmentSlotBounds.values().stream()
-                    .findFirst()
-                    .orElse(new Rectangle(24, 160, EQUIPMENT_SLOT_SIZE, EQUIPMENT_SLOT_SIZE));
-
             int panelWidth = 292;
-            int x = anchor.x;
-            int y = Math.max(24, anchor.y - STAT_PREVIEW_HEIGHT - 18);
+            int x = 24;
+            int y = 24;
 
             Composite oldComposite = g.getComposite();
             g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.82f));
@@ -1048,6 +1225,48 @@ public final class InventorySystem {
             g.setFont(oldFont);
         }
 
+        private void drawHoverTooltip(Graphics2D g, int panelWidth, int panelHeight) {
+            if (mousePoint == null || draggedItem != null || contextInventoryIndex >= 0) {
+                return;
+            }
+
+            Item hoveredItem = getHoveredItem();
+            if (hoveredItem == null) {
+                return;
+            }
+
+            Font oldFont = g.getFont();
+            g.setFont(oldFont.deriveFont(Font.BOLD, 13f));
+            FontMetrics metrics = g.getFontMetrics();
+            String label = hoveredItem.getName() == null ? "Unknown" : hoveredItem.getName();
+            int tooltipWidth = metrics.stringWidth(label) + 18;
+            int tooltipHeight = 26;
+            int x = Math.max(8, Math.min(panelWidth - tooltipWidth - 8, mousePoint.x + 12));
+            int y = Math.max(8, Math.min(panelHeight - tooltipHeight - 8, mousePoint.y + 12));
+
+            Composite oldComposite = g.getComposite();
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.92f));
+            g.setColor(new Color(8, 9, 13));
+            g.fillRoundRect(x, y, tooltipWidth, tooltipHeight, 7, 7);
+            g.setComposite(oldComposite);
+
+            g.setColor(new Color(112, 92, 58));
+            g.drawRoundRect(x, y, tooltipWidth, tooltipHeight, 7, 7);
+            g.setColor(new Color(238, 228, 190));
+            g.drawString(label, x + 9, y + 18);
+            g.setFont(oldFont);
+        }
+
+        private Item getHoveredItem() {
+            int inventoryIndex = getInventorySlotAt(mousePoint);
+            if (inventoryIndex >= 0) {
+                return inventory().getItem(inventoryIndex);
+            }
+
+            EquipmentSlot equipmentSlot = getEquipmentSlotAt(mousePoint);
+            return equipmentSlot == null ? null : inventory().getEquippedItem(equipmentSlot);
+        }
+
         private EquipmentSlot previewSlotForItem(Item item) {
             if (item == null) {
                 return null;
@@ -1059,7 +1278,7 @@ public final class InventorySystem {
                 case LEG_ARMOR -> EquipmentSlot.LEGS;
                 case RING -> EquipmentSlot.RING_LEFT;
                 case WEAPON -> EquipmentSlot.WEAPON;
-                case MISC, CONSUMABLE -> null;
+                case LIMB, MISC, CONSUMABLE -> null;
             };
         }
 
@@ -1157,6 +1376,7 @@ public final class InventorySystem {
                 case LEG_ARMOR -> new Color(90, 110, 150);
                 case RING -> new Color(200, 170, 70);
                 case WEAPON -> new Color(170, 170, 180);
+                case LIMB -> new Color(180, 90, 120);
                 case CONSUMABLE -> new Color(120, 180, 120);
                 case MISC -> new Color(150, 150, 150);
             };
@@ -1197,6 +1417,26 @@ public final class InventorySystem {
             drawItem(g, draggedItem, new Rectangle(x, y, size, size));
 
             g.setComposite(oldComposite);
+        }
+
+        public boolean hasActiveExamineInteraction() {
+            return getActiveExamineInteraction() != null;
+        }
+
+        public InteractionSystem.Interaction getActiveExamineInteraction() {
+            if (examineInteraction != null && examineInteraction.isClosed()) {
+                examineInteraction = null;
+            }
+
+            return examineInteraction;
+        }
+
+        public void closeExamineInteraction() {
+            if (examineInteraction != null) {
+                examineInteraction.close();
+            }
+
+            examineInteraction = null;
         }
 
         private int getInventorySlotAt(Point point) {

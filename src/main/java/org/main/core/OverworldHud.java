@@ -86,6 +86,8 @@ public class OverworldHud {
         skillIcons.put(CharacterSkill.SMITHING, AssetLoader.loadImage(SKILL_ICON_PATH + "anvil.png"));
         skillIcons.put(CharacterSkill.FISHING, AssetLoader.loadImage(SKILL_ICON_PATH + "fishing-hook.png"));
         skillIcons.put(CharacterSkill.COOKING, AssetLoader.loadImage(SKILL_ICON_PATH + "cooking-pot.png"));
+        skillIcons.put(CharacterSkill.BUTCHERING, AssetLoader.loadImage(SKILL_ICON_PATH + "meat-cleaver.png"));
+        skillIcons.put(CharacterSkill.GRAFTING, AssetLoader.loadImage(SKILL_ICON_PATH + "grab.png"));
     }
 
     public int getBottomReservedHeight() {
@@ -398,8 +400,8 @@ public class OverworldHud {
         g.drawString(player.getName(), x + 18, y + 28);
 
         List<String> statLines = new ArrayList<>();
-        statLines.add("Class " + (player.getPlayerClass() == null ? "Unknown" : player.getPlayerClass().getDisplayName()));
-        statLines.add("Level " + player.getLevel() + "  XP " + player.getClassExperience() + "/" + player.getClassExperienceRequiredForNextLevel());
+        statLines.add("Region " + (player.getPlayerRegion() == null ? "Unknown" : player.getPlayerRegion().getDisplayName()));
+        statLines.add("Level " + player.getLevel() + " (leveling paused)");
         statLines.add("HP " + player.getCurrHp() + "/" + player.getMaxHp());
         statLines.add("Attack " + (5 + player.getStat(PlayerStat.STRENGTH) + player.getInventory().getWeaponStatBonus()));
         statLines.add("Defense " + (player.getStat(PlayerStat.DEFENSE) + player.getInventory().getArmorStatBonus()));

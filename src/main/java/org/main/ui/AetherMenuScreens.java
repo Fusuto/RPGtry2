@@ -1,6 +1,6 @@
 package org.main.ui;
 
-import org.main.content.PlayerClassLibrary;
+import org.main.content.PlayerRegionLibrary;
 import org.main.core.PlayerStat;
 
 import java.awt.Color;
@@ -47,20 +47,43 @@ public final class AetherMenuScreens {
         return new Rectangle(x, y, buttonWidth, buttonHeight);
     }
 
-    public static void drawGameOver(Graphics2D g, int width, int height, Image preview, String message) {
+    public static void drawGameOver(
+            Graphics2D g,
+            int width,
+            int height,
+            Image cover,
+            Image titleBackground,
+            String message
+    ) {
         g.setColor(Color.BLACK);
         g.fillRect(0, 0, width, height);
 
-        if (preview != null) {
-            g.drawImage(preview, 0, 0, width, height, null);
+        if (cover != null) {
+            g.drawImage(cover, 0, 0, width, height, null);
         }
 
-        g.setColor(new Color(0, 0, 0, 150));
+        g.setColor(new Color(0, 0, 0, 85));
         g.fillRect(0, 0, width, height);
 
         Font previousFont = g.getFont();
+        Rectangle titleBounds = gameOverTitleBounds(width, height);
+
+        if (titleBackground != null) {
+            g.drawImage(
+                    titleBackground,
+                    titleBounds.x,
+                    titleBounds.y,
+                    titleBounds.width,
+                    titleBounds.height,
+                    null
+            );
+        } else {
+            g.setColor(new Color(8, 8, 10, 210));
+            g.fillRoundRect(titleBounds.x, titleBounds.y, titleBounds.width, titleBounds.height, 8, 8);
+        }
+
         g.setFont(new Font(Font.SERIF, Font.BOLD, 58));
-        drawCenteredText(g, width, "Game Over", height / 3, new Color(235, 225, 210));
+        drawCenteredText(g, width, "GAME OVER", titleBounds.y + titleBounds.height / 2 + 20, new Color(235, 225, 210));
 
         drawButton(g, "Main Menu", gameOverButtonBounds(width, height, 0));
         drawButton(g, "Load", gameOverButtonBounds(width, height, 1));
@@ -71,6 +94,12 @@ public final class AetherMenuScreens {
         }
 
         g.setFont(previousFont);
+    }
+
+    private static Rectangle gameOverTitleBounds(int width, int height) {
+        int titleWidth = Math.min(560, width - 96);
+        int titleHeight = 128;
+        return new Rectangle((width - titleWidth) / 2, Math.max(44, height / 4 - titleHeight / 2), titleWidth, titleHeight);
     }
 
     public static Rectangle gameOverButtonBounds(int width, int height, int index) {
@@ -88,7 +117,7 @@ public final class AetherMenuScreens {
             int height,
             String characterName,
             String message,
-            PlayerClassLibrary selectedPlayerClass
+            PlayerRegionLibrary selectedPlayerRegion
     ) {
         Paint previousPaint = g.getPaint();
         g.setPaint(new GradientPaint(0, 0, new Color(10, 12, 18), 0, height, new Color(28, 25, 22)));
@@ -109,15 +138,15 @@ public final class AetherMenuScreens {
         g.drawString("Name", characterPanelX(width), 150);
         drawNameField(g, nameFieldBounds(width), characterName);
 
-        g.drawString("Class", characterPanelX(width), 242);
+        g.drawString("Region", characterPanelX(width), 242);
 
         int index = 0;
-        for (PlayerClassLibrary playerClass : PlayerClassLibrary.values()) {
-            drawClassOption(g, playerClass, classButtonBounds(width, index), playerClass == selectedPlayerClass);
+        for (PlayerRegionLibrary playerRegion : PlayerRegionLibrary.values()) {
+            drawRegionOption(g, playerRegion, regionButtonBounds(width, index), playerRegion == selectedPlayerRegion);
             index++;
         }
 
-        drawClassDetails(g, classDetailsBounds(width), selectedPlayerClass);
+        drawRegionDetails(g, classDetailsBounds(width), selectedPlayerRegion);
         drawButton(g, "Confirm", confirmCharacterButtonBounds(width, height));
         drawButton(g, "Back", backCharacterButtonBounds(width, height));
 
@@ -133,7 +162,7 @@ public final class AetherMenuScreens {
         return new Rectangle(characterPanelX(width), 165, 300, 46);
     }
 
-    public static Rectangle classButtonBounds(int width, int index) {
+    public static Rectangle regionButtonBounds(int width, int index) {
         return new Rectangle(characterPanelX(width), 258 + index * 62, 220, 48);
     }
 
@@ -201,17 +230,17 @@ public final class AetherMenuScreens {
         g.drawString((characterName == null ? "" : characterName) + "_", bounds.x + 14, bounds.y + 31);
     }
 
-    private static void drawClassOption(Graphics2D g, PlayerClassLibrary playerClass, Rectangle bounds, boolean selected) {
+    private static void drawRegionOption(Graphics2D g, PlayerRegionLibrary playerRegion, Rectangle bounds, boolean selected) {
         g.setColor(selected ? new Color(75, 45, 38, 235) : new Color(12, 12, 12, 215));
         g.fillRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 8, 8);
         g.setColor(selected ? new Color(210, 70, 58) : new Color(105, 88, 62));
         g.drawRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 8, 8);
         g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
         g.setColor(new Color(235, 230, 210));
-        g.drawString(playerClass.getDisplayName(), bounds.x + 16, bounds.y + 30);
+        g.drawString(playerRegion.getDisplayName(), bounds.x + 16, bounds.y + 30);
     }
 
-    private static void drawClassDetails(Graphics2D g, Rectangle bounds, PlayerClassLibrary selectedPlayerClass) {
+    private static void drawRegionDetails(Graphics2D g, Rectangle bounds, PlayerRegionLibrary selectedPlayerRegion) {
         g.setColor(new Color(8, 8, 10, 190));
         g.fillRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 8, 8);
         g.setColor(new Color(95, 76, 54));
@@ -219,35 +248,30 @@ public final class AetherMenuScreens {
 
         g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
         g.setColor(new Color(235, 230, 210));
-        g.drawString(selectedPlayerClass.getDisplayName(), bounds.x + 18, bounds.y + 32);
+        g.drawString(selectedPlayerRegion.getDisplayName(), bounds.x + 18, bounds.y + 32);
 
         g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 14));
         g.setColor(new Color(210, 200, 180));
-        drawWrappedText(g, selectedPlayerClass.getDescription(), bounds.x + 18, bounds.y + 60, bounds.width - 36, 18);
+        drawWrappedText(g, selectedPlayerRegion.getDescription(), bounds.x + 18, bounds.y + 60, bounds.width - 36, 18);
 
         int y = bounds.y + 112;
-        g.drawString("Preferred stats:", bounds.x + 18, y);
+        g.drawString("Starter limbs:", bounds.x + 18, y);
         y += 24;
 
-        for (Map.Entry<PlayerStat, Integer> entry : selectedPlayerClass.getPreferredStatGrowth().entrySet()) {
-            g.drawString(entry.getKey().getDisplayName() + " +" + entry.getValue(), bounds.x + 34, y);
+        for (var limb : selectedPlayerRegion.createStarterLimbs()) {
+            g.drawString(limb.getLimbSlot().getDisplayName() + " - " + limb.getName(), bounds.x + 34, y);
             y += 20;
         }
 
         y += 8;
-        g.drawString("Starter skills:", bounds.x + 18, y);
+        g.drawString("Notes:", bounds.x + 18, y);
         y += 24;
-
-        for (var skill : selectedPlayerClass.getStarterSkills()) {
-            g.drawString(skill.getDisplayName(), bounds.x + 34, y);
-            y += 20;
-        }
 
         drawWrappedText(
                 g,
-                "Branches: " + selectedPlayerClass.getFirstBranchOption() + " / " + selectedPlayerClass.getSecondBranchOption(),
+                "Classes are disabled. Your body and grafted limbs define your stats and abilities.",
                 bounds.x + 18,
-                bounds.y + bounds.height - 38,
+                y,
                 bounds.width - 36,
                 17
         );

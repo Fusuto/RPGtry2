@@ -4,7 +4,9 @@ public enum CharacterSkill {
     MINING("Mining"),
     SMITHING("Smithing"),
     FISHING("Fishing"),
-    COOKING("Cooking");
+    COOKING("Cooking"),
+    BUTCHERING("Butchering"),
+    GRAFTING("Grafting");
 
     private final String displayName;
 

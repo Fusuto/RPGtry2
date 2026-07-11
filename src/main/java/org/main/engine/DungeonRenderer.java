@@ -463,21 +463,15 @@ public class DungeonRenderer {
             return;
         }
 
-        /*
-         * Only front-facing closed doors get the visible door overlay.
-         * Side faces remain normal wall texture, which looks better in perspective.
-         */
-        if (command.faceType != FaceType.FRONT) {
-            return;
-        }
-
         BufferedImage doorTexture = getDoorOverlayTexture(command);
 
         if (doorTexture == null) {
             return;
         }
 
-        Polygon doorPolygon = createDoorOverlayPolygon(command.polygon);
+        Polygon doorPolygon = command.faceType == FaceType.FRONT
+                ? createDoorOverlayPolygon(command.polygon)
+                : createSideVariantOverlayPolygon(command.polygon, doorTexture);
 
         drawTextureSection(g, doorTexture, doorPolygon, 0.0, 1.0);
     }

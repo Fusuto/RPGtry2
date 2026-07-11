@@ -94,6 +94,16 @@ public class GameMouseInputRouter {
         }
 
         if (gameState.isDungeonMode()
+                && gameState.isInventoryOpen()
+                && inventoryPanel.hasActiveExamineInteraction()) {
+            repaintIfConsumed(interactionWindow.handleMousePressed(
+                    e,
+                    inventoryPanel.getActiveExamineInteraction()
+            ));
+            return;
+        }
+
+        if (gameState.isDungeonMode()
                 && overworldHud != null
                 && overworldHud.handleMousePressed(
                 e.getPoint(),
@@ -157,6 +167,10 @@ public class GameMouseInputRouter {
             component.repaint();
         }
 
+        if (gameState.isDungeonMode() && gameState.isInventoryOpen()) {
+            repaintIfConsumed(inventoryPanel.handleMouseMoved(e));
+        }
+
         if (!gameState.isBattleMode()) {
             return;
         }
@@ -170,6 +184,16 @@ public class GameMouseInputRouter {
             repaintIfConsumed(interactionWindow.handleMouseWheelMoved(
                     e,
                     gameState.getActiveInteraction()
+            ));
+            return;
+        }
+
+        if (gameState.isDungeonMode()
+                && gameState.isInventoryOpen()
+                && inventoryPanel.hasActiveExamineInteraction()) {
+            repaintIfConsumed(interactionWindow.handleMouseWheelMoved(
+                    e,
+                    inventoryPanel.getActiveExamineInteraction()
             ));
             return;
         }

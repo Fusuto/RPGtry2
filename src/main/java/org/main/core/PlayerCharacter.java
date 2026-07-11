@@ -1,7 +1,7 @@
 package org.main.core;
 
 import org.main.battle.BattleSkill;
-import org.main.content.PlayerClassLibrary;
+import org.main.content.PlayerRegionLibrary;
 import org.main.content.SkillLibrary;
 
 import java.util.ArrayList;
@@ -15,13 +15,15 @@ public class PlayerCharacter {
     private final HashMap<CharacterSkill, Integer> skills;
     private final HashMap<CharacterSkill, Integer> skillExperience = new HashMap<>();
     private final EnumMap<PlayerStat, Integer> stats;
+    private final EnumMap<LimbSlot, LimbItem> equippedLimbs = new EnumMap<>(LimbSlot.class);
     private final List<BattleSkill> battleSkills;
-    private final PlayerClassLibrary playerClass;
+    private final PlayerRegionLibrary playerRegion;
     private int level = 1;
     private int classExperience = 0;
     private int availableStatPoints = 0;
     private int maxHp;
     private int currHp;
+    private boolean debugSkillsLoaded = false;
     private final InventorySystem.Inventory inventory;
     private final String portraitPath;
 
@@ -57,7 +59,7 @@ public class PlayerCharacter {
             InventorySystem.Inventory inventory,
             HashMap<CharacterSkill, Integer> skills,
             String portraitPath,
-            PlayerClassLibrary playerClass,
+            PlayerRegionLibrary playerRegion,
             Map<PlayerStat, Integer> stats,
             List<BattleSkill> battleSkills
     ) {
@@ -67,7 +69,7 @@ public class PlayerCharacter {
         this.inventory = inventory == null ? new InventorySystem.Inventory() : inventory;
         this.skills = skills == null ? createDefaultSkills() : skills;
         this.portraitPath = portraitPath;
-        this.playerClass = playerClass;
+        this.playerRegion = playerRegion;
         this.stats = new EnumMap<>(PlayerStat.class);
 
         for (PlayerStat stat : PlayerStat.values()) {
@@ -79,6 +81,9 @@ public class PlayerCharacter {
         if (battleSkills != null) {
             this.battleSkills.addAll(battleSkills);
         }
+
+        refreshBattleSkillsFromLimbs();
+        recalculateMaxHp(false);
     }
 
     public static HashMap<CharacterSkill, Integer> createDefaultSkills() {
@@ -109,8 +114,8 @@ public class PlayerCharacter {
         return skills;
     }
 
-    public PlayerClassLibrary getPlayerClass() {
-        return playerClass;
+    public PlayerRegionLibrary getPlayerRegion() {
+        return playerRegion;
     }
 
     public int getLevel() {
@@ -153,6 +158,18 @@ public class PlayerCharacter {
     }
 
     public int getStat(PlayerStat stat) {
+        int total = stats.getOrDefault(stat, 0);
+
+        for (LimbItem limb : equippedLimbs.values()) {
+            if (limb != null) {
+                total += limb.getEffectiveStat(stat);
+            }
+        }
+
+        return total;
+    }
+
+    public int getBaseStat(PlayerStat stat) {
         return stats.getOrDefault(stat, 0);
     }
 
@@ -163,8 +180,7 @@ public class PlayerCharacter {
     public void setStat(PlayerStat stat, int value) {
         if (stat != null) {
             stats.put(stat, Math.max(0, value));
-            maxHp = Math.max(1, 20 + getStat(PlayerStat.VITALITY) * 5);
-            currHp = clampHp(currHp);
+            recalculateMaxHp(false);
         }
     }
 
@@ -182,10 +198,6 @@ public class PlayerCharacter {
         level++;
         availableStatPoints += 10;
 
-        if (playerClass != null) {
-            playerClass.getPreferredStatGrowth().forEach(this::addStat);
-        }
-
         if (chosenStatPoints != null) {
             chosenStatPoints.forEach((stat, amount) -> {
                 int points = Math.max(0, amount == null ? 0 : amount);
@@ -198,8 +210,7 @@ public class PlayerCharacter {
             });
         }
 
-        maxHp = Math.max(1, 20 + getStat(PlayerStat.VITALITY) * 5);
-        currHp = maxHp;
+        recalculateMaxHp(true);
     }
 
     private void addStat(PlayerStat stat, int amount) {
@@ -215,8 +226,7 @@ public class PlayerCharacter {
 
         addStat(stat, 1);
         availableStatPoints--;
-        maxHp = Math.max(1, 20 + getStat(PlayerStat.VITALITY) * 5);
-        currHp = Math.min(maxHp, currHp + (stat == PlayerStat.VITALITY ? 5 : 0));
+        recalculateMaxHp(stat == PlayerStat.VITALITY);
         return true;
     }
 
@@ -304,8 +314,122 @@ public class PlayerCharacter {
         return inventory;
     }
 
+    public Map<LimbSlot, LimbItem> getEquippedLimbsView() {
+        return Map.copyOf(equippedLimbs);
+    }
+
+    public LimbItem getEquippedLimb(LimbSlot slot) {
+        return equippedLimbs.get(slot);
+    }
+
+    public void equipLimb(LimbItem limb) {
+        if (limb == null || limb.getLimbSlot() == null) {
+            return;
+        }
+
+        equippedLimbs.put(limb.getLimbSlot(), limb);
+        refreshBattleSkillsFromLimbs();
+        recalculateMaxHp(false);
+    }
+
+    public boolean canWieldWeapon() {
+        LimbItem leftArm = equippedLimbs.get(LimbSlot.LEFT_ARM);
+        LimbItem rightArm = equippedLimbs.get(LimbSlot.RIGHT_ARM);
+        return leftArm != null && rightArm != null && !leftArm.isBroken() && !rightArm.isBroken();
+    }
+
+    public boolean canUseEquipmentSlot(InventorySystem.EquipmentSlot slot) {
+        if (slot == null) {
+            return false;
+        }
+
+        return switch (slot) {
+            case HEAD -> hasFunctionalLimb(LimbSlot.HEAD);
+            case CHEST -> hasFunctionalLimb(LimbSlot.BODY);
+            case LEGS -> hasFunctionalLimb(LimbSlot.LEGS);
+            case RING_LEFT, RING_RIGHT -> hasFunctionalLimb(LimbSlot.LEFT_ARM) || hasFunctionalLimb(LimbSlot.RIGHT_ARM);
+            case WEAPON -> canWieldWeapon();
+        };
+    }
+
+    public int getUsableWeaponStatBonus() {
+        if (!canWieldWeapon()) {
+            return 0;
+        }
+
+        return inventory.getWeaponStatBonus();
+    }
+
+    public int getUsableArmorStatBonus() {
+        int total = 0;
+
+        for (Map.Entry<InventorySystem.EquipmentSlot, InventorySystem.Item> entry : inventory.getEquippedItemsView().entrySet()) {
+            if (entry.getKey() != InventorySystem.EquipmentSlot.WEAPON
+                    && entry.getValue() != null
+                    && canUseEquipmentSlot(entry.getKey())) {
+                total += entry.getValue().getEffectiveStatBonus();
+            }
+        }
+
+        return total;
+    }
+
+    private boolean hasFunctionalLimb(LimbSlot slot) {
+        LimbItem limb = equippedLimbs.get(slot);
+        return limb != null && !limb.isBroken();
+    }
+
+    public void equipStarterLimbs(List<LimbItem> limbs) {
+        equippedLimbs.clear();
+
+        if (limbs != null) {
+            for (LimbItem limb : limbs) {
+                equipLimb(limb);
+            }
+        }
+
+        refreshBattleSkillsFromLimbs();
+        recalculateMaxHp(true);
+    }
+
+    public boolean isDebugSkillsLoaded() {
+        return debugSkillsLoaded;
+    }
+
+    public void loadDebugSkills() {
+        debugSkillsLoaded = true;
+        refreshBattleSkillsFromLimbs();
+    }
+
     public String getPortraitPath() {
         return portraitPath;
+    }
+
+    private void refreshBattleSkillsFromLimbs() {
+        battleSkills.clear();
+        battleSkills.addAll(SkillLibrary.createUniversalPlayerSkills());
+
+        if (debugSkillsLoaded) {
+            battleSkills.addAll(SkillLibrary.createDebugPlayerSkills());
+        }
+
+        for (LimbItem limb : equippedLimbs.values()) {
+            if (limb != null && !limb.isBroken()) {
+                battleSkills.addAll(limb.getSkills());
+            }
+        }
+    }
+
+    private void recalculateMaxHp(boolean healToFull) {
+        int newMaxHp = Math.max(1, 20 + getStat(PlayerStat.VITALITY) * 5);
+        int previousMaxHp = maxHp;
+        maxHp = newMaxHp;
+
+        if (healToFull || currHp > maxHp) {
+            currHp = maxHp;
+        } else if (newMaxHp > previousMaxHp) {
+            currHp = Math.min(maxHp, currHp + (newMaxHp - previousMaxHp));
+        }
     }
 
     private int clampHp(int hp) {

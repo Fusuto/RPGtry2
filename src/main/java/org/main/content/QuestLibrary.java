@@ -1,5 +1,8 @@
 package org.main.content;
 
+import org.main.core.CharacterSkill;
+import org.main.core.LimbItem;
+
 import java.util.List;
 
 public enum QuestLibrary {
@@ -45,5 +48,18 @@ public enum QuestLibrary {
     public String getStageDescription(int stage) {
         int safeStage = Math.max(0, Math.min(getMaxStage(), stage));
         return stageDescriptions.get(safeStage);
+    }
+
+    public static String skillExperienceRewardText(CharacterSkill skill, int amount) {
+        String skillName = skill == null ? "Skill" : skill.getDisplayName();
+        return "+" + Math.max(0, amount) + " " + skillName + " xp";
+    }
+
+    public static String limbRewardText(LimbItem limb) {
+        if (limb == null) {
+            return "+1 Limb";
+        }
+
+        return "+1 " + limb.getName();
     }
 }

@@ -2,18 +2,23 @@ package org.main.battle;
 
 import org.main.core.GameState;
 import org.main.core.InventorySystem;
+import org.main.core.InteractionSystem;
 import org.main.core.Library;
+import org.main.content.SkillLibrary;
 import org.main.content.QuestLibrary;
 import org.main.content.EnvironmentLibrary;
 import org.main.content.MobDropsLibrary;
 import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
+import org.main.monsters.MonsterType;
 
 import java.awt.Point;
 import java.awt.event.KeyEvent;
 import java.util.List;
 
 public class BattleController {
+    private static final String LOW_HP_WARNING_SOUND_PATH = "assets/sounds/generated/kurt_sample_2.wav";
+
     private final GameState gameState;
     private final BattleRenderer battleRenderer;
     private final SoundSystem soundSystem;
@@ -40,6 +45,30 @@ public class BattleController {
 
     public void handleMouseMoved(Point point) {
         battleRenderer.setMousePoint(point);
+    }
+
+    public void update() {
+        if (soundSystem == null) {
+            return;
+        }
+
+        if (!gameState.isBattleMode() || gameState.getCurrentEncounter() == null) {
+            soundSystem.stopLoopingSound();
+            return;
+        }
+
+        BattleActor playerActor = gameState.getCurrentEncounter().getFirstLivingAlly();
+
+        if (playerActor == null || playerActor.getMaxHp() <= 0) {
+            soundSystem.stopLoopingSound();
+            return;
+        }
+
+        if ((double) playerActor.getCurrentHp() / (double) playerActor.getMaxHp() <= 0.10) {
+            soundSystem.playLoopingSound(LOW_HP_WARNING_SOUND_PATH);
+        } else {
+            soundSystem.stopLoopingSound();
+        }
     }
 
     public void handleMouseClick(Point point) {
@@ -151,6 +180,17 @@ public class BattleController {
             return;
         }
 
+        if (SkillLibrary.isDebugDropHpSkill(pendingSkill)) {
+            Library.BattleResult result = currentEncounter.handleDebugDropHp(selectedActor);
+
+            pendingSkill = null;
+            battleRenderer.clearSelectableTargets();
+            battleRenderer.clearPreviewSkill();
+
+            handleBattleResult(result);
+            return;
+        }
+
         List<BattleActor> resolvedTargets = currentEncounter.resolveSkillTargets(
                 caster,
                 selectedActor,
@@ -253,15 +293,19 @@ public class BattleController {
 
     private void endBattle(boolean removeEnemy) {
         int experienceReward = 0;
+        MonsterType defeatedMonsterType = null;
 
         if (removeEnemy && gameState.getCurrentEncounter() != null) {
             experienceReward = gameState.getCurrentEncounter().getDefeatedEnemyExperienceReward();
         }
 
+        int hpBeforeBattle = gameState.getPlayerCharacter().getCurrHp();
         syncPlayerCharacterHp();
+        int hpLost = Math.max(0, hpBeforeBattle - gameState.getPlayerCharacter().getCurrHp());
 
         if (removeEnemy && gameState.getCurrentEnemyEntity() != null) {
             MapEntity defeatedEnemy = gameState.getCurrentEnemyEntity();
+            defeatedMonsterType = defeatedEnemy.getMonster() == null ? null : defeatedEnemy.getMonster().getType();
 
             if (defeatedEnemy.getMonster() != null
                     && "SLIME".equals(defeatedEnemy.getMonster().getType().name())
@@ -273,13 +317,7 @@ public class BattleController {
             spawnLootDrops(defeatedEnemy);
         }
 
-        if (removeEnemy && experienceReward > 0) {
-            int levelsGained = gameState.getPlayerCharacter().addClassExperience(experienceReward);
-
-            if (levelsGained > 0) {
-                gameState.setLevelUpPending(true);
-            }
-        }
+        // Class leveling is intentionally paused while the limb progression system replaces classes.
 
         pendingSkill = null;
         pendingBattleCommand = null;
@@ -292,9 +330,14 @@ public class BattleController {
             gameState.enterGameOver();
         } else {
             gameState.clearBattleState();
+
+            if (removeEnemy && defeatedMonsterType != null) {
+                gameState.openInteraction(InteractionSystem.postBattleMenu(gameState, defeatedMonsterType, experienceReward, hpLost));
+            }
         }
 
         if (soundSystem != null) {
+            soundSystem.stopLoopingSound();
             soundSystem.stopMusic();
 
             if (environment != null && !gameState.isGameOverMode()) {

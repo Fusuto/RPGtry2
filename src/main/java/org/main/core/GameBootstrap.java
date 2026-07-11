@@ -4,7 +4,7 @@ import org.main.content.ItemLibrary;
 import org.main.content.GenericNpcLibrary;
 import org.main.content.GatheringNodeLibrary;
 import org.main.content.MainNpcLibrary;
-import org.main.content.PlayerClassLibrary;
+import org.main.content.PlayerRegionLibrary;
 import org.main.content.SkillLibrary;
 import org.main.engine.MapEntity;
 import org.main.monsters.Monster;
@@ -18,29 +18,27 @@ public final class GameBootstrap {
     }
 
     public static PlayerCharacter createDefaultPlayerCharacter() {
-        return createPlayerCharacter("Player", PlayerClassLibrary.WARRIOR);
+        return createPlayerCharacter("Player", PlayerRegionLibrary.MIDLANDS);
     }
 
-    public static PlayerCharacter createPlayerCharacter(String name, PlayerClassLibrary playerClass) {
-        PlayerClassLibrary selectedClass = playerClass == null ? PlayerClassLibrary.WARRIOR : playerClass;
+    public static PlayerCharacter createPlayerCharacter(String name, PlayerRegionLibrary playerRegion) {
+        PlayerRegionLibrary selectedRegion = playerRegion == null ? PlayerRegionLibrary.MIDLANDS : playerRegion;
         EnumMap<PlayerStat, Integer> stats = PlayerCharacter.createDefaultStats();
-        selectedClass.getPreferredStatGrowth().forEach((stat, amount) -> stats.put(stat, stats.get(stat) + amount));
         var battleSkills = new ArrayList<>(SkillLibrary.createUniversalPlayerSkills());
-        battleSkills.addAll(selectedClass.getStarterSkills().stream()
-                .map(skill -> skill.createSkill())
-                .toList());
 
-        return new PlayerCharacter(
+        PlayerCharacter player = new PlayerCharacter(
                 name,
                 20 + stats.get(PlayerStat.VITALITY) * 5,
                 20 + stats.get(PlayerStat.VITALITY) * 5,
                 new InventorySystem.Inventory(),
                 PlayerCharacter.createDefaultSkills(),
                 "assets/images/monster/Nov-2015/player/base/human_m.png",
-                selectedClass,
+                selectedRegion,
                 stats,
                 battleSkills
         );
+        player.equipStarterLimbs(selectedRegion.createStarterLimbs());
+        return player;
     }
 
     public static void seedTestContent(GameState gameState) {

@@ -3,6 +3,7 @@ package org.main.core;
 import org.main.content.DialogueLibrary;
 import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
+import org.main.monsters.MonsterType;
 
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
@@ -139,6 +140,17 @@ public final class InteractionSystem {
         return new Interaction(new VolumeInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction));
     }
 
+    private static Interaction debugMenu(
+            SoundSystem soundSystem,
+            GameState gameState,
+            Runnable exitAction,
+            Runnable controlsAction,
+            Runnable saveAction,
+            Runnable loadAction
+    ) {
+        return new Interaction(new DebugInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction));
+    }
+
     public static Interaction controlsMenu(InputBindings inputBindings) {
         return new Interaction(new ControlsInteractionContent(inputBindings));
     }
@@ -149,6 +161,122 @@ public final class InteractionSystem {
 
     public static Interaction fishingMenu(GameState gameState) {
         return new Interaction(new FishingInteractionContent(gameState));
+    }
+
+    public static Interaction postBattleMenu(GameState gameState, MonsterType monsterType, int experienceReward, int hpLost) {
+        List<InteractionOption> options = new ArrayList<>();
+        PlayerCharacter player = gameState == null ? null : gameState.getPlayerCharacter();
+
+        options.add(option("Butcher Random Limb", () -> resolveButchery(gameState, monsterType, null)));
+
+        if (player != null) {
+            for (LimbSlot slot : ButcherySystem.unlockedButcheryTargets(player)) {
+                options.add(option("Target " + slot.getDisplayName(), () -> resolveButchery(gameState, monsterType, slot)));
+            }
+        }
+
+        options.add(closeOption("Leave Remains"));
+
+        String bodyText = "Victory.\nXP earned: "
+                + Math.max(0, experienceReward)
+                + "\nHP lost: "
+                + Math.max(0, hpLost)
+                + "\nYou can attempt to butcher the "
+                + (monsterType == null ? "creature" : monsterType.getDisplayName())
+                + " for a graftable limb.";
+
+        InteractionModel model = new InteractionModel(
+                "Battle Results",
+                bodyText,
+                null,
+                null,
+                null,
+                null,
+                true,
+                options
+        );
+
+        return new Interaction(new StaticInteractionContent(model));
+    }
+
+    public static Interaction graftMenu(GameState gameState, LimbItem limb, Runnable removeLimbFromInventory) {
+        List<InteractionOption> options = new ArrayList<>();
+        PlayerCharacter player = gameState == null ? null : gameState.getPlayerCharacter();
+        int graftingLevel = player == null ? 1 : player.getSkillLevel(CharacterSkill.GRAFTING);
+
+        if (graftingLevel >= 5) {
+            options.add(option("Hazardous", () -> resolveGraft(gameState, limb, ButcherySystem.GraftApproach.HAZARDOUS, removeLimbFromInventory)));
+            options.add(option("Perfectly", () -> resolveGraft(gameState, limb, ButcherySystem.GraftApproach.PERFECT, removeLimbFromInventory)));
+        } else {
+            options.add(option("Unskilled", () -> resolveGraft(gameState, limb, ButcherySystem.GraftApproach.UNSKILLED, removeLimbFromInventory)));
+        }
+
+        options.add(closeOption("Cancel"));
+
+        String bodyText = limb == null
+                ? "There is no limb to graft."
+                : "Graft "
+                + limb.getName()
+                + " onto "
+                + limb.getLimbSlot().getDisplayName()
+                + ".\nCondition: "
+                + limb.getCondition().getDisplayName()
+                + "\nGrafting level: "
+                + graftingLevel;
+
+        return new Interaction(new StaticInteractionContent(new InteractionModel(
+                "Grafting",
+                bodyText,
+                null,
+                null,
+                null,
+                null,
+                true,
+                options
+        )));
+    }
+
+    private static void resolveButchery(GameState gameState, MonsterType monsterType, LimbSlot requestedSlot) {
+        if (gameState == null || gameState.getPlayerCharacter() == null) {
+            return;
+        }
+
+        var result = ButcherySystem.butcher(gameState.getPlayerCharacter(), monsterType, requestedSlot);
+        String message;
+
+        if (result.isPresent()) {
+            LimbItem limb = result.get();
+            boolean stored = gameState.getInventory().addItem(limb);
+            if (!stored) {
+                gameState.addEntity(new MapEntity(limb, gameState.getPlayerX(), gameState.getPlayerY()));
+            }
+            message = stored
+                    ? "Recovered " + limb.getCondition().getDisplayName() + " " + limb.getName() + "."
+                    : "Recovered " + limb.getName() + ", but your inventory is full. It falls to the floor.";
+        } else {
+            message = "The butchery fails and no usable limb remains.";
+        }
+
+        gameState.openInteraction(prompt("Butchery", message, closeOption("Continue")));
+    }
+
+    private static void resolveGraft(
+            GameState gameState,
+            LimbItem limb,
+            ButcherySystem.GraftApproach approach,
+            Runnable removeLimbFromInventory
+    ) {
+        if (gameState == null || gameState.getPlayerCharacter() == null) {
+            return;
+        }
+
+        ButcherySystem.GraftResult result = ButcherySystem.graft(gameState.getPlayerCharacter(), limb, approach);
+
+        if (result.success() && removeLimbFromInventory != null) {
+            removeLimbFromInventory.run();
+        }
+
+        gameState.openInteraction(prompt("Grafting", result.message(), closeOption("Continue")));
     }
 
     public static InteractionOption closeOption(String label) {
@@ -1335,6 +1463,10 @@ public final class InteractionSystem {
             return option("Volume", () -> openInteraction(volumeMenu(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction)));
         }
 
+        protected InteractionOption debugOption() {
+            return option("Debug", () -> openInteraction(debugMenu(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction)));
+        }
+
         protected InteractionOption exitGameOption() {
             return option("Exit Game", () -> {
                 if (soundSystem != null) {
@@ -1545,6 +1677,7 @@ public final class InteractionSystem {
                             stayOpenOption(cameraMovementLabel(), this::toggleCameraMovement),
                             option("Controls", controlsAction()),
                             volumeOption(),
+                            debugOption(),
                             backToConfigOption(),
                             closeOption("Close")
                     )
@@ -1583,6 +1716,80 @@ public final class InteractionSystem {
         private void toggleMiniMap() {
             if (gameState() != null) {
                 gameState().cycleMiniMapMode();
+            }
+        }
+    }
+
+    private static class DebugInteractionContent extends SettingsMenuContent {
+        private DebugInteractionContent(
+                SoundSystem soundSystem,
+                GameState gameState,
+                Runnable exitAction,
+                Runnable controlsAction,
+                Runnable saveAction,
+                Runnable loadAction
+        ) {
+            super(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction);
+        }
+
+        @Override
+        public InteractionModel getModel() {
+            return new InteractionModel(
+                    "Debug",
+                    "Debug tools",
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    true,
+                    List.of(
+                            stayOpenOption(debugInfoLabel(), this::toggleDebugInfo),
+                            stayOpenOption(debugSkillsLabel(), this::loadDebugSkills),
+                            backToSettingsOption(),
+                            closeOption("Close")
+                    )
+            );
+        }
+
+        private InteractionOption backToSettingsOption() {
+            return option("Back", () -> openInteraction(settingsMenu(
+                    soundSystem(),
+                    gameState(),
+                    exitAction(),
+                    controlsAction(),
+                    saveAction(),
+                    loadAction()
+            )));
+        }
+
+        private String debugInfoLabel() {
+            if (gameState() == null || !gameState().isPerformanceOverlayVisible()) {
+                return "Debug Info [OFF]";
+            }
+
+            return "Debug Info [ON]";
+        }
+
+        private String debugSkillsLabel() {
+            if (gameState() == null || gameState().getPlayerCharacter() == null) {
+                return "Load Debug Skills";
+            }
+
+            return gameState().getPlayerCharacter().isDebugSkillsLoaded()
+                    ? "Debug Skills [LOADED]"
+                    : "Load Debug Skills";
+        }
+
+        private void toggleDebugInfo() {
+            if (gameState() != null) {
+                gameState().togglePerformanceOverlayVisible();
+            }
+        }
+
+        private void loadDebugSkills() {
+            if (gameState() != null && gameState().getPlayerCharacter() != null) {
+                gameState().getPlayerCharacter().loadDebugSkills();
             }
         }
     }

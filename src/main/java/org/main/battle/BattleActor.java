@@ -103,6 +103,10 @@ public class BattleActor {
         return currentHp;
     }
 
+    public void setCurrentHp(int currentHp) {
+        this.currentHp = Math.max(0, Math.min(maxHp, currentHp));
+    }
+
     public BufferedImage getImage() {
         return image;
     }

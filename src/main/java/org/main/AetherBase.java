@@ -2,7 +2,7 @@ package org.main;
 
 import org.main.battle.*;
 import org.main.content.EnvironmentLibrary;
-import org.main.content.PlayerClassLibrary;
+import org.main.content.PlayerRegionLibrary;
 import org.main.core.*;
 import org.main.engine.*;
 import org.main.ui.AetherMenuScreens;
@@ -43,12 +43,13 @@ public class AetherBase extends JPanel implements KeyListener {
     private double lastUpdateMs = 0.0;
     private double lastRenderMs = 0.0;
     private String startMenuMessage = "";
-    private PlayerClassLibrary selectedPlayerClass = PlayerClassLibrary.WARRIOR;
+    private PlayerRegionLibrary selectedPlayerRegion = PlayerRegionLibrary.MIDLANDS;
     private String characterName = "Player";
     private String characterCreationMessage = "";
     private String gameOverMessage = "";
     private boolean gameOverMusicStarted = false;
-    private final Image gameOverPreview = AssetLoader.loadImage("assets/images/ui/02_PreviewUI/Battle_over.png");
+    private final Image gameOverCover = AssetLoader.loadImage("assets/images/ui/01_UI_Resources/01Battle/battle_gameover_cover.png");
+    private final Image gameOverTitleBackground = AssetLoader.loadImage("assets/images/ui/01_UI_Resources/01Battle/battle_gameover_bg.png");
     private static final String LEVEL_UP_JINGLE_PATH = null;
     private static final String GAME_OVER_MUSIC_PATH = null;
 
@@ -134,19 +135,17 @@ public class AetherBase extends JPanel implements KeyListener {
 
         gameState.updateMovementAnimation(deltaMs);
         gameState.updateFishing(deltaMs);
+        battleController.update();
 
         for (MapEntity entity : gameState.getEntities()) {
             entity.update(deltaMs);
         }
 
-        if (gameState.isDungeonMode()
-                && gameState.isLevelUpPending()
-                && !gameState.hasActiveInteraction()
-                && !gameState.hasActiveShop()) {
-            gameState.setLevelUpPending(false);
-            soundSystem.playSound(LEVEL_UP_JINGLE_PATH);
-            gameState.openInteraction(InteractionSystem.levelUpMenu(gameState));
-        }
+        /*
+         * Class-style leveling is paused while limb progression replaces classes.
+         * Keep the old menu/system in place for later design decisions, but do
+         * not surface it during normal play.
+         */
 
         lastUpdateMs = (System.nanoTime() - updateStart) / 1_000_000.0;
     }
@@ -181,14 +180,14 @@ public class AetherBase extends JPanel implements KeyListener {
                     getHeight(),
                     characterName,
                     characterCreationMessage,
-                    selectedPlayerClass
+                    selectedPlayerRegion
             );
             lastRenderMs = (System.nanoTime() - renderStart) / 1_000_000.0;
             return;
         }
 
         if (gameState.isGameOverMode()) {
-            AetherMenuScreens.drawGameOver(g2, getWidth(), getHeight(), gameOverPreview, gameOverMessage);
+            AetherMenuScreens.drawGameOver(g2, getWidth(), getHeight(), gameOverCover, gameOverTitleBackground, gameOverMessage);
             lastRenderMs = (System.nanoTime() - renderStart) / 1_000_000.0;
             return;
         }
@@ -220,6 +219,15 @@ public class AetherBase extends JPanel implements KeyListener {
 
             overworldHud.draw(g2, gameState, getWidth(), getHeight());
 
+            if (gameState.isInventoryOpen() && inventoryPanel.hasActiveExamineInteraction()) {
+                interactionWindow.draw(
+                        g2,
+                        inventoryPanel.getActiveExamineInteraction(),
+                        getWidth(),
+                        getHeight() - overworldHud.getBottomReservedHeight()
+                );
+            }
+
             if (gameState.hasActiveShop()) {
                 shopWindow.draw(g2, gameState, getWidth(), getHeight());
             }
@@ -244,7 +252,10 @@ public class AetherBase extends JPanel implements KeyListener {
         }
 
         lastRenderMs = (System.nanoTime() - renderStart) / 1_000_000.0;
-        drawPerformanceOverlay(g2);
+
+        if (gameState.isPerformanceOverlayVisible()) {
+            drawPerformanceOverlay(g2);
+        }
     }
 
     private void handleGameOverMousePressed(Point point) {
@@ -297,9 +308,9 @@ public class AetherBase extends JPanel implements KeyListener {
         requestFocusInWindow();
 
         int index = 0;
-        for (PlayerClassLibrary playerClass : PlayerClassLibrary.values()) {
-            if (AetherMenuScreens.classButtonBounds(getWidth(), index).contains(point)) {
-                selectedPlayerClass = playerClass;
+        for (PlayerRegionLibrary playerRegion : PlayerRegionLibrary.values()) {
+            if (AetherMenuScreens.regionButtonBounds(getWidth(), index).contains(point)) {
+                selectedPlayerRegion = playerRegion;
                 repaint();
                 return;
             }
@@ -327,7 +338,7 @@ public class AetherBase extends JPanel implements KeyListener {
             return;
         }
 
-        gameState.setPlayerCharacter(GameBootstrap.createPlayerCharacter(trimmedName, selectedPlayerClass));
+        gameState.setPlayerCharacter(GameBootstrap.createPlayerCharacter(trimmedName, selectedPlayerRegion));
         gameState.changeDungeon(DungeonMap.testMap(), 1, 1, List.of());
         GameBootstrap.seedTestContent(gameState);
         gameState.setGameMode(GameState.GameMode.DUNGEON);

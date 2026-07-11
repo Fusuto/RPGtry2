@@ -37,6 +37,7 @@ public class GameState {
     private boolean miniMapUnlocked = false;
     private MiniMapMode miniMapMode = MiniMapMode.DISCOVERED;
     private boolean[][] discoveredMiniMapTiles = new boolean[0][0];
+    private boolean performanceOverlayVisible = false;
 
     // 0 = north, 1 = east, 2 = south, 3 = west
     private int direction = 1;
@@ -293,6 +294,18 @@ public class GameState {
         return miniMapMode == MiniMapMode.DEBUG;
     }
 
+    public boolean isPerformanceOverlayVisible() {
+        return performanceOverlayVisible;
+    }
+
+    public void setPerformanceOverlayVisible(boolean performanceOverlayVisible) {
+        this.performanceOverlayVisible = performanceOverlayVisible;
+    }
+
+    public void togglePerformanceOverlayVisible() {
+        performanceOverlayVisible = !performanceOverlayVisible;
+    }
+
     public boolean isMiniMapTileDiscovered(int x, int y) {
         if (isMiniMapDebugMode()) {
             return true;
@@ -375,6 +388,10 @@ public class GameState {
 
     public String getTileInteractionId(int x, int y) {
         return tileInteractionIds.get(tileKey(x, y));
+    }
+
+    public Map<String, String> getTileInteractionIdsView() {
+        return Map.copyOf(tileInteractionIds);
     }
 
     public boolean hasTileInteractionId(int x, int y) {
