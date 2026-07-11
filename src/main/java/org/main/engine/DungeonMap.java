@@ -9,6 +9,8 @@ public class DungeonMap {
     private static final int ALT_WALL = 3;
     private static final int ALT_FLOOR = 4;
     private static final int ALT_DOOR_CLOSED = 5;
+    private static final int FISHING_WATER = 6;
+    private static final int WATER = 7;
 
     private final Library.TileType[][] tiles;
     private final int[][] environmentThemeIndexes;
@@ -63,18 +65,21 @@ public class DungeonMap {
          * Visual map codes:
          * 0 = floor, 1 = wall, 2 = closed door
          * 3 = alternate wall, 4 = alternate floor, 5 = alternate closed door
+         * 6 = fishable water, 7 = decorative water
          */
         int[][] raw = {
-                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-                {1, 0, 0, 2, 1, 0, 0, 4, 4, 3},
-                {1, 0, 1, 0, 1, 0, 3, 3, 4, 3},
-                {1, 0, 1, 0, 0, 0, 4, 3, 4, 3},
-                {1, 0, 1, 2, 1, 0, 4, 3, 4, 3},
-                {1, 0, 0, 0, 0, 0, 4, 4, 4, 3},
-                {1, 1, 1, 1, 0, 0, 4, 3, 4, 3},
-                {1, 0, 0, 0, 0, 0, 4, 3, 4, 3},
-                {1, 0, 1, 1, 1, 5, 4, 4, 4, 3},
-                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+                {1, 0, 0, 2, 0, 0, 1, 4, 4, 4, 2, 0, 0, 1},
+                {1, 0, 1, 1, 1, 0, 1, 4, 3, 4, 1, 1, 0, 1},
+                {1, 0, 1, 7, 6, 0, 2, 4, 3, 4, 0, 0, 0, 1},
+                {1, 0, 1, 7, 7, 0, 1, 4, 3, 4, 1, 1, 0, 1},
+                {1, 0, 1, 1, 1, 0, 1, 4, 4, 4, 1, 1, 0, 1},
+                {1, 0, 0, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 1},
+                {1, 1, 1, 2, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1},
+                {1, 4, 4, 4, 1, 0, 1, 0, 1, 0, 0, 0, 4, 1},
+                {1, 4, 3, 4, 2, 0, 0, 0, 1, 0, 5, 4, 4, 1},
+                {1, 4, 4, 4, 1, 1, 1, 1, 1, 0, 4, 4, 4, 1},
+                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
         };
 
         Library.TileType[][] tiles = new Library.TileType[raw.length][raw[0].length];
@@ -85,6 +90,8 @@ public class DungeonMap {
                 tiles[y][x] = switch (raw[y][x]) {
                     case WALL, ALT_WALL -> Library.TileType.WALL;
                     case DOOR_CLOSED, ALT_DOOR_CLOSED -> Library.TileType.DOOR_CLOSED;
+                    case FISHING_WATER -> Library.TileType.FISHING_WATER;
+                    case WATER -> Library.TileType.WATER;
                     default -> Library.TileType.FLOOR;
                 };
 

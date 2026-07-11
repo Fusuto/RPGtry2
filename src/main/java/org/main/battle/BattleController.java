@@ -1,9 +1,12 @@
 package org.main.battle;
 
 import org.main.core.GameState;
+import org.main.core.InventorySystem;
 import org.main.core.Library;
 import org.main.content.QuestLibrary;
 import org.main.content.EnvironmentLibrary;
+import org.main.content.MobDropsLibrary;
+import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
 
 import java.awt.Point;
@@ -258,17 +261,24 @@ public class BattleController {
         syncPlayerCharacterHp();
 
         if (removeEnemy && gameState.getCurrentEnemyEntity() != null) {
-            if (gameState.getCurrentEnemyEntity().getMonster() != null
-                    && "SLIME".equals(gameState.getCurrentEnemyEntity().getMonster().getType().name())
+            MapEntity defeatedEnemy = gameState.getCurrentEnemyEntity();
+
+            if (defeatedEnemy.getMonster() != null
+                    && "SLIME".equals(defeatedEnemy.getMonster().getType().name())
                     && gameState.getQuestStage(QuestLibrary.SKELETON_HAT) == 1) {
                 gameState.setQuestStage(QuestLibrary.SKELETON_HAT, 2);
             }
 
-            gameState.removeEntity(gameState.getCurrentEnemyEntity());
+            gameState.removeEntity(defeatedEnemy);
+            spawnLootDrops(defeatedEnemy);
         }
 
         if (removeEnemy && experienceReward > 0) {
-            gameState.getPlayerCharacter().addClassExperience(experienceReward);
+            int levelsGained = gameState.getPlayerCharacter().addClassExperience(experienceReward);
+
+            if (levelsGained > 0) {
+                gameState.setLevelUpPending(true);
+            }
         }
 
         pendingSkill = null;
@@ -278,12 +288,16 @@ public class BattleController {
         battleRenderer.clearSelectableTargets();
         battleRenderer.clearPreviewSkill();
 
-        gameState.clearBattleState();
+        if (!removeEnemy && gameState.getPlayerCharacter().getCurrHp() <= 0) {
+            gameState.enterGameOver();
+        } else {
+            gameState.clearBattleState();
+        }
 
         if (soundSystem != null) {
             soundSystem.stopMusic();
 
-            if (environment != null) {
+            if (environment != null && !gameState.isGameOverMode()) {
                 soundSystem.playAmbience(environment.getAmbienceSoundPath());
             }
         }
@@ -298,5 +312,15 @@ public class BattleController {
 
         BattleActor playerActor = currentEncounter.getAllies().get(0);
         gameState.getPlayerCharacter().setCurrHp(playerActor.getCurrentHp());
+    }
+
+    private void spawnLootDrops(MapEntity defeatedEnemy) {
+        if (defeatedEnemy == null || defeatedEnemy.getMonster() == null) {
+            return;
+        }
+
+        for (InventorySystem.Item item : MobDropsLibrary.rollDrops(defeatedEnemy.getMonster().getType())) {
+            gameState.addEntity(new MapEntity(item, defeatedEnemy.getX(), defeatedEnemy.getY()));
+        }
     }
 }

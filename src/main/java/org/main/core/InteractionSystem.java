@@ -143,6 +143,14 @@ public final class InteractionSystem {
         return new Interaction(new ControlsInteractionContent(inputBindings));
     }
 
+    public static Interaction levelUpMenu(GameState gameState) {
+        return new Interaction(new LevelUpInteractionContent(gameState));
+    }
+
+    public static Interaction fishingMenu(GameState gameState) {
+        return new Interaction(new FishingInteractionContent(gameState));
+    }
+
     public static InteractionOption closeOption(String label) {
         return new InteractionOption(label, null, true);
     }
@@ -165,6 +173,7 @@ public final class InteractionSystem {
 
     public static class Interaction {
         private final InteractionContent content;
+        private String selectionSoundPath;
         private boolean closed = false;
 
         private Interaction(InteractionContent content) {
@@ -185,6 +194,15 @@ public final class InteractionSystem {
             }
 
             content.selectOption(optionIndex, this, alternateAction);
+        }
+
+        public String getSelectionSoundPath() {
+            return selectionSoundPath;
+        }
+
+        public Interaction withSelectionSoundPath(String selectionSoundPath) {
+            this.selectionSoundPath = selectionSoundPath;
+            return this;
         }
 
         private boolean handleKeyPressed(KeyEvent e) {
@@ -583,12 +601,21 @@ public final class InteractionSystem {
 
         private final List<Rectangle> optionBounds = new ArrayList<>();
         private final List<Integer> optionIndexes = new ArrayList<>();
+        private final SoundSystem soundSystem;
         private int bodyScrollOffset = 0;
         private int optionScrollOffset = 0;
         private Rectangle lastBodyClip = new Rectangle();
         private Rectangle lastOptionsClip = new Rectangle();
         private int lastBodyContentHeight = 0;
         private int lastOptionsContentHeight = 0;
+
+        public InteractionWindow() {
+            this(null);
+        }
+
+        public InteractionWindow(SoundSystem soundSystem) {
+            this.soundSystem = soundSystem;
+        }
 
         public void draw(Graphics2D g, Interaction interaction, int panelWidth, int panelHeight) {
             optionBounds.clear();
@@ -635,6 +662,7 @@ public final class InteractionSystem {
                 Rectangle bounds = optionBounds.get(i);
 
                 if (bounds.contains(point)) {
+                    playSelectionSound(interaction);
                     interaction.selectOption(optionIndexes.get(i), SwingUtilities.isRightMouseButton(e));
                     return true;
                 }
@@ -713,11 +741,13 @@ public final class InteractionSystem {
             int optionIndex = getNumberKeyOptionIndex(e);
 
             if (optionIndex >= 0 && optionIndex < model.getOptions().size()) {
+                playSelectionSound(interaction);
                 interaction.selectOption(optionIndex);
                 return true;
             }
 
             if (e.getKeyCode() == KeyEvent.VK_ENTER && model.getOptions().size() == 1) {
+                playSelectionSound(interaction);
                 interaction.selectOption(0);
                 return true;
             }
@@ -727,6 +757,12 @@ public final class InteractionSystem {
             }
 
             return false;
+        }
+
+        private void playSelectionSound(Interaction interaction) {
+            if (soundSystem != null && interaction != null) {
+                soundSystem.playSound(interaction.getSelectionSoundPath());
+            }
         }
 
         private boolean handleScrollKey(KeyEvent e) {
@@ -1146,10 +1182,18 @@ public final class InteractionSystem {
     public static class InteractionContext {
         private final GameState gameState;
         private final MapEntity entity;
+        private final int tileX;
+        private final int tileY;
 
         public InteractionContext(GameState gameState, MapEntity entity) {
+            this(gameState, entity, -1, -1);
+        }
+
+        public InteractionContext(GameState gameState, MapEntity entity, int tileX, int tileY) {
             this.gameState = gameState;
             this.entity = entity;
+            this.tileX = tileX;
+            this.tileY = tileY;
         }
 
         public GameState getGameState() {
@@ -1158,6 +1202,14 @@ public final class InteractionSystem {
 
         public MapEntity getEntity() {
             return entity;
+        }
+
+        public int getTileX() {
+            return tileX;
+        }
+
+        public int getTileY() {
+            return tileY;
         }
     }
 
@@ -1178,6 +1230,10 @@ public final class InteractionSystem {
         }
 
         public Interaction create(String interactionId, GameState gameState, MapEntity entity) {
+            return create(interactionId, gameState, entity, -1, -1);
+        }
+
+        public Interaction create(String interactionId, GameState gameState, MapEntity entity, int tileX, int tileY) {
             if (interactionId == null || interactionId.isBlank()) {
                 return null;
             }
@@ -1189,7 +1245,7 @@ public final class InteractionSystem {
                 return null;
             }
 
-            return factory.create(new InteractionContext(gameState, entity));
+            return factory.create(new InteractionContext(gameState, entity, tileX, tileY));
         }
 
         public static InteractionRegistry createDefault() {
@@ -1209,6 +1265,11 @@ public final class InteractionSystem {
                     }),
                     closeOption("Stay")
             ));
+
+            registry.register("fishing_shoal", context -> {
+                context.getGameState().startFishing(context.getTileX(), context.getTileY());
+                return fishingMenu(context.getGameState());
+            });
 
             return registry;
         }
@@ -1306,6 +1367,119 @@ public final class InteractionSystem {
             if (option.shouldCloseAfterSelection()) {
                 interaction.close();
             }
+        }
+    }
+
+    private static class LevelUpInteractionContent implements InteractionContent {
+        private final GameState gameState;
+
+        private LevelUpInteractionContent(GameState gameState) {
+            this.gameState = gameState;
+        }
+
+        @Override
+        public InteractionModel getModel() {
+            PlayerCharacter player = gameState == null ? null : gameState.getPlayerCharacter();
+
+            if (player == null) {
+                return new InteractionModel(
+                        "Level Up",
+                        "No player found.",
+                        null,
+                        null,
+                        null,
+                        null,
+                        true,
+                        true,
+                        List.of(closeOption("Close"))
+                );
+            }
+
+            List<InteractionOption> options = new ArrayList<>();
+
+            for (PlayerStat stat : PlayerStat.values()) {
+                options.add(stayOpenOption(
+                        stat.getDisplayName() + " [" + player.getStat(stat) + "] +",
+                        () -> player.spendStatPoint(stat)
+                ));
+            }
+
+            options.add(closeOption("Done"));
+
+            return new InteractionModel(
+                    "Level Up",
+                    "Level "
+                            + player.getLevel()
+                            + "\nAvailable stat points: "
+                            + player.getAvailableStatPoints()
+                            + "\n\nAllocate your points now, or close this and spend them later from the next level-up prompt.",
+                    null,
+                    null,
+                    null,
+                    null,
+                    false,
+                    true,
+                    options
+            );
+        }
+
+        @Override
+        public void selectOption(int optionIndex, Interaction interaction, boolean alternateAction) {
+            InteractionModel model = getModel();
+
+            if (optionIndex < 0 || optionIndex >= model.getOptions().size()) {
+                return;
+            }
+
+            InteractionOption option = model.getOptions().get(optionIndex);
+            option.run(alternateAction);
+
+            if (option.shouldCloseAfterSelection()) {
+                interaction.close();
+            }
+        }
+    }
+
+    private static class FishingInteractionContent implements InteractionContent {
+        private final GameState gameState;
+
+        private FishingInteractionContent(GameState gameState) {
+            this.gameState = gameState;
+        }
+
+        @Override
+        public InteractionModel getModel() {
+            String body = gameState == null
+                    ? "No fishing spot found."
+                    : gameState.getFishingMessage()
+                    + "\n\nFishing level "
+                    + gameState.getPlayerCharacter().getSkillLevel(CharacterSkill.FISHING)
+                    + "  XP "
+                    + gameState.getPlayerCharacter().getSkillExperience(CharacterSkill.FISHING)
+                    + "/"
+                    + gameState.getPlayerCharacter().getSkillExperienceRequired(CharacterSkill.FISHING)
+                    + "\n\nWait a few seconds for each catch attempt.";
+
+            return new InteractionModel(
+                    "Fishing Shoal",
+                    body,
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    true,
+                    List.of(closeOption("Stop Fishing"))
+            );
+        }
+
+        @Override
+        public void selectOption(int optionIndex, Interaction interaction, boolean alternateAction) {
+            if (gameState != null) {
+                gameState.stopFishing();
+            }
+
+            interaction.close();
         }
     }
 

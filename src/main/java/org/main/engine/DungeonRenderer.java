@@ -16,6 +16,13 @@ public class DungeonRenderer {
     private static final double NEAR_CLIP = 0.10;
     private static final int MAX_TEXTURE_STRIPS = 48;
     private static final int MIN_TEXTURE_STRIPS = 8;
+    private static final String WATER_PATH = "assets/images/monster/Nov-2015/dngn/water/";
+    private final BufferedImage[] decorativeWaterFrames = loadNumberedFrames("shoals_shallow_water", 0, 11);
+    private final BufferedImage[] fishingWaterFrames = {
+            AssetLoader.loadImage(WATER_PATH + "shoals_shallow_water_disturbance1.png"),
+            AssetLoader.loadImage(WATER_PATH + "shoals_shallow_water_disturbance2.png"),
+            AssetLoader.loadImage(WATER_PATH + "shoals_shallow_water_disturbance3.png")
+    };
     private TextureManager textureManager;
     private List<EnvironmentTheme> environmentThemes = new ArrayList<>(
             List.of(EnvironmentTheme.defaultTheme())
@@ -339,6 +346,9 @@ public class DungeonRenderer {
             Point bottomCenter = project(x, z, -1.0);
             Point topCenter = project(x, z, 0.55);
             int spriteHeight = Math.abs(bottomCenter.y - topCenter.y);
+            if (entity.getType() == Library.EntityType.ITEM || entity.getType() == Library.EntityType.TRAP) {
+                spriteHeight = Math.max(16, (int) Math.round(spriteHeight * 0.45));
+            }
             int spriteWidth = spriteHeight;
             int screenX = bottomCenter.x - spriteWidth / 2;
             int screenY = bottomCenter.y - spriteHeight;
@@ -371,6 +381,13 @@ public class DungeonRenderer {
     }
 
     private void drawBaseTileFace(Graphics2D g, RenderCommand command) {
+        BufferedImage waterTexture = getWaterTexture(command);
+
+        if (waterTexture != null) {
+            drawTexturedFace(g, waterTexture, command);
+            return;
+        }
+
         Color color = getRenderColor(command);
         TextureManager.SelectedTexture texture = getTextureForCommand(command);
 
@@ -380,6 +397,35 @@ public class DungeonRenderer {
             g.setColor(color);
             g.fillPolygon(command.polygon);
         }
+    }
+
+    private BufferedImage getWaterTexture(RenderCommand command) {
+        if (command.faceType != FaceType.FLOOR || command.tileType == null) {
+            return null;
+        }
+
+        if (command.tileType == Library.TileType.WATER) {
+            int frame = (int) ((System.currentTimeMillis() / 220L) % decorativeWaterFrames.length);
+            return decorativeWaterFrames[frame];
+        }
+
+        if (command.tileType == Library.TileType.FISHING_WATER) {
+            int frame = (int) ((System.currentTimeMillis() / 260L) % fishingWaterFrames.length);
+            return fishingWaterFrames[frame];
+        }
+
+        return null;
+    }
+
+    private BufferedImage[] loadNumberedFrames(String prefix, int startInclusive, int endInclusive) {
+        int frameCount = Math.max(0, endInclusive - startInclusive + 1);
+        BufferedImage[] frames = new BufferedImage[frameCount];
+
+        for (int i = 0; i < frameCount; i++) {
+            frames[i] = AssetLoader.loadImage(WATER_PATH + prefix + (startInclusive + i) + ".png");
+        }
+
+        return frames;
     }
 
     private void drawSelectedTexture(

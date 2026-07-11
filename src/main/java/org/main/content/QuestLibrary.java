@@ -5,11 +5,12 @@ import java.util.List;
 public enum QuestLibrary {
     SKELETON_HAT(
             "skeleton_hat",
-            "Skeleton's Favor",
+            "Tipping the Hat",
             List.of(
                     "Speak with the skeleton in the test dungeon.",
                     "Kill a slime, then return to the skeleton.",
-                    "Ask the merchant for a hat.",
+                    "Tell the skeleton the slime is dead.",
+                    "Ask the merchant for a hat, then return to the skeleton.",
                     "Bring the hat back to the skeleton.",
                     "Complete. The skeleton has been properly capped."
             )

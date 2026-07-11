@@ -4,6 +4,8 @@ import org.main.core.InteractionSystem;
 import org.main.core.InventorySystem;
 import org.main.core.ShopSystem;
 import org.main.engine.MapEntity;
+import org.main.monsters.Monster;
+import org.main.monsters.MonsterType;
 
 public enum DialogueLibrary {
     OLD_GUARD_INTRO("old_guard_intro") {
@@ -19,7 +21,10 @@ public enum DialogueLibrary {
                         "Rattle me bones, traveler. Do me a kindness: thin out that slime nearby and I may remember where I left my manners.",
                         null,
                         entity != null ? entity.getStaticImage() : null,
-                        InteractionSystem.option("I'll handle the slime.", () -> context.getGameState().setQuestStage(QuestLibrary.SKELETON_HAT, 1)),
+                        InteractionSystem.option("I'll handle the slime.", () -> {
+                            ensureSlimeForQuest(context);
+                            context.getGameState().setQuestStage(QuestLibrary.SKELETON_HAT, 1);
+                        }),
                         InteractionSystem.closeOption("Not now")
                 );
             }
@@ -40,11 +45,11 @@ public enum DialogueLibrary {
                         "Fine work. Now for the important bit: I require a hat. The merchant owes me one, spiritually if not financially.",
                         null,
                         entity != null ? entity.getStaticImage() : null,
-                        InteractionSystem.closeOption("I'll ask the merchant.")
+                        InteractionSystem.option("I'll ask the merchant.", () -> context.getGameState().setQuestStage(QuestLibrary.SKELETON_HAT, 3))
                 );
             }
 
-            if (questStage == 3) {
+            if (questStage == 4) {
                 InventorySystem.Inventory inventory = context.getGameState().getInventory();
                 boolean hasHat = inventory.hasItemNamed(ItemLibrary.LEATHER_CAP.getDisplayName());
 
@@ -58,15 +63,16 @@ public enum DialogueLibrary {
                         hasHat
                                 ? InteractionSystem.option("Give the hat.", () -> {
                                     inventory.removeFirstItemNamed(ItemLibrary.LEATHER_CAP.getDisplayName());
-                                    context.getGameState().getPlayerCharacter().addClassExperience(90);
-                                    context.getGameState().setQuestStage(QuestLibrary.SKELETON_HAT, 4);
+                                    int levelsGained = context.getGameState().getPlayerCharacter().addClassExperience(90);
+                                    context.getGameState().setLevelUpPending(levelsGained > 0);
+                                    context.getGameState().setQuestStage(QuestLibrary.SKELETON_HAT, 5);
                                 })
                                 : InteractionSystem.closeOption("I'll find it."),
                         InteractionSystem.closeOption("Leave")
                 );
             }
 
-            if (questStage >= 4) {
+            if (questStage >= 5) {
                 return InteractionSystem.dialogue(
                         npcName,
                         "Thank you. I would tip my hat, but that would defeat the whole point.",
@@ -122,7 +128,7 @@ public enum DialogueLibrary {
             MapEntity entity = context.getEntity();
             String merchantName = entity != null ? entity.getName() : "Merchant";
 
-            if (context.getGameState().getQuestStage(QuestLibrary.SKELETON_HAT) == 2) {
+            if (context.getGameState().getQuestStage(QuestLibrary.SKELETON_HAT) == 3) {
                 return InteractionSystem.dialogue(
                         merchantName,
                         "A hat for the skeleton? Take this one. No charge. I prefer my customers with fewer haunting obligations.",
@@ -130,7 +136,7 @@ public enum DialogueLibrary {
                         entity != null ? entity.getStaticImage() : null,
                         InteractionSystem.option("Take the hat.", () -> {
                             context.getGameState().getInventory().addItem(ItemLibrary.LEATHER_CAP.createItem());
-                            context.getGameState().setQuestStage(QuestLibrary.SKELETON_HAT, 3);
+                            context.getGameState().setQuestStage(QuestLibrary.SKELETON_HAT, 4);
                         }),
                         InteractionSystem.closeOption("Leave")
                 );
@@ -195,4 +201,14 @@ public enum DialogueLibrary {
     }
 
     public abstract InteractionSystem.Interaction create(InteractionSystem.InteractionContext context);
+
+    private static void ensureSlimeForQuest(InteractionSystem.InteractionContext context) {
+        boolean slimeExists = context.getGameState().getEntities().stream()
+                .anyMatch(entity -> entity.getMonster() != null
+                        && entity.getMonster().getType() == MonsterType.SLIME);
+
+        if (!slimeExists) {
+            context.getGameState().addEntity(new MapEntity(new Monster(MonsterType.SLIME), 8, 6));
+        }
+    }
 }

@@ -9,10 +9,10 @@ import java.util.List;
 public enum MonsterType {
     SLIME(
             "Slime",
-            6,
-            2,
-            0,
+            20,
             5,
+            0,
+            10,
             "A quivering mass of dungeon slime.",
             "assets/images/monster/Nov-2015/mon/amorphous/jelly.png",
             "assets/sounds/generated/enemy_attack.wav",

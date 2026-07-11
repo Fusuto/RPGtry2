@@ -2,8 +2,8 @@ package org.main.tools;
 
 import org.main.engine.AssetLoader;
 
-import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioFileFormat;
+import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
@@ -18,13 +18,12 @@ import javax.swing.JSlider;
 import javax.swing.JTextField;
 import javax.swing.JToggleButton;
 import javax.swing.SwingUtilities;
-import java.awt.BasicStroke;
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
-import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
@@ -34,41 +33,51 @@ import java.awt.event.MouseEvent;
 import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 public class SoundDesignerTool extends JFrame {
     private static final int SAMPLE_RATE = 44_100;
-    private static final int STEP_COUNT = 32;
+    private static final int DEFAULT_STEP_COUNT = 32;
+    private static final int MAX_STEP_COUNT = 64;
     private static final int MIN_NOTE = 24;
     private static final int MAX_NOTE = 84;
+    private static final Integer[] ACTIVE_STEP_OPTIONS = {8, 16, 24, 32, 64};
     private static final Path OUTPUT_FOLDER = AssetLoader.generatedSoundsFolder();
 
-    private final int[] notes = new int[STEP_COUNT];
-    private final PitchGrid pitchGrid = new PitchGrid(notes);
+    private final LayerState[] layers = {
+            new LayerState("Layer 1", false),
+            new LayerState("Layer 2", true)
+    };
+    private final PitchGrid pitchGrid = new PitchGrid();
 
-    private final JComboBox<Waveform> waveformBox = new JComboBox<>(Waveform.values());
+    private final JComboBox<Integer> activeStepsBox = new JComboBox<>(ACTIVE_STEP_OPTIONS);
+    private final JComboBox<String> layerBox = new JComboBox<>(new String[]{"Layer 1", "Layer 2"});
+    private final JPanel layerControlHost = new JPanel(new CardLayout());
     private final JSlider durationSlider = new JSlider(120, 2500, 650);
-    private final JSlider volumeSlider = new JSlider(0, 100, 65);
-    private final JSlider attackSlider = new JSlider(0, 250, 8);
-    private final JSlider releaseSlider = new JSlider(0, 600, 80);
     private final JTextField fileNameField = new JTextField("new_sound", 16);
     private final JLabel statusLabel = new JLabel("Ready.");
     private final JToggleButton loopButton = new JToggleButton("Loop");
+    private final JToggleButton normalizeButton = new JToggleButton("Normalize", true);
 
     private SourceDataLine previewLine;
     private Thread previewThread;
     private volatile boolean previewPlaying = false;
+    private int activeStepCount = DEFAULT_STEP_COUNT;
+    private int selectedLayerIndex = 0;
 
     public SoundDesignerTool() {
         super("Sound Designer");
 
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout());
-        setMinimumSize(new Dimension(860, 560));
+        setMinimumSize(new Dimension(920, 600));
 
-        initializeNotes();
+        activeStepsBox.setSelectedItem(DEFAULT_STEP_COUNT);
+        initializeLayers();
 
-        add(createToolbar(), BorderLayout.NORTH);
+        add(createControlPanel(), BorderLayout.NORTH);
         add(pitchGrid, BorderLayout.CENTER);
         add(createFooter(), BorderLayout.SOUTH);
 
@@ -76,7 +85,14 @@ public class SoundDesignerTool extends JFrame {
         setLocationRelativeTo(null);
     }
 
-    private JPanel createToolbar() {
+    private JPanel createControlPanel() {
+        JPanel controlPanel = new JPanel(new BorderLayout());
+        controlPanel.add(createGlobalToolbar(), BorderLayout.NORTH);
+        controlPanel.add(createLayerToolbar(), BorderLayout.SOUTH);
+        return controlPanel;
+    }
+
+    private JPanel createGlobalToolbar() {
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 8));
         toolbar.setBackground(new Color(95, 88, 79));
 
@@ -89,40 +105,93 @@ public class SoundDesignerTool extends JFrame {
         JButton saveButton = new JButton("Save WAV");
         saveButton.addActionListener(event -> saveWav());
 
-        JButton flattenButton = new JButton("Flatten");
-        flattenButton.addActionListener(event -> {
-            fillNotes(48);
-            pitchGrid.repaint();
-        });
+        activeStepsBox.addActionListener(event -> updateActiveStepCount());
 
-        JButton rampButton = new JButton("Ramp");
-        rampButton.addActionListener(event -> {
-            for (int i = 0; i < notes.length; i++) {
-                notes[i] = 36 + i;
-            }
-            pitchGrid.repaint();
-        });
-
-        toolbar.add(new JLabel("Wave"));
-        toolbar.add(waveformBox);
-        toolbar.add(new JLabel("Length"));
+        toolbar.add(new JLabel("Steps"));
+        toolbar.add(activeStepsBox);
+        toolbar.add(new JLabel("Base Len"));
         toolbar.add(durationSlider);
-        toolbar.add(new JLabel("Vol"));
-        toolbar.add(volumeSlider);
-        toolbar.add(new JLabel("Atk"));
-        toolbar.add(attackSlider);
-        toolbar.add(new JLabel("Rel"));
-        toolbar.add(releaseSlider);
         toolbar.add(playButton);
         toolbar.add(stopButton);
         toolbar.add(loopButton);
-        toolbar.add(flattenButton);
-        toolbar.add(rampButton);
+        toolbar.add(normalizeButton);
         toolbar.add(new JLabel("Name"));
         toolbar.add(fileNameField);
         toolbar.add(saveButton);
 
         return toolbar;
+    }
+
+    private JPanel createLayerToolbar() {
+        JPanel toolbar = new JPanel(new BorderLayout());
+        toolbar.setBackground(new Color(80, 74, 67));
+
+        JPanel selectorPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 6));
+        selectorPanel.setBackground(new Color(80, 74, 67));
+        selectorPanel.add(new JLabel("Edit"));
+        selectorPanel.add(layerBox);
+
+        layerBox.addActionListener(event -> {
+            selectedLayerIndex = Math.max(0, layerBox.getSelectedIndex());
+            ((CardLayout) layerControlHost.getLayout()).show(layerControlHost, currentLayer().name);
+            pitchGrid.clampSelectedStep();
+            pitchGrid.repaint();
+        });
+
+        layerControlHost.setBackground(new Color(80, 74, 67));
+        for (LayerState layer : layers) {
+            layerControlHost.add(createLayerPanel(layer), layer.name);
+        }
+
+        toolbar.add(selectorPanel, BorderLayout.WEST);
+        toolbar.add(layerControlHost, BorderLayout.CENTER);
+        return toolbar;
+    }
+
+    private JPanel createLayerPanel(LayerState layer) {
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
+        panel.setBackground(new Color(80, 74, 67));
+
+        JButton clearButton = new JButton("Clear");
+        clearButton.addActionListener(event -> {
+            fillNotes(layer, 48);
+            pitchGrid.repaint();
+        });
+
+        JButton copyButton = new JButton("Copy Other");
+        copyButton.addActionListener(event -> {
+            copyOtherLayerTo(layer);
+            pitchGrid.repaint();
+        });
+
+        JButton flattenButton = new JButton("Flatten");
+        flattenButton.addActionListener(event -> {
+            fillNotes(layer, 48);
+            pitchGrid.repaint();
+        });
+
+        JButton rampButton = new JButton("Ramp");
+        rampButton.addActionListener(event -> {
+            rampNotes(layer);
+            pitchGrid.repaint();
+        });
+
+        panel.add(new JLabel("Wave"));
+        panel.add(layer.waveformBox);
+        panel.add(new JLabel("Vol"));
+        panel.add(layer.volumeSlider);
+        panel.add(new JLabel("Atk"));
+        panel.add(layer.attackSlider);
+        panel.add(new JLabel("Rel"));
+        panel.add(layer.releaseSlider);
+        panel.add(layer.muteButton);
+        panel.add(layer.soloButton);
+        panel.add(clearButton);
+        panel.add(copyButton);
+        panel.add(flattenButton);
+        panel.add(rampButton);
+
+        return panel;
     }
 
     private JPanel createFooter() {
@@ -132,17 +201,69 @@ public class SoundDesignerTool extends JFrame {
         return footer;
     }
 
-    private void initializeNotes() {
-        for (int i = 0; i < notes.length; i++) {
-            double arc = Math.sin((i / (double) (notes.length - 1)) * Math.PI);
-            notes[i] = 36 + (int) Math.round(18 * arc);
+    private void initializeLayers() {
+        for (LayerState layer : layers) {
+            initializeNotes(layer);
         }
     }
 
-    private void fillNotes(int note) {
-        for (int i = 0; i < notes.length; i++) {
-            notes[i] = note;
+    private void initializeNotes(LayerState layer) {
+        for (int i = 0; i < layer.notes.length; i++) {
+            double arc = Math.sin((i / (double) (DEFAULT_STEP_COUNT - 1)) * Math.PI);
+            layer.notes[i] = 36 + (int) Math.round(18 * arc);
         }
+    }
+
+    private void updateActiveStepCount() {
+        Object selected = activeStepsBox.getSelectedItem();
+        if (!(selected instanceof Integer newStepCount)) {
+            return;
+        }
+
+        int oldStepCount = activeStepCount;
+        activeStepCount = Math.max(1, Math.min(MAX_STEP_COUNT, newStepCount));
+
+        if (activeStepCount > oldStepCount) {
+            for (LayerState layer : layers) {
+                int fillNote = layer.notes[Math.max(0, oldStepCount - 1)];
+                for (int i = oldStepCount; i < activeStepCount; i++) {
+                    layer.notes[i] = fillNote;
+                }
+            }
+        }
+
+        pitchGrid.clampSelectedStep();
+        pitchGrid.repaint();
+        status("Active steps set to " + activeStepCount + ".");
+    }
+
+    private void fillNotes(LayerState layer, int note) {
+        for (int i = 0; i < activeStepCount; i++) {
+            layer.notes[i] = note;
+        }
+    }
+
+    private void rampNotes(LayerState layer) {
+        for (int i = 0; i < activeStepCount; i++) {
+            layer.notes[i] = 36 + i;
+        }
+    }
+
+    private void copyOtherLayerTo(LayerState target) {
+        LayerState source = layers[0] == target ? layers[1] : layers[0];
+
+        for (int i = 0; i < MAX_STEP_COUNT; i++) {
+            target.notes[i] = source.notes[i];
+        }
+
+        target.waveformBox.setSelectedItem(source.waveformBox.getSelectedItem());
+        target.volumeSlider.setValue(source.volumeSlider.getValue());
+        target.attackSlider.setValue(source.attackSlider.getValue());
+        target.releaseSlider.setValue(source.releaseSlider.getValue());
+    }
+
+    private LayerState currentLayer() {
+        return layers[Math.max(0, Math.min(layers.length - 1, selectedLayerIndex))];
     }
 
     private void playPreview() {
@@ -239,27 +360,20 @@ public class SoundDesignerTool extends JFrame {
     }
 
     private byte[] renderAudioBytes() {
-        int durationMs = durationSlider.getValue();
-        double volume = volumeSlider.getValue() / 100.0;
+        int durationMs = Math.max(1, durationSlider.getValue() * activeStepCount / DEFAULT_STEP_COUNT);
         int sampleCount = Math.max(1, SAMPLE_RATE * durationMs / 1000);
-        byte[] audioBytes = new byte[sampleCount * 2];
+        double[] mixedSamples = new double[sampleCount];
+        List<LayerState> audibleLayers = audibleLayers();
 
-        Waveform waveform = (Waveform) waveformBox.getSelectedItem();
-        if (waveform == null) {
-            waveform = Waveform.SINE;
+        for (LayerState layer : audibleLayers) {
+            renderLayer(layer, mixedSamples);
         }
 
-        double phase = 0.0;
+        double scale = outputScale(mixedSamples);
+        byte[] audioBytes = new byte[sampleCount * 2];
 
         for (int sample = 0; sample < sampleCount; sample++) {
-            double progress = sample / (double) sampleCount;
-            int step = Math.min(STEP_COUNT - 1, (int) Math.floor(progress * STEP_COUNT));
-            double frequency = noteToFrequency(notes[step]);
-            phase += frequency / SAMPLE_RATE;
-            phase -= Math.floor(phase);
-
-            double envelope = envelope(sample, sampleCount);
-            double value = waveform.sample(phase) * envelope * volume;
+            double value = Math.max(-1.0, Math.min(1.0, mixedSamples[sample] * scale));
             short pcm = (short) Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, value * Short.MAX_VALUE));
 
             int byteIndex = sample * 2;
@@ -270,9 +384,66 @@ public class SoundDesignerTool extends JFrame {
         return audioBytes;
     }
 
-    private double envelope(int sample, int sampleCount) {
-        int attackSamples = SAMPLE_RATE * attackSlider.getValue() / 1000;
-        int releaseSamples = SAMPLE_RATE * releaseSlider.getValue() / 1000;
+    private void renderLayer(LayerState layer, double[] mixedSamples) {
+        Waveform waveform = (Waveform) layer.waveformBox.getSelectedItem();
+        if (waveform == null) {
+            waveform = Waveform.SINE;
+        }
+
+        double volume = layer.volumeSlider.getValue() / 100.0;
+        double phase = 0.0;
+
+        for (int sample = 0; sample < mixedSamples.length; sample++) {
+            double progress = sample / (double) mixedSamples.length;
+            int step = Math.min(activeStepCount - 1, (int) Math.floor(progress * activeStepCount));
+            double frequency = noteToFrequency(layer.notes[step]);
+            phase += frequency / SAMPLE_RATE;
+            phase -= Math.floor(phase);
+
+            mixedSamples[sample] += waveform.sample(phase) * envelope(layer, sample, mixedSamples.length) * volume;
+        }
+    }
+
+    private List<LayerState> audibleLayers() {
+        List<LayerState> result = new ArrayList<>();
+        boolean hasSolo = false;
+
+        for (LayerState layer : layers) {
+            if (layer.soloButton.isSelected()) {
+                hasSolo = true;
+                break;
+            }
+        }
+
+        for (LayerState layer : layers) {
+            boolean audible = hasSolo
+                    ? layer.soloButton.isSelected() && !layer.muteButton.isSelected()
+                    : !layer.muteButton.isSelected();
+
+            if (audible) {
+                result.add(layer);
+            }
+        }
+
+        return result;
+    }
+
+    private double outputScale(double[] mixedSamples) {
+        if (!normalizeButton.isSelected()) {
+            return 1.0;
+        }
+
+        double peak = 0.0;
+        for (double sample : mixedSamples) {
+            peak = Math.max(peak, Math.abs(sample));
+        }
+
+        return peak > 1.0 ? 0.98 / peak : 1.0;
+    }
+
+    private double envelope(LayerState layer, int sample, int sampleCount) {
+        int attackSamples = SAMPLE_RATE * layer.attackSlider.getValue() / 1000;
+        int releaseSamples = SAMPLE_RATE * layer.releaseSlider.getValue() / 1000;
 
         double attack = attackSamples <= 0
                 ? 1.0
@@ -354,16 +525,33 @@ public class SoundDesignerTool extends JFrame {
         abstract double sample(double phase);
     }
 
-    private static class PitchGrid extends JComponent {
+    private static class LayerState {
+        private final String name;
+        private final int[] notes = new int[MAX_STEP_COUNT];
+        private final JComboBox<Waveform> waveformBox = new JComboBox<>(Waveform.values());
+        private final JSlider volumeSlider = new JSlider(0, 100, 65);
+        private final JSlider attackSlider = new JSlider(0, 250, 8);
+        private final JSlider releaseSlider = new JSlider(0, 600, 80);
+        private final JToggleButton muteButton = new JToggleButton("Mute");
+        private final JToggleButton soloButton = new JToggleButton("Solo");
+
+        private LayerState(String name, boolean mutedByDefault) {
+            this.name = name;
+            muteButton.setSelected(mutedByDefault);
+            volumeSlider.setPreferredSize(new Dimension(96, 24));
+            attackSlider.setPreferredSize(new Dimension(96, 24));
+            releaseSlider.setPreferredSize(new Dimension(96, 24));
+        }
+    }
+
+    private class PitchGrid extends JComponent {
         private static final Color BACKGROUND = Color.BLACK;
         private static final Color BAR = new Color(45, 72, 150);
         private static final Color CAP = new Color(255, 20, 80);
 
-        private final int[] notes;
         private int selectedStep = 0;
 
-        private PitchGrid(int[] notes) {
-            this.notes = notes;
+        private PitchGrid() {
             setPreferredSize(new Dimension(840, 420));
             setBackground(BACKGROUND);
 
@@ -398,17 +586,18 @@ public class SoundDesignerTool extends JFrame {
             int bottom = height - 78;
             int usableWidth = right - left;
             int usableHeight = bottom - top;
+            LayerState layer = currentLayer();
 
             g2.setColor(BACKGROUND);
             g2.fillRect(0, 0, width, height);
 
-            drawHeader(g2, left, top, bottom);
+            drawHeader(g2, left, top, bottom, layer);
 
-            int stepWidth = Math.max(1, usableWidth / notes.length);
+            int stepWidth = Math.max(1, usableWidth / activeStepCount);
 
-            for (int i = 0; i < notes.length; i++) {
+            for (int i = 0; i < activeStepCount; i++) {
                 int x = left + i * stepWidth + stepWidth / 2;
-                int note = Math.max(MIN_NOTE, Math.min(MAX_NOTE, notes[i]));
+                int note = Math.max(MIN_NOTE, Math.min(MAX_NOTE, layer.notes[i]));
                 double normalized = (note - MIN_NOTE) / (double) (MAX_NOTE - MIN_NOTE);
                 int y = bottom - (int) Math.round(normalized * usableHeight);
 
@@ -424,10 +613,10 @@ public class SoundDesignerTool extends JFrame {
             g2.drawString(":VALUE", left - 10, bottom + 26);
 
             g2.setColor(CAP);
-            g2.drawString("NOTE: " + notes[selectedStep], 8, height - 16);
+            g2.drawString(layer.name.toUpperCase(Locale.ROOT) + " NOTE: " + layer.notes[selectedStep], 8, height - 16);
         }
 
-        private void drawHeader(Graphics2D g2, int left, int top, int bottom) {
+        private void drawHeader(Graphics2D g2, int left, int top, int bottom, LayerState layer) {
             g2.setColor(new Color(255, 20, 80));
             g2.fillRect(0, 0, getWidth(), 26);
 
@@ -436,19 +625,20 @@ public class SoundDesignerTool extends JFrame {
 
             g2.setFont(new Font(Font.MONOSPACED, Font.BOLD, 18));
             g2.setColor(new Color(170, 170, 180));
-            g2.drawString(":PITCH", 8, 78);
+            g2.drawString(":PITCH " + layer.name.toUpperCase(Locale.ROOT), 8, 78);
 
             g2.setColor(new Color(255, 140, 180));
-            for (int i = 0; i < notes.length; i++) {
-                g2.fillRect(left + i * 12, bottom + 42, 8, 6);
+            int tickGap = Math.max(6, Math.min(12, (getWidth() - left - 24) / activeStepCount));
+            for (int i = 0; i < activeStepCount; i++) {
+                g2.fillRect(left + i * tickGap, bottom + 42, 8, 6);
             }
 
             g2.setColor(new Color(240, 240, 240));
-            g2.drawString("SPD", 115, 54);
+            g2.drawString("STEPS", 115, 54);
             g2.setColor(Color.BLACK);
-            g2.fillRect(162, 35, 38, 24);
+            g2.fillRect(188, 35, 48, 24);
             g2.setColor(Color.WHITE);
-            g2.drawString("01", 165, 54);
+            g2.drawString(String.valueOf(activeStepCount), 194, 54);
         }
 
         private void setNoteFromPoint(Point point) {
@@ -463,13 +653,17 @@ public class SoundDesignerTool extends JFrame {
                 return;
             }
 
-            int step = Math.min(notes.length - 1, Math.max(0, (point.x - left) * notes.length / usableWidth));
+            int step = Math.min(activeStepCount - 1, Math.max(0, (point.x - left) * activeStepCount / usableWidth));
             double normalized = 1.0 - ((point.y - top) / (double) usableHeight);
             int note = MIN_NOTE + (int) Math.round(Math.max(0.0, Math.min(1.0, normalized)) * (MAX_NOTE - MIN_NOTE));
 
-            notes[step] = note;
+            currentLayer().notes[step] = note;
             selectedStep = step;
             repaint();
+        }
+
+        private void clampSelectedStep() {
+            selectedStep = Math.max(0, Math.min(activeStepCount - 1, selectedStep));
         }
     }
 }

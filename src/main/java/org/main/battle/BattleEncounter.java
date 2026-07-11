@@ -431,8 +431,7 @@ public class BattleEncounter {
             return Library.BattleResult.CONTINUE;
         }
 
-        int damage = attacker.getAttackDamage();
-        target.takeDamage(damage);
+        int damage = target.takeDamage(attacker.getAttackDamage());
         playSound(attacker.getAttackSoundPath());
         playSound(target.getHitSoundPath());
 
@@ -490,9 +489,8 @@ public class BattleEncounter {
                 continue;
             }
 
-            int damage = attacker.getAttackDamage();
+            int damage = target.takeDamage(attacker.getAttackDamage());
             playSound(attacker.getAttackSoundPath());
-            target.takeDamage(damage);
             playSound(target.getHitSoundPath());
 
             turnSummary

@@ -151,6 +151,12 @@ public class GameMouseInputRouter {
     }
 
     private void handleMouseMoved(MouseEvent e) {
+        if (gameState.isDungeonMode()
+                && overworldHud != null
+                && overworldHud.handleMouseMoved(e.getPoint(), gameState)) {
+            component.repaint();
+        }
+
         if (!gameState.isBattleMode()) {
             return;
         }
@@ -165,6 +171,13 @@ public class GameMouseInputRouter {
                     e,
                     gameState.getActiveInteraction()
             ));
+            return;
+        }
+
+        if (gameState.isDungeonMode()
+                && overworldHud != null
+                && overworldHud.handleMouseWheelMoved(e, gameState, component.getWidth(), component.getHeight())) {
+            component.repaint();
         }
     }
 

@@ -16,6 +16,39 @@ public enum ItemLibrary {
             15
     ),
 
+    BONES(
+            "Bones",
+            InventorySystem.ItemType.MISC,
+            "assets/images/monster/Nov-2015/item/amulet/bone_gray.png",
+            null,
+            0,
+            GearMaterial.NONE,
+            GearDurability.PERFECT,
+            3
+    ),
+
+    SLIME(
+            "Slime",
+            InventorySystem.ItemType.MISC,
+            "assets/images/monster/Nov-2015/item/misc/runes/rune_slime.png",
+            null,
+            0,
+            GearMaterial.NONE,
+            GearDurability.PERFECT,
+            2
+    ),
+
+    RAW_FISH(
+            "Raw Fish",
+            InventorySystem.ItemType.MISC,
+            "assets/images/monster/Ancient/Oct-5-2010/dc-mon/animals/big_fish.png",
+            null,
+            0,
+            GearMaterial.NONE,
+            GearDurability.PERFECT,
+            4
+    ),
+
     IRON_SWORD(
             "Iron Sword",
             InventorySystem.ItemType.WEAPON,

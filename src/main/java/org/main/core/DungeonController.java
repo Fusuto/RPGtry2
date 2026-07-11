@@ -274,14 +274,16 @@ public class DungeonController {
         InteractionSystem.Interaction interaction = interactionRegistry.create(
                 entity.getInteractionId(),
                 gameState,
-                entity
+                entity,
+                entity.getX(),
+                entity.getY()
         );
 
         if (interaction == null) {
             return false;
         }
 
-        gameState.openInteraction(interaction);
+        gameState.openInteraction(interaction.withSelectionSoundPath(entity.getTalkSoundPath()));
         return true;
     }
 
@@ -297,7 +299,9 @@ public class DungeonController {
         InteractionSystem.Interaction interaction = interactionRegistry.create(
                 gameState.getTileInteractionId(x, y),
                 gameState,
-                null
+                null,
+                x,
+                y
         );
 
         if (interaction == null) {

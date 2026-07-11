@@ -23,7 +23,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>org.main.WizardryBase</mainClass>
+                            <mainClass>org.main.AetherBase</mainClass>
                         </manifest>
                     </archive>
                 </configuration>

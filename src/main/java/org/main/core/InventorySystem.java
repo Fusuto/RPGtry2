@@ -1,13 +1,17 @@
 package org.main.core;
 
 import org.main.engine.AssetLoader;
+import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
 
 import java.awt.*;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
+import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
+import javax.swing.SwingUtilities;
 
 public final class InventorySystem {
     private InventorySystem() {
@@ -555,6 +559,7 @@ public final class InventorySystem {
         private static final int EQUIPMENT_SLOT_SIZE = 46;
         private static final int EQUIPMENT_GAP = 10;
         private static final int EQUIPMENT_TO_GRID_GAP = 18;
+        private static final int STAT_PREVIEW_HEIGHT = 78;
 
         private final Inventory inventory;
         private final GameState gameState;
@@ -563,9 +568,12 @@ public final class InventorySystem {
 
         private final Rectangle[] inventorySlotBounds = new Rectangle[Inventory.SLOT_COUNT];
         private final Map<EquipmentSlot, Rectangle> equipmentSlotBounds = new EnumMap<>(EquipmentSlot.class);
+        private final List<ContextMenuOption> contextMenuOptions = new ArrayList<>();
+        private final Rectangle contextMenuBounds = new Rectangle();
 
         private Item draggedItem;
         private int draggedInventoryIndex = -1;
+        private int contextInventoryIndex = -1;
         private Point mousePoint;
 
         public InventoryPanel(Inventory inventory) {
@@ -585,13 +593,24 @@ public final class InventorySystem {
         public void draw(Graphics2D g, int panelWidth, int panelHeight) {
             calculateBounds(panelWidth, panelHeight);
 
+            drawStatPreview(g);
             drawEquipmentSlots(g);
             drawInventoryGrid(g);
+            drawContextMenu(g);
             drawDraggedItem(g);
         }
 
         public boolean handleMousePressed(MouseEvent e) {
             mousePoint = e.getPoint();
+
+            if (handleContextMenuClick(mousePoint)) {
+                return true;
+            }
+
+            if (contextInventoryIndex >= 0) {
+                closeContextMenu();
+                return true;
+            }
 
             int inventoryIndex = getInventorySlotAt(mousePoint);
 
@@ -600,6 +619,12 @@ public final class InventorySystem {
 
                 if (item == null) {
                     return false;
+                }
+
+                if (SwingUtilities.isRightMouseButton(e)) {
+                    openContextMenu(inventoryIndex, mousePoint);
+                    clearDrag();
+                    return true;
                 }
 
                 if (e.getClickCount() >= 2) {
@@ -640,6 +665,69 @@ public final class InventorySystem {
             return false;
         }
 
+        private void openContextMenu(int inventoryIndex, Point point) {
+            contextInventoryIndex = inventoryIndex;
+            contextMenuOptions.clear();
+
+            Item item = inventory().getItem(inventoryIndex);
+
+            if (item == null) {
+                return;
+            }
+
+            if (item.isEquippable()) {
+                contextMenuOptions.add(new ContextMenuOption("Wear", () -> {
+                    inventory().equipFromInventory(contextInventoryIndex);
+                    closeContextMenu();
+                }));
+            }
+
+            contextMenuOptions.add(new ContextMenuOption("Use", () -> {
+                useItem(contextInventoryIndex);
+                closeContextMenu();
+            }));
+
+            contextMenuOptions.add(new ContextMenuOption("Drop", () -> {
+                dropItem(contextInventoryIndex);
+                closeContextMenu();
+            }));
+
+            int width = 96;
+            int height = contextMenuOptions.size() * 26 + 8;
+            contextMenuBounds.setBounds(point.x, point.y, width, height);
+        }
+
+        private boolean handleContextMenuClick(Point point) {
+            if (contextInventoryIndex < 0 || point == null) {
+                return false;
+            }
+
+            if (!contextMenuBounds.contains(point)) {
+                return false;
+            }
+
+            int optionY = contextMenuBounds.y + 4;
+
+            for (ContextMenuOption option : contextMenuOptions) {
+                Rectangle optionBounds = new Rectangle(contextMenuBounds.x + 4, optionY, contextMenuBounds.width - 8, 24);
+
+                if (optionBounds.contains(point)) {
+                    option.action().run();
+                    return true;
+                }
+
+                optionY += 26;
+            }
+
+            return true;
+        }
+
+        private void closeContextMenu() {
+            contextInventoryIndex = -1;
+            contextMenuOptions.clear();
+            contextMenuBounds.setBounds(0, 0, 0, 0);
+        }
+
         private boolean useItem(int inventoryIndex) {
             Item item = inventory().getItem(inventoryIndex);
 
@@ -666,6 +754,45 @@ public final class InventorySystem {
 
             inventory().removeItem(inventoryIndex);
             return true;
+        }
+
+        private boolean dropItem(int inventoryIndex) {
+            if (gameState == null) {
+                return false;
+            }
+
+            Item item = inventory().removeItem(inventoryIndex);
+
+            if (item == null) {
+                return false;
+            }
+
+            int dropX = gameState.getPlayerX() + forwardX(gameState.getDirection());
+            int dropY = gameState.getPlayerY() + forwardY(gameState.getDirection());
+
+            if (gameState.getDungeonMap() == null || !gameState.getDungeonMap().isWalkable(dropX, dropY)) {
+                dropX = gameState.getPlayerX();
+                dropY = gameState.getPlayerY();
+            }
+
+            gameState.addEntity(new MapEntity(item, dropX, dropY));
+            return true;
+        }
+
+        private int forwardX(int direction) {
+            return switch (direction) {
+                case 1 -> 1;
+                case 3 -> -1;
+                default -> 0;
+            };
+        }
+
+        private int forwardY(int direction) {
+            return switch (direction) {
+                case 0 -> -1;
+                case 2 -> 1;
+                default -> 0;
+            };
         }
 
         public boolean handleMouseDragged(MouseEvent e) {
@@ -820,6 +947,133 @@ public final class InventorySystem {
                     drawValidEquipmentHint(g, bounds);
                 }
             }
+        }
+
+        private void drawContextMenu(Graphics2D g) {
+            if (contextInventoryIndex < 0 || contextMenuOptions.isEmpty()) {
+                return;
+            }
+
+            Composite oldComposite = g.getComposite();
+            Font oldFont = g.getFont();
+
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.92f));
+            g.setColor(new Color(8, 9, 13));
+            g.fillRoundRect(
+                    contextMenuBounds.x,
+                    contextMenuBounds.y,
+                    contextMenuBounds.width,
+                    contextMenuBounds.height,
+                    8,
+                    8
+            );
+            g.setComposite(oldComposite);
+
+            g.setColor(new Color(112, 92, 58));
+            g.drawRoundRect(
+                    contextMenuBounds.x,
+                    contextMenuBounds.y,
+                    contextMenuBounds.width,
+                    contextMenuBounds.height,
+                    8,
+                    8
+            );
+
+            g.setFont(oldFont.deriveFont(Font.BOLD, 13f));
+            int y = contextMenuBounds.y + 21;
+
+            for (ContextMenuOption option : contextMenuOptions) {
+                g.setColor(new Color(238, 228, 190));
+                g.drawString(option.label(), contextMenuBounds.x + 12, y);
+                y += 26;
+            }
+
+            g.setFont(oldFont);
+        }
+
+        private void drawStatPreview(Graphics2D g) {
+            if (gameState == null) {
+                return;
+            }
+
+            PlayerCharacter player = gameState.getPlayerCharacter();
+            int currentAttack = 5 + player.getStat(PlayerStat.STRENGTH) + inventory().getWeaponStatBonus();
+            int currentDefense = player.getStat(PlayerStat.DEFENSE) + inventory().getArmorStatBonus();
+            int previewAttack = currentAttack;
+            int previewDefense = currentDefense;
+
+            if (draggedItem != null && draggedItem.isEquippable()) {
+                if (draggedItem.getItemType() == ItemType.WEAPON) {
+                    Item currentWeapon = inventory().getEquippedItem(EquipmentSlot.WEAPON);
+                    previewAttack = 5 + player.getStat(PlayerStat.STRENGTH)
+                            - (currentWeapon == null ? 0 : currentWeapon.getEffectiveStatBonus())
+                            + draggedItem.getEffectiveStatBonus();
+                } else {
+                    EquipmentSlot slot = previewSlotForItem(draggedItem);
+                    Item currentArmor = slot == null ? null : inventory().getEquippedItem(slot);
+                    previewDefense = player.getStat(PlayerStat.DEFENSE)
+                            + inventory().getArmorStatBonus()
+                            - (currentArmor == null ? 0 : currentArmor.getEffectiveStatBonus())
+                            + draggedItem.getEffectiveStatBonus();
+                }
+            }
+
+            Rectangle anchor = equipmentSlotBounds.values().stream()
+                    .findFirst()
+                    .orElse(new Rectangle(24, 160, EQUIPMENT_SLOT_SIZE, EQUIPMENT_SLOT_SIZE));
+
+            int panelWidth = 292;
+            int x = anchor.x;
+            int y = Math.max(24, anchor.y - STAT_PREVIEW_HEIGHT - 18);
+
+            Composite oldComposite = g.getComposite();
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.82f));
+            g.setColor(new Color(8, 9, 13));
+            g.fillRoundRect(x, y, panelWidth, STAT_PREVIEW_HEIGHT, 8, 8);
+            g.setComposite(oldComposite);
+
+            g.setColor(new Color(112, 92, 58));
+            g.drawRoundRect(x, y, panelWidth, STAT_PREVIEW_HEIGHT, 8, 8);
+
+            Font oldFont = g.getFont();
+            g.setFont(oldFont.deriveFont(Font.BOLD, 14f));
+            g.setColor(new Color(238, 228, 190));
+            g.drawString("Equipment Stats", x + 14, y + 24);
+
+            g.setFont(oldFont.deriveFont(Font.PLAIN, 13f));
+            drawStatLine(g, "Attack", currentAttack, previewAttack, x + 14, y + 46);
+            drawStatLine(g, "Defense", currentDefense, previewDefense, x + 150, y + 46);
+            g.setColor(new Color(178, 170, 148));
+            g.drawString("Drag gear over slots to preview changes.", x + 14, y + 66);
+            g.setFont(oldFont);
+        }
+
+        private EquipmentSlot previewSlotForItem(Item item) {
+            if (item == null) {
+                return null;
+            }
+
+            return switch (item.getItemType()) {
+                case HEAD_GEAR -> EquipmentSlot.HEAD;
+                case CHEST_ARMOR -> EquipmentSlot.CHEST;
+                case LEG_ARMOR -> EquipmentSlot.LEGS;
+                case RING -> EquipmentSlot.RING_LEFT;
+                case WEAPON -> EquipmentSlot.WEAPON;
+                case MISC, CONSUMABLE -> null;
+            };
+        }
+
+        private void drawStatLine(Graphics2D g, String label, int current, int preview, int x, int y) {
+            int delta = preview - current;
+            g.setColor(new Color(210, 204, 178));
+            g.drawString(label + " " + current, x, y);
+
+            if (delta == 0) {
+                return;
+            }
+
+            g.setColor(delta > 0 ? new Color(92, 225, 112) : new Color(224, 74, 74));
+            g.drawString((delta > 0 ? " +" : " ") + delta, x + 70, y);
         }
 
         private void drawSlot(Graphics2D g, Rectangle bounds, String label) {
@@ -980,6 +1234,9 @@ public final class InventorySystem {
             draggedInventoryIndex = -1;
             draggedEquipmentSlot = null;
             mousePoint = null;
+        }
+
+        private record ContextMenuOption(String label, Runnable action) {
         }
     }
 }

@@ -1,7 +1,9 @@
 package org.main.core;
 
 import org.main.content.ItemLibrary;
-import org.main.content.NpcLibrary;
+import org.main.content.GenericNpcLibrary;
+import org.main.content.GatheringNodeLibrary;
+import org.main.content.MainNpcLibrary;
 import org.main.content.PlayerClassLibrary;
 import org.main.content.SkillLibrary;
 import org.main.engine.MapEntity;
@@ -46,10 +48,11 @@ public final class GameBootstrap {
             return;
         }
 
-        gameState.addEntityUnlessRemoved(new MapEntity(new Monster(MonsterType.SLIME), 4, 3));
-        gameState.addEntityUnlessRemoved(NpcLibrary.OLD_GUARD.createEntity(6, 1));
-        gameState.addEntityUnlessRemoved(NpcLibrary.GOBLIN_MERCHANT.createEntity(5, 7));
-        gameState.setTileInteractionId(5, 8, "generated_dungeon_gate");
+        gameState.addEntityUnlessRemoved(new MapEntity(new Monster(MonsterType.SLIME), 8, 6));
+        gameState.addEntityUnlessRemoved(MainNpcLibrary.TIPPING_THE_HAT_SKELETON.createEntity(8, 1));
+        gameState.addEntityUnlessRemoved(GenericNpcLibrary.GOBLIN_MERCHANT.createEntity(2, 9));
+        gameState.setTileInteractionId(10, 9, "generated_dungeon_gate");
+        gameState.setTileInteractionId(4, 3, GatheringNodeLibrary.FISHING_SHOAL.getInteractionId());
 
         gameState.addEntityUnlessRemoved(new MapEntity(ItemLibrary.POTION.createItem(), 2, 1));
 

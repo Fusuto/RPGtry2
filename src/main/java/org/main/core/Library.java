@@ -18,6 +18,8 @@ public final class Library {
         WALL(true),
         DOOR_CLOSED(true),
         DOOR_OPEN(false),
+        FISHING_WATER(true),
+        WATER(true),
         TRAP(false),
         STAIRS_DOWN(false),
         STAIRS_UP(false);

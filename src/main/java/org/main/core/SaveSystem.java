@@ -73,7 +73,7 @@ public final class SaveSystem {
         gameState.getQuestStagesView().forEach((id, stage) -> properties.setProperty("quest." + id, String.valueOf(stage)));
 
         try (OutputStream outputStream = Files.newOutputStream(SAVE_PATH)) {
-            properties.store(outputStream, "Wizardry save");
+            properties.store(outputStream, "Aether save");
         }
     }
 

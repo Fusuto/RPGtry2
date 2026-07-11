@@ -47,6 +47,13 @@ public class GameState {
     private boolean inventoryOpen = false;
     private boolean skillsOpen = false;
     private boolean questsOpen = false;
+    private boolean statsOpen = false;
+    private boolean levelUpPending = false;
+    private boolean fishingActive = false;
+    private int fishingX = -1;
+    private int fishingY = -1;
+    private int fishingElapsedMs = 0;
+    private String fishingMessage = "Cast your line.";
     private String selectedQuestId;
     private InteractionSystem.Interaction activeInteraction;
     private ShopSystem.ShopSession activeShop;
@@ -56,7 +63,8 @@ public class GameState {
         START_MENU,
         CHARACTER_CREATION,
         DUNGEON,
-        BATTLE;
+        BATTLE,
+        GAME_OVER;
 
         public boolean isDungeon() {
             return this == DUNGEON;
@@ -70,6 +78,7 @@ public class GameState {
     public InteractionSystem.Interaction getActiveInteraction() {
         if (activeInteraction != null && activeInteraction.isClosed()) {
             activeInteraction = null;
+            stopFishing();
         }
 
         return activeInteraction;
@@ -83,6 +92,7 @@ public class GameState {
         closeInventory();
         closeSkills();
         closeQuests();
+        closeStats();
         closeShop();
         activeInteraction = interaction;
     }
@@ -93,6 +103,7 @@ public class GameState {
         }
 
         activeInteraction = null;
+        stopFishing();
     }
 
     public PlayerCharacter getPlayerCharacter() {
@@ -117,6 +128,7 @@ public class GameState {
         if (inventoryOpen) {
             closeSkills();
             closeQuests();
+            closeStats();
             closeShop();
             closeInteraction();
         }
@@ -140,6 +152,7 @@ public class GameState {
         if (skillsOpen) {
             closeInventory();
             closeQuests();
+            closeStats();
             closeShop();
             closeInteraction();
         }
@@ -163,6 +176,7 @@ public class GameState {
         if (questsOpen) {
             closeInventory();
             closeSkills();
+            closeStats();
             closeShop();
             closeInteraction();
         }
@@ -176,6 +190,38 @@ public class GameState {
 
     public void closeQuests() {
         questsOpen = false;
+    }
+
+    public boolean isStatsOpen() {
+        return statsOpen;
+    }
+
+    public void setStatsOpen(boolean statsOpen) {
+        if (statsOpen) {
+            closeInventory();
+            closeSkills();
+            closeQuests();
+            closeShop();
+            closeInteraction();
+        }
+
+        this.statsOpen = statsOpen;
+    }
+
+    public void toggleStats() {
+        setStatsOpen(!statsOpen);
+    }
+
+    public void closeStats() {
+        statsOpen = false;
+    }
+
+    public boolean isLevelUpPending() {
+        return levelUpPending;
+    }
+
+    public void setLevelUpPending(boolean levelUpPending) {
+        this.levelUpPending = levelUpPending;
     }
 
     public String getSelectedQuestId() {
@@ -312,6 +358,7 @@ public class GameState {
         closeInventory();
         closeSkills();
         closeQuests();
+        closeStats();
         closeShop();
         closeInteraction();
         clearBattleState();
@@ -413,6 +460,10 @@ public class GameState {
 
     public boolean isCharacterCreationMode() {
         return gameMode == GameMode.CHARACTER_CREATION;
+    }
+
+    public boolean isGameOverMode() {
+        return gameMode == GameMode.GAME_OVER;
     }
 
     public int getPlayerX() {
@@ -708,6 +759,69 @@ public class GameState {
         activeShop = null;
     }
 
+    public void startFishing(int x, int y) {
+        fishingActive = true;
+        fishingX = x;
+        fishingY = y;
+        fishingElapsedMs = 0;
+        fishingMessage = "You cast your line into the shoal.";
+    }
+
+    public void stopFishing() {
+        fishingActive = false;
+        fishingX = -1;
+        fishingY = -1;
+        fishingElapsedMs = 0;
+    }
+
+    public boolean isFishingActive() {
+        return fishingActive;
+    }
+
+    public boolean isFishingAt(int x, int y) {
+        return fishingActive && fishingX == x && fishingY == y;
+    }
+
+    public void updateFishing(int deltaMs) {
+        if (!fishingActive || playerCharacter == null) {
+            return;
+        }
+
+        fishingElapsedMs += Math.max(0, deltaMs);
+
+        if (fishingElapsedMs < 2500) {
+            return;
+        }
+
+        fishingElapsedMs = 0;
+
+        int fishingLevel = Math.max(1, playerCharacter.getSkillLevel(CharacterSkill.FISHING));
+        double successChance = Math.min(0.85, 0.35 + fishingLevel * 0.03);
+
+        if (Math.random() <= successChance && getInventory().addItem(org.main.content.ItemLibrary.RAW_FISH.createItem())) {
+            int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.FISHING, 18);
+            fishingMessage = levelsGained > 0
+                    ? "You catch a fish. Fishing level " + playerCharacter.getSkillLevel(CharacterSkill.FISHING) + "!"
+                    : "You catch a fish. Fishing XP "
+                    + playerCharacter.getSkillExperience(CharacterSkill.FISHING)
+                    + "/"
+                    + playerCharacter.getSkillExperienceRequired(CharacterSkill.FISHING)
+                    + ".";
+            return;
+        }
+
+        if (!getInventory().hasFreeSlot()) {
+            fishingMessage = "Your inventory is too full to hold any fish.";
+            return;
+        }
+
+        fishingMessage = "The fish slip away.";
+    }
+
+    public String getFishingMessage() {
+        return fishingMessage;
+    }
+
     public int getDirection() {
         return direction;
     }
@@ -776,5 +890,17 @@ public class GameState {
         currentEncounter = null;
         currentEnemyEntity = null;
         gameMode = GameMode.DUNGEON;
+    }
+
+    public void enterGameOver() {
+        currentEncounter = null;
+        currentEnemyEntity = null;
+        closeInventory();
+        closeSkills();
+        closeQuests();
+        closeStats();
+        closeShop();
+        closeInteraction();
+        gameMode = GameMode.GAME_OVER;
     }
 }

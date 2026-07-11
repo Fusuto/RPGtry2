@@ -12,9 +12,12 @@ import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.event.MouseWheelEvent;
 import java.awt.image.BufferedImage;
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class OverworldHud {
@@ -29,6 +32,7 @@ public class OverworldHud {
     private static final int BUTTON_SIZE = 58;
     private static final int BUTTON_CENTER_GAP = 112;
     private static final int FOUR_BUTTON_GAP = 84;
+    private static final int FIVE_BUTTON_GAP = 74;
     private static final int BUTTON_ICON_SIZE = 32;
     private static final int CORNER_SIZE = 96;
     private static final int SKILL_PANEL_WIDTH = 210;
@@ -42,6 +46,11 @@ public class OverworldHud {
     private static final int HP_BAR_HEIGHT = 12;
     private static final int QUEST_PANEL_WIDTH = 430;
     private static final int QUEST_PANEL_HEIGHT = 190;
+    private static final int STATS_PANEL_WIDTH = 320;
+    private static final int STATS_PANEL_HEIGHT = 240;
+    private static final int STATS_SCROLL_STEP = 24;
+    private static final int SKILL_TOOLTIP_WIDTH = 158;
+    private static final int SKILL_TOOLTIP_HEIGHT = 54;
 
     private final BufferedImage bottomPanel = AssetLoader.loadImage(FOOZLE_PATH + "Panel_2.png");
     private final BufferedImage corner = AssetLoader.loadImage(FOOZLE_PATH + "Corner.png");
@@ -54,6 +63,7 @@ public class OverworldHud {
     private final BufferedImage inventoryIcon = AssetLoader.loadImage(A1_ICON_PATH + "BodyArmor.png");
     private final BufferedImage skillsIcon = AssetLoader.loadImage(A1_ICON_PATH + "Skill.png");
     private final BufferedImage questsIcon = AssetLoader.loadImage(A1_ICON_PATH + "AskAround.png");
+    private final BufferedImage statsIcon = AssetLoader.loadImage(A1_ICON_PATH + "MaxHP.png");
     private final BufferedImage escapeIcon = AssetLoader.loadImage(A1_ICON_PATH + "SavePoint.png");
 
     private final Map<CharacterSkill, BufferedImage> skillIcons = new EnumMap<>(CharacterSkill.class);
@@ -61,8 +71,15 @@ public class OverworldHud {
     private final Rectangle inventoryButtonBounds = new Rectangle();
     private final Rectangle skillsButtonBounds = new Rectangle();
     private final Rectangle questsButtonBounds = new Rectangle();
+    private final Rectangle statsButtonBounds = new Rectangle();
     private final Rectangle escapeButtonBounds = new Rectangle();
     private final Map<QuestLibrary, Rectangle> questRowBounds = new EnumMap<>(QuestLibrary.class);
+    private final Map<CharacterSkill, Rectangle> skillCellBounds = new EnumMap<>(CharacterSkill.class);
+    private final Rectangle statsPanelBounds = new Rectangle();
+    private final Rectangle statsClipBounds = new Rectangle();
+    private Point mousePoint = new Point(-1, -1);
+    private int statsScrollOffset = 0;
+    private int statsContentHeight = 0;
 
     public OverworldHud() {
         skillIcons.put(CharacterSkill.MINING, AssetLoader.loadImage(SKILL_ICON_PATH + "mining.png"));
@@ -96,9 +113,14 @@ public class OverworldHud {
             drawQuestPanel(g, gameState, width, height);
         }
 
+        if (gameState.isStatsOpen()) {
+            drawStatsPanel(g, gameState, width, height);
+        }
+
         drawButton(g, inventoryButtonBounds, inventoryIcon);
         drawButton(g, skillsButtonBounds, skillsIcon);
         drawButton(g, questsButtonBounds, questsIcon);
+        drawButton(g, statsButtonBounds, statsIcon);
         drawButton(g, escapeButtonBounds, escapeIcon);
     }
 
@@ -130,6 +152,11 @@ public class OverworldHud {
             return true;
         }
 
+        if (statsButtonBounds.contains(point)) {
+            gameState.toggleStats();
+            return true;
+        }
+
         if (gameState.isQuestsOpen() && handleQuestPanelClick(point, gameState, width, height)) {
             return true;
         }
@@ -138,6 +165,7 @@ public class OverworldHud {
             gameState.closeInventory();
             gameState.closeSkills();
             gameState.closeQuests();
+            gameState.closeStats();
 
             if (escapeMenuAction != null) {
                 escapeMenuAction.run();
@@ -149,14 +177,47 @@ public class OverworldHud {
         return false;
     }
 
+    public boolean handleMouseMoved(Point point, GameState gameState) {
+        if (point == null || gameState == null) {
+            return false;
+        }
+
+        mousePoint = point;
+        return gameState.isSkillsOpen();
+    }
+
+    public boolean handleMouseWheelMoved(MouseWheelEvent e, GameState gameState, int width, int height) {
+        if (e == null || gameState == null || !gameState.isStatsOpen()) {
+            return false;
+        }
+
+        Rectangle bounds = calculateStatsPanelBounds(width, height);
+
+        if (!bounds.contains(e.getPoint())) {
+            return false;
+        }
+
+        int clipHeight = Math.max(1, STATS_PANEL_HEIGHT - 58);
+        int maxScroll = Math.max(0, statsContentHeight - clipHeight);
+
+        if (maxScroll <= 0) {
+            statsScrollOffset = 0;
+            return true;
+        }
+
+        statsScrollOffset = clamp(statsScrollOffset + e.getWheelRotation() * STATS_SCROLL_STEP, 0, maxScroll);
+        return true;
+    }
+
     private void calculateButtonBounds(int width, int height) {
         int y = height - BOTTOM_BAR_HEIGHT + (BOTTOM_BAR_HEIGHT - BUTTON_SIZE) / 2;
         int centerX = Math.max(BUTTON_SIZE, width / 2);
 
-        setCenteredBounds(inventoryButtonBounds, centerX - FOUR_BUTTON_GAP - FOUR_BUTTON_GAP / 2, y, BUTTON_SIZE);
-        setCenteredBounds(skillsButtonBounds, centerX - FOUR_BUTTON_GAP / 2, y, BUTTON_SIZE);
-        setCenteredBounds(questsButtonBounds, centerX + FOUR_BUTTON_GAP / 2, y, BUTTON_SIZE);
-        setCenteredBounds(escapeButtonBounds, centerX + FOUR_BUTTON_GAP + FOUR_BUTTON_GAP / 2, y, BUTTON_SIZE);
+        setCenteredBounds(inventoryButtonBounds, centerX - FIVE_BUTTON_GAP * 2, y, BUTTON_SIZE);
+        setCenteredBounds(skillsButtonBounds, centerX - FIVE_BUTTON_GAP, y, BUTTON_SIZE);
+        setCenteredBounds(questsButtonBounds, centerX, y, BUTTON_SIZE);
+        setCenteredBounds(statsButtonBounds, centerX + FIVE_BUTTON_GAP, y, BUTTON_SIZE);
+        setCenteredBounds(escapeButtonBounds, centerX + FIVE_BUTTON_GAP * 2, y, BUTTON_SIZE);
     }
 
     private void setCenteredBounds(Rectangle bounds, int centerX, int y, int size) {
@@ -187,6 +248,7 @@ public class OverworldHud {
     private void drawSkillsPanel(Graphics2D g, GameState gameState, int width, int height) {
         int x = Math.max(18, width - SKILL_PANEL_WIDTH - 28);
         int y = Math.max(60, height - BOTTOM_BAR_HEIGHT - SKILL_PANEL_HEIGHT - 20);
+        skillCellBounds.clear();
 
         drawImage(g, skillPanel, x, y, SKILL_PANEL_WIDTH, SKILL_PANEL_HEIGHT, false);
 
@@ -211,9 +273,12 @@ public class OverworldHud {
             int cellY = startY + row * SKILL_CELL_SIZE;
             int level = Math.min(99, Math.max(1, gameState.getPlayerCharacter().getSkillLevel(skill)));
 
+            skillCellBounds.put(skill, new Rectangle(cellX - 6, cellY - 6, 68, 46));
             drawSkillCell(g, skillIcons.get(skill), cellX, cellY, level, metrics);
             index++;
         }
+
+        drawSkillTooltip(g, gameState, width, height);
     }
 
     private void drawCharacterStatus(Graphics2D g, GameState gameState, int width, int height) {
@@ -314,6 +379,125 @@ public class OverworldHud {
                 QUEST_PANEL_WIDTH - 225,
                 18
         );
+    }
+
+    private void drawStatsPanel(Graphics2D g, GameState gameState, int width, int height) {
+        PlayerCharacter player = gameState.getPlayerCharacter();
+        Rectangle bounds = calculateStatsPanelBounds(width, height);
+        statsPanelBounds.setBounds(bounds);
+        int x = bounds.x;
+        int y = bounds.y;
+
+        g.setColor(new Color(8, 9, 13, 220));
+        g.fillRoundRect(x, y, STATS_PANEL_WIDTH, STATS_PANEL_HEIGHT, 8, 8);
+        g.setColor(new Color(112, 92, 58));
+        g.drawRoundRect(x, y, STATS_PANEL_WIDTH, STATS_PANEL_HEIGHT, 8, 8);
+
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 17f));
+        g.setColor(new Color(238, 228, 190));
+        g.drawString(player.getName(), x + 18, y + 28);
+
+        List<String> statLines = new ArrayList<>();
+        statLines.add("Class " + (player.getPlayerClass() == null ? "Unknown" : player.getPlayerClass().getDisplayName()));
+        statLines.add("Level " + player.getLevel() + "  XP " + player.getClassExperience() + "/" + player.getClassExperienceRequiredForNextLevel());
+        statLines.add("HP " + player.getCurrHp() + "/" + player.getMaxHp());
+        statLines.add("Attack " + (5 + player.getStat(PlayerStat.STRENGTH) + player.getInventory().getWeaponStatBonus()));
+        statLines.add("Defense " + (player.getStat(PlayerStat.DEFENSE) + player.getInventory().getArmorStatBonus()));
+        for (PlayerStat stat : PlayerStat.values()) {
+            statLines.add(stat.getDisplayName() + " " + player.getStat(stat));
+        }
+
+        Rectangle clipBounds = new Rectangle(x + 16, y + 42, STATS_PANEL_WIDTH - 34, STATS_PANEL_HEIGHT - 58);
+        statsClipBounds.setBounds(clipBounds);
+        int lineHeight = 18;
+        statsContentHeight = statLines.size() * lineHeight + 10;
+        int maxScroll = Math.max(0, statsContentHeight - clipBounds.height);
+        statsScrollOffset = clamp(statsScrollOffset, 0, maxScroll);
+
+        Graphics2D clipped = (Graphics2D) g.create();
+        clipped.setClip(clipBounds);
+        clipped.setFont(g.getFont().deriveFont(Font.PLAIN, 13f));
+        clipped.setColor(new Color(210, 204, 178));
+
+        int lineY = clipBounds.y + 16 - statsScrollOffset;
+        for (String line : statLines) {
+            clipped.drawString(line, clipBounds.x + 2, lineY);
+            lineY += lineHeight;
+        }
+        clipped.dispose();
+
+        drawStatsScrollbar(g, clipBounds, maxScroll);
+    }
+
+    private void drawSkillTooltip(Graphics2D g, GameState gameState, int width, int height) {
+        CharacterSkill hoveredSkill = getHoveredSkill();
+
+        if (hoveredSkill == null) {
+            return;
+        }
+
+        PlayerCharacter player = gameState.getPlayerCharacter();
+        int experience = player.getSkillExperience(hoveredSkill);
+        int required = player.getSkillExperienceRequired(hoveredSkill);
+        int remaining = Math.max(0, required - experience);
+
+        int tooltipX = clamp(mousePoint.x + 14, 10, width - SKILL_TOOLTIP_WIDTH - 10);
+        int tooltipY = clamp(mousePoint.y + 14, 10, height - BOTTOM_BAR_HEIGHT - SKILL_TOOLTIP_HEIGHT - 8);
+
+        g.setColor(new Color(7, 8, 12, 235));
+        g.fillRoundRect(tooltipX, tooltipY, SKILL_TOOLTIP_WIDTH, SKILL_TOOLTIP_HEIGHT, 7, 7);
+        g.setColor(new Color(126, 105, 65));
+        g.drawRoundRect(tooltipX, tooltipY, SKILL_TOOLTIP_WIDTH, SKILL_TOOLTIP_HEIGHT, 7, 7);
+
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 13f));
+        g.setColor(new Color(246, 236, 176));
+        g.drawString(hoveredSkill.getDisplayName(), tooltipX + 10, tooltipY + 18);
+
+        g.setFont(g.getFont().deriveFont(Font.PLAIN, 12f));
+        g.setColor(new Color(210, 204, 178));
+        g.drawString("XP " + experience + "/" + required, tooltipX + 10, tooltipY + 35);
+        g.drawString("Left " + remaining, tooltipX + 10, tooltipY + 49);
+    }
+
+    private CharacterSkill getHoveredSkill() {
+        for (Map.Entry<CharacterSkill, Rectangle> entry : skillCellBounds.entrySet()) {
+            if (entry.getValue().contains(mousePoint)) {
+                return entry.getKey();
+            }
+        }
+
+        return null;
+    }
+
+    private Rectangle calculateStatsPanelBounds(int width, int height) {
+        return new Rectangle(
+                22,
+                Math.max(62, height - BOTTOM_BAR_HEIGHT - STATS_PANEL_HEIGHT - 16),
+                STATS_PANEL_WIDTH,
+                STATS_PANEL_HEIGHT
+        );
+    }
+
+    private void drawStatsScrollbar(Graphics2D g, Rectangle clipBounds, int maxScroll) {
+        if (maxScroll <= 0) {
+            return;
+        }
+
+        int trackX = clipBounds.x + clipBounds.width - 6;
+        int trackY = clipBounds.y + 4;
+        int trackHeight = clipBounds.height - 8;
+        int thumbHeight = Math.max(24, (int) Math.round(trackHeight * (clipBounds.height / (double) statsContentHeight)));
+        int thumbTravel = Math.max(1, trackHeight - thumbHeight);
+        int thumbY = trackY + (int) Math.round(thumbTravel * (statsScrollOffset / (double) maxScroll));
+
+        g.setColor(new Color(0, 0, 0, 110));
+        g.fillRoundRect(trackX, trackY, 4, trackHeight, 4, 4);
+        g.setColor(new Color(210, 204, 178, 190));
+        g.fillRoundRect(trackX, thumbY, 4, thumbHeight, 4, 4);
+    }
+
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private boolean handleQuestPanelClick(Point point, GameState gameState, int width, int height) {

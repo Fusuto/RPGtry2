@@ -129,17 +129,21 @@ public class PlayerCharacter {
         return Math.max(1, level * 100);
     }
 
-    public void addClassExperience(int amount) {
+    public int addClassExperience(int amount) {
         if (amount <= 0) {
-            return;
+            return 0;
         }
 
         classExperience += amount;
+        int levelsGained = 0;
 
         while (classExperience >= getClassExperienceRequiredForNextLevel()) {
             classExperience -= getClassExperienceRequiredForNextLevel();
             levelUp(Map.of());
+            levelsGained++;
         }
+
+        return levelsGained;
     }
 
     public void restoreProgress(int level, int classExperience, int availableStatPoints) {
@@ -204,6 +208,18 @@ public class PlayerCharacter {
         }
     }
 
+    public boolean spendStatPoint(PlayerStat stat) {
+        if (stat == null || availableStatPoints <= 0) {
+            return false;
+        }
+
+        addStat(stat, 1);
+        availableStatPoints--;
+        maxHp = Math.max(1, 20 + getStat(PlayerStat.VITALITY) * 5);
+        currHp = Math.min(maxHp, currHp + (stat == PlayerStat.VITALITY ? 5 : 0));
+        return true;
+    }
+
     public int getSkillLevel(CharacterSkill skill) {
         return skills.getOrDefault(skill, 0);
     }
@@ -224,12 +240,32 @@ public class PlayerCharacter {
         }
     }
 
-    public void addSkillExperience(CharacterSkill skill, int amount) {
+    public int addSkillExperience(CharacterSkill skill, int amount) {
         if (skill == null || amount <= 0) {
-            return;
+            return 0;
         }
 
-        skillExperience.put(skill, getSkillExperience(skill) + amount);
+        int experience = getSkillExperience(skill) + amount;
+        int levelsGained = 0;
+        int level = Math.max(1, getSkillLevel(skill));
+
+        while (experience >= skillExperienceRequired(level)) {
+            experience -= skillExperienceRequired(level);
+            level++;
+            levelsGained++;
+        }
+
+        skills.put(skill, level);
+        skillExperience.put(skill, experience);
+        return levelsGained;
+    }
+
+    public int getSkillExperienceRequired(CharacterSkill skill) {
+        return skillExperienceRequired(Math.max(1, getSkillLevel(skill)));
+    }
+
+    private int skillExperienceRequired(int level) {
+        return Math.max(1, level * 100);
     }
 
     public Map<CharacterSkill, Integer> getSkillsView() {

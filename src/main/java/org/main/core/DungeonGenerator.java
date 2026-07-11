@@ -1,6 +1,6 @@
 package org.main.core;
 
-import org.main.content.NpcLibrary;
+import org.main.content.GenericNpcLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 import org.main.monsters.Monster;
@@ -230,7 +230,7 @@ public class DungeonGenerator {
         Point candidate = findOpenTile(tiles, entities);
 
         if (candidate != null) {
-            entities.add(NpcLibrary.GOBLIN_MERCHANT.createEntity(candidate.x(), candidate.y()));
+            entities.add(GenericNpcLibrary.GOBLIN_MERCHANT.createEntity(candidate.x(), candidate.y()));
         }
     }
 
