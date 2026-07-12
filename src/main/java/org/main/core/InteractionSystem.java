@@ -1,6 +1,7 @@
 package org.main.core;
 
 import org.main.content.DialogueLibrary;
+import org.main.content.RecipeLibrary;
 import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
 import org.main.monsters.MonsterType;
@@ -26,6 +27,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 public final class InteractionSystem {
 
@@ -160,7 +162,71 @@ public final class InteractionSystem {
     }
 
     public static Interaction fishingMenu(GameState gameState) {
-        return new Interaction(new FishingInteractionContent(gameState));
+        return new Interaction(new SkillingInteractionContent(
+                gameState,
+                "Fishing Shoal",
+                CharacterSkill.FISHING,
+                () -> gameState == null ? "No fishing spot found." : gameState.getFishingMessage(),
+                "Wait a few seconds for each catch attempt.",
+                "Stop Fishing",
+                () -> {
+                    if (gameState != null) {
+                        gameState.stopFishing();
+                    }
+                }
+        )).allowInventoryOverlay();
+    }
+
+    public static Interaction miningMenu(GameState gameState) {
+        return new Interaction(new SkillingInteractionContent(
+                gameState,
+                "Mineral Rock",
+                CharacterSkill.MINING,
+                () -> gameState == null ? "No mineral rock found." : gameState.getMiningMessage(),
+                "Wait a few seconds for each mining attempt.",
+                "Stop Mining",
+                () -> {
+                    if (gameState != null) {
+                        gameState.stopMining();
+                    }
+                }
+        )).allowInventoryOverlay();
+    }
+
+    public static Interaction cookingMenu(GameState gameState) {
+        return new Interaction(new SkillingInteractionContent(
+                gameState,
+                "Campfire",
+                CharacterSkill.COOKING,
+                () -> gameState == null ? "No campfire found." : gameState.getCookingMessage(),
+                "Wait a few seconds for each cooking attempt.",
+                "Stop Cooking",
+                () -> {
+                    if (gameState != null) {
+                        gameState.stopCooking();
+                    }
+                }
+        )).allowInventoryOverlay();
+    }
+
+    public static Interaction smeltingMenu(GameState gameState) {
+        return new Interaction(new SkillingInteractionContent(
+                gameState,
+                "Furnace",
+                CharacterSkill.SMITHING,
+                () -> gameState == null ? "No furnace found." : gameState.getSmeltingMessage(),
+                "Wait a few seconds for each smelting attempt.",
+                "Stop Smelting",
+                () -> {
+                    if (gameState != null) {
+                        gameState.stopSmelting();
+                    }
+                }
+        )).allowInventoryOverlay();
+    }
+
+    public static Interaction anvilMenu(GameState gameState) {
+        return new Interaction(new AnvilInteractionContent(gameState)).allowInventoryOverlay();
     }
 
     public static Interaction postBattleMenu(GameState gameState, MonsterType monsterType, int experienceReward, int hpLost) {
@@ -303,6 +369,7 @@ public final class InteractionSystem {
         private final InteractionContent content;
         private String selectionSoundPath;
         private boolean closed = false;
+        private boolean inventoryOverlayAllowed = false;
 
         private Interaction(InteractionContent content) {
             this.content = content;
@@ -333,8 +400,29 @@ public final class InteractionSystem {
             return this;
         }
 
+        public Interaction allowInventoryOverlay() {
+            inventoryOverlayAllowed = true;
+            return this;
+        }
+
+        public boolean isInventoryOverlayAllowed() {
+            return inventoryOverlayAllowed;
+        }
+
         private boolean handleKeyPressed(KeyEvent e) {
             return content.handleKeyPressed(e, this);
+        }
+
+        private boolean handleMousePressed(MouseEvent e, Rectangle windowBounds) {
+            return content.handleMousePressed(e, this, windowBounds);
+        }
+
+        private boolean handleMouseMoved(Point point, Rectangle windowBounds) {
+            return content.handleMouseMoved(point, this, windowBounds);
+        }
+
+        private void drawCustom(Graphics2D g, Rectangle windowBounds) {
+            content.drawCustom(g, this, windowBounds);
         }
 
         public void close() {
@@ -353,6 +441,17 @@ public final class InteractionSystem {
 
         default boolean handleKeyPressed(KeyEvent e, Interaction interaction) {
             return false;
+        }
+
+        default boolean handleMousePressed(MouseEvent e, Interaction interaction, Rectangle windowBounds) {
+            return false;
+        }
+
+        default boolean handleMouseMoved(Point point, Interaction interaction, Rectangle windowBounds) {
+            return false;
+        }
+
+        default void drawCustom(Graphics2D g, Interaction interaction, Rectangle windowBounds) {
         }
     }
 
@@ -734,6 +833,7 @@ public final class InteractionSystem {
         private int optionScrollOffset = 0;
         private Rectangle lastBodyClip = new Rectangle();
         private Rectangle lastOptionsClip = new Rectangle();
+        private Rectangle lastWindowBounds = new Rectangle();
         private int lastBodyContentHeight = 0;
         private int lastOptionsContentHeight = 0;
 
@@ -768,11 +868,13 @@ public final class InteractionSystem {
             drawDimBackground(g, panelWidth, panelHeight);
 
             Rectangle windowBounds = calculateWindowBounds(panelWidth, panelHeight, model);
+            lastWindowBounds = new Rectangle(windowBounds);
 
             drawWindowBackground(g, windowBounds);
             drawPortraits(g, model, windowBounds);
             drawText(g, model, windowBounds);
             drawOptions(g, model, windowBounds);
+            interaction.drawCustom(g, windowBounds);
 
             if (oldInterpolation != null) {
                 g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, oldInterpolation);
@@ -785,6 +887,9 @@ public final class InteractionSystem {
             }
 
             Point point = e.getPoint();
+            if (interaction.handleMousePressed(e, lastWindowBounds)) {
+                return true;
+            }
 
             for (int i = 0; i < optionBounds.size(); i++) {
                 Rectangle bounds = optionBounds.get(i);
@@ -844,6 +949,14 @@ public final class InteractionSystem {
             }
 
             return false;
+        }
+
+        public boolean handleMouseMoved(Point point, Interaction interaction) {
+            if (interaction == null || interaction.isClosed()) {
+                return false;
+            }
+
+            return interaction.handleMouseMoved(point, lastWindowBounds);
         }
 
         public boolean handleKeyPressed(KeyEvent e, Interaction interaction) {
@@ -1395,8 +1508,63 @@ public final class InteractionSystem {
             ));
 
             registry.register("fishing_shoal", context -> {
-                context.getGameState().startFishing(context.getTileX(), context.getTileY());
+                if (!context.getGameState().startFishing(context.getTileX(), context.getTileY())) {
+                    return prompt(
+                            "Fishing Shoal",
+                            context.getGameState().getFishingMessage(),
+                            closeOption("Close")
+                    );
+                }
+
                 return fishingMenu(context.getGameState());
+            });
+
+            registry.register("mineral_rock_basic", context -> {
+                if (!context.getGameState().startMining(context.getTileX(), context.getTileY())) {
+                    return prompt(
+                            "Mineral Rock",
+                            context.getGameState().getMiningMessage(),
+                            closeOption("Close")
+                    );
+                }
+
+                return miningMenu(context.getGameState());
+            });
+
+            registry.register("campfire_basic", context -> {
+                if (!context.getGameState().startCooking(context.getTileX(), context.getTileY())) {
+                    return prompt(
+                            "Campfire",
+                            context.getGameState().getCookingMessage(),
+                            closeOption("Close")
+                    );
+                }
+
+                return cookingMenu(context.getGameState());
+            });
+
+            registry.register("furnace_basic", context -> {
+                if (!context.getGameState().startSmelting(context.getTileX(), context.getTileY())) {
+                    return prompt(
+                            "Furnace",
+                            context.getGameState().getSmeltingMessage(),
+                            closeOption("Close")
+                    );
+                }
+
+                return smeltingMenu(context.getGameState());
+            });
+
+            registry.register("anvil_basic", context -> {
+                if (!context.getGameState().startSmithing(context.getTileX(), context.getTileY())) {
+                    return prompt(
+                            "Anvil",
+                            context.getGameState().getSmithingMessage(),
+                            closeOption("Close")
+                    );
+                }
+
+                return anvilMenu(context.getGameState());
             });
 
             return registry;
@@ -1572,28 +1740,51 @@ public final class InteractionSystem {
         }
     }
 
-    private static class FishingInteractionContent implements InteractionContent {
+    private static class SkillingInteractionContent implements InteractionContent {
         private final GameState gameState;
+        private final String title;
+        private final CharacterSkill skill;
+        private final Supplier<String> messageSupplier;
+        private final String footerText;
+        private final String stopLabel;
+        private final Runnable stopAction;
 
-        private FishingInteractionContent(GameState gameState) {
+        private SkillingInteractionContent(
+                GameState gameState,
+                String title,
+                CharacterSkill skill,
+                Supplier<String> messageSupplier,
+                String footerText,
+                String stopLabel,
+                Runnable stopAction
+        ) {
             this.gameState = gameState;
+            this.title = title;
+            this.skill = skill;
+            this.messageSupplier = messageSupplier;
+            this.footerText = footerText;
+            this.stopLabel = stopLabel;
+            this.stopAction = stopAction;
         }
 
         @Override
         public InteractionModel getModel() {
             String body = gameState == null
-                    ? "No fishing spot found."
-                    : gameState.getFishingMessage()
-                    + "\n\nFishing level "
-                    + gameState.getPlayerCharacter().getSkillLevel(CharacterSkill.FISHING)
+                    ? messageSupplier.get()
+                    : messageSupplier.get()
+                    + "\n\n"
+                    + skill.getDisplayName()
+                    + " level "
+                    + gameState.getPlayerCharacter().getSkillLevel(skill)
                     + "  XP "
-                    + gameState.getPlayerCharacter().getSkillExperience(CharacterSkill.FISHING)
+                    + gameState.getPlayerCharacter().getSkillExperience(skill)
                     + "/"
-                    + gameState.getPlayerCharacter().getSkillExperienceRequired(CharacterSkill.FISHING)
-                    + "\n\nWait a few seconds for each catch attempt.";
+                    + gameState.getPlayerCharacter().getSkillExperienceRequired(skill)
+                    + "\n\n"
+                    + footerText;
 
             return new InteractionModel(
-                    "Fishing Shoal",
+                    title,
                     body,
                     null,
                     null,
@@ -1601,17 +1792,197 @@ public final class InteractionSystem {
                     null,
                     true,
                     true,
-                    List.of(closeOption("Stop Fishing"))
+                    List.of(closeOption(stopLabel))
             );
         }
 
         @Override
         public void selectOption(int optionIndex, Interaction interaction, boolean alternateAction) {
-            if (gameState != null) {
-                gameState.stopFishing();
+            if (stopAction != null) {
+                stopAction.run();
             }
 
             interaction.close();
+        }
+    }
+
+    private static class AnvilInteractionContent implements InteractionContent {
+        private static final int SLOT_SIZE = 54;
+        private static final int SLOT_GAP = 10;
+        private static final int GRID_COLUMNS = 6;
+        private static final int GRID_PADDING = 22;
+
+        private final GameState gameState;
+        private final List<Rectangle> recipeBounds = new ArrayList<>();
+        private int hoveredRecipeIndex = -1;
+
+        private AnvilInteractionContent(GameState gameState) {
+            this.gameState = gameState;
+        }
+
+        @Override
+        public InteractionModel getModel() {
+            String material = gameState == null || gameState.getSmithingMaterialName() == null
+                    ? "No material selected."
+                    : "Material: " + gameState.getSmithingMaterialName();
+            String body = material
+                    + "\n"
+                    + (gameState == null ? "" : gameState.getSmithingMessage())
+                    + "\n\n"
+                    + "Smithing level "
+                    + (gameState == null ? 1 : gameState.getPlayerCharacter().getSkillLevel(CharacterSkill.SMITHING))
+                    + "  XP "
+                    + (gameState == null ? 0 : gameState.getPlayerCharacter().getSkillExperience(CharacterSkill.SMITHING))
+                    + "/"
+                    + (gameState == null ? 0 : gameState.getPlayerCharacter().getSkillExperienceRequired(CharacterSkill.SMITHING));
+
+            return new InteractionModel(
+                    "Anvil",
+                    body,
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    true,
+                    List.of(closeOption("Close"))
+            );
+        }
+
+        @Override
+        public void drawCustom(Graphics2D g, Interaction interaction, Rectangle windowBounds) {
+            recipeBounds.clear();
+
+            if (gameState == null) {
+                return;
+            }
+
+            List<RecipeLibrary.SmithingRecipe> recipes = gameState.getAvailableSmithingRecipes();
+            Rectangle grid = gridBounds(windowBounds);
+            Font oldFont = g.getFont();
+
+            for (int i = 0; i < recipes.size(); i++) {
+                RecipeLibrary.SmithingRecipe recipe = recipes.get(i);
+                int column = i % GRID_COLUMNS;
+                int row = i / GRID_COLUMNS;
+                Rectangle slot = new Rectangle(
+                        grid.x + column * (SLOT_SIZE + SLOT_GAP),
+                        grid.y + row * (SLOT_SIZE + SLOT_GAP),
+                        SLOT_SIZE,
+                        SLOT_SIZE
+                );
+                recipeBounds.add(slot);
+
+                boolean canCraft = canCraft(recipe);
+                g.setColor(new Color(20, 22, 28, 230));
+                g.fillRoundRect(slot.x, slot.y, slot.width, slot.height, 6, 6);
+                g.setColor(canCraft ? new Color(218, 196, 126) : new Color(150, 55, 55));
+                g.drawRoundRect(slot.x, slot.y, slot.width, slot.height, 6, 6);
+
+                BufferedImage icon = recipe.previewItem() == null ? null : recipe.previewItem().getIcon();
+                if (icon != null) {
+                    g.drawImage(icon, slot.x + 7, slot.y + 7, slot.width - 14, slot.height - 14, null);
+                }
+
+                if (!canCraft) {
+                    Composite oldComposite = g.getComposite();
+                    g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.45f));
+                    g.setColor(new Color(120, 0, 0));
+                    g.fillRoundRect(slot.x, slot.y, slot.width, slot.height, 6, 6);
+                    g.setComposite(oldComposite);
+                }
+            }
+
+            if (hoveredRecipeIndex >= 0 && hoveredRecipeIndex < recipes.size() && hoveredRecipeIndex < recipeBounds.size()) {
+                drawRecipeTooltip(g, recipes.get(hoveredRecipeIndex), recipeBounds.get(hoveredRecipeIndex), windowBounds);
+            }
+
+            g.setFont(oldFont);
+        }
+
+        @Override
+        public boolean handleMousePressed(MouseEvent e, Interaction interaction, Rectangle windowBounds) {
+            if (gameState == null || e == null) {
+                return false;
+            }
+
+            List<RecipeLibrary.SmithingRecipe> recipes = gameState.getAvailableSmithingRecipes();
+            Point point = e.getPoint();
+            for (int i = 0; i < recipeBounds.size() && i < recipes.size(); i++) {
+                if (!recipeBounds.get(i).contains(point)) {
+                    continue;
+                }
+
+                gameState.craftSmithingRecipe(recipes.get(i));
+                return true;
+            }
+
+            return false;
+        }
+
+        @Override
+        public boolean handleMouseMoved(Point point, Interaction interaction, Rectangle windowBounds) {
+            int previousHover = hoveredRecipeIndex;
+            hoveredRecipeIndex = -1;
+
+            if (point != null) {
+                for (int i = 0; i < recipeBounds.size(); i++) {
+                    if (recipeBounds.get(i).contains(point)) {
+                        hoveredRecipeIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            return previousHover != hoveredRecipeIndex;
+        }
+
+        @Override
+        public void selectOption(int optionIndex, Interaction interaction, boolean alternateAction) {
+            interaction.close();
+        }
+
+        private Rectangle gridBounds(Rectangle windowBounds) {
+            return new Rectangle(
+                    windowBounds.x + GRID_PADDING,
+                    windowBounds.y + 132,
+                    windowBounds.width - GRID_PADDING * 2,
+                    windowBounds.height - 210
+            );
+        }
+
+        private boolean canCraft(RecipeLibrary.SmithingRecipe recipe) {
+            return gameState != null
+                    && recipe != null
+                    && gameState.getPlayerCharacter().getSkillLevel(CharacterSkill.SMITHING) >= recipe.requiredLevel();
+        }
+
+        private void drawRecipeTooltip(Graphics2D g, RecipeLibrary.SmithingRecipe recipe, Rectangle slot, Rectangle windowBounds) {
+            Font oldFont = g.getFont();
+            g.setFont(oldFont.deriveFont(Font.PLAIN, 13f));
+            FontMetrics metrics = g.getFontMetrics();
+            String name = recipe.displayName();
+            String bars = recipe.requiredBars() + " " + recipe.materialName();
+            String level = "Requires Smithing " + recipe.requiredLevel();
+            int width = Math.max(metrics.stringWidth(name), Math.max(metrics.stringWidth(bars), metrics.stringWidth(level))) + 20;
+            int height = 58;
+            int x = Math.min(windowBounds.x + windowBounds.width - width - 12, slot.x + slot.width + 10);
+            int y = Math.max(windowBounds.y + 10, slot.y);
+
+            Composite oldComposite = g.getComposite();
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.94f));
+            g.setColor(new Color(8, 9, 13));
+            g.fillRoundRect(x, y, width, height, 7, 7);
+            g.setComposite(oldComposite);
+
+            g.setColor(new Color(112, 92, 58));
+            g.drawRoundRect(x, y, width, height, 7, 7);
+            g.setColor(new Color(238, 228, 190));
+            g.drawString(name, x + 10, y + 18);
+            g.setColor(new Color(218, 210, 180));
+            g.drawString(bars, x + 10, y + 35);
+            g.drawString(level, x + 10, y + 51);
+            g.setFont(oldFont);
         }
     }
 

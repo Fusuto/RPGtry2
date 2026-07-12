@@ -51,6 +51,7 @@ public final class Library {
     public enum BattleCommand {
         ATTACK,
         SKILL,
+        ITEMS,
         RUN
     }
 

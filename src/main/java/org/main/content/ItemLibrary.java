@@ -3,6 +3,12 @@ package org.main.content;
 import org.main.core.InventorySystem;
 import org.main.core.GearDurability;
 import org.main.core.GearMaterial;
+import org.main.engine.AssetLoader;
+
+import java.awt.AlphaComposite;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
 
 public enum ItemLibrary {
     POTION(
@@ -51,6 +57,54 @@ public enum ItemLibrary {
             GearDurability.PERFECT,
             4,
             "A freshly caught fish from shallow dungeon water. Not very useful until someone cooks it."
+    ),
+
+    COOKED_FISH(
+            "Cooked Fish",
+            InventorySystem.ItemType.CONSUMABLE,
+            "assets/images/monster/Ancient/Oct-5-2010/dc-mon/animals/big_fish.png",
+            null,
+            6,
+            GearMaterial.NONE,
+            GearDurability.PERFECT,
+            8,
+            "Warm, flaky dungeon fish. Restores 6 HP when eaten."
+    ),
+
+    BURNT_FISH(
+            "Burnt Fish",
+            InventorySystem.ItemType.MISC,
+            "assets/images/monster/Ancient/Oct-5-2010/dc-mon/animals/big_fish.png",
+            null,
+            0,
+            GearMaterial.NONE,
+            GearDurability.PERFECT,
+            1,
+            "A sad blackened fish. It smells like ambition meeting reality."
+    ),
+
+    COPPER_ORE(
+            "Copper Ore",
+            InventorySystem.ItemType.MISC,
+            "assets/images/generic/64x64/A_Rock1_Node1.png",
+            null,
+            0,
+            GearMaterial.NONE,
+            GearDurability.PERFECT,
+            6,
+            "A chunk of copper-bearing ore. Smelt it at a furnace to make a copper bar."
+    ),
+
+    COPPER_BAR(
+            "Copper Bar",
+            InventorySystem.ItemType.MISC,
+            "assets/images/resourceMaterial/bronze_bar.png",
+            null,
+            0,
+            GearMaterial.NONE,
+            GearDurability.PERFECT,
+            12,
+            "A simple copper bar. It is soft, workable, and ready for beginner smithing."
     ),
 
     IRON_SWORD(
@@ -123,6 +177,122 @@ public enum ItemLibrary {
 
     public InventorySystem.Item createItem() {
         return new InventorySystem.Item(displayName, itemType, iconPath, useSoundPath, healAmount, material, durability, baseGoldValue, examineText);
+    }
+
+    public static InventorySystem.Item createTintedWeapon(
+            String displayName,
+            String iconPath,
+            Color tint,
+            GearMaterial material,
+            int baseGoldValue,
+            String examineText
+    ) {
+        return new InventorySystem.Item(
+                displayName,
+                InventorySystem.ItemType.WEAPON,
+                tintImage(AssetLoader.loadImage(iconPath), tint),
+                null,
+                0,
+                material,
+                GearDurability.PERFECT,
+                baseGoldValue,
+                examineText
+        );
+    }
+    public static InventorySystem.Item createTintedArmor(
+            String displayName,
+            String iconPath,
+            Color tint,
+            GearMaterial material,
+            int baseGoldValue,
+            String examineText
+    ) {
+        return new InventorySystem.Item(
+                displayName,
+                InventorySystem.ItemType.CHEST_ARMOR,
+                tintImage(AssetLoader.loadImage(iconPath), tint),
+                null,
+                0,
+                material,
+                GearDurability.PERFECT,
+                baseGoldValue,
+                examineText
+        );
+    }
+    public static InventorySystem.Item createTintedHelmet(
+            String displayName,
+            String iconPath,
+            Color tint,
+            GearMaterial material,
+            int baseGoldValue,
+            String examineText
+    ) {
+        return new InventorySystem.Item(
+                displayName,
+                InventorySystem.ItemType.HEAD_GEAR,
+                tintImage(AssetLoader.loadImage(iconPath), tint),
+                null,
+                0,
+                material,
+                GearDurability.PERFECT,
+                baseGoldValue,
+                examineText
+        );
+    }
+    public static InventorySystem.Item createTintedLegs(
+            String displayName,
+            String iconPath,
+            Color tint,
+            GearMaterial material,
+            int baseGoldValue,
+            String examineText
+    ) {
+        return new InventorySystem.Item(
+                displayName,
+                InventorySystem.ItemType.LEG_ARMOR,
+                tintImage(AssetLoader.loadImage(iconPath), tint),
+                null,
+                0,
+                material,
+                GearDurability.PERFECT,
+                baseGoldValue,
+                examineText
+        );
+    }
+    public static InventorySystem.Item createTintedShield(
+            String displayName,
+            String iconPath,
+            Color tint,
+            GearMaterial material,
+            int baseGoldValue,
+            String examineText
+    ) {
+        return new InventorySystem.Item(
+                displayName,
+                InventorySystem.ItemType.SHIELD,
+                tintImage(AssetLoader.loadImage(iconPath), tint),
+                null,
+                0,
+                material,
+                GearDurability.PERFECT,
+                baseGoldValue,
+                examineText
+        );
+    }
+
+    private static BufferedImage tintImage(BufferedImage source, Color tint) {
+        if (source == null || tint == null) {
+            return source;
+        }
+
+        BufferedImage tinted = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = tinted.createGraphics();
+        graphics.drawImage(source, 0, 0, null);
+        graphics.setComposite(AlphaComposite.SrcAtop.derive(0.42f));
+        graphics.setColor(tint);
+        graphics.fillRect(0, 0, source.getWidth(), source.getHeight());
+        graphics.dispose();
+        return tinted;
     }
 
     public String getDisplayName() {

@@ -1,6 +1,7 @@
 package org.main.battle;
 
 import org.main.core.Library;
+import org.main.core.InventorySystem;
 
 import java.awt.*;
 import java.awt.image.BufferedImage;
@@ -15,16 +16,27 @@ public class BattleRenderer {
     private static final int MESSAGE_BOX_HEIGHT = 44;
     private static final int MESSAGE_BOX_MARGIN = 20;
     private static final int MESSAGE_BOX_MAX_WIDTH = 520;
+    private static final double BATTLE_AREA_HEIGHT_RATIO = 0.70;
+    private static final float MODAL_BACKDROP_ALPHA = 0.35f;
+    private static final float TARGET_OUTLINE_ALPHA = 0.55f;
+    private static final float TARGET_PREVIEW_FILL_ALPHA = 0.28f;
+    private static final float TARGET_PREVIEW_OUTLINE_ALPHA = 0.95f;
+    private static final float MESSAGE_BACKGROUND_ALPHA = 0.72f;
+    private static final float MESSAGE_OVERLAY_ALPHA = 0.90f;
 
     private final Map<Library.BattleCommand, Rectangle> commandBounds = new EnumMap<>(Library.BattleCommand.class);
     private final Map<BattleActor, Rectangle> actorBounds = new IdentityHashMap<>();
     private final Set<BattleActor> selectableTargets = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Map<BattleSkill, Rectangle> skillBounds = new IdentityHashMap<>();
+    private final Map<Integer, Rectangle> itemBounds = new HashMap<>();
+    private final List<BattleItemEntry> battleItems = new ArrayList<>();
 
     private BattleSkill previewSkill = null;
     private Point mousePoint = null;
     private boolean skillWindowOpen = false;
+    private boolean itemWindowOpen = false;
     private Rectangle skillWindowCloseBounds = new Rectangle();
+    private Rectangle itemWindowCloseBounds = new Rectangle();
 
     private BattleAssets assets;
 
@@ -93,10 +105,42 @@ public class BattleRenderer {
         return skillWindowOpen;
     }
 
+    public void openItemWindow(InventorySystem.Inventory inventory) {
+        itemWindowOpen = true;
+        battleItems.clear();
+        itemBounds.clear();
+
+        if (inventory == null) {
+            return;
+        }
+
+        for (int i = 0; i < InventorySystem.Inventory.SLOT_COUNT; i++) {
+            InventorySystem.Item item = inventory.getItem(i);
+
+            if (item != null
+                    && item.getItemType() == InventorySystem.ItemType.CONSUMABLE
+                    && item.getHealAmount() > 0) {
+                battleItems.add(new BattleItemEntry(i, item));
+            }
+        }
+    }
+
+    public void closeItemWindow() {
+        itemWindowOpen = false;
+        itemWindowCloseBounds = new Rectangle();
+        itemBounds.clear();
+        battleItems.clear();
+    }
+
+    public boolean isItemWindowOpen() {
+        return itemWindowOpen;
+    }
+
     public void draw(Graphics2D g, BattleEncounter encounter, int width, int height) {
         actorBounds.clear();
         commandBounds.clear();
         skillBounds.clear();
+        itemBounds.clear();
 
         if (encounter == null) {
             return;
@@ -107,7 +151,7 @@ public class BattleRenderer {
                 RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR
         );
 
-        int battleAreaHeight = (int) (height * 0.70);
+        int battleAreaHeight = (int) (height * BATTLE_AREA_HEIGHT_RATIO);
         int bottomHeight = height - battleAreaHeight;
         int menuWidth = width / 2;
 
@@ -131,6 +175,10 @@ public class BattleRenderer {
         if (skillWindowOpen) {
             drawSkillWindow(g, encounter, width, height);
         }
+
+        if (itemWindowOpen) {
+            drawItemWindow(g, width, height);
+        }
     }
 
     public BattleSkill getSkillAt(Point point) {
@@ -151,6 +199,24 @@ public class BattleRenderer {
         return skillWindowOpen && skillWindowCloseBounds.contains(point);
     }
 
+    public Integer getBattleItemIndexAt(Point point) {
+        if (!itemWindowOpen) {
+            return null;
+        }
+
+        for (Map.Entry<Integer, Rectangle> entry : itemBounds.entrySet()) {
+            if (entry.getValue().contains(point)) {
+                return entry.getKey();
+            }
+        }
+
+        return null;
+    }
+
+    public boolean isItemWindowCloseButtonAt(Point point) {
+        return itemWindowOpen && itemWindowCloseBounds.contains(point);
+    }
+
     private void drawSkillWindow(Graphics2D g, BattleEncounter encounter, int width, int height) {
         BattleActor actor = getFirstLivingAlly(encounter);
         List<BattleSkill> skills = actor != null ? actor.getSkills() : List.of();
@@ -163,7 +229,7 @@ public class BattleRenderer {
 
         Composite oldComposite = g.getComposite();
 
-        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.35f));
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, MODAL_BACKDROP_ALPHA));
         g.setColor(Color.BLACK);
         g.fillRect(0, 0, width, height);
 
@@ -178,6 +244,117 @@ public class BattleRenderer {
         drawSkillWindowTitle(g, windowX, windowY, windowWidth);
         drawSkillWindowCloseButton(g, windowX, windowY, windowWidth);
         drawSkillRows(g, skills, windowX, windowY, windowWidth, windowHeight);
+    }
+
+    private void drawItemWindow(Graphics2D g, int width, int height) {
+        int windowWidth = Math.min(420, width - 80);
+        int windowHeight = Math.min(320, height - 80);
+
+        int windowX = (width - windowWidth) / 2;
+        int windowY = (height - windowHeight) / 2;
+
+        Composite oldComposite = g.getComposite();
+
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, MODAL_BACKDROP_ALPHA));
+        g.setColor(Color.BLACK);
+        g.fillRect(0, 0, width, height);
+
+        g.setComposite(oldComposite);
+
+        g.setColor(new Color(25, 25, 25));
+        g.fillRoundRect(windowX, windowY, windowWidth, windowHeight, 14, 14);
+
+        g.setColor(Color.WHITE);
+        g.drawRoundRect(windowX, windowY, windowWidth, windowHeight, 14, 14);
+
+        drawItemWindowTitle(g, windowX, windowY, windowWidth);
+        drawItemWindowCloseButton(g, windowX, windowY, windowWidth);
+        drawBattleItemRows(g, windowX, windowY, windowWidth, windowHeight);
+    }
+
+    private void drawItemWindowTitle(Graphics2D g, int windowX, int windowY, int windowWidth) {
+        g.setColor(Color.WHITE);
+
+        Font oldFont = g.getFont();
+        g.setFont(oldFont.deriveFont(Font.BOLD, 16f));
+
+        g.drawString("Items", windowX + 20, windowY + 30);
+
+        g.setFont(oldFont);
+
+        g.setColor(new Color(180, 180, 180));
+        g.drawLine(windowX + 16, windowY + 44, windowX + windowWidth - 16, windowY + 44);
+    }
+
+    private void drawItemWindowCloseButton(Graphics2D g, int windowX, int windowY, int windowWidth) {
+        int closeSize = 24;
+
+        int closeX = windowX + windowWidth - closeSize - 14;
+        int closeY = windowY + 10;
+
+        itemWindowCloseBounds = new Rectangle(closeX, closeY, closeSize, closeSize);
+
+        g.setColor(new Color(60, 60, 60));
+        g.fillRect(closeX, closeY, closeSize, closeSize);
+
+        g.setColor(Color.WHITE);
+        g.drawRect(closeX, closeY, closeSize, closeSize);
+
+        FontMetrics metrics = g.getFontMetrics();
+
+        String label = "X";
+
+        int textX = closeX + (closeSize - metrics.stringWidth(label)) / 2;
+        int textY = closeY
+                + (closeSize - metrics.getHeight()) / 2
+                + metrics.getAscent();
+
+        g.drawString(label, textX, textY);
+    }
+
+    private void drawBattleItemRows(Graphics2D g, int windowX, int windowY, int windowWidth, int windowHeight) {
+        int contentX = windowX + 20;
+        int contentY = windowY + 60;
+        int contentWidth = windowWidth - 40;
+
+        int rowHeight = 34;
+        int rowGap = 8;
+
+        if (battleItems.isEmpty()) {
+            g.setColor(new Color(210, 210, 210));
+            g.drawString("No usable healing items.", contentX, contentY + 22);
+            return;
+        }
+
+        for (int i = 0; i < battleItems.size(); i++) {
+            BattleItemEntry entry = battleItems.get(i);
+
+            int rowX = contentX;
+            int rowY = contentY + i * (rowHeight + rowGap);
+
+            if (rowY + rowHeight > windowY + windowHeight - 20) {
+                break;
+            }
+
+            Rectangle rowBounds = new Rectangle(rowX, rowY, contentWidth, rowHeight);
+            itemBounds.put(entry.inventoryIndex(), rowBounds);
+
+            g.setColor(new Color(45, 45, 45));
+            g.fillRect(rowX, rowY, contentWidth, rowHeight);
+
+            g.setColor(Color.WHITE);
+            g.drawRect(rowX, rowY, contentWidth, rowHeight);
+
+            FontMetrics metrics = g.getFontMetrics();
+            String label = entry.item().getName() + "  +" + entry.item().getHealAmount() + " HP";
+
+            int textX = rowX + 10;
+            int textY = rowY
+                    + (rowHeight - metrics.getHeight()) / 2
+                    + metrics.getAscent();
+
+            g.drawString(label, textX, textY);
+        }
     }
 
     private BattleActor getFirstLivingAlly(BattleEncounter encounter) {
@@ -480,7 +657,7 @@ public class BattleRenderer {
         Stroke oldStroke = g.getStroke();
         Composite oldComposite = g.getComposite();
 
-        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.55f));
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, TARGET_OUTLINE_ALPHA));
         g.setColor(Color.YELLOW);
         g.setStroke(new BasicStroke(2));
         g.drawRect(bounds.x - 3, bounds.y - 3, bounds.width + 6, bounds.height + 6);
@@ -493,11 +670,11 @@ public class BattleRenderer {
         Stroke oldStroke = g.getStroke();
         Composite oldComposite = g.getComposite();
 
-        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.28f));
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, TARGET_PREVIEW_FILL_ALPHA));
         g.setColor(Color.YELLOW);
         g.fillRect(bounds.x - 4, bounds.y - 4, bounds.width + 8, bounds.height + 8);
 
-        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.95f));
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, TARGET_PREVIEW_OUTLINE_ALPHA));
         g.setColor(Color.ORANGE);
         g.setStroke(new BasicStroke(4));
         g.drawRect(bounds.x - 5, bounds.y - 5, bounds.width + 10, bounds.height + 10);
@@ -555,7 +732,7 @@ public class BattleRenderer {
                 buttonImage,
                 contentWidth,
                 contentHeight,
-                3,
+                4,
                 BUTTON_GAP
         );
 
@@ -578,9 +755,16 @@ public class BattleRenderer {
 
         drawCommandButton(
                 g,
+                Library.BattleCommand.ITEMS,
+                "Items",
+                new Rectangle(contentX, contentY + (buttonHeight + BUTTON_GAP) * 2, buttonWidth, buttonHeight)
+        );
+
+        drawCommandButton(
+                g,
                 Library.BattleCommand.RUN,
                 "Run",
-                new Rectangle(contentX, contentY + (buttonHeight + BUTTON_GAP) * 2, buttonWidth, buttonHeight)
+                new Rectangle(contentX, contentY + (buttonHeight + BUTTON_GAP) * 3, buttonWidth, buttonHeight)
         );
     }
 
@@ -676,11 +860,11 @@ public class BattleRenderer {
 
         Composite oldComposite = g.getComposite();
 
-        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.72f));
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, MESSAGE_BACKGROUND_ALPHA));
         g.setColor(Color.BLACK);
         g.fillRoundRect(boxX, boxY, boxWidth, boxHeight, 12, 12);
 
-        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.90f));
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, MESSAGE_OVERLAY_ALPHA));
         g.setColor(Color.WHITE);
         g.drawRoundRect(boxX, boxY, boxWidth, boxHeight, 12, 12);
 
@@ -816,5 +1000,8 @@ public class BattleRenderer {
         }
 
         return ellipsis;
+    }
+
+    private record BattleItemEntry(int inventoryIndex, InventorySystem.Item item) {
     }
 }

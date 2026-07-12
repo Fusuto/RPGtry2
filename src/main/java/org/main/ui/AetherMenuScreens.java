@@ -14,6 +14,67 @@ import java.awt.Rectangle;
 import java.util.Map;
 
 public final class AetherMenuScreens {
+    private static final int START_TITLE_FONT_SIZE = 52;
+    private static final int START_TITLE_HEIGHT_DIVISOR = 4;
+    private static final int START_BUTTON_WIDTH = 220;
+    private static final int START_BUTTON_HEIGHT = 48;
+    private static final int START_BUTTON_GAP = 16;
+    private static final int START_BUTTON_COUNT = 3;
+    private static final int START_MESSAGE_OFFSET_Y = 34;
+    private static final int MESSAGE_FONT_SIZE = 15;
+    private static final Color TITLE_TEXT_COLOR = new Color(235, 225, 200);
+    private static final Color MESSAGE_TEXT_COLOR = new Color(220, 205, 170);
+
+    private static final int GAME_OVER_OVERLAY_ALPHA = 85;
+    private static final int GAME_OVER_FALLBACK_ALPHA = 210;
+    private static final int GAME_OVER_CORNER_RADIUS = 8;
+    private static final int GAME_OVER_TITLE_FONT_SIZE = 58;
+    private static final int GAME_OVER_TITLE_BASELINE_OFFSET = 20;
+    private static final int GAME_OVER_TITLE_MAX_WIDTH = 560;
+    private static final int GAME_OVER_TITLE_HORIZONTAL_MARGIN = 96;
+    private static final int GAME_OVER_TITLE_HEIGHT = 128;
+    private static final int GAME_OVER_TITLE_MIN_Y = 44;
+    private static final int GAME_OVER_BUTTON_WIDTH = 240;
+    private static final int GAME_OVER_BUTTON_HEIGHT = 50;
+    private static final int GAME_OVER_BUTTON_GAP = 18;
+    private static final int GAME_OVER_MESSAGE_OFFSET_Y = 82;
+
+    private static final int CHARACTER_OUTER_FRAME_MARGIN = 34;
+    private static final int CHARACTER_INNER_FRAME_MARGIN = 42;
+    private static final int CHARACTER_TITLE_FONT_SIZE = 42;
+    private static final int CHARACTER_TITLE_Y = 92;
+    private static final int CHARACTER_LABEL_FONT_SIZE = 18;
+    private static final int CHARACTER_NAME_LABEL_Y = 150;
+    private static final int CHARACTER_REGION_LABEL_Y = 242;
+    private static final int CHARACTER_NAME_FIELD_Y = 165;
+    private static final int CHARACTER_NAME_FIELD_WIDTH = 300;
+    private static final int CHARACTER_NAME_FIELD_HEIGHT = 46;
+    private static final int CHARACTER_REGION_BUTTON_Y = 258;
+    private static final int CHARACTER_REGION_BUTTON_STEP_Y = 62;
+    private static final int CHARACTER_REGION_BUTTON_WIDTH = 220;
+    private static final int CHARACTER_REGION_BUTTON_HEIGHT = 48;
+    private static final int CHARACTER_ACTION_BUTTON_WIDTH = 200;
+    private static final int CHARACTER_ACTION_BUTTON_HEIGHT = 48;
+    private static final int CHARACTER_ACTION_BUTTON_Y_OFFSET = 112;
+    private static final int CHARACTER_CONFIRM_X_OFFSET = 230;
+    private static final int CHARACTER_BACK_X_OFFSET = 30;
+    private static final int CHARACTER_DETAILS_X_OFFSET = 390;
+    private static final int CHARACTER_DETAILS_Y = 145;
+    private static final int CHARACTER_DETAILS_WIDTH = 400;
+    private static final int CHARACTER_DETAILS_HEIGHT = 335;
+    private static final int CHARACTER_PANEL_MIN_X = 58;
+    private static final int CHARACTER_PANEL_CENTER_OFFSET = 380;
+    private static final int CHARACTER_MESSAGE_OFFSET_Y = 76;
+
+    private static final int BUTTON_CORNER_RADIUS = 8;
+    private static final int BUTTON_FONT_SIZE = 20;
+    private static final int BUTTON_UNDERLINE_HORIZONTAL_PADDING = 14;
+    private static final int BUTTON_UNDERLINE_BOTTOM_OFFSET = 7;
+    private static final Color BUTTON_BACKGROUND_COLOR = new Color(12, 12, 12, 215);
+    private static final Color BUTTON_BORDER_COLOR = new Color(105, 88, 62);
+    private static final Color BUTTON_ACCENT_COLOR = new Color(170, 36, 32);
+    private static final Color BUTTON_TEXT_COLOR = new Color(235, 230, 210);
+
     private AetherMenuScreens() {
     }
 
@@ -21,27 +82,27 @@ public final class AetherMenuScreens {
         drawFramedBackground(g, width, height);
 
         Font previousFont = g.getFont();
-        g.setFont(new Font(Font.SERIF, Font.BOLD, 52));
-        drawCenteredText(g, width, "Aether", height / 4, new Color(235, 225, 200));
+        g.setFont(new Font(Font.SERIF, Font.BOLD, START_TITLE_FONT_SIZE));
+        drawCenteredText(g, width, "Aether", height / START_TITLE_HEIGHT_DIVISOR, TITLE_TEXT_COLOR);
 
         drawButton(g, "New", startMenuButtonBounds(width, height, 0));
         drawButton(g, "Load", startMenuButtonBounds(width, height, 1));
         drawButton(g, "Quit", startMenuButtonBounds(width, height, 2));
 
         if (message != null && !message.isBlank()) {
-            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 15));
+            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, MESSAGE_FONT_SIZE));
             Rectangle lastButton = startMenuButtonBounds(width, height, 2);
-            drawCenteredText(g, width, message, lastButton.y + lastButton.height + 34, new Color(220, 205, 170));
+            drawCenteredText(g, width, message, lastButton.y + lastButton.height + START_MESSAGE_OFFSET_Y, MESSAGE_TEXT_COLOR);
         }
 
         g.setFont(previousFont);
     }
 
     public static Rectangle startMenuButtonBounds(int width, int height, int index) {
-        int buttonWidth = 220;
-        int buttonHeight = 48;
-        int gap = 16;
-        int totalHeight = buttonHeight * 3 + gap * 2;
+        int buttonWidth = START_BUTTON_WIDTH;
+        int buttonHeight = START_BUTTON_HEIGHT;
+        int gap = START_BUTTON_GAP;
+        int totalHeight = buttonHeight * START_BUTTON_COUNT + gap * (START_BUTTON_COUNT - 1);
         int x = (width - buttonWidth) / 2;
         int y = height / 2 - totalHeight / 2 + index * (buttonHeight + gap);
         return new Rectangle(x, y, buttonWidth, buttonHeight);
@@ -62,7 +123,7 @@ public final class AetherMenuScreens {
             g.drawImage(cover, 0, 0, width, height, null);
         }
 
-        g.setColor(new Color(0, 0, 0, 85));
+        g.setColor(new Color(0, 0, 0, GAME_OVER_OVERLAY_ALPHA));
         g.fillRect(0, 0, width, height);
 
         Font previousFont = g.getFont();
@@ -78,34 +139,34 @@ public final class AetherMenuScreens {
                     null
             );
         } else {
-            g.setColor(new Color(8, 8, 10, 210));
-            g.fillRoundRect(titleBounds.x, titleBounds.y, titleBounds.width, titleBounds.height, 8, 8);
+            g.setColor(new Color(8, 8, 10, GAME_OVER_FALLBACK_ALPHA));
+            g.fillRoundRect(titleBounds.x, titleBounds.y, titleBounds.width, titleBounds.height, GAME_OVER_CORNER_RADIUS, GAME_OVER_CORNER_RADIUS);
         }
 
-        g.setFont(new Font(Font.SERIF, Font.BOLD, 58));
-        drawCenteredText(g, width, "GAME OVER", titleBounds.y + titleBounds.height / 2 + 20, new Color(235, 225, 210));
+        g.setFont(new Font(Font.SERIF, Font.BOLD, GAME_OVER_TITLE_FONT_SIZE));
+        drawCenteredText(g, width, "GAME OVER", titleBounds.y + titleBounds.height / 2 + GAME_OVER_TITLE_BASELINE_OFFSET, new Color(235, 225, 210));
 
         drawButton(g, "Main Menu", gameOverButtonBounds(width, height, 0));
         drawButton(g, "Load", gameOverButtonBounds(width, height, 1));
 
         if (message != null && !message.isBlank()) {
-            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 15));
-            drawCenteredText(g, width, message, gameOverButtonBounds(width, height, 1).y + 82, new Color(220, 205, 170));
+            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, MESSAGE_FONT_SIZE));
+            drawCenteredText(g, width, message, gameOverButtonBounds(width, height, 1).y + GAME_OVER_MESSAGE_OFFSET_Y, MESSAGE_TEXT_COLOR);
         }
 
         g.setFont(previousFont);
     }
 
     private static Rectangle gameOverTitleBounds(int width, int height) {
-        int titleWidth = Math.min(560, width - 96);
-        int titleHeight = 128;
-        return new Rectangle((width - titleWidth) / 2, Math.max(44, height / 4 - titleHeight / 2), titleWidth, titleHeight);
+        int titleWidth = Math.min(GAME_OVER_TITLE_MAX_WIDTH, width - GAME_OVER_TITLE_HORIZONTAL_MARGIN);
+        int titleHeight = GAME_OVER_TITLE_HEIGHT;
+        return new Rectangle((width - titleWidth) / 2, Math.max(GAME_OVER_TITLE_MIN_Y, height / START_TITLE_HEIGHT_DIVISOR - titleHeight / 2), titleWidth, titleHeight);
     }
 
     public static Rectangle gameOverButtonBounds(int width, int height, int index) {
-        int buttonWidth = 240;
-        int buttonHeight = 50;
-        int gap = 18;
+        int buttonWidth = GAME_OVER_BUTTON_WIDTH;
+        int buttonHeight = GAME_OVER_BUTTON_HEIGHT;
+        int gap = GAME_OVER_BUTTON_GAP;
         int x = (width - buttonWidth) / 2;
         int y = height / 2 + index * (buttonHeight + gap);
         return new Rectangle(x, y, buttonWidth, buttonHeight);
@@ -126,19 +187,29 @@ public final class AetherMenuScreens {
 
         Font previousFont = g.getFont();
         g.setColor(new Color(95, 76, 54));
-        g.drawRect(34, 34, width - 68, height - 68);
-        g.setColor(new Color(170, 36, 32));
-        g.drawRect(42, 42, width - 84, height - 84);
+        g.drawRect(
+                CHARACTER_OUTER_FRAME_MARGIN,
+                CHARACTER_OUTER_FRAME_MARGIN,
+                width - CHARACTER_OUTER_FRAME_MARGIN * 2,
+                height - CHARACTER_OUTER_FRAME_MARGIN * 2
+        );
+        g.setColor(BUTTON_ACCENT_COLOR);
+        g.drawRect(
+                CHARACTER_INNER_FRAME_MARGIN,
+                CHARACTER_INNER_FRAME_MARGIN,
+                width - CHARACTER_INNER_FRAME_MARGIN * 2,
+                height - CHARACTER_INNER_FRAME_MARGIN * 2
+        );
 
-        g.setFont(new Font(Font.SERIF, Font.BOLD, 42));
-        drawCenteredText(g, width, "Create Character", 92, new Color(235, 225, 200));
+        g.setFont(new Font(Font.SERIF, Font.BOLD, CHARACTER_TITLE_FONT_SIZE));
+        drawCenteredText(g, width, "Create Character", CHARACTER_TITLE_Y, TITLE_TEXT_COLOR);
 
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
+        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, CHARACTER_LABEL_FONT_SIZE));
         g.setColor(new Color(230, 220, 195));
-        g.drawString("Name", characterPanelX(width), 150);
+        g.drawString("Name", characterPanelX(width), CHARACTER_NAME_LABEL_Y);
         drawNameField(g, nameFieldBounds(width), characterName);
 
-        g.drawString("Region", characterPanelX(width), 242);
+        g.drawString("Region", characterPanelX(width), CHARACTER_REGION_LABEL_Y);
 
         int index = 0;
         for (PlayerRegionLibrary playerRegion : PlayerRegionLibrary.values()) {
@@ -151,51 +222,76 @@ public final class AetherMenuScreens {
         drawButton(g, "Back", backCharacterButtonBounds(width, height));
 
         if (message != null && !message.isBlank()) {
-            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 15));
-            drawCenteredText(g, width, message, confirmCharacterButtonBounds(width, height).y + 76, new Color(220, 205, 170));
+            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, MESSAGE_FONT_SIZE));
+            drawCenteredText(g, width, message, confirmCharacterButtonBounds(width, height).y + CHARACTER_MESSAGE_OFFSET_Y, MESSAGE_TEXT_COLOR);
         }
 
         g.setFont(previousFont);
     }
 
     public static Rectangle nameFieldBounds(int width) {
-        return new Rectangle(characterPanelX(width), 165, 300, 46);
+        return new Rectangle(characterPanelX(width), CHARACTER_NAME_FIELD_Y, CHARACTER_NAME_FIELD_WIDTH, CHARACTER_NAME_FIELD_HEIGHT);
     }
 
     public static Rectangle regionButtonBounds(int width, int index) {
-        return new Rectangle(characterPanelX(width), 258 + index * 62, 220, 48);
+        return new Rectangle(
+                characterPanelX(width),
+                CHARACTER_REGION_BUTTON_Y + index * CHARACTER_REGION_BUTTON_STEP_Y,
+                CHARACTER_REGION_BUTTON_WIDTH,
+                CHARACTER_REGION_BUTTON_HEIGHT
+        );
     }
 
     public static Rectangle confirmCharacterButtonBounds(int width, int height) {
-        return new Rectangle(width / 2 - 230, height - 112, 200, 48);
+        return new Rectangle(
+                width / 2 - CHARACTER_CONFIRM_X_OFFSET,
+                height - CHARACTER_ACTION_BUTTON_Y_OFFSET,
+                CHARACTER_ACTION_BUTTON_WIDTH,
+                CHARACTER_ACTION_BUTTON_HEIGHT
+        );
     }
 
     public static Rectangle backCharacterButtonBounds(int width, int height) {
-        return new Rectangle(width / 2 + 30, height - 112, 200, 48);
+        return new Rectangle(
+                width / 2 + CHARACTER_BACK_X_OFFSET,
+                height - CHARACTER_ACTION_BUTTON_Y_OFFSET,
+                CHARACTER_ACTION_BUTTON_WIDTH,
+                CHARACTER_ACTION_BUTTON_HEIGHT
+        );
     }
 
     private static Rectangle classDetailsBounds(int width) {
-        return new Rectangle(characterPanelX(width) + 390, 145, 400, 335);
+        return new Rectangle(
+                characterPanelX(width) + CHARACTER_DETAILS_X_OFFSET,
+                CHARACTER_DETAILS_Y,
+                CHARACTER_DETAILS_WIDTH,
+                CHARACTER_DETAILS_HEIGHT
+        );
     }
 
     private static int characterPanelX(int width) {
-        return Math.max(58, width / 2 - 380);
+        return Math.max(CHARACTER_PANEL_MIN_X, width / 2 - CHARACTER_PANEL_CENTER_OFFSET);
     }
 
     public static void drawButton(Graphics2D g, String label, Rectangle bounds) {
-        g.setColor(new Color(12, 12, 12, 215));
-        g.fillRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 8, 8);
-        g.setColor(new Color(105, 88, 62));
-        g.drawRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 8, 8);
-        g.setColor(new Color(170, 36, 32));
-        g.drawLine(bounds.x + 14, bounds.y + bounds.height - 7, bounds.x + bounds.width - 14, bounds.y + bounds.height - 7);
+        g.setColor(BUTTON_BACKGROUND_COLOR);
+        g.fillRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, BUTTON_CORNER_RADIUS, BUTTON_CORNER_RADIUS);
+        g.setColor(BUTTON_BORDER_COLOR);
+        g.drawRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, BUTTON_CORNER_RADIUS, BUTTON_CORNER_RADIUS);
+        g.setColor(BUTTON_ACCENT_COLOR);
+        g.drawLine(
+                bounds.x + BUTTON_UNDERLINE_HORIZONTAL_PADDING,
+                bounds.y + bounds.height - BUTTON_UNDERLINE_BOTTOM_OFFSET,
+                bounds.x + bounds.width - BUTTON_UNDERLINE_HORIZONTAL_PADDING,
+                bounds.y + bounds.height - BUTTON_UNDERLINE_BOTTOM_OFFSET
+        );
 
         Font previousFont = g.getFont();
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 20));
+        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, BUTTON_FONT_SIZE));
         FontMetrics metrics = g.getFontMetrics();
         int textX = bounds.x + (bounds.width - metrics.stringWidth(label)) / 2;
         int textY = bounds.y + (bounds.height - metrics.getHeight()) / 2 + metrics.getAscent();
-        g.setColor(new Color(235, 230, 210));
+        g.setColor(BUTTON_TEXT_COLOR);
         g.drawString(label, textX, textY);
         g.setFont(previousFont);
     }

@@ -17,6 +17,18 @@ public enum QuestLibrary {
                     "Bring the hat back to the skeleton.",
                     "Complete. The skeleton has been properly capped."
             )
+    ),
+
+    GATHERING_BASICS(
+            "gathering_basics",
+            "Gathering Basics",
+            List.of(
+                    "Catch a fish from the shoal in the starter area.",
+                    "Use the raw fish from your inventory, then cook it at the campfire.",
+                    "Mine copper ore from the mineral rock.",
+                    "Use the copper ore from your inventory, then smelt it at the furnace.",
+                    "Complete. You know how to fish, cook, mine, and smelt basic ore."
+            )
     );
 
     private final String id;

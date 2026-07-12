@@ -35,8 +35,8 @@ public class OverworldHud {
     private static final int FIVE_BUTTON_GAP = 74;
     private static final int BUTTON_ICON_SIZE = 32;
     private static final int CORNER_SIZE = 96;
-    private static final int SKILL_PANEL_WIDTH = 210;
-    private static final int SKILL_PANEL_HEIGHT = 220;
+    private static final int SKILL_PANEL_WIDTH = 250;
+    private static final int SKILL_PANEL_HEIGHT = 420;
     private static final int SKILL_ICON_SIZE = 34;
     private static final int SKILL_CELL_SIZE = 52;
     private static final int CHARACTER_CARD_WIDTH = 300;
@@ -179,6 +179,21 @@ public class OverworldHud {
         return false;
     }
 
+    public boolean handleInventoryButtonPressed(Point point, GameState gameState, int width, int height) {
+        if (point == null || gameState == null) {
+            return false;
+        }
+
+        calculateButtonBounds(width, height);
+
+        if (!inventoryButtonBounds.contains(point)) {
+            return false;
+        }
+
+        gameState.toggleInventory();
+        return true;
+    }
+
     public boolean handleMouseMoved(Point point, GameState gameState) {
         if (point == null || gameState == null) {
             return false;
@@ -261,7 +276,7 @@ public class OverworldHud {
         g.setComposite(oldComposite);
 
         int columns = 2;
-        int startX = x + 44;
+        int startX = x + 52;
         int startY = y + 40;
         int index = 0;
 
@@ -271,7 +286,7 @@ public class OverworldHud {
         for (CharacterSkill skill : CharacterSkill.values()) {
             int column = index % columns;
             int row = index / columns;
-            int cellX = startX + column * 74;
+            int cellX = startX + column * 88;
             int cellY = startY + row * SKILL_CELL_SIZE;
             int level = Math.min(99, Math.max(1, gameState.getPlayerCharacter().getSkillLevel(skill)));
 
@@ -403,8 +418,11 @@ public class OverworldHud {
         statLines.add("Region " + (player.getPlayerRegion() == null ? "Unknown" : player.getPlayerRegion().getDisplayName()));
         statLines.add("Level " + player.getLevel() + " (leveling paused)");
         statLines.add("HP " + player.getCurrHp() + "/" + player.getMaxHp());
-        statLines.add("Attack " + (5 + player.getStat(PlayerStat.STRENGTH) + player.getInventory().getWeaponStatBonus()));
-        statLines.add("Defense " + (player.getStat(PlayerStat.DEFENSE) + player.getInventory().getArmorStatBonus()));
+        statLines.add("Melee Accuracy " + (player.getStat(PlayerStat.ATTACK) + player.getSkillLevel(CharacterSkill.ATTACK) + player.getUsableWeaponStatBonus()));
+        statLines.add("Melee Power " + (player.getStat(PlayerStat.STRENGTH) + player.getSkillLevel(CharacterSkill.STRENGTH) + player.getUsableWeaponStatBonus()));
+        statLines.add("Defense Roll " + (player.getStat(PlayerStat.DEFENSE) + player.getSkillLevel(CharacterSkill.DEFENSE) + player.getUsableArmorStatBonus()));
+        statLines.add("Spellcasting " + (player.getStat(PlayerStat.INTELLIGENCE) + player.getSkillLevel(CharacterSkill.MAGIC_ACCURACY) + player.getUsableMagicAccuracyBonus()));
+        statLines.add("Potency " + (player.getStat(PlayerStat.WILLPOWER) + player.getSkillLevel(CharacterSkill.MAGIC_POWER)));
         for (PlayerStat stat : PlayerStat.values()) {
             statLines.add(stat.getDisplayName() + " " + player.getStat(stat));
         }

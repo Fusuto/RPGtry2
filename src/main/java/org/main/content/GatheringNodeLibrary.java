@@ -26,6 +26,17 @@ public enum GatheringNodeLibrary {
                     "assets/images/monster/Nov-2015/dngn/water/shoals_shallow_water4.png"
             },
             1000
+    ),
+
+    MINERAL_ROCK_A(
+            "Mineral Rock",
+            "mineral_rock_basic",
+            new String[]{
+                    "assets/images/generic/64x64/A_Rock1_Node1.png",
+                    "assets/images/generic/64x64/A_Rock1_Node2.png",
+                    "assets/images/generic/64x64/A_Rock1_Node3.png"
+            },
+            1000
     );
 
     private final String displayName;
@@ -43,7 +54,17 @@ public enum GatheringNodeLibrary {
     public MapEntity createEntity(int x, int y) {
         MapEntity entity;
 
-        if (framePaths.length > 1) {
+        if (this == MINERAL_ROCK_A) {
+            entity = new MapEntity(
+                    displayName,
+                    Library.EntityType.TRAP,
+                    x,
+                    y,
+                    getImageForExhaustion(0)
+            )
+                    .blocksMovement(true)
+                    .withVisualScale(1.35);
+        } else if (framePaths.length > 1) {
             entity = new MapEntity(
                     displayName,
                     Library.EntityType.TRAP,
@@ -66,6 +87,11 @@ public enum GatheringNodeLibrary {
         }
 
         return entity;
+    }
+
+    public BufferedImage getImageForExhaustion(int exhaustionLevel) {
+        int safeIndex = Math.max(0, Math.min(framePaths.length - 1, exhaustionLevel));
+        return AssetLoader.loadImage(framePaths[safeIndex]);
     }
 
     public String getInteractionId() {

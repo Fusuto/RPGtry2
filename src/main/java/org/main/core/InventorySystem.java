@@ -3,6 +3,8 @@ package org.main.core;
 import org.main.engine.AssetLoader;
 import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
+import org.main.content.ItemLibrary;
+import org.main.content.RecipeLibrary;
 
 import java.awt.*;
 import java.awt.event.MouseEvent;
@@ -14,6 +16,8 @@ import java.util.Map;
 import javax.swing.SwingUtilities;
 
 public final class InventorySystem {
+    private static final double SELL_PRICE_MULTIPLIER = 0.35;
+
     private InventorySystem() {
     }
 
@@ -23,6 +27,7 @@ public final class InventorySystem {
         LEG_ARMOR,
         RING,
         WEAPON,
+        SHIELD,
         LIMB,
         MISC,
         CONSUMABLE
@@ -34,7 +39,8 @@ public final class InventorySystem {
         LEGS("Legs"),
         RING_LEFT("Ring"),
         RING_RIGHT("Ring"),
-        WEAPON("Weapon");
+        WEAPON("Weapon"),
+        SHIELD("Shield");
 
         private final String label;
 
@@ -207,7 +213,7 @@ public final class InventorySystem {
         }
 
         public int getCalculatedSellPrice() {
-            return Math.max(1, (int) Math.floor(getCalculatedBuyPrice() * 0.35));
+            return Math.max(1, (int) Math.floor(getCalculatedBuyPrice() * SELL_PRICE_MULTIPLIER));
         }
 
         public boolean isEquippable() {
@@ -215,7 +221,8 @@ public final class InventorySystem {
                     || itemType == ItemType.CHEST_ARMOR
                     || itemType == ItemType.LEG_ARMOR
                     || itemType == ItemType.RING
-                    || itemType == ItemType.WEAPON;
+                    || itemType == ItemType.WEAPON
+                    || itemType == ItemType.SHIELD;
         }
 
         public Item copy() {
@@ -332,6 +339,22 @@ public final class InventorySystem {
             }
 
             return false;
+        }
+
+        public int findFirstItemIndexNamed(String itemName) {
+            if (itemName == null || itemName.isBlank()) {
+                return -1;
+            }
+
+            for (int i = 0; i < items.length; i++) {
+                Item item = items[i];
+
+                if (item != null && itemName.equalsIgnoreCase(item.getName())) {
+                    return i;
+                }
+            }
+
+            return -1;
         }
 
         public boolean hasItemNamed(String itemName) {
@@ -553,6 +576,7 @@ public final class InventorySystem {
                 case LEG_ARMOR -> slot == EquipmentSlot.LEGS;
                 case RING -> slot == EquipmentSlot.RING_LEFT || slot == EquipmentSlot.RING_RIGHT;
                 case WEAPON -> slot == EquipmentSlot.WEAPON;
+                case SHIELD -> slot == EquipmentSlot.SHIELD;
                 case LIMB, MISC, CONSUMABLE -> false;
             };
         }
@@ -567,6 +591,7 @@ public final class InventorySystem {
                 case CHEST_ARMOR -> EquipmentSlot.CHEST;
                 case LEG_ARMOR -> EquipmentSlot.LEGS;
                 case WEAPON -> EquipmentSlot.WEAPON;
+                case SHIELD -> EquipmentSlot.SHIELD;
                 case RING -> getPreferredRingSlot();
                 case LIMB, MISC, CONSUMABLE -> null;
             };
@@ -597,7 +622,7 @@ public final class InventorySystem {
         private static final int EQUIPMENT_SLOT_SIZE = 46;
         private static final int EQUIPMENT_GAP = 10;
         private static final int EQUIPMENT_TO_GRID_GAP = 18;
-        private static final int STAT_PREVIEW_HEIGHT = 78;
+        private static final int STAT_PREVIEW_HEIGHT = 132;
         private static final int LIMB_PANEL_WIDTH = 360;
         private static final int LIMB_PANEL_HEIGHT = 116;
 
@@ -610,7 +635,10 @@ public final class InventorySystem {
         private final Map<EquipmentSlot, Rectangle> equipmentSlotBounds = new EnumMap<>(EquipmentSlot.class);
         private final List<ContextMenuOption> contextMenuOptions = new ArrayList<>();
         private final Rectangle contextMenuBounds = new Rectangle();
-        private InteractionSystem.Interaction examineInteraction;
+        private String examineTooltipTitle;
+        private String examineTooltipText;
+        private Point examineTooltipPoint;
+        private final Rectangle examineTooltipBounds = new Rectangle();
 
         private Item draggedItem;
         private int draggedInventoryIndex = -1;
@@ -640,11 +668,16 @@ public final class InventorySystem {
             drawInventoryGrid(g);
             drawContextMenu(g);
             drawHoverTooltip(g, panelWidth, panelHeight);
+            drawExamineTooltip(g, panelWidth, panelHeight);
             drawDraggedItem(g);
         }
 
         public boolean handleMousePressed(MouseEvent e) {
             mousePoint = e.getPoint();
+
+            if (handleExamineTooltipClick(mousePoint)) {
+                return true;
+            }
 
             if (handleContextMenuClick(mousePoint)) {
                 return true;
@@ -652,6 +685,7 @@ public final class InventorySystem {
 
             if (contextInventoryIndex >= 0) {
                 closeContextMenu();
+                clearExamineTooltip();
                 return true;
             }
 
@@ -744,7 +778,7 @@ public final class InventorySystem {
             }
 
             contextMenuOptions.add(new ContextMenuOption("Examine", () -> {
-                examineInteraction = createExamineInteraction(item);
+                showExamineTooltip(item);
                 closeContextMenu();
             }));
 
@@ -797,7 +831,19 @@ public final class InventorySystem {
         private boolean useItem(int inventoryIndex) {
             Item item = inventory().getItem(inventoryIndex);
 
-            if (item == null || item.getItemType() != ItemType.CONSUMABLE) {
+            if (item == null) {
+                return false;
+            }
+
+            if ((ItemLibrary.RAW_FISH.getDisplayName().equalsIgnoreCase(item.getName())
+                    || RecipeLibrary.isSmeltableItem(item)
+                    || RecipeLibrary.isSmithingMaterial(item))
+                    && gameState != null) {
+                gameState.selectWorldUseItem(inventoryIndex);
+                return true;
+            }
+
+            if (item.getItemType() != ItemType.CONSUMABLE) {
                 return false;
             }
 
@@ -1035,7 +1081,7 @@ public final class InventorySystem {
                 return true;
             }
 
-            return gameState.getPlayerCharacter().canUseEquipmentSlot(slot);
+            return gameState.getPlayerCharacter().canUseEquipment(item, slot);
         }
 
         private void drawContextMenu(Graphics2D g) {
@@ -1080,16 +1126,32 @@ public final class InventorySystem {
             g.setFont(oldFont);
         }
 
-        private InteractionSystem.Interaction createExamineInteraction(Item item) {
-            if (item instanceof LimbItem limb) {
-                return InteractionSystem.prompt("Examine", limbExamineText(limb), InteractionSystem.closeOption("Close"));
+        private void showExamineTooltip(Item item) {
+            examineTooltipTitle = item == null ? "Examine" : item.getName();
+            examineTooltipText = item instanceof LimbItem limb
+                    ? limbExamineText(limb)
+                    : item == null ? "There is nothing to examine." : item.getExamineText();
+            examineTooltipPoint = mousePoint == null ? new Point(24, 24) : new Point(mousePoint);
+        }
+
+        private void clearExamineTooltip() {
+            examineTooltipTitle = null;
+            examineTooltipText = null;
+            examineTooltipPoint = null;
+            examineTooltipBounds.setBounds(0, 0, 0, 0);
+        }
+
+        private boolean handleExamineTooltipClick(Point point) {
+            if (examineTooltipText == null || point == null || examineTooltipBounds.isEmpty()) {
+                return false;
             }
 
-            return InteractionSystem.prompt(
-                    item == null ? "Examine" : item.getName(),
-                    item == null ? "There is nothing to examine." : item.getExamineText(),
-                    InteractionSystem.closeOption("Close")
-            );
+            if (!examineTooltipBounds.contains(point)) {
+                return false;
+            }
+
+            clearExamineTooltip();
+            return true;
         }
 
         private String limbExamineText(LimbItem limb) {
@@ -1178,28 +1240,47 @@ public final class InventorySystem {
 
             PlayerCharacter player = gameState.getPlayerCharacter();
             int currentWeaponBonus = player.getUsableWeaponStatBonus();
-            int currentAttack = 5 + player.getStat(PlayerStat.STRENGTH) + currentWeaponBonus;
-            int currentDefense = player.getStat(PlayerStat.DEFENSE) + player.getUsableArmorStatBonus();
+            int currentAttack = player.getStat(PlayerStat.ATTACK) + player.getSkillLevel(CharacterSkill.ATTACK) + currentWeaponBonus;
+            int currentDamage = player.getStat(PlayerStat.STRENGTH) + player.getSkillLevel(CharacterSkill.STRENGTH) + currentWeaponBonus;
+            int currentDefense = player.getStat(PlayerStat.DEFENSE) + player.getSkillLevel(CharacterSkill.DEFENSE) + player.getUsableArmorStatBonus();
+            int currentSpellcasting = player.getStat(PlayerStat.INTELLIGENCE)
+                    + player.getSkillLevel(CharacterSkill.MAGIC_ACCURACY)
+                    + player.getUsableMagicAccuracyBonus();
+            int currentPotency = player.getStat(PlayerStat.WILLPOWER) + player.getSkillLevel(CharacterSkill.MAGIC_POWER);
             int previewAttack = currentAttack;
+            int previewDamage = currentDamage;
             int previewDefense = currentDefense;
+            int previewSpellcasting = currentSpellcasting;
+            int previewPotency = currentPotency;
 
             if (draggedItem != null && draggedItem.isEquippable()) {
                 if (draggedItem.getItemType() == ItemType.WEAPON) {
                     Item currentWeapon = inventory().getEquippedItem(EquipmentSlot.WEAPON);
-                    previewAttack = 5 + player.getStat(PlayerStat.STRENGTH)
-                            - (currentWeapon == null ? 0 : currentWeapon.getEffectiveStatBonus())
+                    int weaponDelta = - (currentWeapon == null ? 0 : currentWeapon.getEffectiveStatBonus())
                             + draggedItem.getEffectiveStatBonus();
+                    previewAttack = player.getStat(PlayerStat.ATTACK)
+                            + player.getSkillLevel(CharacterSkill.ATTACK)
+                            + currentWeaponBonus
+                            + weaponDelta;
+                    previewDamage = player.getStat(PlayerStat.STRENGTH)
+                            + player.getSkillLevel(CharacterSkill.STRENGTH)
+                            + currentWeaponBonus
+                            + weaponDelta;
                 } else {
                     EquipmentSlot slot = previewSlotForItem(draggedItem);
-                    Item currentArmor = slot == null ? null : inventory().getEquippedItem(slot);
-                    previewDefense = player.getStat(PlayerStat.DEFENSE)
-                            + player.getUsableArmorStatBonus()
-                            - (currentArmor == null ? 0 : currentArmor.getEffectiveStatBonus())
-                            + draggedItem.getEffectiveStatBonus();
+                    Item currentEquipped = slot == null ? null : inventory().getEquippedItem(slot);
+                    int equippedBonus = currentEquipped == null ? 0 : currentEquipped.getEffectiveStatBonus();
+                    int draggedBonus = canWearItem(draggedItem, slot) ? draggedItem.getEffectiveStatBonus() : 0;
+
+                    if (draggedItem.getItemType() == ItemType.RING) {
+                        previewSpellcasting = currentSpellcasting - equippedBonus + draggedBonus;
+                    } else {
+                        previewDefense = currentDefense - equippedBonus + draggedBonus;
+                    }
                 }
             }
 
-            int panelWidth = 292;
+            int panelWidth = 340;
             int x = 24;
             int y = 24;
 
@@ -1218,15 +1299,18 @@ public final class InventorySystem {
             g.drawString("Equipment Stats", x + 14, y + 24);
 
             g.setFont(oldFont.deriveFont(Font.PLAIN, 13f));
-            drawStatLine(g, "Attack", currentAttack, previewAttack, x + 14, y + 46);
-            drawStatLine(g, "Defense", currentDefense, previewDefense, x + 150, y + 46);
+            drawStatLine(g, "Accuracy", currentAttack, previewAttack, x + 14, y + 46);
+            drawStatLine(g, "Damage", currentDamage, previewDamage, x + 174, y + 46);
+            drawStatLine(g, "Defense", currentDefense, previewDefense, x + 14, y + 66);
+            drawStatLine(g, "Spellcasting", currentSpellcasting, previewSpellcasting, x + 174, y + 66);
+            drawStatLine(g, "Potency", currentPotency, previewPotency, x + 14, y + 86);
             g.setColor(new Color(178, 170, 148));
-            g.drawString("Drag gear over slots to preview changes.", x + 14, y + 66);
+            g.drawString("Rings improve spellcasting.", x + 14, y + 112);
             g.setFont(oldFont);
         }
 
         private void drawHoverTooltip(Graphics2D g, int panelWidth, int panelHeight) {
-            if (mousePoint == null || draggedItem != null || contextInventoryIndex >= 0) {
+            if (examineTooltipText != null || mousePoint == null || draggedItem != null || contextInventoryIndex >= 0) {
                 return;
             }
 
@@ -1257,6 +1341,108 @@ public final class InventorySystem {
             g.setFont(oldFont);
         }
 
+        private void drawExamineTooltip(Graphics2D g, int panelWidth, int panelHeight) {
+            if (examineTooltipText == null || examineTooltipText.isBlank()) {
+                examineTooltipBounds.setBounds(0, 0, 0, 0);
+                return;
+            }
+
+            Font oldFont = g.getFont();
+            g.setFont(oldFont.deriveFont(Font.PLAIN, 13f));
+            FontMetrics metrics = g.getFontMetrics();
+
+            int maxTextWidth = 320;
+            List<String> lines = wrapText(metrics, examineTooltipText, maxTextWidth);
+            String title = examineTooltipTitle == null || examineTooltipTitle.isBlank() ? "Examine" : examineTooltipTitle;
+
+            int tooltipWidth = maxTextWidth + 24;
+            int titleHeight = 22;
+            int lineHeight = metrics.getHeight();
+            int tooltipHeight = Math.min(panelHeight - 16, titleHeight + lines.size() * lineHeight + 22);
+            int preferredX = examineTooltipPoint == null ? 24 : examineTooltipPoint.x + 12;
+            int preferredY = examineTooltipPoint == null ? 24 : examineTooltipPoint.y + 12;
+            int x = Math.max(8, Math.min(panelWidth - tooltipWidth - 8, preferredX));
+            int y = Math.max(8, Math.min(panelHeight - tooltipHeight - 8, preferredY));
+            examineTooltipBounds.setBounds(x, y, tooltipWidth, tooltipHeight);
+
+            Composite oldComposite = g.getComposite();
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.94f));
+            g.setColor(new Color(8, 9, 13));
+            g.fillRoundRect(x, y, tooltipWidth, tooltipHeight, 8, 8);
+            g.setComposite(oldComposite);
+
+            g.setColor(new Color(112, 92, 58));
+            g.drawRoundRect(x, y, tooltipWidth, tooltipHeight, 8, 8);
+
+            g.setFont(oldFont.deriveFont(Font.BOLD, 13f));
+            g.setColor(new Color(238, 228, 190));
+            g.drawString(title, x + 12, y + 18);
+
+            g.setFont(oldFont.deriveFont(Font.PLAIN, 13f));
+            g.setColor(new Color(218, 210, 180));
+            int textY = y + titleHeight + metrics.getAscent();
+            int maxLines = Math.max(1, (tooltipHeight - titleHeight - 16) / lineHeight);
+
+            for (int i = 0; i < Math.min(lines.size(), maxLines); i++) {
+                String line = i == maxLines - 1 && lines.size() > maxLines
+                        ? trimTextToFit(metrics, lines.get(i) + "...", maxTextWidth)
+                        : lines.get(i);
+                g.drawString(line, x + 12, textY + i * lineHeight);
+            }
+
+            g.setFont(oldFont);
+        }
+
+        private List<String> wrapText(FontMetrics metrics, String text, int maxWidth) {
+            List<String> lines = new ArrayList<>();
+
+            for (String paragraph : text.split("\\R", -1)) {
+                if (paragraph.isBlank()) {
+                    lines.add("");
+                    continue;
+                }
+
+                StringBuilder line = new StringBuilder();
+
+                for (String word : paragraph.split("\\s+")) {
+                    String candidate = line.isEmpty() ? word : line + " " + word;
+
+                    if (metrics.stringWidth(candidate) <= maxWidth) {
+                        line = new StringBuilder(candidate);
+                    } else {
+                        if (!line.isEmpty()) {
+                            lines.add(line.toString());
+                        }
+                        line = new StringBuilder(word);
+                    }
+                }
+
+                if (!line.isEmpty()) {
+                    lines.add(line.toString());
+                }
+            }
+
+            return lines;
+        }
+
+        private String trimTextToFit(FontMetrics metrics, String text, int maxWidth) {
+            if (metrics.stringWidth(text) <= maxWidth) {
+                return text;
+            }
+
+            String ellipsis = "...";
+
+            for (int i = text.length() - 1; i >= 0; i--) {
+                String candidate = text.substring(0, i) + ellipsis;
+
+                if (metrics.stringWidth(candidate) <= maxWidth) {
+                    return candidate;
+                }
+            }
+
+            return ellipsis;
+        }
+
         private Item getHoveredItem() {
             int inventoryIndex = getInventorySlotAt(mousePoint);
             if (inventoryIndex >= 0) {
@@ -1278,6 +1464,7 @@ public final class InventorySystem {
                 case LEG_ARMOR -> EquipmentSlot.LEGS;
                 case RING -> EquipmentSlot.RING_LEFT;
                 case WEAPON -> EquipmentSlot.WEAPON;
+                case SHIELD -> EquipmentSlot.SHIELD;
                 case LIMB, MISC, CONSUMABLE -> null;
             };
         }
@@ -1376,6 +1563,7 @@ public final class InventorySystem {
                 case LEG_ARMOR -> new Color(90, 110, 150);
                 case RING -> new Color(200, 170, 70);
                 case WEAPON -> new Color(170, 170, 180);
+                case SHIELD -> new Color(115, 145, 165);
                 case LIMB -> new Color(180, 90, 120);
                 case CONSUMABLE -> new Color(120, 180, 120);
                 case MISC -> new Color(150, 150, 150);
@@ -1420,23 +1608,15 @@ public final class InventorySystem {
         }
 
         public boolean hasActiveExamineInteraction() {
-            return getActiveExamineInteraction() != null;
+            return false;
         }
 
         public InteractionSystem.Interaction getActiveExamineInteraction() {
-            if (examineInteraction != null && examineInteraction.isClosed()) {
-                examineInteraction = null;
-            }
-
-            return examineInteraction;
+            return null;
         }
 
         public void closeExamineInteraction() {
-            if (examineInteraction != null) {
-                examineInteraction.close();
-            }
-
-            examineInteraction = null;
+            clearExamineTooltip();
         }
 
         private int getInventorySlotAt(Point point) {

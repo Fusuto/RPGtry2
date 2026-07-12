@@ -20,7 +20,9 @@ public enum EnvironmentLibrary {
             "assets/sounds/generated/Concept 4.wav",
             "assets/sounds/generated/footstep.wav",
             "assets/sounds/generated/player_hit.wav"
-    );
+    ),
+
+    ;
 
     private final List<EnvironmentTheme> themes;
     private final String ambienceSoundPath;

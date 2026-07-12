@@ -18,6 +18,7 @@ public class DungeonGenerator {
     private static final double MEDIUM_ROOM_CHANCE = 0.20;
     private static final double DOOR_CHANCE = 0.22;
     private static final double MONO_TYPE_CHANCE = 0.30;
+    private static final int TARGET_CARVED_CELL_DIVISOR = 5;
     private static final String DEEPER_DOOR_INTERACTION_ID = "generated_dungeon_gate";
 
     private final Random random;
@@ -86,7 +87,7 @@ public class DungeonGenerator {
 
         int width = tiles[0].length;
         int height = tiles.length;
-        int targetCells = (width * height) / 5;
+        int targetCells = (width * height) / TARGET_CARVED_CELL_DIVISOR;
         Point current = start;
 
         while (carvedCells.size() < targetCells) {

@@ -2,6 +2,7 @@ package org.main.core;
 
 import org.main.content.ItemLibrary;
 import org.main.content.PlayerRegionLibrary;
+import org.main.content.RecipeLibrary;
 import org.main.engine.DungeonMap;
 import org.main.monsters.MonsterType;
 
@@ -304,7 +305,11 @@ public final class SaveSystem {
         }
 
         ItemLibrary libraryItem = ItemLibrary.fromDisplayName(item.getName());
-        return libraryItem == null ? "" : libraryItem.name();
+        if (libraryItem != null) {
+            return libraryItem.name();
+        }
+
+        return RecipeLibrary.isSmithingResult(item) ? "RECIPE|" + item.getName() : "";
     }
 
     private static InventorySystem.Item readInventoryItem(String itemName) {
@@ -314,6 +319,10 @@ public final class SaveSystem {
 
         if (itemName.startsWith("LIMB|")) {
             return readLimb(itemName);
+        }
+
+        if (itemName.startsWith("RECIPE|")) {
+            return RecipeLibrary.createSmithingResultByDisplayName(itemName.substring("RECIPE|".length()));
         }
 
         try {

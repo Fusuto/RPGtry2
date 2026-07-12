@@ -82,6 +82,20 @@ public final class AssetLoader {
         return AudioSystem.getAudioInputStream(new BufferedInputStream(stream));
     }
 
+    public static InputStream openAssetStream(String assetPath) throws IOException {
+        Path externalPath = resolveExternalPath(assetPath);
+        if (externalPath != null && Files.exists(externalPath)) {
+            return Files.newInputStream(externalPath);
+        }
+
+        InputStream stream = openResourceStream(normalizeResourcePath(assetPath));
+        if (stream == null) {
+            throw new IOException("Asset resource not found: " + assetPath);
+        }
+
+        return new BufferedInputStream(stream);
+    }
+
     public static List<ImageAsset> loadImagesFromFolder(String folderPath) {
         List<ImageAsset> assets = new ArrayList<>();
         Set<String> loadedFileNames = new LinkedHashSet<>();

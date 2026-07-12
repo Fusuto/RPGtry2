@@ -1,10 +1,14 @@
 package org.main.core;
 
 import org.main.battle.BattleEncounter;
+import org.main.content.GatheringNodeLibrary;
+import org.main.content.ItemLibrary;
 import org.main.content.QuestLibrary;
+import org.main.content.RecipeLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 
+import java.awt.Point;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HashMap;
@@ -13,6 +17,24 @@ import java.util.Map;
 import java.util.Set;
 
 public class GameState {
+    private static final int RESOURCE_RESPAWN_MS = 5 * 60 * 1000;
+    private static final int GATHERING_ATTEMPT_INTERVAL_MS = 2500;
+    private static final int RESOURCE_ATTEMPTS_PER_EXHAUSTION_ROLL = 2;
+    private static final double RESOURCE_EXHAUSTION_CHANCE = 0.50;
+    private static final int MAX_RESOURCE_EXHAUSTION_LEVEL = 2;
+    private static final double BASE_FISHING_SUCCESS_CHANCE = 0.35;
+    private static final double FISHING_SUCCESS_CHANCE_PER_LEVEL = 0.03;
+    private static final double MAX_FISHING_SUCCESS_CHANCE = 0.85;
+    private static final int FISHING_XP_REWARD = 18;
+    private static final double BASE_MINING_SUCCESS_CHANCE = 0.40;
+    private static final double MINING_SUCCESS_CHANCE_PER_LEVEL = 0.03;
+    private static final double MAX_MINING_SUCCESS_CHANCE = 0.88;
+    private static final int MINING_XP_REWARD = 18;
+    private static final double BASE_COOKING_SUCCESS_CHANCE = 0.45;
+    private static final double COOKING_SUCCESS_CHANCE_PER_LEVEL = 0.035;
+    private static final double MAX_COOKING_SUCCESS_CHANCE = 0.90;
+    private static final int COOKING_XP_REWARD = 20;
+
     private DungeonMap dungeonMap;
     private final List<MapEntity> entities = new ArrayList<>();
     private final Map<String, String> tileInteractionIds = new HashMap<>();
@@ -55,6 +77,27 @@ public class GameState {
     private int fishingY = -1;
     private int fishingElapsedMs = 0;
     private String fishingMessage = "Cast your line.";
+    private boolean miningActive = false;
+    private int miningX = -1;
+    private int miningY = -1;
+    private int miningElapsedMs = 0;
+    private String miningMessage = "Strike the rock.";
+    private final Map<String, ResourceNodeState> resourceNodeStates = new HashMap<>();
+    private boolean cookingActive = false;
+    private int cookingX = -1;
+    private int cookingY = -1;
+    private int cookingElapsedMs = 0;
+    private int selectedWorldItemIndex = -1;
+    private String cookingItemName;
+    private String cookingMessage = "Use raw fish, then interact with a campfire.";
+    private boolean smeltingActive = false;
+    private int smeltingX = -1;
+    private int smeltingY = -1;
+    private int smeltingElapsedMs = 0;
+    private String smeltingItemName;
+    private String smeltingMessage = "Use ore, then interact with a furnace.";
+    private String smithingMaterialName;
+    private String smithingMessage = "Use a metal bar, then interact with an anvil.";
     private String selectedQuestId;
     private InteractionSystem.Interaction activeInteraction;
     private ShopSystem.ShopSession activeShop;
@@ -80,6 +123,9 @@ public class GameState {
         if (activeInteraction != null && activeInteraction.isClosed()) {
             activeInteraction = null;
             stopFishing();
+            stopCooking();
+            stopMining();
+            stopSmelting();
         }
 
         return activeInteraction;
@@ -105,6 +151,8 @@ public class GameState {
 
         activeInteraction = null;
         stopFishing();
+        stopCooking();
+        stopMining();
     }
 
     public PlayerCharacter getPlayerCharacter() {
@@ -131,7 +179,10 @@ public class GameState {
             closeQuests();
             closeStats();
             closeShop();
-            closeInteraction();
+
+            if (!isInventoryOverlayAllowed()) {
+                closeInteraction();
+            }
         }
 
         this.inventoryOpen = inventoryOpen;
@@ -143,6 +194,11 @@ public class GameState {
 
     public void closeInventory() {
         inventoryOpen = false;
+    }
+
+    public boolean isInventoryOverlayAllowed() {
+        InteractionSystem.Interaction interaction = getActiveInteraction();
+        return interaction != null && interaction.isInventoryOverlayAllowed();
     }
 
     public boolean isSkillsOpen() {
@@ -359,6 +415,7 @@ public class GameState {
         this.dungeonMap = dungeonMap;
         entities.clear();
         tileInteractionIds.clear();
+        resourceNodeStates.clear();
         resetMiniMapDiscovery();
 
         if (newEntities != null) {
@@ -776,12 +833,21 @@ public class GameState {
         activeShop = null;
     }
 
-    public void startFishing(int x, int y) {
+    public boolean startFishing(int x, int y) {
+        stopCooking();
+        stopMining();
+
+        if (isResourceExhausted(x, y)) {
+            fishingMessage = "The shoal is quiet. Give it time to recover.";
+            return false;
+        }
+
         fishingActive = true;
         fishingX = x;
         fishingY = y;
         fishingElapsedMs = 0;
         fishingMessage = "You cast your line into the shoal.";
+        return true;
     }
 
     public void stopFishing() {
@@ -806,17 +872,35 @@ public class GameState {
 
         fishingElapsedMs += Math.max(0, deltaMs);
 
-        if (fishingElapsedMs < 2500) {
+        if (fishingElapsedMs < GATHERING_ATTEMPT_INTERVAL_MS) {
             return;
         }
 
         fishingElapsedMs = 0;
 
+        if (isResourceExhausted(fishingX, fishingY)) {
+            fishingMessage = "The shoal is quiet. Give it time to recover.";
+            stopFishing();
+            return;
+        }
+
+        recordResourceAttempt(fishingX, fishingY);
+
+        if (isResourceExhausted(fishingX, fishingY)) {
+            fishingMessage = "The shoal goes still. It needs time to recover.";
+            stopFishing();
+            return;
+        }
+
         int fishingLevel = Math.max(1, playerCharacter.getSkillLevel(CharacterSkill.FISHING));
-        double successChance = Math.min(0.85, 0.35 + fishingLevel * 0.03);
+        double successChance = Math.min(
+                MAX_FISHING_SUCCESS_CHANCE,
+                BASE_FISHING_SUCCESS_CHANCE + fishingLevel * FISHING_SUCCESS_CHANCE_PER_LEVEL
+        );
 
         if (Math.random() <= successChance && getInventory().addItem(org.main.content.ItemLibrary.RAW_FISH.createItem())) {
-            int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.FISHING, 18);
+            int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.FISHING, FISHING_XP_REWARD);
+            advanceQuestIfAt(QuestLibrary.GATHERING_BASICS, 0, 1);
             fishingMessage = levelsGained > 0
                     ? "You catch a fish. Fishing level " + playerCharacter.getSkillLevel(CharacterSkill.FISHING) + "!"
                     : "You catch a fish. Fishing XP "
@@ -837,6 +921,589 @@ public class GameState {
 
     public String getFishingMessage() {
         return fishingMessage;
+    }
+
+    public boolean startMining(int x, int y) {
+        stopFishing();
+        stopCooking();
+        stopSmelting();
+
+        if (isResourceExhausted(x, y)) {
+            miningMessage = "The rock is depleted. Give it time to recover.";
+            return false;
+        }
+
+        miningActive = true;
+        miningX = x;
+        miningY = y;
+        miningElapsedMs = 0;
+        miningMessage = "You swing at the mineral rock.";
+        return true;
+    }
+
+    public void stopMining() {
+        miningActive = false;
+        miningX = -1;
+        miningY = -1;
+        miningElapsedMs = 0;
+    }
+
+    public boolean isMiningActive() {
+        return miningActive;
+    }
+
+    public boolean isMiningAt(int x, int y) {
+        return miningActive && miningX == x && miningY == y;
+    }
+
+    public void updateMining(int deltaMs) {
+        if (!miningActive || playerCharacter == null) {
+            return;
+        }
+
+        miningElapsedMs += Math.max(0, deltaMs);
+
+        if (miningElapsedMs < GATHERING_ATTEMPT_INTERVAL_MS) {
+            return;
+        }
+
+        miningElapsedMs = 0;
+
+        if (isResourceExhausted(miningX, miningY)) {
+            miningMessage = "The rock is depleted. Give it time to recover.";
+            stopMining();
+            return;
+        }
+
+        recordResourceAttempt(miningX, miningY);
+
+        if (isResourceExhausted(miningX, miningY)) {
+            miningMessage = "The rock crumbles down to bare stone. It needs time to recover.";
+            stopMining();
+            return;
+        }
+
+        int miningLevel = Math.max(1, playerCharacter.getSkillLevel(CharacterSkill.MINING));
+        double successChance = Math.min(
+                MAX_MINING_SUCCESS_CHANCE,
+                BASE_MINING_SUCCESS_CHANCE + miningLevel * MINING_SUCCESS_CHANCE_PER_LEVEL
+        );
+
+        if (Math.random() <= successChance && getInventory().addItem(ItemLibrary.COPPER_ORE.createItem())) {
+            int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.MINING, MINING_XP_REWARD);
+            advanceQuestIfAt(QuestLibrary.GATHERING_BASICS, 2, 3);
+            miningMessage = levelsGained > 0
+                    ? "You mine copper ore. Mining level " + playerCharacter.getSkillLevel(CharacterSkill.MINING) + "!"
+                    : "You mine copper ore. Mining XP "
+                    + playerCharacter.getSkillExperience(CharacterSkill.MINING)
+                    + "/"
+                    + playerCharacter.getSkillExperienceRequired(CharacterSkill.MINING)
+                    + ".";
+            return;
+        }
+
+        if (!getInventory().hasFreeSlot()) {
+            miningMessage = "Your inventory is too full to hold any ore.";
+            return;
+        }
+
+        miningMessage = "You chip the rock, but no usable ore breaks free.";
+    }
+
+    public String getMiningMessage() {
+        return miningMessage;
+    }
+
+    public void updateResourceNodes(int deltaMs) {
+        if (resourceNodeStates.isEmpty()) {
+            return;
+        }
+
+        int safeDelta = Math.max(0, deltaMs);
+
+        for (Map.Entry<String, ResourceNodeState> entry : resourceNodeStates.entrySet()) {
+            ResourceNodeState state = entry.getValue();
+
+            if (state.respawnRemainingMs <= 0) {
+                continue;
+            }
+
+            state.respawnRemainingMs = Math.max(0, state.respawnRemainingMs - safeDelta);
+
+            if (state.respawnRemainingMs == 0) {
+                state.exhaustionLevel = 0;
+                state.attemptsSinceLastExhaustionRoll = 0;
+                restoreResourceNode(entry.getKey());
+            }
+        }
+    }
+
+    public int getResourceExhaustionLevel(int x, int y) {
+        return getResourceNodeState(x, y).exhaustionLevel;
+    }
+
+    private void recordResourceAttempt(int x, int y) {
+        ResourceNodeState state = getResourceNodeState(x, y);
+
+        if (state.exhaustionLevel >= MAX_RESOURCE_EXHAUSTION_LEVEL) {
+            return;
+        }
+
+        state.attemptsSinceLastExhaustionRoll++;
+
+        if (state.attemptsSinceLastExhaustionRoll < RESOURCE_ATTEMPTS_PER_EXHAUSTION_ROLL) {
+            return;
+        }
+
+        state.attemptsSinceLastExhaustionRoll = 0;
+
+        if (Math.random() <= RESOURCE_EXHAUSTION_CHANCE) {
+            state.exhaustionLevel = Math.min(MAX_RESOURCE_EXHAUSTION_LEVEL, state.exhaustionLevel + 1);
+            updateResourceNodeVisual(x, y);
+
+            if (state.exhaustionLevel >= MAX_RESOURCE_EXHAUSTION_LEVEL) {
+                state.respawnRemainingMs = RESOURCE_RESPAWN_MS;
+            }
+        }
+    }
+
+    private boolean isResourceExhausted(int x, int y) {
+        return getResourceNodeState(x, y).exhaustionLevel >= MAX_RESOURCE_EXHAUSTION_LEVEL;
+    }
+
+    private ResourceNodeState getResourceNodeState(int x, int y) {
+        return resourceNodeStates.computeIfAbsent(tileKey(x, y), ignored -> new ResourceNodeState());
+    }
+
+    private void restoreResourceNode(String key) {
+        Point point = parseTileKey(key);
+
+        if (point == null) {
+            return;
+        }
+
+        updateResourceNodeVisual(point.x, point.y);
+    }
+
+    private void updateResourceNodeVisual(int x, int y) {
+        int exhaustionLevel = getResourceExhaustionLevel(x, y);
+        MapEntity entity = getEntityAt(x, y);
+
+        if (entity != null && GatheringNodeLibrary.MINERAL_ROCK_A.getInteractionId().equals(entity.getInteractionId())) {
+            entity.setStaticImage(GatheringNodeLibrary.MINERAL_ROCK_A.getImageForExhaustion(exhaustionLevel));
+            return;
+        }
+
+        if (GatheringNodeLibrary.FISHING_SHOAL.getInteractionId().equals(getTileInteractionId(x, y))
+                && dungeonMap != null) {
+            dungeonMap.setTile(x, y, exhaustionLevel >= 2 ? Library.TileType.WATER : Library.TileType.FISHING_WATER);
+        }
+    }
+
+    private Point parseTileKey(String key) {
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+
+        String[] parts = key.split(",", 2);
+        if (parts.length != 2) {
+            return null;
+        }
+
+        try {
+            return new Point(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private MapEntity getEntityAt(int x, int y) {
+        for (MapEntity entity : entities) {
+            if (entity.isAt(x, y)) {
+                return entity;
+            }
+        }
+
+        return null;
+    }
+
+    public void selectWorldUseItem(int inventoryIndex) {
+        selectedWorldItemIndex = inventoryIndex;
+    }
+
+    public InventorySystem.Item getSelectedWorldUseItem() {
+        if (selectedWorldItemIndex < 0) {
+            return null;
+        }
+
+        return getInventory().getItem(selectedWorldItemIndex);
+    }
+
+    public void clearSelectedWorldUseItem() {
+        selectedWorldItemIndex = -1;
+    }
+
+    public boolean startCooking(int x, int y) {
+        stopFishing();
+        stopMining();
+        stopSmelting();
+        InventorySystem.Item selectedItem = getSelectedWorldUseItem();
+
+        if (!isCookableItem(selectedItem)) {
+            cookingMessage = "Use a raw fish from your inventory first, then interact with the campfire.";
+            return false;
+        }
+
+        cookingActive = true;
+        cookingX = x;
+        cookingY = y;
+        cookingElapsedMs = 0;
+        cookingItemName = selectedItem.getName();
+        cookingMessage = "You hold " + cookingItemName + " near the flames.";
+        return true;
+    }
+
+    public void stopCooking() {
+        cookingActive = false;
+        cookingX = -1;
+        cookingY = -1;
+        cookingElapsedMs = 0;
+        cookingItemName = null;
+    }
+
+    public boolean isCookingActive() {
+        return cookingActive;
+    }
+
+    public boolean isCookingAt(int x, int y) {
+        return cookingActive && cookingX == x && cookingY == y;
+    }
+
+    public void updateCooking(int deltaMs) {
+        if (!cookingActive || playerCharacter == null) {
+            return;
+        }
+
+        cookingElapsedMs += Math.max(0, deltaMs);
+
+        if (cookingElapsedMs < GATHERING_ATTEMPT_INTERVAL_MS) {
+            return;
+        }
+
+        cookingElapsedMs = 0;
+
+        if (cookingItemName == null || cookingItemName.isBlank()) {
+            cookingMessage = "Use a raw fish from your inventory first, then interact with the campfire.";
+            clearSelectedWorldUseItem();
+            return;
+        }
+
+        InventorySystem.Item selectedItem = getSelectedWorldUseItem();
+
+        if (selectedItem == null || !cookingItemName.equalsIgnoreCase(selectedItem.getName())) {
+            int nextMatchingFishIndex = getInventory().findFirstItemIndexNamed(cookingItemName);
+
+            if (nextMatchingFishIndex < 0) {
+                cookingMessage = "You have no more " + cookingItemName + " to cook.";
+                cookingItemName = null;
+                cookingActive = false;
+                clearSelectedWorldUseItem();
+                return;
+            }
+
+            selectWorldUseItem(nextMatchingFishIndex);
+            selectedItem = getSelectedWorldUseItem();
+        }
+
+        if (!isCookableItem(selectedItem) || !cookingItemName.equalsIgnoreCase(selectedItem.getName())) {
+            cookingMessage = "That item cannot be cooked here.";
+            cookingItemName = null;
+            cookingActive = false;
+            clearSelectedWorldUseItem();
+            return;
+        }
+
+        getInventory().removeItem(selectedWorldItemIndex);
+        clearSelectedWorldUseItem();
+
+        int cookingLevel = Math.max(1, playerCharacter.getSkillLevel(CharacterSkill.COOKING));
+        double successChance = Math.min(
+                MAX_COOKING_SUCCESS_CHANCE,
+                BASE_COOKING_SUCCESS_CHANCE + cookingLevel * COOKING_SUCCESS_CHANCE_PER_LEVEL
+        );
+        boolean cooked = Math.random() <= successChance;
+        InventorySystem.Item resultItem = cooked
+                ? createCookedItem(cookingItemName)
+                : createBurntItem(cookingItemName);
+
+        if (!getInventory().addItem(resultItem)) {
+            cookingMessage = "Your inventory is too full to hold the result.";
+            return;
+        }
+
+        advanceQuestIfAt(QuestLibrary.GATHERING_BASICS, 1, 2);
+
+        if (cooked) {
+            int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.COOKING, COOKING_XP_REWARD);
+            cookingMessage = levelsGained > 0
+                    ? "You cook the fish. Cooking level " + playerCharacter.getSkillLevel(CharacterSkill.COOKING) + "!"
+                    : "You cook the fish. Cooking XP "
+                    + playerCharacter.getSkillExperience(CharacterSkill.COOKING)
+                    + "/"
+                    + playerCharacter.getSkillExperienceRequired(CharacterSkill.COOKING)
+                    + ".";
+        } else {
+            cookingMessage = "You burn the " + cookingItemName + ".";
+        }
+
+        int nextMatchingFishIndex = getInventory().findFirstItemIndexNamed(cookingItemName);
+        if (nextMatchingFishIndex >= 0) {
+            selectWorldUseItem(nextMatchingFishIndex);
+        } else {
+            cookingMessage = cookingMessage + " You have no more " + cookingItemName + " to cook.";
+            cookingItemName = null;
+            cookingActive = false;
+        }
+    }
+
+    public String getCookingMessage() {
+        return cookingMessage;
+    }
+
+    private boolean isCookableItem(InventorySystem.Item item) {
+        return item != null && ItemLibrary.RAW_FISH.getDisplayName().equalsIgnoreCase(item.getName());
+    }
+
+    private InventorySystem.Item createCookedItem(String rawItemName) {
+        return ItemLibrary.COOKED_FISH.createItem();
+    }
+
+    private InventorySystem.Item createBurntItem(String rawItemName) {
+        return ItemLibrary.BURNT_FISH.createItem();
+    }
+
+    public boolean startSmelting(int x, int y) {
+        stopFishing();
+        stopMining();
+        stopCooking();
+        InventorySystem.Item selectedItem = getSelectedWorldUseItem();
+
+        if (!RecipeLibrary.isSmeltableItem(selectedItem)) {
+            smeltingMessage = "Use copper ore from your inventory first, then interact with the furnace.";
+            return false;
+        }
+
+        smeltingActive = true;
+        smeltingX = x;
+        smeltingY = y;
+        smeltingElapsedMs = 0;
+        smeltingItemName = selectedItem.getName();
+        smeltingMessage = "You place " + smeltingItemName + " into the furnace.";
+        return true;
+    }
+
+    public void stopSmelting() {
+        smeltingActive = false;
+        smeltingX = -1;
+        smeltingY = -1;
+        smeltingElapsedMs = 0;
+        smeltingItemName = null;
+    }
+
+    public boolean isSmeltingActive() {
+        return smeltingActive;
+    }
+
+    public boolean isSmeltingAt(int x, int y) {
+        return smeltingActive && smeltingX == x && smeltingY == y;
+    }
+
+    public void updateSmelting(int deltaMs) {
+        if (!smeltingActive || playerCharacter == null) {
+            return;
+        }
+
+        smeltingElapsedMs += Math.max(0, deltaMs);
+
+        if (smeltingElapsedMs < GATHERING_ATTEMPT_INTERVAL_MS) {
+            return;
+        }
+
+        smeltingElapsedMs = 0;
+
+        if (smeltingItemName == null || smeltingItemName.isBlank()) {
+            smeltingMessage = "Use ore from your inventory first, then interact with the furnace.";
+            clearSelectedWorldUseItem();
+            return;
+        }
+
+        InventorySystem.Item selectedItem = getSelectedWorldUseItem();
+
+        if (selectedItem == null || !smeltingItemName.equalsIgnoreCase(selectedItem.getName())) {
+            int nextMatchingOreIndex = getInventory().findFirstItemIndexNamed(smeltingItemName);
+
+            if (nextMatchingOreIndex < 0) {
+                smeltingMessage = "You have no more " + smeltingItemName + " to smelt.";
+                smeltingItemName = null;
+                smeltingActive = false;
+                clearSelectedWorldUseItem();
+                return;
+            }
+
+            selectWorldUseItem(nextMatchingOreIndex);
+            selectedItem = getSelectedWorldUseItem();
+        }
+
+        RecipeLibrary.SmeltingRecipe recipe = RecipeLibrary.smeltingRecipeFor(selectedItem);
+        if (recipe == null || !recipe.inputName().equalsIgnoreCase(smeltingItemName)) {
+            smeltingMessage = "That item cannot be smelted here.";
+            smeltingItemName = null;
+            smeltingActive = false;
+            clearSelectedWorldUseItem();
+            return;
+        }
+
+        getInventory().removeItem(selectedWorldItemIndex);
+        clearSelectedWorldUseItem();
+
+        if (!getInventory().addItem(recipe.createOutput())) {
+            smeltingMessage = "Your inventory is too full to hold the bar.";
+            return;
+        }
+
+        advanceQuestIfAt(QuestLibrary.GATHERING_BASICS, 3, 4);
+
+        int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.SMITHING, recipe.xpReward());
+        smeltingMessage = levelsGained > 0
+                ? "You smelt a " + recipe.outputName() + ". Smithing level "
+                + playerCharacter.getSkillLevel(CharacterSkill.SMITHING) + "!"
+                : "You smelt a " + recipe.outputName() + ". Smithing XP "
+                + playerCharacter.getSkillExperience(CharacterSkill.SMITHING)
+                + "/"
+                + playerCharacter.getSkillExperienceRequired(CharacterSkill.SMITHING)
+                + ".";
+
+        int nextMatchingOreIndex = getInventory().findFirstItemIndexNamed(smeltingItemName);
+        if (nextMatchingOreIndex >= 0) {
+            selectWorldUseItem(nextMatchingOreIndex);
+        } else {
+            smeltingMessage = smeltingMessage + " You have no more " + smeltingItemName + " to smelt.";
+            smeltingItemName = null;
+            smeltingActive = false;
+        }
+    }
+
+    public String getSmeltingMessage() {
+        return smeltingMessage;
+    }
+
+    public boolean startSmithing(int x, int y) {
+        stopFishing();
+        stopMining();
+        stopCooking();
+        stopSmelting();
+
+        InventorySystem.Item selectedItem = getSelectedWorldUseItem();
+        if (!RecipeLibrary.isSmithingMaterial(selectedItem)) {
+            smithingMaterialName = null;
+            smithingMessage = "Use a copper bar from your inventory first, then interact with the anvil.";
+            return false;
+        }
+
+        smithingMaterialName = selectedItem.getName();
+        smithingMessage = "Choose what to make with " + smithingMaterialName + ".";
+        return true;
+    }
+
+    public List<RecipeLibrary.SmithingRecipe> getAvailableSmithingRecipes() {
+        return RecipeLibrary.smithingRecipesForMaterial(smithingMaterialName);
+    }
+
+    public String getSmithingMaterialName() {
+        return smithingMaterialName;
+    }
+
+    public String getSmithingMessage() {
+        return smithingMessage;
+    }
+
+    public boolean craftSmithingRecipe(RecipeLibrary.SmithingRecipe recipe) {
+        if (recipe == null || playerCharacter == null) {
+            return false;
+        }
+
+        if (playerCharacter.getSkillLevel(CharacterSkill.SMITHING) < recipe.requiredLevel()) {
+            smithingMessage = "You need Smithing level " + recipe.requiredLevel() + " to make " + recipe.displayName() + ".";
+            return false;
+        }
+
+        int barCount = countInventoryItemsNamed(recipe.materialName());
+        if (barCount < recipe.requiredBars()) {
+            smithingMessage = "You need " + recipe.requiredBars() + " " + recipe.materialName() + " to make " + recipe.displayName() + ".";
+            return false;
+        }
+
+        if (!getInventory().hasFreeSlot() && recipe.requiredBars() <= 0) {
+            smithingMessage = "Your inventory is too full to hold the result.";
+            return false;
+        }
+
+        for (int i = 0; i < recipe.requiredBars(); i++) {
+            getInventory().removeFirstItemNamed(recipe.materialName());
+        }
+
+        if (!getInventory().addItem(recipe.createResult())) {
+            smithingMessage = "Your inventory is too full to hold the result.";
+            return false;
+        }
+
+        int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.SMITHING, recipe.xpReward());
+        smithingMessage = levelsGained > 0
+                ? "You smith a " + recipe.displayName() + ". Smithing level "
+                + playerCharacter.getSkillLevel(CharacterSkill.SMITHING) + "!"
+                : "You smith a " + recipe.displayName() + ". Smithing XP "
+                + playerCharacter.getSkillExperience(CharacterSkill.SMITHING)
+                + "/"
+                + playerCharacter.getSkillExperienceRequired(CharacterSkill.SMITHING)
+                + ".";
+
+        if (countInventoryItemsNamed(recipe.materialName()) <= 0) {
+            smithingMaterialName = null;
+            clearSelectedWorldUseItem();
+            smithingMessage += " You have no more " + recipe.materialName() + ".";
+        }
+
+        return true;
+    }
+
+    private int countInventoryItemsNamed(String itemName) {
+        if (itemName == null || itemName.isBlank()) {
+            return 0;
+        }
+
+        int count = 0;
+        InventorySystem.Inventory inventory = getInventory();
+
+        for (int i = 0; i < InventorySystem.Inventory.SLOT_COUNT; i++) {
+            InventorySystem.Item item = inventory.getItem(i);
+            if (item != null && itemName.equalsIgnoreCase(item.getName())) {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private void advanceQuestIfAt(QuestLibrary quest, int expectedStage, int nextStage) {
+        if (getQuestStage(quest) == expectedStage) {
+            setQuestStage(quest, nextStage);
+        }
+    }
+
+    private static class ResourceNodeState {
+        private int exhaustionLevel = 0;
+        private int attemptsSinceLastExhaustionRoll = 0;
+        private int respawnRemainingMs = 0;
     }
 
     public int getDirection() {

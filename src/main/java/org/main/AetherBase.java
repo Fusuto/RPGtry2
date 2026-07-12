@@ -14,6 +14,23 @@ import java.io.IOException;
 import java.util.List;
 
 public class AetherBase extends JPanel implements KeyListener {
+    private static final int DEFAULT_WINDOW_WIDTH = 900;
+    private static final int DEFAULT_WINDOW_HEIGHT = 600;
+    private static final int TARGET_FRAME_MS = 16;
+    private static final double INITIAL_AVERAGE_FRAME_MS = TARGET_FRAME_MS;
+    private static final double FRAME_AVERAGE_PREVIOUS_WEIGHT = 0.90;
+    private static final double FRAME_AVERAGE_CURRENT_WEIGHT = 0.10;
+    private static final double NANOS_PER_MILLISECOND = 1_000_000.0;
+    private static final double MILLIS_PER_SECOND = 1000.0;
+    private static final int MAX_CHARACTER_NAME_LENGTH = 16;
+    private static final int PERFORMANCE_FONT_SIZE = 12;
+    private static final int PERFORMANCE_RIGHT_MARGIN = 18;
+    private static final int PERFORMANCE_TOP_MARGIN = 14;
+    private static final int PERFORMANCE_BACKGROUND_HORIZONTAL_PADDING = 6;
+    private static final int PERFORMANCE_BACKGROUND_TOP_OFFSET = 2;
+    private static final int PERFORMANCE_BACKGROUND_EXTRA_HEIGHT = 8;
+    private static final int PERFORMANCE_BACKGROUND_ALPHA = 150;
+    private static final Color PERFORMANCE_TEXT_COLOR = new Color(220, 240, 220);
 
     private final DungeonRenderer dungeonRenderer = new DungeonRenderer();
     private final MiniMapRenderer miniMapRenderer = new MiniMapRenderer();
@@ -39,7 +56,7 @@ public class AetherBase extends JPanel implements KeyListener {
     private final InventorySystem.InventoryPanel inventoryPanel;
 
     private long lastUpdateTime = System.currentTimeMillis();
-    private double averageFrameMs = 16.0;
+    private double averageFrameMs = INITIAL_AVERAGE_FRAME_MS;
     private double lastUpdateMs = 0.0;
     private double lastRenderMs = 0.0;
     private String startMenuMessage = "";
@@ -54,7 +71,7 @@ public class AetherBase extends JPanel implements KeyListener {
     private static final String GAME_OVER_MUSIC_PATH = null;
 
     public AetherBase() {
-        setPreferredSize(new Dimension(900, 600));
+        setPreferredSize(new Dimension(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT));
         setBackground(Color.BLACK);
         setFocusable(true);
         addKeyListener(this);
@@ -81,7 +98,7 @@ public class AetherBase extends JPanel implements KeyListener {
         installMouseInput();
         GameBootstrap.seedTestContent(gameState);
 
-        Timer timer = new Timer(16, e -> {
+        Timer timer = new Timer(TARGET_FRAME_MS, e -> {
             long now = System.currentTimeMillis();
             int deltaMs = (int) (now - lastUpdateTime);
             lastUpdateTime = now;
@@ -125,7 +142,8 @@ public class AetherBase extends JPanel implements KeyListener {
 
     private void updateGame(int deltaMs) {
         long updateStart = System.nanoTime();
-        averageFrameMs = averageFrameMs * 0.90 + deltaMs * 0.10;
+        averageFrameMs = averageFrameMs * FRAME_AVERAGE_PREVIOUS_WEIGHT
+                + deltaMs * FRAME_AVERAGE_CURRENT_WEIGHT;
 
         if (gameState.isGameOverMode() && !gameOverMusicStarted) {
             soundSystem.stopAll();
@@ -134,7 +152,11 @@ public class AetherBase extends JPanel implements KeyListener {
         }
 
         gameState.updateMovementAnimation(deltaMs);
+        gameState.updateResourceNodes(deltaMs);
         gameState.updateFishing(deltaMs);
+        gameState.updateMining(deltaMs);
+        gameState.updateCooking(deltaMs);
+        gameState.updateSmelting(deltaMs);
         battleController.update();
 
         for (MapEntity entity : gameState.getEntities()) {
@@ -147,7 +169,7 @@ public class AetherBase extends JPanel implements KeyListener {
          * not surface it during normal play.
          */
 
-        lastUpdateMs = (System.nanoTime() - updateStart) / 1_000_000.0;
+        lastUpdateMs = (System.nanoTime() - updateStart) / NANOS_PER_MILLISECOND;
     }
 
     public static void main(String[] args) {
@@ -169,7 +191,7 @@ public class AetherBase extends JPanel implements KeyListener {
 
         if (gameState.isStartMenuMode()) {
             AetherMenuScreens.drawStartMenu(g2, getWidth(), getHeight(), startMenuMessage);
-            lastRenderMs = (System.nanoTime() - renderStart) / 1_000_000.0;
+            lastRenderMs = (System.nanoTime() - renderStart) / NANOS_PER_MILLISECOND;
             return;
         }
 
@@ -182,13 +204,13 @@ public class AetherBase extends JPanel implements KeyListener {
                     characterCreationMessage,
                     selectedPlayerRegion
             );
-            lastRenderMs = (System.nanoTime() - renderStart) / 1_000_000.0;
+            lastRenderMs = (System.nanoTime() - renderStart) / NANOS_PER_MILLISECOND;
             return;
         }
 
         if (gameState.isGameOverMode()) {
             AetherMenuScreens.drawGameOver(g2, getWidth(), getHeight(), gameOverCover, gameOverTitleBackground, gameOverMessage);
-            lastRenderMs = (System.nanoTime() - renderStart) / 1_000_000.0;
+            lastRenderMs = (System.nanoTime() - renderStart) / NANOS_PER_MILLISECOND;
             return;
         }
 
@@ -208,6 +230,15 @@ public class AetherBase extends JPanel implements KeyListener {
             );
 
             miniMapRenderer.draw(g2, gameState);
+
+            if (gameState.hasActiveInteraction() && gameState.isInventoryOverlayAllowed()) {
+                interactionWindow.draw(
+                        g2,
+                        gameState.getActiveInteraction(),
+                        getWidth(),
+                        getHeight() - overworldHud.getBottomReservedHeight()
+                );
+            }
 
             if (gameState.isInventoryOpen()) {
                 inventoryPanel.draw(
@@ -232,7 +263,7 @@ public class AetherBase extends JPanel implements KeyListener {
                 shopWindow.draw(g2, gameState, getWidth(), getHeight());
             }
 
-            if (gameState.hasActiveInteraction()) {
+            if (gameState.hasActiveInteraction() && !gameState.isInventoryOverlayAllowed()) {
                 interactionWindow.draw(
                         g2,
                         gameState.getActiveInteraction(),
@@ -251,7 +282,7 @@ public class AetherBase extends JPanel implements KeyListener {
             );
         }
 
-        lastRenderMs = (System.nanoTime() - renderStart) / 1_000_000.0;
+        lastRenderMs = (System.nanoTime() - renderStart) / NANOS_PER_MILLISECOND;
 
         if (gameState.isPerformanceOverlayVisible()) {
             drawPerformanceOverlay(g2);
@@ -347,7 +378,7 @@ public class AetherBase extends JPanel implements KeyListener {
     }
 
     private void drawPerformanceOverlay(Graphics2D g) {
-        int fps = averageFrameMs <= 0.0 ? 0 : (int) Math.round(1000.0 / averageFrameMs);
+        int fps = averageFrameMs <= 0.0 ? 0 : (int) Math.round(MILLIS_PER_SECOND / averageFrameMs);
         String[] lines = {
                 "FPS " + fps,
                 String.format("Frame %.1f ms", averageFrameMs),
@@ -358,7 +389,7 @@ public class AetherBase extends JPanel implements KeyListener {
         };
 
         Font previousFont = g.getFont();
-        g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, PERFORMANCE_FONT_SIZE));
         FontMetrics metrics = g.getFontMetrics();
         int lineHeight = metrics.getHeight();
         int width = 0;
@@ -367,13 +398,18 @@ public class AetherBase extends JPanel implements KeyListener {
             width = Math.max(width, metrics.stringWidth(line));
         }
 
-        int x = getWidth() - width - 18;
-        int y = 14;
-        int height = lineHeight * lines.length + 8;
+        int x = getWidth() - width - PERFORMANCE_RIGHT_MARGIN;
+        int y = PERFORMANCE_TOP_MARGIN;
+        int height = lineHeight * lines.length + PERFORMANCE_BACKGROUND_EXTRA_HEIGHT;
 
-        g.setColor(new Color(0, 0, 0, 150));
-        g.fillRect(x - 6, y - 2, width + 12, height);
-        g.setColor(new Color(220, 240, 220));
+        g.setColor(new Color(0, 0, 0, PERFORMANCE_BACKGROUND_ALPHA));
+        g.fillRect(
+                x - PERFORMANCE_BACKGROUND_HORIZONTAL_PADDING,
+                y - PERFORMANCE_BACKGROUND_TOP_OFFSET,
+                width + PERFORMANCE_BACKGROUND_HORIZONTAL_PADDING * 2,
+                height
+        );
+        g.setColor(PERFORMANCE_TEXT_COLOR);
 
         for (int i = 0; i < lines.length; i++) {
             g.drawString(lines[i], x, y + lineHeight * (i + 1));
@@ -426,6 +462,17 @@ public class AetherBase extends JPanel implements KeyListener {
             return;
         }
 
+        InputBindings bindings = gameState.getInputBindings();
+        int keyCode = e.getKeyCode();
+
+        if (bindings.matches(InputBindings.Action.INVENTORY, keyCode)
+                && gameState.isDungeonMode()
+                && gameState.isInventoryOverlayAllowed()) {
+            gameState.toggleInventory();
+            repaint();
+            return;
+        }
+
         if (gameState.isDungeonMode() && gameState.hasActiveInteraction()) {
             boolean consumed = interactionWindow.handleKeyPressed(
                     e,
@@ -448,9 +495,6 @@ public class AetherBase extends JPanel implements KeyListener {
 
             return;
         }
-
-        InputBindings bindings = gameState.getInputBindings();
-        int keyCode = e.getKeyCode();
 
         if (bindings.matches(InputBindings.Action.ESCAPE_MENU, keyCode) && gameState.isDungeonMode()) {
             openConfigMenu();
@@ -580,7 +624,7 @@ public class AetherBase extends JPanel implements KeyListener {
 
         char typed = e.getKeyChar();
 
-        if (Character.isISOControl(typed) || characterName.length() >= 16) {
+        if (Character.isISOControl(typed) || characterName.length() >= MAX_CHARACTER_NAME_LENGTH) {
             return;
         }
 

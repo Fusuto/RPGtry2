@@ -1,10 +1,12 @@
 package org.main.core;
 
 public enum PlayerStat {
+    ATTACK("Attack"),
     STRENGTH("Strength"),
     DEFENSE("Defense"),
     AGILITY("Agility"),
     INTELLIGENCE("Intelligence"),
+    WILLPOWER("Willpower"),
     VITALITY("Vitality");
 
     private final String displayName;

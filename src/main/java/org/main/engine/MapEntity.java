@@ -7,6 +7,8 @@ import org.main.core.InventorySystem;
 import java.awt.image.BufferedImage;
 
 public class MapEntity {
+    private static final double MIN_VISUAL_SCALE = 0.10;
+
     private final String name;
     private final Library.EntityType type;
 
@@ -16,6 +18,9 @@ public class MapEntity {
     private InventorySystem.Item item;
     private String interactionId;
     private String talkSoundPath;
+    private boolean blocksMovementOverride = false;
+    private boolean renderOnWall = false;
+    private double visualScale = 1.0;
 
     private int x;
     private int y;
@@ -96,6 +101,29 @@ public class MapEntity {
         return this;
     }
 
+    public MapEntity blocksMovement(boolean blocksMovement) {
+        this.blocksMovementOverride = blocksMovement;
+        return this;
+    }
+
+    public MapEntity renderOnWall(boolean renderOnWall) {
+        this.renderOnWall = renderOnWall;
+        return this;
+    }
+
+    public boolean shouldRenderOnWall() {
+        return renderOnWall;
+    }
+
+    public double getVisualScale() {
+        return visualScale;
+    }
+
+    public MapEntity withVisualScale(double visualScale) {
+        this.visualScale = Math.max(MIN_VISUAL_SCALE, visualScale);
+        return this;
+    }
+
     public InventorySystem.Item getItem() {
         return item;
     }
@@ -129,7 +157,8 @@ public class MapEntity {
     }
 
     public boolean blocksMovement() {
-        return type == Library.EntityType.ENEMY
+        return blocksMovementOverride
+                || type == Library.EntityType.ENEMY
                 || type == Library.EntityType.ALLY
                 || type == Library.EntityType.NPC
                 || type == Library.EntityType.CHEST;

@@ -18,6 +18,7 @@ import java.util.List;
 
 public class BattleController {
     private static final String LOW_HP_WARNING_SOUND_PATH = "assets/sounds/generated/kurt_sample_2.wav";
+    private static final double LOW_HP_WARNING_THRESHOLD = 0.10;
 
     private final GameState gameState;
     private final BattleRenderer battleRenderer;
@@ -64,7 +65,7 @@ public class BattleController {
             return;
         }
 
-        if ((double) playerActor.getCurrentHp() / (double) playerActor.getMaxHp() <= 0.10) {
+        if ((double) playerActor.getCurrentHp() / (double) playerActor.getMaxHp() <= LOW_HP_WARNING_THRESHOLD) {
             soundSystem.playLoopingSound(LOW_HP_WARNING_SOUND_PATH);
         } else {
             soundSystem.stopLoopingSound();
@@ -80,6 +81,11 @@ public class BattleController {
 
         if (battleRenderer.isSkillWindowOpen()) {
             handleSkillWindowClick(point);
+            return;
+        }
+
+        if (battleRenderer.isItemWindowOpen()) {
+            handleItemWindowClick(point);
             return;
         }
 
@@ -104,7 +110,8 @@ public class BattleController {
         switch (e.getKeyCode()) {
             case KeyEvent.VK_1, KeyEvent.VK_A -> handleBattleCommand(Library.BattleCommand.ATTACK);
             case KeyEvent.VK_2, KeyEvent.VK_S -> handleBattleCommand(Library.BattleCommand.SKILL);
-            case KeyEvent.VK_3, KeyEvent.VK_R -> handleBattleCommand(Library.BattleCommand.RUN);
+            case KeyEvent.VK_3, KeyEvent.VK_I -> handleBattleCommand(Library.BattleCommand.ITEMS);
+            case KeyEvent.VK_4, KeyEvent.VK_R -> handleBattleCommand(Library.BattleCommand.RUN);
             case KeyEvent.VK_ESCAPE -> endBattle(false);
         }
     }
@@ -122,6 +129,33 @@ public class BattleController {
         }
 
         beginSkillTargeting(clickedSkill);
+    }
+
+    private void handleItemWindowClick(Point clickPoint) {
+        if (battleRenderer.isItemWindowCloseButtonAt(clickPoint)) {
+            battleRenderer.closeItemWindow();
+            return;
+        }
+
+        Integer inventoryIndex = battleRenderer.getBattleItemIndexAt(clickPoint);
+
+        if (inventoryIndex == null) {
+            return;
+        }
+
+        BattleEncounter currentEncounter = gameState.getCurrentEncounter();
+
+        if (currentEncounter == null) {
+            return;
+        }
+
+        Library.BattleResult result = currentEncounter.handleUseItem(
+                gameState.getInventory(),
+                inventoryIndex
+        );
+
+        battleRenderer.closeItemWindow();
+        handleBattleResult(result);
     }
 
     private void beginSkillTargeting(BattleSkill skill) {
@@ -250,6 +284,11 @@ public class BattleController {
             return;
         }
 
+        if (command == Library.BattleCommand.ITEMS) {
+            openItemWindow(currentEncounter);
+            return;
+        }
+
         Library.BattleResult result = currentEncounter.handleRunCommand(command);
         handleBattleResult(result);
     }
@@ -266,6 +305,7 @@ public class BattleController {
         pendingBattleCommand = Library.BattleCommand.ATTACK;
 
         battleRenderer.closeSkillWindow();
+        battleRenderer.closeItemWindow();
         battleRenderer.setSelectableTargets(validTargets);
         battleRenderer.clearPreviewSkill();
 
@@ -277,9 +317,21 @@ public class BattleController {
         pendingBattleCommand = null;
 
         battleRenderer.clearSelectableTargets();
+        battleRenderer.closeItemWindow();
         battleRenderer.openSkillWindow();
 
         currentEncounter.setBattleMessage("Choose a skill.");
+    }
+
+    private void openItemWindow(BattleEncounter currentEncounter) {
+        pendingSkill = null;
+        pendingBattleCommand = null;
+
+        battleRenderer.clearSelectableTargets();
+        battleRenderer.closeSkillWindow();
+        battleRenderer.openItemWindow(gameState.getInventory());
+
+        currentEncounter.setBattleMessage("Choose an item.");
     }
 
     private void handleBattleResult(Library.BattleResult result) {
@@ -323,6 +375,7 @@ public class BattleController {
         pendingBattleCommand = null;
 
         battleRenderer.closeSkillWindow();
+        battleRenderer.closeItemWindow();
         battleRenderer.clearSelectableTargets();
         battleRenderer.clearPreviewSkill();
 

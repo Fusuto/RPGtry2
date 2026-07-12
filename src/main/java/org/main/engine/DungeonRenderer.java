@@ -14,6 +14,11 @@ public class DungeonRenderer {
     private static final double HORIZONTAL_FOCAL_RATIO = 0.55;
     private static final double WALL_HALF_HEIGHT_RATIO = 0.48;
     private static final double NEAR_CLIP = 0.10;
+    private static final double SPRITE_TOP_VERTICAL = 0.55;
+    private static final double SMALL_ENTITY_SCALE = 0.45;
+    private static final int MIN_SMALL_ENTITY_HEIGHT = 16;
+    private static final int MIN_ENTITY_WIDTH = 8;
+    private static final int MIN_ENTITY_HEIGHT = 8;
     private static final int MAX_TEXTURE_STRIPS = 48;
     private static final int MIN_TEXTURE_STRIPS = 8;
     private static final String WATER_PATH = "assets/images/monster/Nov-2015/dngn/water/";
@@ -309,18 +314,11 @@ public class DungeonRenderer {
             return commands;
         }
         for (MapEntity entity : entities) {
-            /*
-             * Animation support is staying here for later.
-             *
-             * For now, we are using a static overworld image instead.
-             */
             BufferedImage entityImage = entity.getStaticImage();
 
-    /*
-    if (entity.getIdleAnimation() != null) {
-        entityImage = entity.getIdleAnimation().getCurrentFrame();
-    }
-    */
+            if (entity.getIdleAnimation() != null) {
+                entityImage = entity.getIdleAnimation().getCurrentFrame();
+            }
 
             if (entityImage == null) {
                 continue;
@@ -334,7 +332,7 @@ public class DungeonRenderer {
             if (Math.abs(relative.side) > sideLimit) {
                 continue;
             } /* * Simple visibility check: * Do not draw an entity if a wall exists on the same relative tile. * Later we can improve this into line-of-sight / occlusion. */
-            if (isWallAtRelative(relative.forward, relative.side)) {
+            if (isWallAtRelative(relative.forward, relative.side) && !entity.shouldRenderOnWall()) {
                 continue;
             }
 //            BufferedImage frame = entity.getIdleAnimation().getCurrentFrame();
@@ -344,16 +342,19 @@ public class DungeonRenderer {
                 continue;
             }
             Point bottomCenter = project(x, z, -1.0);
-            Point topCenter = project(x, z, 0.55);
+            Point topCenter = project(x, z, SPRITE_TOP_VERTICAL);
             int spriteHeight = Math.abs(bottomCenter.y - topCenter.y);
             if (entity.getType() == Library.EntityType.ITEM || entity.getType() == Library.EntityType.TRAP) {
-                spriteHeight = Math.max(16, (int) Math.round(spriteHeight * 0.45));
+                spriteHeight = Math.max(MIN_SMALL_ENTITY_HEIGHT, (int) Math.round(spriteHeight * SMALL_ENTITY_SCALE));
             }
+            spriteHeight = Math.max(MIN_ENTITY_HEIGHT, (int) Math.round(spriteHeight * entity.getVisualScale()));
             int spriteWidth = spriteHeight;
+            if (entityImage.getHeight() > 0) {
+                spriteWidth = Math.max(MIN_ENTITY_WIDTH, (int) Math.round(spriteHeight * (entityImage.getWidth() / (double) entityImage.getHeight())));
+            }
             int screenX = bottomCenter.x - spriteWidth / 2;
             int screenY = bottomCenter.y - spriteHeight;
             Polygon spriteBounds = rectanglePolygon(screenX, screenY, spriteWidth, spriteHeight);
-//            commands.add(new RenderCommand(frame, relative.forward, relative.side, entity.getX(), entity.getY(), spriteBounds, z));
             commands.add(new RenderCommand(
                     entityImage,
                     relative.forward,

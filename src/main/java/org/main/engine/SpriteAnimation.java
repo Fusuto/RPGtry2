@@ -1,6 +1,15 @@
 package org.main.engine;
 
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 
 public class SpriteAnimation {
     private final BufferedImage[] frames;
@@ -45,6 +54,52 @@ public class SpriteAnimation {
         } catch (RuntimeException e) {
             throw new RuntimeException("Failed to load sprite sheet: " + path, e);
         }
+    }
+
+    public static SpriteAnimation fromGif(String path, int frameDurationMs) {
+        try (InputStream stream = AssetLoader.openAssetStream(path);
+             ImageInputStream imageInput = ImageIO.createImageInputStream(stream)) {
+            if (imageInput == null) {
+                throw new IOException("Failed to create GIF stream");
+            }
+
+            Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("gif");
+            if (!readers.hasNext()) {
+                throw new IOException("No GIF image reader available");
+            }
+
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(imageInput, false, false);
+                int frameCount = reader.getNumImages(true);
+                List<BufferedImage> loadedFrames = new ArrayList<>();
+
+                for (int i = 0; i < frameCount; i++) {
+                    BufferedImage frame = reader.read(i);
+                    if (frame != null) {
+                        loadedFrames.add(copyFrame(frame));
+                    }
+                }
+
+                if (loadedFrames.isEmpty()) {
+                    throw new IOException("GIF contained no readable frames");
+                }
+
+                return new SpriteAnimation(loadedFrames.toArray(BufferedImage[]::new), frameDurationMs);
+            } finally {
+                reader.dispose();
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to load GIF animation: " + path, e);
+        }
+    }
+
+    private static BufferedImage copyFrame(BufferedImage source) {
+        BufferedImage copy = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = copy.createGraphics();
+        graphics.drawImage(source, 0, 0, null);
+        graphics.dispose();
+        return copy;
     }
 
     public void update(int deltaMs) {

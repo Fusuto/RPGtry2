@@ -1,13 +1,6 @@
 package org.main.content;
 
-import org.main.core.InteractionSystem;
-import org.main.core.InventorySystem;
-import org.main.core.ShopSystem;
-import org.main.core.ButcherySystem;
-import org.main.core.CharacterSkill;
-import org.main.core.GearDurability;
-import org.main.core.LimbItem;
-import org.main.core.LimbSlot;
+import org.main.core.*;
 import org.main.engine.MapEntity;
 import org.main.monsters.Monster;
 import org.main.monsters.MonsterType;
@@ -167,6 +160,71 @@ public enum DialogueLibrary {
                     }),
                     InteractionSystem.closeOption("Leave")
             );
+        }
+    },
+
+    CREST_FALLEN("crest_fallen") {
+        @Override
+        public InteractionSystem.Interaction create(InteractionSystem.InteractionContext context) {
+            MapEntity entity = context.getEntity();
+            String npcName = entity.getName();
+
+            InteractionSystem.Conversation conversation =
+                    new InteractionSystem.Conversation("start")
+                            .addNode(new InteractionSystem.ConversationNode(
+                                    "start",
+                                    npcName,
+                                    "Ah one of the undead, and you seem to even have your wits about you. Do you recall anything?",
+                                    null,
+                                    entity != null ? entity.getStaticImage() : null,
+                                    "Player",
+                                    npcName,
+                                    new InteractionSystem.ConversationChoice("Who are you?", "who_are_you"),
+                                    new InteractionSystem.ConversationChoice("What do you mean one of the undead?", "undead"),
+                                    new InteractionSystem.ConversationChoice("I can't remember anything...", "amnesia"),
+                                    new InteractionSystem.ConversationChoice("Goodbye.", null)
+                            ))
+                            .addNode(new InteractionSystem.ConversationNode(
+                                    "who_are_you",
+                                    npcName,
+                                    "I am just a wanderer, not too different from yourself",
+                                    null,
+                                    entity != null ? entity.getStaticImage() : null,
+                                    "Player",
+                                    npcName,
+                                    new InteractionSystem.ConversationChoice("What do you mean one of the undead?", "undead"),
+                                    new InteractionSystem.ConversationChoice("I can't remember anything...", "amnesia"),
+                                    new InteractionSystem.ConversationChoice("Goodbye.", null)
+                            ))
+                            .addNode(new InteractionSystem.ConversationNode(
+                                    "undead",
+                                    npcName,
+                                    "Well it's just a guess, you might be something else all together. You definitely are not a normal person thats for sure.",
+                                    null,
+                                    entity.getStaticImage(),
+                                    "Player",
+                                    npcName,
+                                    new InteractionSystem.ConversationChoice("Who are you?", "who_are_you"),
+                                    new InteractionSystem.ConversationChoice("I can't remember anything...", "amnesia"),
+                                    new InteractionSystem.ConversationChoice("Goodbye.", null)
+                            ))
+                            .addNode(new InteractionSystem.ConversationNode(
+                                    "amnesia",
+                                    npcName,
+                                    "Well maybe what you were doing before might come back to your over time.",
+                                    null,
+                                    entity.getStaticImage(),
+                                    "Player",
+                                    npcName,
+                                    new InteractionSystem.ConversationChoice("Who are you?", "who_are_you"),
+                                    new InteractionSystem.ConversationChoice("What do you mean one of the undead?", "undead"),
+                                    new InteractionSystem.ConversationChoice("Goodbye.", null)
+                            ))
+
+                    ;
+
+            return InteractionSystem.conversation(conversation);
+
         }
     },
 

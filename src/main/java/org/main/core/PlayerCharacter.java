@@ -11,6 +11,11 @@ import java.util.List;
 import java.util.Map;
 
 public class PlayerCharacter {
+    private static final int MIN_MAX_HP = 1;
+    private static final int BASE_MAX_HP = 20;
+    private static final int MAX_HP_PER_VITALITY = 5;
+    private static final int MIN_CURRENT_HP = 0;
+
     private final String name;
     private final HashMap<CharacterSkill, Integer> skills;
     private final HashMap<CharacterSkill, Integer> skillExperience = new HashMap<>();
@@ -349,6 +354,32 @@ public class PlayerCharacter {
             case LEGS -> hasFunctionalLimb(LimbSlot.LEGS);
             case RING_LEFT, RING_RIGHT -> hasFunctionalLimb(LimbSlot.LEFT_ARM) || hasFunctionalLimb(LimbSlot.RIGHT_ARM);
             case WEAPON -> canWieldWeapon();
+            case SHIELD -> hasFunctionalLimb(LimbSlot.LEFT_ARM) || hasFunctionalLimb(LimbSlot.RIGHT_ARM);
+        };
+    }
+
+    public boolean canUseEquipment(InventorySystem.Item item, InventorySystem.EquipmentSlot slot) {
+        if (item == null || slot == null || !canUseEquipmentSlot(slot)) {
+            return false;
+        }
+
+        if (item.getItemType() == InventorySystem.ItemType.WEAPON || item.getItemType() == InventorySystem.ItemType.RING) {
+            return true;
+        }
+
+        return getSkillLevel(CharacterSkill.DEFENSE) >= defenseRequirementFor(item.getMaterial());
+    }
+
+    public static int defenseRequirementFor(GearMaterial material) {
+        if (material == null) {
+            return 0;
+        }
+
+        return switch (material) {
+            case NONE -> 0;
+            case BRONZE, OAK, LEATHER -> 1;
+            case IRON, YEW, SILVER -> 5;
+            case STEEL, IRONWOOD -> 10;
         };
     }
 
@@ -365,8 +396,25 @@ public class PlayerCharacter {
 
         for (Map.Entry<InventorySystem.EquipmentSlot, InventorySystem.Item> entry : inventory.getEquippedItemsView().entrySet()) {
             if (entry.getKey() != InventorySystem.EquipmentSlot.WEAPON
+                    && entry.getKey() != InventorySystem.EquipmentSlot.RING_LEFT
+                    && entry.getKey() != InventorySystem.EquipmentSlot.RING_RIGHT
                     && entry.getValue() != null
-                    && canUseEquipmentSlot(entry.getKey())) {
+                    && canUseEquipment(entry.getValue(), entry.getKey())) {
+                total += entry.getValue().getEffectiveStatBonus();
+            }
+        }
+
+        return total;
+    }
+
+    public int getUsableMagicAccuracyBonus() {
+        int total = 0;
+
+        for (Map.Entry<InventorySystem.EquipmentSlot, InventorySystem.Item> entry : inventory.getEquippedItemsView().entrySet()) {
+            if ((entry.getKey() == InventorySystem.EquipmentSlot.RING_LEFT
+                    || entry.getKey() == InventorySystem.EquipmentSlot.RING_RIGHT)
+                    && entry.getValue() != null
+                    && canUseEquipment(entry.getValue(), entry.getKey())) {
                 total += entry.getValue().getEffectiveStatBonus();
             }
         }
@@ -421,7 +469,7 @@ public class PlayerCharacter {
     }
 
     private void recalculateMaxHp(boolean healToFull) {
-        int newMaxHp = Math.max(1, 20 + getStat(PlayerStat.VITALITY) * 5);
+        int newMaxHp = Math.max(MIN_MAX_HP, BASE_MAX_HP + getStat(PlayerStat.VITALITY) * MAX_HP_PER_VITALITY);
         int previousMaxHp = maxHp;
         maxHp = newMaxHp;
 
@@ -433,6 +481,6 @@ public class PlayerCharacter {
     }
 
     private int clampHp(int hp) {
-        return Math.max(0, Math.min(maxHp, hp));
+        return Math.max(MIN_CURRENT_HP, Math.min(maxHp, hp));
     }
 }

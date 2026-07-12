@@ -755,6 +755,7 @@ public final class ShopSystem {
                 case LEG_ARMOR -> new Color(90, 110, 150);
                 case RING -> new Color(200, 170, 70);
                 case WEAPON -> new Color(170, 170, 180);
+                case SHIELD -> new Color(115, 145, 165);
                 case LIMB -> new Color(180, 90, 120);
                 case CONSUMABLE -> new Color(120, 180, 120);
                 case MISC -> new Color(150, 150, 150);

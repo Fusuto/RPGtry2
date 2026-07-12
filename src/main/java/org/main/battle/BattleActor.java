@@ -1,6 +1,9 @@
 package org.main.battle;
 
 import org.main.core.Library;
+import org.main.core.CharacterSkill;
+import org.main.core.PlayerCharacter;
+import org.main.core.PlayerStat;
 
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -27,6 +30,15 @@ public class BattleActor {
     private int intelligence = 0;
     private String speciesId;
     private int experienceReward = 0;
+    private int attackStat = 1;
+    private int strengthStat = 1;
+    private int defenseStat = 0;
+    private int agilityStat = 1;
+    private int willpowerStat = 1;
+    private int weaponBonus = 0;
+    private int armorBonus = 0;
+    private final EnumMap<CharacterSkill, Integer> combatSkills = new EnumMap<>(CharacterSkill.class);
+    private PlayerCharacter sourcePlayer;
 
     private final List<BattleSkill> skills = new ArrayList<>();
     private final Map<BattleStatusType, BattleStatus> statuses = new EnumMap<>(BattleStatusType.class);
@@ -62,6 +74,10 @@ public class BattleActor {
         this.EntityType = entityType;
         this.attackDamage = attackDamage;
         this.defense = Math.max(0, defense);
+        this.attackStat = Math.max(1, attackDamage);
+        this.strengthStat = Math.max(1, attackDamage);
+        this.defenseStat = Math.max(0, defense);
+        this.armorBonus = Math.max(0, defense);
     }
 
     public List<BattleSkill> getSkills() {
@@ -142,7 +158,7 @@ public class BattleActor {
             adjustedAmount = (int) Math.ceil(amount * (1.0 - defenseDamageReduction));
         }
 
-        adjustedAmount = Math.max(0, adjustedAmount - defense);
+        adjustedAmount = Math.max(0, adjustedAmount);
         currentHp = Math.max(0, currentHp - adjustedAmount);
         return adjustedAmount;
     }
@@ -227,7 +243,122 @@ public class BattleActor {
     }
 
     public void setIntelligence(int intelligence) {
-        this.intelligence = Math.max(0, Math.min(10, intelligence));
+        this.intelligence = Math.max(0, intelligence);
+    }
+
+    public int getAttackStat() {
+        return attackStat;
+    }
+
+    public void setAttackStat(int attackStat) {
+        this.attackStat = Math.max(0, attackStat);
+    }
+
+    public int getStrengthStat() {
+        return strengthStat;
+    }
+
+    public void setStrengthStat(int strengthStat) {
+        this.strengthStat = Math.max(0, strengthStat);
+    }
+
+    public int getDefenseStat() {
+        return defenseStat;
+    }
+
+    public void setDefenseStat(int defenseStat) {
+        this.defenseStat = Math.max(0, defenseStat);
+    }
+
+    public int getAgilityStat() {
+        return agilityStat;
+    }
+
+    public void setAgilityStat(int agilityStat) {
+        this.agilityStat = Math.max(0, agilityStat);
+    }
+
+    public int getWillpowerStat() {
+        return willpowerStat;
+    }
+
+    public void setWillpowerStat(int willpowerStat) {
+        this.willpowerStat = Math.max(0, willpowerStat);
+    }
+
+    public int getWeaponBonus() {
+        return weaponBonus;
+    }
+
+    public void setWeaponBonus(int weaponBonus) {
+        this.weaponBonus = Math.max(0, weaponBonus);
+    }
+
+    public int getArmorBonus() {
+        return armorBonus;
+    }
+
+    public void setArmorBonus(int armorBonus) {
+        this.armorBonus = Math.max(0, armorBonus);
+    }
+
+    public int getCombatSkillLevel(CharacterSkill skill) {
+        return combatSkills.getOrDefault(skill, 1);
+    }
+
+    public void setCombatSkillLevel(CharacterSkill skill, int level) {
+        if (skill != null) {
+            combatSkills.put(skill, Math.max(1, level));
+        }
+    }
+
+    public void copyCombatProfileFrom(PlayerCharacter player) {
+        if (player == null) {
+            return;
+        }
+
+        sourcePlayer = player;
+        setAttackStat(player.getStat(PlayerStat.ATTACK));
+        setStrengthStat(player.getStat(PlayerStat.STRENGTH));
+        setDefenseStat(player.getStat(PlayerStat.DEFENSE));
+        setAgilityStat(player.getStat(PlayerStat.AGILITY));
+        setIntelligence(player.getStat(PlayerStat.INTELLIGENCE) + player.getUsableMagicAccuracyBonus());
+        setWillpowerStat(player.getStat(PlayerStat.WILLPOWER));
+        setWeaponBonus(player.getUsableWeaponStatBonus());
+        setArmorBonus(player.getUsableArmorStatBonus());
+        setCombatSkillLevel(CharacterSkill.ATTACK, player.getSkillLevel(CharacterSkill.ATTACK));
+        setCombatSkillLevel(CharacterSkill.STRENGTH, player.getSkillLevel(CharacterSkill.STRENGTH));
+        setCombatSkillLevel(CharacterSkill.DEFENSE, player.getSkillLevel(CharacterSkill.DEFENSE));
+        setCombatSkillLevel(CharacterSkill.MAGIC_ACCURACY, player.getSkillLevel(CharacterSkill.MAGIC_ACCURACY));
+        setCombatSkillLevel(CharacterSkill.MAGIC_POWER, player.getSkillLevel(CharacterSkill.MAGIC_POWER));
+    }
+
+    public void configureMonsterCombatStats(int attack, int defense, int intelligence, int willpower) {
+        setAttackStat(attack);
+        setStrengthStat(attack);
+        setDefenseStat(defense);
+        setAgilityStat(Math.max(1, attack));
+        setIntelligence(intelligence);
+        setWillpowerStat(willpower);
+        setArmorBonus(defense);
+        setCombatSkillLevel(CharacterSkill.ATTACK, Math.max(1, attack));
+        setCombatSkillLevel(CharacterSkill.STRENGTH, Math.max(1, attack));
+        setCombatSkillLevel(CharacterSkill.DEFENSE, Math.max(1, defense));
+        setCombatSkillLevel(CharacterSkill.MAGIC_ACCURACY, Math.max(1, intelligence));
+        setCombatSkillLevel(CharacterSkill.MAGIC_POWER, Math.max(1, willpower));
+    }
+
+    public void addCombatSkillExperience(CharacterSkill skill, int amount) {
+        if (sourcePlayer == null || skill == null || amount <= 0) {
+            return;
+        }
+
+        int levelsGained = sourcePlayer.addSkillExperience(skill, amount);
+        setCombatSkillLevel(skill, sourcePlayer.getSkillLevel(skill));
+
+        if (levelsGained > 0 && skill == CharacterSkill.DEFENSE) {
+            setArmorBonus(sourcePlayer.getUsableArmorStatBonus());
+        }
     }
 
     public String getSpeciesId() {
