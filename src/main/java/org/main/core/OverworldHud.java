@@ -1,7 +1,7 @@
 package org.main.core;
 
+import org.main.battle.DifficultyResolver;
 import org.main.engine.AssetLoader;
-import org.main.content.QuestLibrary;
 
 import java.awt.AlphaComposite;
 import java.awt.Color;
@@ -51,6 +51,9 @@ public class OverworldHud {
     private static final int STATS_SCROLL_STEP = 24;
     private static final int SKILL_TOOLTIP_WIDTH = 158;
     private static final int SKILL_TOOLTIP_HEIGHT = 54;
+    private static final int HELD_ITEM_SLOT_SIZE = 48;
+    private static final int HELD_ITEM_ICON_PADDING = 7;
+    private static final int HELD_ITEM_CLUSTER_GAP = 24;
 
     private final BufferedImage bottomPanel = AssetLoader.loadImage(FOOZLE_PATH + "Panel_2.png");
     private final BufferedImage corner = AssetLoader.loadImage(FOOZLE_PATH + "Corner.png");
@@ -73,7 +76,7 @@ public class OverworldHud {
     private final Rectangle questsButtonBounds = new Rectangle();
     private final Rectangle statsButtonBounds = new Rectangle();
     private final Rectangle escapeButtonBounds = new Rectangle();
-    private final Map<QuestLibrary, Rectangle> questRowBounds = new EnumMap<>(QuestLibrary.class);
+    private final Map<String, Rectangle> questRowBounds = new HashMap<>();
     private final Map<CharacterSkill, Rectangle> skillCellBounds = new EnumMap<>(CharacterSkill.class);
     private final Rectangle statsPanelBounds = new Rectangle();
     private final Rectangle statsClipBounds = new Rectangle();
@@ -102,6 +105,7 @@ public class OverworldHud {
         calculateButtonBounds(width, height);
         drawBottomBar(g, width, height);
         drawCorners(g, width);
+        drawHeldWorldUseItem(g, gameState, width, height);
 
         if (gameState.isSkillsOpen()) {
             drawSkillsPanel(g, gameState, width, height);
@@ -262,6 +266,62 @@ public class OverworldHud {
         drawImage(g, icon, iconX, iconY, BUTTON_ICON_SIZE, BUTTON_ICON_SIZE, false);
     }
 
+    private void drawHeldWorldUseItem(Graphics2D g, GameState gameState, int width, int height) {
+        InventorySystem.Item heldItem = gameState.getSelectedWorldUseItem();
+
+        if (heldItem == null) {
+            return;
+        }
+
+        int y = height - BOTTOM_BAR_HEIGHT + (BOTTOM_BAR_HEIGHT - HELD_ITEM_SLOT_SIZE) / 2;
+        int x = Math.max(
+                14,
+                inventoryButtonBounds.x - HELD_ITEM_CLUSTER_GAP - HELD_ITEM_SLOT_SIZE
+        );
+
+        Composite oldComposite = g.getComposite();
+        g.setComposite(AlphaComposite.SrcOver.derive(0.88f));
+        g.setColor(new Color(8, 9, 13));
+        g.fillRoundRect(x, y, HELD_ITEM_SLOT_SIZE, HELD_ITEM_SLOT_SIZE, 8, 8);
+        g.setComposite(oldComposite);
+
+        g.setColor(new Color(226, 194, 104));
+        g.drawRoundRect(x, y, HELD_ITEM_SLOT_SIZE, HELD_ITEM_SLOT_SIZE, 8, 8);
+        g.setColor(new Color(90, 68, 36));
+        g.drawRoundRect(x + 2, y + 2, HELD_ITEM_SLOT_SIZE - 4, HELD_ITEM_SLOT_SIZE - 4, 6, 6);
+
+        BufferedImage icon = heldItem.getIcon();
+        if (icon != null) {
+            drawImage(
+                    g,
+                    icon,
+                    x + HELD_ITEM_ICON_PADDING,
+                    y + HELD_ITEM_ICON_PADDING,
+                    HELD_ITEM_SLOT_SIZE - HELD_ITEM_ICON_PADDING * 2,
+                    HELD_ITEM_SLOT_SIZE - HELD_ITEM_ICON_PADDING * 2,
+                    false
+            );
+        } else {
+            String label = heldItem.getName() == null || heldItem.getName().isBlank()
+                    ? "?"
+                    : heldItem.getName().substring(0, 1).toUpperCase();
+            Font oldFont = g.getFont();
+            g.setFont(oldFont.deriveFont(Font.BOLD, 18f));
+            FontMetrics metrics = g.getFontMetrics();
+            g.setColor(new Color(238, 228, 190));
+            g.drawString(
+                    label,
+                    x + (HELD_ITEM_SLOT_SIZE - metrics.stringWidth(label)) / 2,
+                    y + (HELD_ITEM_SLOT_SIZE - metrics.getHeight()) / 2 + metrics.getAscent()
+            );
+            g.setFont(oldFont);
+        }
+
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 10f));
+        g.setColor(new Color(246, 236, 176));
+        g.drawString("USE", x + 13, y - 3);
+    }
+
     private void drawSkillsPanel(Graphics2D g, GameState gameState, int width, int height) {
         int x = Math.max(18, width - SKILL_PANEL_WIDTH - 28);
         int y = Math.max(60, height - BOTTOM_BAR_HEIGHT - SKILL_PANEL_HEIGHT - 20);
@@ -352,11 +412,11 @@ public class OverworldHud {
 
         int rowY = y + 52;
         int selectedStage = 0;
-        QuestLibrary selectedQuest = null;
+        GameState.QuestDefinition selectedQuest = null;
 
-        for (QuestLibrary quest : QuestLibrary.values()) {
-            int stage = gameState.getQuestStage(quest);
-            boolean selected = quest.getId().equals(gameState.getSelectedQuestId());
+        for (GameState.QuestDefinition quest : gameState.getQuestDefinitions()) {
+            int stage = gameState.getQuestStagesView().getOrDefault(quest.id(), 0);
+            boolean selected = quest.id().equals(gameState.getSelectedQuestId());
 
             if (selected || selectedQuest == null) {
                 selectedQuest = quest;
@@ -364,14 +424,14 @@ public class OverworldHud {
             }
 
             Rectangle rowBounds = new Rectangle(x + 18, rowY - 16, 168, 24);
-            questRowBounds.put(quest, rowBounds);
+            questRowBounds.put(quest.id(), rowBounds);
 
             g.setColor(selected ? new Color(42, 44, 52, 210) : new Color(0, 0, 0, 0));
             g.fillRoundRect(rowBounds.x, rowBounds.y, rowBounds.width, rowBounds.height, 4, 4);
 
             g.setColor(questColor(quest, stage));
             g.setFont(g.getFont().deriveFont(Font.BOLD, 13f));
-            g.drawString(quest.getDisplayName(), x + 26, rowY);
+            g.drawString(quest.displayName(), x + 26, rowY);
             rowY += 28;
         }
 
@@ -384,13 +444,13 @@ public class OverworldHud {
 
         g.setFont(g.getFont().deriveFont(Font.BOLD, 15f));
         g.setColor(new Color(238, 228, 190));
-        g.drawString(selectedQuest.getDisplayName(), textX, textY);
+        g.drawString(selectedQuest.displayName(), textX, textY);
 
         g.setFont(g.getFont().deriveFont(Font.PLAIN, 13f));
         g.setColor(new Color(210, 204, 178));
         drawWrappedText(
                 g,
-                selectedQuest.getStageDescription(selectedStage),
+                selectedQuest.stageDescription(selectedStage),
                 textX,
                 textY + 26,
                 QUEST_PANEL_WIDTH - 225,
@@ -415,17 +475,23 @@ public class OverworldHud {
         g.drawString(player.getName(), x + 18, y + 28);
 
         List<String> statLines = new ArrayList<>();
-        statLines.add("Region " + (player.getPlayerRegion() == null ? "Unknown" : player.getPlayerRegion().getDisplayName()));
-        statLines.add("Level " + player.getLevel() + " (leveling paused)");
+        DifficultyResolver.DifficultyRating buildRating = DifficultyResolver.ratePlayer(player);
+        statLines.add("Starting Region");
+        statLines.add(player.getPlayerRegion() == null ? "Unknown" : player.getPlayerRegion().getDisplayName());
+        statLines.add("B Level " + buildRating.level());
+        statLines.add("------------------");
+        statLines.add("Stats");
         statLines.add("HP " + player.getCurrHp() + "/" + player.getMaxHp());
-        statLines.add("Melee Accuracy " + (player.getStat(PlayerStat.ATTACK) + player.getSkillLevel(CharacterSkill.ATTACK) + player.getUsableWeaponStatBonus()));
-        statLines.add("Melee Power " + (player.getStat(PlayerStat.STRENGTH) + player.getSkillLevel(CharacterSkill.STRENGTH) + player.getUsableWeaponStatBonus()));
-        statLines.add("Defense Roll " + (player.getStat(PlayerStat.DEFENSE) + player.getSkillLevel(CharacterSkill.DEFENSE) + player.getUsableArmorStatBonus()));
-        statLines.add("Spellcasting " + (player.getStat(PlayerStat.INTELLIGENCE) + player.getSkillLevel(CharacterSkill.MAGIC_ACCURACY) + player.getUsableMagicAccuracyBonus()));
-        statLines.add("Potency " + (player.getStat(PlayerStat.WILLPOWER) + player.getSkillLevel(CharacterSkill.MAGIC_POWER)));
         for (PlayerStat stat : PlayerStat.values()) {
             statLines.add(stat.getDisplayName() + " " + player.getStat(stat));
         }
+        statLines.add("------------------");
+        statLines.add("Combined Stats");
+        statLines.add("Melee Accuracy " + player.getMeleeAccuracy());
+        statLines.add("Melee Power " + player.getMeleePower());
+        statLines.add("Defense Roll " + player.getDefenseRoll());
+        statLines.add("Spellcasting " + player.getSpellcasting());
+        statLines.add("Spell Potency " + player.getSpellPotency());
 
         Rectangle clipBounds = new Rectangle(x + 16, y + 42, STATS_PANEL_WIDTH - 34, STATS_PANEL_HEIGHT - 58);
         statsClipBounds.setBounds(clipBounds);
@@ -523,9 +589,9 @@ public class OverworldHud {
     private boolean handleQuestPanelClick(Point point, GameState gameState, int width, int height) {
         drawQuestPanelLayoutOnly(gameState, width, height);
 
-        for (Map.Entry<QuestLibrary, Rectangle> entry : questRowBounds.entrySet()) {
+        for (Map.Entry<String, Rectangle> entry : questRowBounds.entrySet()) {
             if (entry.getValue().contains(point)) {
-                gameState.setSelectedQuestId(entry.getKey().getId());
+                gameState.setSelectedQuestId(entry.getKey());
                 return true;
             }
         }
@@ -539,17 +605,17 @@ public class OverworldHud {
         int y = Math.max(62, height - BOTTOM_BAR_HEIGHT - QUEST_PANEL_HEIGHT - 16);
         int rowY = y + 52;
 
-        for (QuestLibrary quest : QuestLibrary.values()) {
-            questRowBounds.put(quest, new Rectangle(x + 18, rowY - 16, 168, 24));
+        for (GameState.QuestDefinition quest : gameState.getQuestDefinitions()) {
+            questRowBounds.put(quest.id(), new Rectangle(x + 18, rowY - 16, 168, 24));
             rowY += 28;
 
             if (gameState.getSelectedQuestId() == null) {
-                gameState.setSelectedQuestId(quest.getId());
+                gameState.setSelectedQuestId(quest.id());
             }
         }
     }
 
-    private Color questColor(QuestLibrary quest, int stage) {
+    private Color questColor(GameState.QuestDefinition quest, int stage) {
         if (quest.isComplete(stage)) {
             return new Color(92, 225, 112);
         }

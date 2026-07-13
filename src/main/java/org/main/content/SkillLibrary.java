@@ -102,6 +102,22 @@ public enum SkillLibrary {
             0,
             0.0,
             0.0
+    ),
+
+    ABSORB(
+            "Absorb",
+            "Deals small damage and heals the user.",
+            Library.SkillTargetShape.SINGLE_TARGET,
+            Library.EntityType.ENEMY,
+            Library.BattleTargetingMode.MAGIC,
+            null,
+            2,
+            Library.EffectType.DAMAGE,
+            0.0,
+            0,
+            0,
+            0.0,
+            0.5
     );
 
     private static final List<SkillLibrary> DEFAULT_PLAYER_SKILLS = List.of(
@@ -259,5 +275,25 @@ public enum SkillLibrary {
 
     public Library.EffectType getEffectType() {
         return effectType;
+    }
+
+    public double getStunChance() {
+        return stunChance;
+    }
+
+    public int getStunTurns() {
+        return stunTurns;
+    }
+
+    public int getDefendTurns() {
+        return defendTurns;
+    }
+
+    public double getDamageReduction() {
+        return damageReduction;
+    }
+
+    public double getSelfHealPercent() {
+        return selfHealPercent;
     }
 }

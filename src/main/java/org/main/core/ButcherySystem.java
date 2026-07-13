@@ -1,7 +1,7 @@
 package org.main.core;
 
 import org.main.battle.BattleSkill;
-import org.main.content.EnemySkillLibrary;
+import org.main.content.SkillLibrary;
 import org.main.monsters.MonsterType;
 
 import java.util.ArrayList;
@@ -30,9 +30,6 @@ public final class ButcherySystem {
     private static final double GRAFT_MAX_SUCCESS = 0.92;
     private static final int GRAFT_XP_REWARD = 16;
     private static final double GRAFT_CONDITION_RISK_CHANCE = 0.35;
-    private static final int MONSTER_HP_TO_VITALITY_DIVISOR = 5;
-    private static final int MONSTER_INTELLIGENCE_TO_WILLPOWER_DIVISOR = 2;
-    private static final int MONSTER_XP_TO_AGILITY_DIVISOR = 6;
     private static final double SKILL_INHERIT_CHANCE = 0.35;
     private static final double PERFECT_CONDITION_BASE_CHANCE = 0.05;
     private static final double PERFECT_CONDITION_LEVEL_BONUS = 0.015;
@@ -198,13 +195,9 @@ public final class ButcherySystem {
             stats.put(stat, 0);
         }
 
-        stats.put(PlayerStat.VITALITY, Math.max(1, monsterType.getMaxHp() / MONSTER_HP_TO_VITALITY_DIVISOR));
-        stats.put(PlayerStat.ATTACK, Math.max(1, monsterType.getAttack()));
-        stats.put(PlayerStat.STRENGTH, Math.max(1, monsterType.getAttack()));
-        stats.put(PlayerStat.DEFENSE, Math.max(0, monsterType.getDefense()));
-        stats.put(PlayerStat.INTELLIGENCE, Math.max(0, monsterType.getIntelligence()));
-        stats.put(PlayerStat.WILLPOWER, Math.max(1, monsterType.getDefense() + monsterType.getIntelligence() / MONSTER_INTELLIGENCE_TO_WILLPOWER_DIVISOR));
-        stats.put(PlayerStat.AGILITY, Math.max(1, monsterType.getXpReward() / MONSTER_XP_TO_AGILITY_DIVISOR));
+        for (PlayerStat stat : PlayerStat.values()) {
+            stats.put(stat, Math.max(0, monsterType.getStat(stat)));
+        }
         return stats;
     }
 
@@ -271,7 +264,7 @@ public final class ButcherySystem {
         }
 
         List<BattleSkill> skills = new ArrayList<>();
-        for (EnemySkillLibrary skill : monsterType.getSkills()) {
+        for (SkillLibrary skill : monsterType.getSkills()) {
             if (ThreadLocalRandom.current().nextDouble() <= SKILL_INHERIT_CHANCE) {
                 skills.add(skill.createSkill());
             }
@@ -324,9 +317,13 @@ public final class ButcherySystem {
     }
 
     private static double monsterDifficulty(MonsterType monsterType) {
-        return monsterType.getMaxHp() / DIFFICULTY_HP_DIVISOR
-                + monsterType.getAttack()
-                + monsterType.getDefense()
+        return monsterType.getStat(PlayerStat.VITALITY) / DIFFICULTY_HP_DIVISOR
+                + monsterType.getStat(PlayerStat.ATTACK)
+                + monsterType.getStat(PlayerStat.STRENGTH)
+                + monsterType.getStat(PlayerStat.DEFENSE)
+                + monsterType.getStat(PlayerStat.AGILITY)
+                + monsterType.getStat(PlayerStat.INTELLIGENCE)
+                + monsterType.getStat(PlayerStat.WILLPOWER)
                 + monsterType.getXpReward() / DIFFICULTY_XP_DIVISOR;
     }
 

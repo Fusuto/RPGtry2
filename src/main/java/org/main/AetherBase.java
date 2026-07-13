@@ -2,6 +2,7 @@ package org.main;
 
 import org.main.battle.*;
 import org.main.content.EnvironmentLibrary;
+import org.main.content.MapDesignLibrary;
 import org.main.content.PlayerRegionLibrary;
 import org.main.core.*;
 import org.main.engine.*;
@@ -12,6 +13,8 @@ import java.awt.*;
 import java.awt.event.*;
 import java.io.IOException;
 import java.util.List;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 public class AetherBase extends JPanel implements KeyListener {
     private static final int DEFAULT_WINDOW_WIDTH = 900;
@@ -215,6 +218,7 @@ public class AetherBase extends JPanel implements KeyListener {
         }
 
         if (gameState.isDungeonMode()) {
+            dungeonRenderer.setPlayerCharacter(gameState.getPlayerCharacter());
             dungeonRenderer.draw(
                     g2,
                     gameState.getDungeonMap(),
@@ -324,6 +328,11 @@ public class AetherBase extends JPanel implements KeyListener {
         }
 
         if (AetherMenuScreens.startMenuButtonBounds(getWidth(), getHeight(), 2).contains(point)) {
+            loadCustomMapFromStartMenu();
+            return;
+        }
+
+        if (AetherMenuScreens.startMenuButtonBounds(getWidth(), getHeight(), 3).contains(point)) {
             quitGame();
         }
     }
@@ -371,6 +380,7 @@ public class AetherBase extends JPanel implements KeyListener {
 
         gameState.setPlayerCharacter(GameBootstrap.createPlayerCharacter(trimmedName, selectedPlayerRegion));
         gameState.changeDungeon(DungeonMap.testMap(), 1, 1, List.of());
+        applyStarterEnvironmentThemes();
         GameBootstrap.seedTestContent(gameState);
         gameState.setGameMode(GameState.GameMode.DUNGEON);
         soundSystem.playAmbience(environment.getAmbienceSoundPath());
@@ -379,11 +389,18 @@ public class AetherBase extends JPanel implements KeyListener {
 
     private void drawPerformanceOverlay(Graphics2D g) {
         int fps = averageFrameMs <= 0.0 ? 0 : (int) Math.round(MILLIS_PER_SECOND / averageFrameMs);
+        DifficultyResolver.DifficultyRating playerRating = DifficultyResolver.ratePlayer(gameState.getPlayerCharacter());
+        String enemyDifficultyLine = gameState.isDungeonMode()
+                ? dungeonRenderer.getLastVisibleEnemyDifficultyDebugLine()
+                : "Enemy n/a";
         String[] lines = {
                 "FPS " + fps,
                 String.format("Frame %.1f ms", averageFrameMs),
                 String.format("Update %.2f ms", lastUpdateMs),
                 String.format("Render %.2f ms", lastRenderMs),
+                "Build Lv " + playerRating.level(),
+                String.format("Power %.1f", playerRating.power()),
+                enemyDifficultyLine,
                 "Entities " + gameState.getEntities().size(),
                 "Map " + gameState.getDungeonMap().getWidth() + "x" + gameState.getDungeonMap().getHeight()
         };
@@ -557,8 +574,34 @@ public class AetherBase extends JPanel implements KeyListener {
     }
 
     private void loadGameFromMenu() {
+        List<InteractionSystem.InteractionOption> options = new java.util.ArrayList<>();
+        options.add(InteractionSystem.option("Saved Game", this::loadSavedGameFromMenu));
+
+        try {
+            List<Path> mapPaths = MapDesignLibrary.listSavedMaps();
+            if (mapPaths.isEmpty()) {
+                options.add(InteractionSystem.closeOption("No authored maps found"));
+            }
+
+            for (Path mapPath : mapPaths) {
+                options.add(InteractionSystem.option("Map: " + mapLoadLabel(mapPath), () -> loadAuthoredMapFromMenu(mapPath)));
+            }
+        } catch (IOException exception) {
+            options.add(InteractionSystem.closeOption("No authored maps found"));
+        }
+
+        options.add(InteractionSystem.closeOption("Cancel"));
+        gameState.openInteraction(InteractionSystem.prompt(
+                "Load",
+                "Choose what to load.",
+                options.toArray(new InteractionSystem.InteractionOption[0])
+        ));
+    }
+
+    private void loadSavedGameFromMenu() {
         try {
             SaveSystem.load(gameState);
+            applyLoadedEnvironmentThemes();
             gameOverMusicStarted = false;
             soundSystem.playAmbience(environment.getAmbienceSoundPath());
             gameState.openInteraction(InteractionSystem.prompt(
@@ -575,11 +618,70 @@ public class AetherBase extends JPanel implements KeyListener {
         }
     }
 
+    private void loadAuthoredMapFromMenu(Path mapPath) {
+        try {
+            MapDesignLibrary.MapDesign mapDesign = MapDesignLibrary.load(mapPath);
+            gameState.changeDungeon(mapDesign, mapPath);
+            applyMapEnvironmentThemes(mapDesign);
+            gameState.setGameMode(GameState.GameMode.DUNGEON);
+            gameOverMusicStarted = false;
+            soundSystem.playAmbience(environment.getAmbienceSoundPath());
+            gameState.openInteraction(InteractionSystem.prompt(
+                    "Loaded Map",
+                    "Loaded " + mapDesign.displayName() + ".",
+                    InteractionSystem.closeOption("Close")
+            ));
+        } catch (IOException exception) {
+            gameState.openInteraction(InteractionSystem.prompt(
+                    "Map Load Failed",
+                    exception.getMessage(),
+                    InteractionSystem.closeOption("Close")
+            ));
+        }
+    }
+
+    private String mapLoadLabel(Path mapPath) {
+        try {
+            MapDesignLibrary.MapDesign mapDesign = MapDesignLibrary.load(mapPath);
+            if (mapDesign.description().isBlank()) {
+                return mapDesign.displayName();
+            }
+
+            return mapDesign.displayName() + " - " + mapDesign.description();
+        } catch (IOException exception) {
+            return mapPath.getFileName().toString().replaceFirst("[.][^.]+$", "");
+        }
+    }
+
     private void loadGameFromStartMenu() {
         try {
             SaveSystem.load(gameState);
+            applyLoadedEnvironmentThemes();
             startMenuMessage = "";
             gameOverMusicStarted = false;
+            soundSystem.playAmbience(environment.getAmbienceSoundPath());
+            repaint();
+        } catch (IOException exception) {
+            startMenuMessage = exception.getMessage();
+            repaint();
+        }
+    }
+
+    private void loadCustomMapFromStartMenu() {
+        try {
+            Files.createDirectories(MapDesignLibrary.MAP_FOLDER);
+            JFileChooser chooser = new JFileChooser(MapDesignLibrary.MAP_FOLDER.toFile());
+            if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+                return;
+            }
+
+            MapDesignLibrary.MapDesign mapDesign = MapDesignLibrary.load(chooser.getSelectedFile().toPath());
+            gameState.setPlayerCharacter(GameBootstrap.createDefaultPlayerCharacter());
+            gameState.changeDungeon(mapDesign, chooser.getSelectedFile().toPath());
+            applyMapEnvironmentThemes(mapDesign);
+            startMenuMessage = "";
+            gameOverMusicStarted = false;
+            gameState.setGameMode(GameState.GameMode.DUNGEON);
             soundSystem.playAmbience(environment.getAmbienceSoundPath());
             repaint();
         } catch (IOException exception) {
@@ -591,6 +693,7 @@ public class AetherBase extends JPanel implements KeyListener {
     private void loadGameFromGameOver() {
         try {
             SaveSystem.load(gameState);
+            applyLoadedEnvironmentThemes();
             gameOverMessage = "";
             gameOverMusicStarted = false;
             soundSystem.stopAll();
@@ -610,6 +713,36 @@ public class AetherBase extends JPanel implements KeyListener {
         }
 
         System.exit(0);
+    }
+
+    private void applyStarterEnvironmentThemes() {
+        dungeonRenderer.setEnvironmentThemes(environment.getThemes());
+    }
+
+    private void applyLoadedEnvironmentThemes() {
+        Path mapDesignPath = gameState.getCurrentMapDesignPath();
+        if (mapDesignPath == null) {
+            applyStarterEnvironmentThemes();
+            return;
+        }
+
+        try {
+            applyMapEnvironmentThemes(MapDesignLibrary.load(mapDesignPath));
+        } catch (IOException exception) {
+            applyStarterEnvironmentThemes();
+        }
+    }
+
+    private void applyMapEnvironmentThemes(MapDesignLibrary.MapDesign mapDesign) {
+        if (mapDesign == null) {
+            applyStarterEnvironmentThemes();
+            return;
+        }
+
+        dungeonRenderer.setEnvironmentThemes(List.of(
+                mapDesign.primaryTheme().getTheme(),
+                mapDesign.alternateTheme().getTheme()
+        ));
     }
 
     @Override

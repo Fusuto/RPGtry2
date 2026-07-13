@@ -16,6 +16,7 @@ public class LimbItem extends InventorySystem.Item {
     private final List<BattleSkill> skills;
     private final GearDurability condition;
     private final String iconPath;
+    private final String examineText;
 
     public LimbItem(
             String name,
@@ -26,6 +27,19 @@ public class LimbItem extends InventorySystem.Item {
             GearDurability condition,
             String iconPath
     ) {
+        this(name, monsterType, limbSlot, baseStats, skills, condition, iconPath, "");
+    }
+
+    public LimbItem(
+            String name,
+            MonsterType monsterType,
+            LimbSlot limbSlot,
+            Map<PlayerStat, Integer> baseStats,
+            List<BattleSkill> skills,
+            GearDurability condition,
+            String iconPath,
+            String examineText
+    ) {
         super(name, InventorySystem.ItemType.LIMB, loadIcon(iconPath), null, 0, GearMaterial.NONE, condition, 25);
         this.monsterType = monsterType;
         this.limbSlot = limbSlot;
@@ -33,6 +47,7 @@ public class LimbItem extends InventorySystem.Item {
         this.skills = skills == null ? List.of() : List.copyOf(skills);
         this.condition = condition == null ? GearDurability.GOOD : condition;
         this.iconPath = iconPath;
+        this.examineText = examineText == null ? "" : examineText;
 
         for (PlayerStat stat : PlayerStat.values()) {
             this.baseStats.put(stat, Math.max(0, baseStats == null ? 0 : baseStats.getOrDefault(stat, 0)));
@@ -67,6 +82,15 @@ public class LimbItem extends InventorySystem.Item {
         return condition;
     }
 
+    public String getIconPath() {
+        return iconPath;
+    }
+
+    @Override
+    public String getExamineText() {
+        return examineText;
+    }
+
     public boolean isBroken() {
         return condition == GearDurability.BROKEN;
     }
@@ -79,7 +103,8 @@ public class LimbItem extends InventorySystem.Item {
                 baseStats,
                 skills,
                 newCondition,
-                iconPath
+                iconPath,
+                examineText
         );
     }
 

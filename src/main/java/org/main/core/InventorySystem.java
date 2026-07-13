@@ -3,8 +3,6 @@ package org.main.core;
 import org.main.engine.AssetLoader;
 import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
-import org.main.content.ItemLibrary;
-import org.main.content.RecipeLibrary;
 
 import java.awt.*;
 import java.awt.event.MouseEvent;
@@ -63,6 +61,9 @@ public final class InventorySystem {
         private final GearDurability durability;
         private final int baseGoldValue;
         private final String examineText;
+        private final PlayerStat statBonusTarget;
+        private final boolean stackable;
+        private int quantity;
 
         public Item(String name, ItemType itemType, BufferedImage icon) {
             this(name, itemType, icon, null, 0);
@@ -100,6 +101,38 @@ public final class InventorySystem {
                 int baseGoldValue,
                 String examineText
         ) {
+            this(name, itemType, icon, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, null);
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                BufferedImage icon,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget
+        ) {
+            this(name, itemType, icon, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, false, 1);
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                BufferedImage icon,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                boolean stackable,
+                int quantity
+        ) {
             this.name = name;
             this.itemType = itemType;
             this.icon = icon;
@@ -111,6 +144,9 @@ public final class InventorySystem {
             this.examineText = examineText == null || examineText.isBlank()
                     ? "There is nothing unusual about it."
                     : examineText;
+            this.statBonusTarget = statBonusTarget;
+            this.stackable = stackable;
+            this.quantity = Math.max(1, quantity);
         }
 
         public Item(String name, ItemType itemType, String iconPath) {
@@ -150,6 +186,21 @@ public final class InventorySystem {
                 String examineText
         ) {
             this(name, itemType, loadIcon(iconPath), useSoundPath, healAmount, material, durability, baseGoldValue, examineText);
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                String iconPath,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget
+        ) {
+            this(name, itemType, loadIcon(iconPath), useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget);
         }
 
         private static BufferedImage loadIcon(String iconPath) {
@@ -192,8 +243,35 @@ public final class InventorySystem {
             return baseGoldValue;
         }
 
+        public boolean isStackable() {
+            return stackable;
+        }
+
+        public int getQuantity() {
+            return quantity;
+        }
+
+        public void addQuantity(int amount) {
+            if (stackable && amount > 0) {
+                long nextQuantity = (long) quantity + amount;
+                quantity = (int) Math.min(Integer.MAX_VALUE, nextQuantity);
+            }
+        }
+
+        public boolean removeQuantity(int amount) {
+            if (!stackable || amount <= 0 || quantity < amount) {
+                return false;
+            }
+            quantity -= amount;
+            return true;
+        }
+
         public String getExamineText() {
             return examineText;
+        }
+
+        public PlayerStat getStatBonusTarget() {
+            return statBonusTarget;
         }
 
         public int getEffectiveStatBonus() {
@@ -235,7 +313,10 @@ public final class InventorySystem {
                     material,
                     durability,
                     baseGoldValue,
-                    examineText
+                    examineText,
+                    statBonusTarget,
+                    stackable,
+                    quantity
             );
         }
     }
@@ -294,6 +375,14 @@ public final class InventorySystem {
                 return false;
             }
 
+            if (item.isStackable()) {
+                Item stack = findStack(item.getName());
+                if (stack != null) {
+                    stack.addQuantity(item.getQuantity());
+                    return true;
+                }
+            }
+
             for (int i = 0; i < items.length; i++) {
                 if (items[i] == null) {
                     items[i] = item;
@@ -324,7 +413,11 @@ public final class InventorySystem {
                 Item item = items[i];
 
                 if (item != null && itemName.equalsIgnoreCase(item.getName())) {
-                    items[i] = null;
+                    if (item.isStackable() && item.getQuantity() > 1) {
+                        item.removeQuantity(1);
+                    } else {
+                        items[i] = null;
+                    }
                     return true;
                 }
             }
@@ -339,6 +432,67 @@ public final class InventorySystem {
             }
 
             return false;
+        }
+
+        public int countItemNamed(String itemName) {
+            if (itemName == null || itemName.isBlank()) {
+                return 0;
+            }
+
+            int count = 0;
+            for (Item item : items) {
+                if (item != null && itemName.equalsIgnoreCase(item.getName())) {
+                    count += item.isStackable() ? item.getQuantity() : 1;
+                }
+            }
+
+            for (Item item : equippedItems.values()) {
+                if (item != null && itemName.equalsIgnoreCase(item.getName())) {
+                    count += item.isStackable() ? item.getQuantity() : 1;
+                }
+            }
+
+            return count;
+        }
+
+        public boolean removeItemQuantityNamed(String itemName, int amount) {
+            if (itemName == null || itemName.isBlank() || amount <= 0 || countItemNamed(itemName) < amount) {
+                return false;
+            }
+
+            int remaining = amount;
+            for (int i = 0; i < items.length && remaining > 0; i++) {
+                Item item = items[i];
+                if (item == null || !itemName.equalsIgnoreCase(item.getName())) {
+                    continue;
+                }
+
+                if (item.isStackable()) {
+                    int removed = Math.min(remaining, item.getQuantity());
+                    item.removeQuantity(removed);
+                    remaining -= removed;
+                    if (item.getQuantity() <= 0) {
+                        items[i] = null;
+                    }
+                } else {
+                    items[i] = null;
+                    remaining--;
+                }
+            }
+
+            for (EquipmentSlot slot : EquipmentSlot.values()) {
+                if (remaining <= 0) {
+                    break;
+                }
+
+                Item item = equippedItems.get(slot);
+                if (item != null && itemName.equalsIgnoreCase(item.getName())) {
+                    equippedItems.remove(slot);
+                    remaining--;
+                }
+            }
+
+            return remaining == 0;
         }
 
         public int findFirstItemIndexNamed(String itemName) {
@@ -425,7 +579,19 @@ public final class InventorySystem {
         }
 
         public boolean addItemAt(Item item, int index) {
-            if (item == null || !isValidInventoryIndex(index) || items[index] != null) {
+            if (item == null || !isValidInventoryIndex(index)) {
+                return false;
+            }
+
+            if (item.isStackable()) {
+                Item stack = findStack(item.getName());
+                if (stack != null) {
+                    stack.addQuantity(item.getQuantity());
+                    return true;
+                }
+            }
+
+            if (items[index] != null) {
                 return false;
             }
 
@@ -612,6 +778,20 @@ public final class InventorySystem {
         private boolean isValidInventoryIndex(int index) {
             return index >= 0 && index < items.length;
         }
+
+        private Item findStack(String itemName) {
+            if (itemName == null || itemName.isBlank()) {
+                return null;
+            }
+
+            for (Item item : items) {
+                if (item != null && item.isStackable() && itemName.equalsIgnoreCase(item.getName())) {
+                    return item;
+                }
+            }
+
+            return null;
+        }
     }
 
     public static class InventoryPanel {
@@ -783,7 +963,7 @@ public final class InventorySystem {
             }));
 
             contextMenuOptions.add(new ContextMenuOption("Use", () -> {
-                useItem(contextInventoryIndex);
+                selectItemForWorldUse(contextInventoryIndex);
                 closeContextMenu();
             }));
 
@@ -835,10 +1015,7 @@ public final class InventorySystem {
                 return false;
             }
 
-            if ((ItemLibrary.RAW_FISH.getDisplayName().equalsIgnoreCase(item.getName())
-                    || RecipeLibrary.isSmeltableItem(item)
-                    || RecipeLibrary.isSmithingMaterial(item))
-                    && gameState != null) {
+            if (gameState != null) {
                 gameState.selectWorldUseItem(inventoryIndex);
                 return true;
             }
@@ -865,6 +1042,15 @@ public final class InventorySystem {
             }
 
             inventory().removeItem(inventoryIndex);
+            return true;
+        }
+
+        private boolean selectItemForWorldUse(int inventoryIndex) {
+            if (gameState == null || inventory().getItem(inventoryIndex) == null) {
+                return false;
+            }
+
+            gameState.selectWorldUseItem(inventoryIndex);
             return true;
         }
 
@@ -1159,6 +1345,10 @@ public final class InventorySystem {
             LimbItem currentLimb = player == null ? null : player.getEquippedLimb(limb.getLimbSlot());
             StringBuilder builder = new StringBuilder();
 
+            if (limb.getExamineText() != null && !limb.getExamineText().isBlank()) {
+                builder.append(limb.getExamineText().trim()).append("\n\n");
+            }
+
             builder.append(limb.getName())
                     .append(" was cut from ")
                     .append(limb.getMonsterType() == null ? "an unknown creature" : limb.getMonsterType().getDisplayName())
@@ -1240,13 +1430,12 @@ public final class InventorySystem {
 
             PlayerCharacter player = gameState.getPlayerCharacter();
             int currentWeaponBonus = player.getUsableWeaponStatBonus();
-            int currentAttack = player.getStat(PlayerStat.ATTACK) + player.getSkillLevel(CharacterSkill.ATTACK) + currentWeaponBonus;
-            int currentDamage = player.getStat(PlayerStat.STRENGTH) + player.getSkillLevel(CharacterSkill.STRENGTH) + currentWeaponBonus;
-            int currentDefense = player.getStat(PlayerStat.DEFENSE) + player.getSkillLevel(CharacterSkill.DEFENSE) + player.getUsableArmorStatBonus();
-            int currentSpellcasting = player.getStat(PlayerStat.INTELLIGENCE)
-                    + player.getSkillLevel(CharacterSkill.MAGIC_ACCURACY)
+            int currentAttack = currentWeaponBonus + player.getEquipmentStatBonus(PlayerStat.ATTACK);
+            int currentDamage = currentWeaponBonus + player.getEquipmentStatBonus(PlayerStat.STRENGTH);
+            int currentDefense = player.getUsableArmorStatBonus() + player.getEquipmentStatBonus(PlayerStat.DEFENSE);
+            int currentSpellcasting = player.getEquipmentStatBonus(PlayerStat.INTELLIGENCE)
                     + player.getUsableMagicAccuracyBonus();
-            int currentPotency = player.getStat(PlayerStat.WILLPOWER) + player.getSkillLevel(CharacterSkill.MAGIC_POWER);
+            int currentPotency = player.getEquipmentStatBonus(PlayerStat.WILLPOWER);
             int previewAttack = currentAttack;
             int previewDamage = currentDamage;
             int previewDefense = currentDefense;
@@ -1258,21 +1447,25 @@ public final class InventorySystem {
                     Item currentWeapon = inventory().getEquippedItem(EquipmentSlot.WEAPON);
                     int weaponDelta = - (currentWeapon == null ? 0 : currentWeapon.getEffectiveStatBonus())
                             + draggedItem.getEffectiveStatBonus();
-                    previewAttack = player.getStat(PlayerStat.ATTACK)
-                            + player.getSkillLevel(CharacterSkill.ATTACK)
-                            + currentWeaponBonus
-                            + weaponDelta;
-                    previewDamage = player.getStat(PlayerStat.STRENGTH)
-                            + player.getSkillLevel(CharacterSkill.STRENGTH)
-                            + currentWeaponBonus
-                            + weaponDelta;
+                    previewAttack = currentAttack + weaponDelta;
+                    previewDamage = currentDamage + weaponDelta;
                 } else {
                     EquipmentSlot slot = previewSlotForItem(draggedItem);
                     Item currentEquipped = slot == null ? null : inventory().getEquippedItem(slot);
                     int equippedBonus = currentEquipped == null ? 0 : currentEquipped.getEffectiveStatBonus();
                     int draggedBonus = canWearItem(draggedItem, slot) ? draggedItem.getEffectiveStatBonus() : 0;
 
-                    if (draggedItem.getItemType() == ItemType.RING) {
+                    if (draggedItem.getItemType() == ItemType.RING && draggedItem.getStatBonusTarget() == PlayerStat.ATTACK) {
+                        previewAttack = currentAttack - equippedBonus + draggedBonus;
+                    } else if (draggedItem.getItemType() == ItemType.RING && draggedItem.getStatBonusTarget() == PlayerStat.STRENGTH) {
+                        previewDamage = currentDamage - equippedBonus + draggedBonus;
+                    } else if (draggedItem.getItemType() == ItemType.RING && draggedItem.getStatBonusTarget() == PlayerStat.DEFENSE) {
+                        previewDefense = currentDefense - equippedBonus + draggedBonus;
+                    } else if (draggedItem.getItemType() == ItemType.RING && draggedItem.getStatBonusTarget() == PlayerStat.INTELLIGENCE) {
+                        previewSpellcasting = currentSpellcasting - equippedBonus + draggedBonus;
+                    } else if (draggedItem.getItemType() == ItemType.RING && draggedItem.getStatBonusTarget() == PlayerStat.WILLPOWER) {
+                        previewPotency = currentPotency - equippedBonus + draggedBonus;
+                    } else if (draggedItem.getItemType() == ItemType.RING) {
                         previewSpellcasting = currentSpellcasting - equippedBonus + draggedBonus;
                     } else {
                         previewDefense = currentDefense - equippedBonus + draggedBonus;
@@ -1303,7 +1496,7 @@ public final class InventorySystem {
             drawStatLine(g, "Damage", currentDamage, previewDamage, x + 174, y + 46);
             drawStatLine(g, "Defense", currentDefense, previewDefense, x + 14, y + 66);
             drawStatLine(g, "Spellcasting", currentSpellcasting, previewSpellcasting, x + 174, y + 66);
-            drawStatLine(g, "Potency", currentPotency, previewPotency, x + 14, y + 86);
+            drawStatLine(g, "Spell Potency", currentPotency, previewPotency, x + 14, y + 86);
             g.setColor(new Color(178, 170, 148));
             g.drawString("Rings improve spellcasting.", x + 14, y + 112);
             g.setFont(oldFont);
@@ -1529,6 +1722,34 @@ public final class InventorySystem {
             } else {
                 drawFallbackItemIcon(g, item, iconX, iconY, iconSize);
             }
+
+            if (item.isStackable() && item.getQuantity() > 1) {
+                drawStackQuantity(g, item.getQuantity(), bounds);
+            }
+        }
+
+        private void drawStackQuantity(Graphics2D g, int quantity, Rectangle bounds) {
+            String label = quantity >= 1_000_000
+                    ? (quantity / 1_000_000) + "m"
+                    : quantity >= 1_000
+                    ? (quantity / 1_000) + "k"
+                    : String.valueOf(quantity);
+
+            Font oldFont = g.getFont();
+            g.setFont(oldFont.deriveFont(Font.BOLD, 11f));
+            FontMetrics metrics = g.getFontMetrics();
+            int padding = 3;
+            int textWidth = metrics.stringWidth(label);
+            int badgeWidth = textWidth + padding * 2;
+            int badgeHeight = metrics.getHeight();
+            int x = bounds.x + bounds.width - badgeWidth - 3;
+            int y = bounds.y + bounds.height - badgeHeight - 3;
+
+            g.setColor(new Color(0, 0, 0, 180));
+            g.fillRoundRect(x, y, badgeWidth, badgeHeight, 6, 6);
+            g.setColor(new Color(255, 226, 99));
+            g.drawString(label, x + padding, y + metrics.getAscent());
+            g.setFont(oldFont);
         }
 
         private void drawFallbackItemIcon(Graphics2D g, Item item, int x, int y, int size) {

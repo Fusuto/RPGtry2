@@ -318,34 +318,46 @@ public class BattleActor {
         }
 
         sourcePlayer = player;
-        setAttackStat(player.getStat(PlayerStat.ATTACK));
-        setStrengthStat(player.getStat(PlayerStat.STRENGTH));
-        setDefenseStat(player.getStat(PlayerStat.DEFENSE));
-        setAgilityStat(player.getStat(PlayerStat.AGILITY));
-        setIntelligence(player.getStat(PlayerStat.INTELLIGENCE) + player.getUsableMagicAccuracyBonus());
-        setWillpowerStat(player.getStat(PlayerStat.WILLPOWER));
+        setAttackStat(player.getCombinedStat(PlayerStat.ATTACK));
+        setStrengthStat(player.getCombinedStat(PlayerStat.STRENGTH));
+        setDefenseStat(player.getCombinedStat(PlayerStat.DEFENSE));
+        setAgilityStat(player.getCombinedStat(PlayerStat.AGILITY));
+        setIntelligence(player.getCombinedStat(PlayerStat.INTELLIGENCE));
+        setWillpowerStat(player.getCombinedStat(PlayerStat.WILLPOWER));
         setWeaponBonus(player.getUsableWeaponStatBonus());
         setArmorBonus(player.getUsableArmorStatBonus());
         setCombatSkillLevel(CharacterSkill.ATTACK, player.getSkillLevel(CharacterSkill.ATTACK));
         setCombatSkillLevel(CharacterSkill.STRENGTH, player.getSkillLevel(CharacterSkill.STRENGTH));
         setCombatSkillLevel(CharacterSkill.DEFENSE, player.getSkillLevel(CharacterSkill.DEFENSE));
-        setCombatSkillLevel(CharacterSkill.MAGIC_ACCURACY, player.getSkillLevel(CharacterSkill.MAGIC_ACCURACY));
+        setCombatSkillLevel(CharacterSkill.MAGIC_ACCURACY,
+                player.getSkillLevel(CharacterSkill.MAGIC_ACCURACY) + player.getUsableMagicAccuracyBonus());
         setCombatSkillLevel(CharacterSkill.MAGIC_POWER, player.getSkillLevel(CharacterSkill.MAGIC_POWER));
     }
 
-    public void configureMonsterCombatStats(int attack, int defense, int intelligence, int willpower) {
+    public void configureMonsterCombatStats(Map<PlayerStat, Integer> stats) {
+        int attack = statValue(stats, PlayerStat.ATTACK);
+        int strength = statValue(stats, PlayerStat.STRENGTH);
+        int defense = statValue(stats, PlayerStat.DEFENSE);
+        int agility = statValue(stats, PlayerStat.AGILITY);
+        int intelligence = statValue(stats, PlayerStat.INTELLIGENCE);
+        int willpower = statValue(stats, PlayerStat.WILLPOWER);
+
         setAttackStat(attack);
-        setStrengthStat(attack);
+        setStrengthStat(strength);
         setDefenseStat(defense);
-        setAgilityStat(Math.max(1, attack));
+        setAgilityStat(agility);
         setIntelligence(intelligence);
         setWillpowerStat(willpower);
         setArmorBonus(defense);
         setCombatSkillLevel(CharacterSkill.ATTACK, Math.max(1, attack));
-        setCombatSkillLevel(CharacterSkill.STRENGTH, Math.max(1, attack));
+        setCombatSkillLevel(CharacterSkill.STRENGTH, Math.max(1, strength));
         setCombatSkillLevel(CharacterSkill.DEFENSE, Math.max(1, defense));
         setCombatSkillLevel(CharacterSkill.MAGIC_ACCURACY, Math.max(1, intelligence));
         setCombatSkillLevel(CharacterSkill.MAGIC_POWER, Math.max(1, willpower));
+    }
+
+    private int statValue(Map<PlayerStat, Integer> stats, PlayerStat stat) {
+        return Math.max(0, stats == null ? 0 : stats.getOrDefault(stat, 0));
     }
 
     public void addCombatSkillExperience(CharacterSkill skill, int amount) {

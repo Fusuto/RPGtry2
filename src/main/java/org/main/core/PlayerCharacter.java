@@ -12,9 +12,8 @@ import java.util.Map;
 
 public class PlayerCharacter {
     private static final int MIN_MAX_HP = 1;
-    private static final int BASE_MAX_HP = 20;
-    private static final int MAX_HP_PER_VITALITY = 5;
     private static final int MIN_CURRENT_HP = 0;
+    private static final int DEFAULT_VITALITY = 10;
 
     private final String name;
     private final HashMap<CharacterSkill, Integer> skills;
@@ -78,7 +77,8 @@ public class PlayerCharacter {
         this.stats = new EnumMap<>(PlayerStat.class);
 
         for (PlayerStat stat : PlayerStat.values()) {
-            this.stats.put(stat, Math.max(0, stats == null ? 1 : stats.getOrDefault(stat, 1)));
+            int defaultValue = stat == PlayerStat.VITALITY ? DEFAULT_VITALITY : 1;
+            this.stats.put(stat, Math.max(0, stats == null ? defaultValue : stats.getOrDefault(stat, defaultValue)));
         }
 
         this.battleSkills = new ArrayList<>();
@@ -105,7 +105,7 @@ public class PlayerCharacter {
         EnumMap<PlayerStat, Integer> defaultStats = new EnumMap<>(PlayerStat.class);
 
         for (PlayerStat stat : PlayerStat.values()) {
-            defaultStats.put(stat, 1);
+            defaultStats.put(stat, stat == PlayerStat.VITALITY ? DEFAULT_VITALITY : 1);
         }
 
         return defaultStats;
@@ -174,6 +174,31 @@ public class PlayerCharacter {
         return total;
     }
 
+    public int getEquipmentStatBonus(PlayerStat stat) {
+        if (stat == null) {
+            return 0;
+        }
+
+        int total = 0;
+
+        for (Map.Entry<InventorySystem.EquipmentSlot, InventorySystem.Item> entry : inventory.getEquippedItemsView().entrySet()) {
+            InventorySystem.Item item = entry.getValue();
+            if ((entry.getKey() == InventorySystem.EquipmentSlot.RING_LEFT
+                    || entry.getKey() == InventorySystem.EquipmentSlot.RING_RIGHT)
+                    && item != null
+                    && item.getStatBonusTarget() == stat
+                    && canUseEquipment(item, entry.getKey())) {
+                total += item.getEffectiveStatBonus();
+            }
+        }
+
+        return total;
+    }
+
+    public int getCombinedStat(PlayerStat stat) {
+        return getStat(stat) + getEquipmentStatBonus(stat);
+    }
+
     public int getBaseStat(PlayerStat stat) {
         return stats.getOrDefault(stat, 0);
     }
@@ -220,7 +245,7 @@ public class PlayerCharacter {
 
     private void addStat(PlayerStat stat, int amount) {
         if (stat != null && amount > 0) {
-            stats.put(stat, getStat(stat) + amount);
+            stats.put(stat, getBaseStat(stat) + amount);
         }
     }
 
@@ -414,12 +439,42 @@ public class PlayerCharacter {
             if ((entry.getKey() == InventorySystem.EquipmentSlot.RING_LEFT
                     || entry.getKey() == InventorySystem.EquipmentSlot.RING_RIGHT)
                     && entry.getValue() != null
+                    && entry.getValue().getStatBonusTarget() == null
                     && canUseEquipment(entry.getValue(), entry.getKey())) {
                 total += entry.getValue().getEffectiveStatBonus();
             }
         }
 
         return total;
+    }
+
+    public int getMeleeAccuracy() {
+        return getCombinedStat(PlayerStat.ATTACK)
+                + getSkillLevel(CharacterSkill.ATTACK)
+                + getUsableWeaponStatBonus();
+    }
+
+    public int getMeleePower() {
+        return getCombinedStat(PlayerStat.STRENGTH)
+                + getSkillLevel(CharacterSkill.STRENGTH)
+                + getUsableWeaponStatBonus();
+    }
+
+    public int getDefenseRoll() {
+        return getCombinedStat(PlayerStat.DEFENSE)
+                + getSkillLevel(CharacterSkill.DEFENSE)
+                + getUsableArmorStatBonus();
+    }
+
+    public int getSpellcasting() {
+        return getCombinedStat(PlayerStat.INTELLIGENCE)
+                + getSkillLevel(CharacterSkill.MAGIC_ACCURACY)
+                + getUsableMagicAccuracyBonus();
+    }
+
+    public int getSpellPotency() {
+        return getCombinedStat(PlayerStat.WILLPOWER)
+                + getSkillLevel(CharacterSkill.MAGIC_POWER);
     }
 
     private boolean hasFunctionalLimb(LimbSlot slot) {
@@ -469,7 +524,7 @@ public class PlayerCharacter {
     }
 
     private void recalculateMaxHp(boolean healToFull) {
-        int newMaxHp = Math.max(MIN_MAX_HP, BASE_MAX_HP + getStat(PlayerStat.VITALITY) * MAX_HP_PER_VITALITY);
+        int newMaxHp = Math.max(MIN_MAX_HP, getStat(PlayerStat.VITALITY));
         int previousMaxHp = maxHp;
         maxHp = newMaxHp;
 

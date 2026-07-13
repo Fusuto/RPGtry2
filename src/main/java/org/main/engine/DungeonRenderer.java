@@ -1,12 +1,16 @@
 package org.main.engine;
 
+import org.main.battle.DifficultyResolver;
 import org.main.core.Library;
+import org.main.core.PlayerCharacter;
 
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class DungeonRenderer {
     private static final int MAX_DEPTH = 5;
@@ -21,6 +25,13 @@ public class DungeonRenderer {
     private static final int MIN_ENTITY_HEIGHT = 8;
     private static final int MAX_TEXTURE_STRIPS = 48;
     private static final int MIN_TEXTURE_STRIPS = 8;
+    private static final int MIN_DIFFICULTY_LABEL_SPRITE_HEIGHT = 44;
+    private static final int MAX_DIFFICULTY_LABEL_DEPTH = 3;
+    private static final Color DIFFICULTY_TRIVIAL_COLOR = new Color(165, 170, 175);
+    private static final Color DIFFICULTY_EASY_COLOR = new Color(86, 205, 105);
+    private static final Color DIFFICULTY_FAIR_COLOR = new Color(235, 215, 92);
+    private static final Color DIFFICULTY_DANGEROUS_COLOR = new Color(235, 145, 58);
+    private static final Color DIFFICULTY_DEADLY_COLOR = new Color(230, 70, 70);
     private static final String WATER_PATH = "assets/images/monster/Nov-2015/dngn/water/";
     private final BufferedImage[] decorativeWaterFrames = loadNumberedFrames("shoals_shallow_water", 0, 11);
     private final BufferedImage[] fishingWaterFrames = {
@@ -46,6 +57,10 @@ public class DungeonRenderer {
     private double cameraOffsetForward;
     private double cameraOffsetSide;
     private double cameraRotationRadians;
+    private PlayerCharacter playerCharacter;
+    private DifficultyResolver.DifficultyRating framePlayerRating;
+    private final Map<MapEntity, DifficultyResolver.DifficultyRating> frameMonsterRatingCache = new IdentityHashMap<>();
+    private DifficultyResolver.DifficultyComparison frameMostDangerousComparison;
 
     private enum FaceType {FRONT, LEFT, RIGHT, FLOOR, SPRITE}
 
@@ -59,6 +74,7 @@ public class DungeonRenderer {
         Polygon polygon;
         double sortZ;
         BufferedImage spriteImage;
+        MapEntity entity;
 
         RenderCommand(FaceType faceType, Library.TileType tileType, int depth, int side, int worldX, int worldY, Polygon polygon, double sortZ) {
             this.faceType = faceType;
@@ -71,9 +87,10 @@ public class DungeonRenderer {
             this.sortZ = sortZ;
         }
 
-        RenderCommand(BufferedImage spriteImage, int depth, int side, int worldX, int worldY, Polygon polygon, double sortZ) {
+        RenderCommand(BufferedImage spriteImage, MapEntity entity, int depth, int side, int worldX, int worldY, Polygon polygon, double sortZ) {
             this.faceType = FaceType.SPRITE;
             this.spriteImage = spriteImage;
+            this.entity = entity;
             this.depth = depth;
             this.side = side;
             this.worldX = worldX;
@@ -95,6 +112,22 @@ public class DungeonRenderer {
 
     public void setTextureManager(TextureManager textureManager) {
         this.textureManager = textureManager;
+    }
+
+    public void setPlayerCharacter(PlayerCharacter playerCharacter) {
+        this.playerCharacter = playerCharacter;
+    }
+
+    public String getLastVisibleEnemyDifficultyDebugLine() {
+        if (frameMostDangerousComparison == null) {
+            return "Enemy none";
+        }
+
+        return String.format(
+                "Enemy Lv %d x%.2f",
+                frameMostDangerousComparison.monsterRating().level(),
+                frameMostDangerousComparison.ratio()
+        );
     }
 
     public void setEnvironmentThemes(List<EnvironmentTheme> environmentThemes) {
@@ -161,6 +194,9 @@ public class DungeonRenderer {
         this.cameraOffsetForward = cameraOffsetForward;
         this.cameraOffsetSide = cameraOffsetSide;
         this.cameraRotationRadians = cameraRotationRadians;
+        this.framePlayerRating = playerCharacter == null ? null : DifficultyResolver.ratePlayer(playerCharacter);
+        this.frameMonsterRatingCache.clear();
+        this.frameMostDangerousComparison = null;
         drawDungeonBackground(g); /* * Draw floors first so they never accidentally render over walls. */
         List<RenderCommand> floorCommands = buildFloorRenderCommands();
         floorCommands.sort(Comparator.comparingDouble((RenderCommand c) -> c.sortZ).reversed());
@@ -357,6 +393,7 @@ public class DungeonRenderer {
             Polygon spriteBounds = rectanglePolygon(screenX, screenY, spriteWidth, spriteHeight);
             commands.add(new RenderCommand(
                     entityImage,
+                    entity,
                     relative.forward,
                     relative.side,
                     entity.getX(),
@@ -666,6 +703,74 @@ public class DungeonRenderer {
         if (oldInterpolation != null) {
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, oldInterpolation);
         }
+        drawDifficultyLabel(g, command, bounds);
+    }
+
+    private void drawDifficultyLabel(Graphics2D g, RenderCommand command, Rectangle spriteBounds) {
+        if (playerCharacter == null
+                || framePlayerRating == null
+                || command.entity == null
+                || command.entity.getType() != Library.EntityType.ENEMY
+                || command.entity.getMonster() == null
+                || command.depth > MAX_DIFFICULTY_LABEL_DEPTH
+                || spriteBounds.height < MIN_DIFFICULTY_LABEL_SPRITE_HEIGHT) {
+            return;
+        }
+
+        DifficultyResolver.DifficultyComparison comparison = DifficultyResolver.compare(
+                framePlayerRating,
+                frameMonsterRating(command.entity)
+        );
+        rememberVisibleEnemyComparison(comparison);
+        String label = comparison.compactLabel();
+        Font previousFont = g.getFont();
+        g.setFont(previousFont.deriveFont(Font.BOLD, 11f));
+        FontMetrics metrics = g.getFontMetrics();
+        int paddingX = 5;
+        int paddingY = 2;
+        int labelWidth = metrics.stringWidth(label) + paddingX * 2;
+        int labelHeight = metrics.getHeight() + paddingY * 2;
+        int x = Math.max(4, Math.min(viewWidth - labelWidth - 4, spriteBounds.x + spriteBounds.width / 2 - labelWidth / 2));
+        int y = Math.max(4, spriteBounds.y - labelHeight - 3);
+
+        g.setColor(new Color(0, 0, 0, 165));
+        g.fillRoundRect(x, y, labelWidth, labelHeight, 6, 6);
+        g.setColor(colorForDifficultyBand(comparison.band()));
+        g.drawRoundRect(x, y, labelWidth, labelHeight, 6, 6);
+        g.drawString(label, x + paddingX, y + paddingY + metrics.getAscent());
+        g.setFont(previousFont);
+    }
+
+    private DifficultyResolver.DifficultyRating frameMonsterRating(MapEntity entity) {
+        return frameMonsterRatingCache.computeIfAbsent(
+                entity,
+                key -> DifficultyResolver.rateMonster(key.getMonster())
+        );
+    }
+
+    private void rememberVisibleEnemyComparison(DifficultyResolver.DifficultyComparison comparison) {
+        if (comparison == null) {
+            return;
+        }
+
+        if (frameMostDangerousComparison == null
+                || comparison.ratio() > frameMostDangerousComparison.ratio()) {
+            frameMostDangerousComparison = comparison;
+        }
+    }
+
+    private Color colorForDifficultyBand(DifficultyResolver.DifficultyBand band) {
+        if (band == null) {
+            return DIFFICULTY_FAIR_COLOR;
+        }
+
+        return switch (band) {
+            case TRIVIAL -> DIFFICULTY_TRIVIAL_COLOR;
+            case EASY -> DIFFICULTY_EASY_COLOR;
+            case FAIR -> DIFFICULTY_FAIR_COLOR;
+            case DANGEROUS -> DIFFICULTY_DANGEROUS_COLOR;
+            case DEADLY -> DIFFICULTY_DEADLY_COLOR;
+        };
     }
 
     private void drawTexturedFace(Graphics2D g, BufferedImage texture, RenderCommand command) {

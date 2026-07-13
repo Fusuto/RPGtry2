@@ -1,6 +1,7 @@
 package org.main.core;
 
 import org.main.content.GenericNpcLibrary;
+import org.main.content.InteractionLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 import org.main.monsters.Monster;
@@ -19,7 +20,6 @@ public class DungeonGenerator {
     private static final double DOOR_CHANCE = 0.22;
     private static final double MONO_TYPE_CHANCE = 0.30;
     private static final int TARGET_CARVED_CELL_DIVISOR = 5;
-    private static final String DEEPER_DOOR_INTERACTION_ID = "generated_dungeon_gate";
 
     private final Random random;
 
@@ -52,7 +52,7 @@ public class DungeonGenerator {
                 : List.of(new GeneratedDungeon.TileInteraction(
                         deeperDoor.x(),
                         deeperDoor.y(),
-                        DEEPER_DOOR_INTERACTION_ID
+                        InteractionLibrary.GENERATED_DUNGEON_GATE.getInteractionId()
                 ));
 
         return new GeneratedDungeon(

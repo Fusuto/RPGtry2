@@ -18,7 +18,6 @@ public class BattleEncounter {
     private static final int FRONT_ROW_ACTOR_COUNT = 3;
     private static final int BATTLE_SLOT_COUNT = 3;
     private static final int BASE_PLAYER_ATTACK_DAMAGE = 5;
-    private static final int MONSTER_WILLPOWER_INTELLIGENCE_DIVISOR = 2;
     private static final int DEFENSE_XP_MINIMUM = 1;
     private static final int DEFENSE_XP_PER_DAMAGE = 3;
     private static final int ATTACK_XP_PER_ACTION = 5;
@@ -122,8 +121,8 @@ public class BattleEncounter {
                 playerCharacter.getCurrHp(),
                 null,
                 Library.EntityType.ALLY,
-                BASE_PLAYER_ATTACK_DAMAGE + playerCharacter.getStat(PlayerStat.STRENGTH) + equipmentAttackBonus,
-                playerCharacter.getStat(PlayerStat.DEFENSE) + equipmentDefenseBonus
+                BASE_PLAYER_ATTACK_DAMAGE + playerCharacter.getCombinedStat(PlayerStat.STRENGTH) + equipmentAttackBonus,
+                playerCharacter.getCombinedStat(PlayerStat.DEFENSE) + equipmentDefenseBonus
         );
         playerActor.copyCombatProfileFrom(playerCharacter);
         playerActor.setHitSoundPath(environment == null ? null : environment.getPlayerHitSoundPath());
@@ -147,22 +146,17 @@ public class BattleEncounter {
                     monster1.getName(),
                     monster1.getMaxHp(),
                     monster1.getCurrentHp(),
-                    monster1.getType().getImg(),
+                    monster1.getImage(),
                     Library.EntityType.ENEMY,
-                    monster1.getAttack()
+                    monster1.getStat(PlayerStat.STRENGTH),
+                    monster1.getStat(PlayerStat.DEFENSE)
             );
-            enemy.setAttackSoundPath(monster1.getType().getAttackSoundPath());
-            enemy.setHitSoundPath(monster1.getType().getDamageSoundPath());
-            enemy.configureMonsterCombatStats(
-                    monster1.getType().getAttack(),
-                    monster1.getType().getDefense(),
-                    monster1.getType().getIntelligence(),
-                    Math.max(1, monster1.getType().getDefense()
-                            + monster1.getType().getIntelligence() / MONSTER_WILLPOWER_INTELLIGENCE_DIVISOR)
-            );
-            enemy.setSpeciesId(monster1.getType().name());
-            enemy.setExperienceReward(monster1.getType().getXpReward());
-            monster1.getType().getSkills().forEach(skill -> enemy.addSkill(skill.createSkill()));
+            enemy.setAttackSoundPath(monster1.getAttackSoundPath());
+            enemy.setHitSoundPath(monster1.getDamageSoundPath());
+            enemy.configureMonsterCombatStats(monster1.getStatsView());
+            enemy.setSpeciesId(monster1.getType() == null ? monster1.getCustomId() : monster1.getType().name());
+            enemy.setExperienceReward(monster1.getXpReward());
+            monster1.getSkills().forEach(skill -> enemy.addSkill(skill.createSkill()));
             monsterActors.add(enemy);
         });
 

@@ -48,12 +48,12 @@ public class MapEntity {
     }
 
     public MapEntity(Monster monster, int x, int y) {
-        this(monster.getName(), Library.EntityType.ENEMY, x, y, monster.getType().getImg());
+        this(monster.getName(), Library.EntityType.ENEMY, x, y, monster.getImage());
         this.monster = monster;
     }
 
     public MapEntity(Monster monster, int x, int y, Library.EntityType type) {
-        this(monster.getName(), type, x, y, monster.getType().getImg());
+        this(monster.getName(), type, x, y, monster.getImage());
         this.monster = monster;
     }
 

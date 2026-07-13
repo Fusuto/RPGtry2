@@ -1,6 +1,7 @@
 package org.main.core;
 
 import org.main.content.ItemLibrary;
+import org.main.content.MapDesignLibrary;
 import org.main.content.PlayerRegionLibrary;
 import org.main.content.RecipeLibrary;
 import org.main.engine.DungeonMap;
@@ -12,6 +13,8 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Base64;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -73,6 +76,8 @@ public final class SaveSystem {
         properties.setProperty("world.minimapUnlocked", String.valueOf(gameState.isMiniMapUnlocked()));
         properties.setProperty("world.discovered", join(gameState.getDiscoveredMiniMapTileKeys()));
         properties.setProperty("world.removedEntities", join(gameState.getRemovedEntityKeysView()));
+        properties.setProperty("world.spokenAuthoredDialogues", join(gameState.getSpokenAuthoredDialogueIdsView()));
+        properties.setProperty("world.mapDesignPath", mapDesignPathForSave(gameState.getCurrentMapDesignPath()));
         saveDungeonMap(properties, gameState.getDungeonMap());
         saveTileInteractions(properties, gameState);
 
@@ -123,6 +128,7 @@ public final class SaveSystem {
         DungeonMap dungeonMap = loadDungeonMap(properties);
         int playerX = readInt(properties, "world.x", 1);
         int playerY = readInt(properties, "world.y", 1);
+        Path mapDesignPath = readMapDesignPath(properties.getProperty("world.mapDesignPath", ""));
 
         if (dungeonMap.isOutOfBounds(playerX, playerY)) {
             playerX = 1;
@@ -131,18 +137,24 @@ public final class SaveSystem {
 
         gameState.setPlayerCharacter(player);
         gameState.setRemovedEntityKeys(readSet(properties.getProperty("world.removedEntities", "")));
-        gameState.changeDungeon(
-                dungeonMap,
-                playerX,
-                playerY,
-                java.util.List.of()
-        );
+        if (mapDesignPath != null && Files.isRegularFile(mapDesignPath)) {
+            MapDesignLibrary.MapDesign mapDesign = MapDesignLibrary.load(mapDesignPath);
+            gameState.changeDungeon(mapDesign, playerX, playerY, mapDesignPath);
+        } else {
+            gameState.changeDungeon(
+                    dungeonMap,
+                    playerX,
+                    playerY,
+                    java.util.List.of()
+            );
+        }
         loadTileInteractions(properties, gameState);
         gameState.setCurrentFloor(currentFloor);
         gameState.setDirection(readInt(properties, "world.direction", 1));
         gameState.setMiniMapUnlocked(Boolean.parseBoolean(properties.getProperty("world.minimapUnlocked", "false")));
         gameState.setMiniMapMode(readEnum(properties, "world.minimapMode", GameState.MiniMapMode.class, GameState.MiniMapMode.DISCOVERED));
         gameState.setDiscoveredMiniMapTileKeys(readSet(properties.getProperty("world.discovered", "")));
+        gameState.setSpokenAuthoredDialogueIds(readSet(properties.getProperty("world.spokenAuthoredDialogues", "")));
         restoreGold(gameState, readInt(properties, "world.gold", gameState.getGold()));
         gameState.setQuestStages(readQuestStages(properties));
 
@@ -304,6 +316,13 @@ public final class SaveSystem {
             return limbKey(limb);
         }
 
+        if (item.isStackable()) {
+            ItemLibrary libraryItem = ItemLibrary.fromDisplayName(item.getName());
+            if (libraryItem != null) {
+                return "STACK|" + libraryItem.name() + "|" + item.getQuantity();
+            }
+        }
+
         ItemLibrary libraryItem = ItemLibrary.fromDisplayName(item.getName());
         if (libraryItem != null) {
             return libraryItem.name();
@@ -321,8 +340,45 @@ public final class SaveSystem {
             return readLimb(itemName);
         }
 
+        if (itemName.startsWith("CUSTOM_LIMB|")) {
+            return readCustomLimb(itemName);
+        }
+
         if (itemName.startsWith("RECIPE|")) {
             return RecipeLibrary.createSmithingResultByDisplayName(itemName.substring("RECIPE|".length()));
+        }
+
+        if (itemName.startsWith("STACK|")) {
+            String[] parts = itemName.split("\\|");
+            if (parts.length >= 3) {
+                try {
+                    ItemLibrary item = ItemLibrary.valueOf(parts[1]);
+                    int quantity = Math.max(1, Integer.parseInt(parts[2]));
+                    if (item == ItemLibrary.GOLD) {
+                        return ItemLibrary.createGold(quantity);
+                    }
+
+                    InventorySystem.Item created = item.createItem();
+                    if (created.isStackable()) {
+                        return new InventorySystem.Item(
+                                created.getName(),
+                                created.getItemType(),
+                                created.getIcon(),
+                                created.getUseSoundPath(),
+                                created.getHealAmount(),
+                                created.getMaterial(),
+                                created.getDurability(),
+                                created.getBaseGoldValue(),
+                                created.getExamineText(),
+                                created.getStatBonusTarget(),
+                                true,
+                                quantity
+                        );
+                    }
+                } catch (IllegalArgumentException ignored) {
+                    return null;
+                }
+            }
         }
 
         try {
@@ -334,8 +390,12 @@ public final class SaveSystem {
     }
 
     private static String limbKey(LimbItem limb) {
-        if (limb == null || limb.getMonsterType() == null) {
+        if (limb == null) {
             return "";
+        }
+
+        if (limb.getMonsterType() == null) {
+            return customLimbKey(limb);
         }
 
         return "LIMB|"
@@ -344,6 +404,29 @@ public final class SaveSystem {
                 + limb.getLimbSlot().name()
                 + "|"
                 + limb.getCondition().name();
+    }
+
+    private static String customLimbKey(LimbItem limb) {
+        StringBuilder stats = new StringBuilder();
+        for (PlayerStat stat : PlayerStat.values()) {
+            if (!stats.isEmpty()) {
+                stats.append(',');
+            }
+            stats.append(stat.name()).append('=').append(limb.getBaseStatsView().getOrDefault(stat, 0));
+        }
+
+        return "CUSTOM_LIMB|"
+                + encode(limb.getName())
+                + "|"
+                + limb.getLimbSlot().name()
+                + "|"
+                + limb.getCondition().name()
+                + "|"
+                + encode(limb.getIconPath())
+                + "|"
+                + encode(stats.toString())
+                + "|"
+                + encode(limb.getExamineText());
     }
 
     private static LimbItem readLimb(String value) {
@@ -366,12 +449,47 @@ public final class SaveSystem {
         }
     }
 
-    private static void restoreGold(GameState gameState, int gold) {
-        if (gameState.getGold() > 0) {
-            gameState.spendGold(gameState.getGold());
+    private static LimbItem readCustomLimb(String value) {
+        if (value == null || !value.startsWith("CUSTOM_LIMB|")) {
+            return null;
         }
 
-        gameState.addGold(Math.max(0, gold));
+        String[] parts = value.split("\\|");
+        if (parts.length < 6) {
+            return null;
+        }
+
+        try {
+            String name = decode(parts[1]);
+            LimbSlot slot = LimbSlot.valueOf(parts[2]);
+            GearDurability condition = GearDurability.valueOf(parts[3]);
+            String iconPath = decode(parts[4]);
+            EnumMap<PlayerStat, Integer> stats = new EnumMap<>(PlayerStat.class);
+            for (String statPart : decode(parts[5]).split(",")) {
+                String[] statValue = statPart.split("=");
+                if (statValue.length == 2) {
+                    stats.put(PlayerStat.valueOf(statValue[0]), Integer.parseInt(statValue[1]));
+                }
+            }
+            String examineText = parts.length >= 7 ? decode(parts[6]) : "";
+            return new LimbItem(name, null, slot, stats, List.of(), condition, iconPath, examineText);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private static String encode(String value) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString((value == null ? "" : value).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private static String decode(String value) {
+        return new String(Base64.getUrlDecoder().decode(value), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private static void restoreGold(GameState gameState, int gold) {
+        if (gold > 0 && gameState.getGold() == 0) {
+            gameState.addGold(gold);
+        }
     }
 
     private static Map<String, Integer> readQuestStages(Properties properties) {
@@ -384,6 +502,34 @@ public final class SaveSystem {
         }
 
         return quests;
+    }
+
+    private static String mapDesignPathForSave(Path path) {
+        if (path == null) {
+            return "";
+        }
+
+        Path absoluteMapFolder = MapDesignLibrary.MAP_FOLDER.toAbsolutePath().normalize();
+        Path absolutePath = path.toAbsolutePath().normalize();
+        if (absolutePath.startsWith(absoluteMapFolder)) {
+            return MapDesignLibrary.MAP_FOLDER.resolve(absoluteMapFolder.relativize(absolutePath)).toString();
+        }
+
+        return path.toString();
+    }
+
+    private static Path readMapDesignPath(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+
+        Path path = Path.of(value);
+        if (Files.isRegularFile(path)) {
+            return path;
+        }
+
+        Path mapFolderPath = MapDesignLibrary.MAP_FOLDER.resolve(value).normalize();
+        return Files.isRegularFile(mapFolderPath) ? mapFolderPath : path;
     }
 
     private static Set<String> readSet(String value) {

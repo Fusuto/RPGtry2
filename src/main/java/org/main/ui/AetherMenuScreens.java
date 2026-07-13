@@ -19,7 +19,7 @@ public final class AetherMenuScreens {
     private static final int START_BUTTON_WIDTH = 220;
     private static final int START_BUTTON_HEIGHT = 48;
     private static final int START_BUTTON_GAP = 16;
-    private static final int START_BUTTON_COUNT = 3;
+    private static final int START_BUTTON_COUNT = 4;
     private static final int START_MESSAGE_OFFSET_Y = 34;
     private static final int MESSAGE_FONT_SIZE = 15;
     private static final Color TITLE_TEXT_COLOR = new Color(235, 225, 200);
@@ -87,11 +87,12 @@ public final class AetherMenuScreens {
 
         drawButton(g, "New", startMenuButtonBounds(width, height, 0));
         drawButton(g, "Load", startMenuButtonBounds(width, height, 1));
-        drawButton(g, "Quit", startMenuButtonBounds(width, height, 2));
+        drawButton(g, "Custom Map", startMenuButtonBounds(width, height, 2));
+        drawButton(g, "Quit", startMenuButtonBounds(width, height, 3));
 
         if (message != null && !message.isBlank()) {
             g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, MESSAGE_FONT_SIZE));
-            Rectangle lastButton = startMenuButtonBounds(width, height, 2);
+            Rectangle lastButton = startMenuButtonBounds(width, height, 3);
             drawCenteredText(g, width, message, lastButton.y + lastButton.height + START_MESSAGE_OFFSET_Y, MESSAGE_TEXT_COLOR);
         }
 

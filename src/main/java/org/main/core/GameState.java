@@ -3,12 +3,14 @@ package org.main.core;
 import org.main.battle.BattleEncounter;
 import org.main.content.GatheringNodeLibrary;
 import org.main.content.ItemLibrary;
+import org.main.content.MapDesignLibrary;
 import org.main.content.QuestLibrary;
 import org.main.content.RecipeLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 
 import java.awt.Point;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HashMap;
@@ -38,6 +40,11 @@ public class GameState {
     private DungeonMap dungeonMap;
     private final List<MapEntity> entities = new ArrayList<>();
     private final Map<String, String> tileInteractionIds = new HashMap<>();
+    private final Map<String, MapDesignLibrary.AuthoredDialogue> authoredDialogues = new HashMap<>();
+    private final Map<String, QuestDefinition> authoredQuestDefinitions = new HashMap<>();
+    private final Map<String, MapDesignLibrary.CustomItem> customItems = new HashMap<>();
+    private final Map<String, MapDesignLibrary.CustomLimb> customLimbs = new HashMap<>();
+    private final Set<String> spokenAuthoredDialogues = new HashSet<>();
     private final Set<String> removedEntityKeys = new HashSet<>();
     private final Map<String, Integer> questStages = new HashMap<>();
     private final InputBindings inputBindings = new InputBindings();
@@ -47,6 +54,7 @@ public class GameState {
     private int playerX = 1;
     private int playerY = 1;
     private int currentFloor = 1;
+    private Path currentMapDesignPath;
     private double movementStartX = 1.0;
     private double movementStartY = 1.0;
     private double movementProgress = 1.0;
@@ -88,6 +96,8 @@ public class GameState {
     private int cookingY = -1;
     private int cookingElapsedMs = 0;
     private int selectedWorldItemIndex = -1;
+    private InventorySystem.Item selectedWorldItem;
+    private String selectedWorldItemName;
     private String cookingItemName;
     private String cookingMessage = "Use raw fish, then interact with a campfire.";
     private boolean smeltingActive = false;
@@ -101,7 +111,6 @@ public class GameState {
     private String selectedQuestId;
     private InteractionSystem.Interaction activeInteraction;
     private ShopSystem.ShopSession activeShop;
-    private int gold = 100;
 
     public enum GameMode {
         START_MENU,
@@ -394,6 +403,46 @@ public class GameState {
         for (GeneratedDungeon.TileInteraction tileInteraction : generatedDungeon.tileInteractions()) {
             setTileInteractionId(tileInteraction.x(), tileInteraction.y(), tileInteraction.interactionId());
         }
+
+        setAuthoredDialogues(generatedDungeon.authoredDialogues());
+        setAuthoredQuests(generatedDungeon.authoredQuests());
+        setCustomItems(generatedDungeon.customItems());
+        setCustomLimbs(generatedDungeon.customLimbs());
+        currentMapDesignPath = null;
+    }
+
+    public void changeDungeon(MapDesignLibrary.MapDesign mapDesign, int playerX, int playerY) {
+        changeDungeon(mapDesign, playerX, playerY, null);
+    }
+
+    public void changeDungeon(MapDesignLibrary.MapDesign mapDesign, int playerX, int playerY, Path mapDesignPath) {
+        if (mapDesign == null) {
+            return;
+        }
+
+        changeDungeon(MapDesignLibrary.toGeneratedDungeon(mapDesign, playerX, playerY));
+        currentMapDesignPath = mapDesignPath;
+    }
+
+    public void changeDungeon(MapDesignLibrary.MapDesign mapDesign) {
+        changeDungeon(mapDesign, null);
+    }
+
+    public void changeDungeon(MapDesignLibrary.MapDesign mapDesign, Path mapDesignPath) {
+        if (mapDesign == null) {
+            return;
+        }
+
+        changeDungeon(MapDesignLibrary.toGeneratedDungeon(mapDesign));
+        currentMapDesignPath = mapDesignPath;
+    }
+
+    public Path getCurrentMapDesignPath() {
+        return currentMapDesignPath;
+    }
+
+    public void clearCurrentMapDesignPath() {
+        currentMapDesignPath = null;
     }
 
     public enum MiniMapMode {
@@ -415,12 +464,17 @@ public class GameState {
         this.dungeonMap = dungeonMap;
         entities.clear();
         tileInteractionIds.clear();
+        authoredDialogues.clear();
+        authoredQuestDefinitions.clear();
+        customItems.clear();
+        customLimbs.clear();
+        currentMapDesignPath = null;
         resourceNodeStates.clear();
         resetMiniMapDiscovery();
 
         if (newEntities != null) {
             for (MapEntity entity : newEntities) {
-                addEntity(entity);
+                addEntityUnlessRemoved(entity);
             }
         }
 
@@ -454,6 +508,125 @@ public class GameState {
     public boolean hasTileInteractionId(int x, int y) {
         String interactionId = getTileInteractionId(x, y);
         return interactionId != null && !interactionId.isBlank();
+    }
+
+    public void setAuthoredDialogues(List<MapDesignLibrary.AuthoredDialogue> dialogues) {
+        authoredDialogues.clear();
+        if (dialogues == null) {
+            return;
+        }
+
+        for (MapDesignLibrary.AuthoredDialogue dialogue : dialogues) {
+            if (dialogue != null && dialogue.interactionId() != null && !dialogue.interactionId().isBlank()) {
+                authoredDialogues.put(dialogue.interactionId(), dialogue);
+            }
+        }
+    }
+
+    public MapDesignLibrary.AuthoredDialogue getAuthoredDialogue(String interactionId) {
+        if (interactionId == null || interactionId.isBlank()) {
+            return null;
+        }
+
+        return authoredDialogues.get(interactionId);
+    }
+
+    public void setAuthoredQuests(List<MapDesignLibrary.AuthoredQuest> quests) {
+        authoredQuestDefinitions.clear();
+        if (quests == null) {
+            return;
+        }
+
+        for (MapDesignLibrary.AuthoredQuest quest : quests) {
+            if (quest != null && !quest.questId().isBlank()) {
+                authoredQuestDefinitions.put(quest.questId(), new QuestDefinition(
+                        quest.questId(),
+                        quest.displayName(),
+                        quest.stageDescriptions()
+                ));
+            }
+        }
+    }
+
+    public void setCustomItems(List<MapDesignLibrary.CustomItem> items) {
+        customItems.clear();
+        if (items == null) {
+            return;
+        }
+
+        for (MapDesignLibrary.CustomItem item : items) {
+            if (item != null && !item.itemId().isBlank()) {
+                customItems.put(item.itemId(), item);
+            }
+        }
+    }
+
+    public void setCustomLimbs(List<MapDesignLibrary.CustomLimb> limbs) {
+        customLimbs.clear();
+        if (limbs == null) {
+            return;
+        }
+
+        for (MapDesignLibrary.CustomLimb limb : limbs) {
+            if (limb != null && !limb.limbId().isBlank()) {
+                customLimbs.put(limb.limbId(), limb);
+            }
+        }
+    }
+
+    public InventorySystem.Item createCustomItem(String itemId) {
+        MapDesignLibrary.CustomItem item = customItems.get(itemId);
+        return item == null ? null : item.createItem();
+    }
+
+    public InventorySystem.Item createCustomItemByNameOrId(String itemNameOrId) {
+        if (itemNameOrId == null || itemNameOrId.isBlank()) {
+            return null;
+        }
+        MapDesignLibrary.CustomItem item = customItems.get(itemNameOrId);
+        if (item != null) {
+            return item.createItem();
+        }
+        MapDesignLibrary.CustomLimb limb = customLimbs.get(itemNameOrId);
+        if (limb != null) {
+            return limb.createLimb();
+        }
+        for (MapDesignLibrary.CustomItem customItem : customItems.values()) {
+            if (itemNameOrId.equalsIgnoreCase(customItem.displayName())) {
+                return customItem.createItem();
+            }
+        }
+        for (MapDesignLibrary.CustomLimb customLimb : customLimbs.values()) {
+            if (itemNameOrId.equalsIgnoreCase(customLimb.displayName())) {
+                return customLimb.createLimb();
+            }
+        }
+        return null;
+    }
+
+    public boolean hasSpokenToAuthoredDialogue(String interactionId) {
+        return interactionId != null && spokenAuthoredDialogues.contains(interactionId);
+    }
+
+    public void markSpokenToAuthoredDialogue(String interactionId) {
+        if (interactionId != null && !interactionId.isBlank()) {
+            spokenAuthoredDialogues.add(interactionId);
+        }
+    }
+
+    public Set<String> getSpokenAuthoredDialogueIdsView() {
+        return Set.copyOf(spokenAuthoredDialogues);
+    }
+
+    public void setSpokenAuthoredDialogueIds(Set<String> interactionIds) {
+        spokenAuthoredDialogues.clear();
+        if (interactionIds != null) {
+            for (String interactionId : interactionIds) {
+                if (interactionId != null && !interactionId.isBlank()) {
+                    spokenAuthoredDialogues.add(interactionId);
+                }
+            }
+        }
     }
 
     private String tileKey(int x, int y) {
@@ -771,6 +944,33 @@ public class GameState {
         return Map.copyOf(questStages);
     }
 
+    public List<QuestDefinition> getQuestDefinitions() {
+        List<QuestDefinition> definitions = new ArrayList<>();
+        for (QuestLibrary quest : QuestLibrary.values()) {
+            List<String> stages = new ArrayList<>();
+            for (int stage = 0; stage <= quest.getMaxStage(); stage++) {
+                stages.add(quest.getStageDescription(stage));
+            }
+            definitions.add(new QuestDefinition(quest.getId(), quest.getDisplayName(), stages));
+        }
+        definitions.addAll(authoredQuestDefinitions.values());
+        return definitions;
+    }
+
+    public QuestDefinition getQuestDefinition(String questId) {
+        if (questId == null || questId.isBlank()) {
+            return null;
+        }
+
+        for (QuestDefinition definition : getQuestDefinitions()) {
+            if (questId.equals(definition.id())) {
+                return definition;
+            }
+        }
+
+        return null;
+    }
+
     public void setQuestStages(Map<String, Integer> questStages) {
         this.questStages.clear();
 
@@ -783,8 +983,20 @@ public class GameState {
         }
     }
 
+    public void setQuestStage(String questId, int stage) {
+        if (questId == null || questId.isBlank()) {
+            return;
+        }
+
+        QuestDefinition definition = getQuestDefinition(questId);
+        int safeStage = definition == null
+                ? Math.max(0, stage)
+                : Math.max(0, Math.min(definition.maxStage(), stage));
+        questStages.put(questId, safeStage);
+    }
+
     public int getGold() {
-        return gold;
+        return getInventory().countItemNamed(ItemLibrary.GOLD.getDisplayName());
     }
 
     public void addGold(int amount) {
@@ -792,11 +1004,11 @@ public class GameState {
             return;
         }
 
-        gold += amount;
+        getInventory().addItem(ItemLibrary.createGold(amount));
     }
 
     public boolean canSpendGold(int amount) {
-        return amount >= 0 && gold >= amount;
+        return amount >= 0 && getGold() >= amount;
     }
 
     public boolean spendGold(int amount) {
@@ -804,8 +1016,7 @@ public class GameState {
             return false;
         }
 
-        gold -= amount;
-        return true;
+        return amount == 0 || getInventory().removeItemQuantityNamed(ItemLibrary.GOLD.getDisplayName(), amount);
     }
 
     public ShopSystem.ShopSession getActiveShop() {
@@ -1129,6 +1340,9 @@ public class GameState {
 
     public void selectWorldUseItem(int inventoryIndex) {
         selectedWorldItemIndex = inventoryIndex;
+        InventorySystem.Item item = getInventory().getItem(inventoryIndex);
+        selectedWorldItem = item;
+        selectedWorldItemName = item == null ? null : item.getName();
     }
 
     public InventorySystem.Item getSelectedWorldUseItem() {
@@ -1136,11 +1350,37 @@ public class GameState {
             return null;
         }
 
-        return getInventory().getItem(selectedWorldItemIndex);
+        InventorySystem.Item item = getInventory().getItem(selectedWorldItemIndex);
+        if (item == selectedWorldItem) {
+            return item;
+        }
+
+        if (selectedWorldItem != null && inventoryContains(selectedWorldItem)) {
+            return selectedWorldItem;
+        }
+
+        if (item == null || selectedWorldItemName == null || !selectedWorldItemName.equals(item.getName())) {
+            clearSelectedWorldUseItem();
+            return null;
+        }
+
+        return item;
+    }
+
+    private boolean inventoryContains(InventorySystem.Item targetItem) {
+        for (int i = 0; i < InventorySystem.Inventory.SLOT_COUNT; i++) {
+            if (getInventory().getItem(i) == targetItem) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public void clearSelectedWorldUseItem() {
         selectedWorldItemIndex = -1;
+        selectedWorldItem = null;
+        selectedWorldItemName = null;
     }
 
     public boolean startCooking(int x, int y) {
@@ -1586,5 +1826,28 @@ public class GameState {
         closeShop();
         closeInteraction();
         gameMode = GameMode.GAME_OVER;
+    }
+
+    public record QuestDefinition(String id, String displayName, List<String> stageDescriptions) {
+        public QuestDefinition {
+            id = id == null ? "" : id;
+            displayName = displayName == null || displayName.isBlank() ? "Untitled Quest" : displayName;
+            stageDescriptions = stageDescriptions == null || stageDescriptions.isEmpty()
+                    ? List.of("Begin the quest.", "Complete.")
+                    : List.copyOf(stageDescriptions);
+        }
+
+        public int maxStage() {
+            return stageDescriptions.size() - 1;
+        }
+
+        public boolean isComplete(int stage) {
+            return stage >= maxStage();
+        }
+
+        public String stageDescription(int stage) {
+            int safeStage = Math.max(0, Math.min(maxStage(), stage));
+            return stageDescriptions.get(safeStage);
+        }
     }
 }

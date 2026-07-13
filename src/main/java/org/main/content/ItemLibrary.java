@@ -11,6 +11,18 @@ import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 
 public enum ItemLibrary {
+    GOLD(
+            "Gold",
+            InventorySystem.ItemType.MISC,
+            "assets/images/ui/01_UI_Resources/A1ICON/Gold.png",
+            null,
+            0,
+            GearMaterial.NONE,
+            GearDurability.PERFECT,
+            1,
+            "A small pile of spendable gold."
+    ),
+
     POTION(
             "Potion",
             InventorySystem.ItemType.CONSUMABLE,
@@ -176,7 +188,28 @@ public enum ItemLibrary {
     }
 
     public InventorySystem.Item createItem() {
+        if (this == GOLD) {
+            return createGold(1);
+        }
+
         return new InventorySystem.Item(displayName, itemType, iconPath, useSoundPath, healAmount, material, durability, baseGoldValue, examineText);
+    }
+
+    public static InventorySystem.Item createGold(int amount) {
+        return new InventorySystem.Item(
+                GOLD.displayName,
+                GOLD.itemType,
+                AssetLoader.loadImage(GOLD.iconPath),
+                GOLD.useSoundPath,
+                GOLD.healAmount,
+                GOLD.material,
+                GOLD.durability,
+                GOLD.baseGoldValue,
+                GOLD.examineText,
+                null,
+                true,
+                Math.max(1, amount)
+        );
     }
 
     public static InventorySystem.Item createTintedWeapon(

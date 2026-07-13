@@ -360,6 +360,7 @@ public class BattleController {
             defeatedMonsterType = defeatedEnemy.getMonster() == null ? null : defeatedEnemy.getMonster().getType();
 
             if (defeatedEnemy.getMonster() != null
+                    && defeatedEnemy.getMonster().getType() != null
                     && "SLIME".equals(defeatedEnemy.getMonster().getType().name())
                     && gameState.getQuestStage(QuestLibrary.SKELETON_HAT) == 1) {
                 gameState.setQuestStage(QuestLibrary.SKELETON_HAT, 2);
@@ -411,7 +412,7 @@ public class BattleController {
     }
 
     private void spawnLootDrops(MapEntity defeatedEnemy) {
-        if (defeatedEnemy == null || defeatedEnemy.getMonster() == null) {
+        if (defeatedEnemy == null || defeatedEnemy.getMonster() == null || defeatedEnemy.getMonster().getType() == null) {
             return;
         }
 

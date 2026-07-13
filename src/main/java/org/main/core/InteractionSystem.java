@@ -1,6 +1,10 @@
 package org.main.core;
 
 import org.main.content.DialogueLibrary;
+import org.main.content.InteractionLibrary;
+import org.main.content.ItemLibrary;
+import org.main.content.MapDesignLibrary;
+import org.main.content.QuestLibrary;
 import org.main.content.RecipeLibrary;
 import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
@@ -23,6 +27,8 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.awt.image.BufferedImage;
 import javax.swing.SwingUtilities;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -1482,11 +1488,395 @@ public final class InteractionSystem {
             InteractionFactory factory = factories.get(interactionId);
 
             if (factory == null) {
+                if (interactionId != null && interactionId.startsWith("map_link|")) {
+                    return createMapLinkInteraction(interactionId, gameState);
+                }
+
+                Interaction authoredInteraction = createAuthoredInteraction(interactionId, gameState, entity, tileX, tileY);
+                if (authoredInteraction != null) {
+                    return authoredInteraction;
+                }
+
                 System.out.println("No interaction registered for id: " + interactionId);
                 return null;
             }
 
             return factory.create(new InteractionContext(gameState, entity, tileX, tileY));
+        }
+
+        private Interaction createMapLinkInteraction(String interactionId, GameState gameState) {
+            String[] parts = interactionId.split("\\|");
+            if (parts.length < 4) {
+                return prompt("Map Link", "This map link is incomplete.", closeOption("Close"));
+            }
+
+            String mapPathText = parts[1];
+            int targetX = parseInteractionInt(parts[2], 1);
+            int targetY = parseInteractionInt(parts[3], 1);
+            return prompt(
+                    "Map Link",
+                    "Travel to " + mapPathText + "?",
+                    option("Travel", () -> openMapLink(gameState, mapPathText, targetX, targetY)),
+                    closeOption("Stay")
+            );
+        }
+
+        private void openMapLink(GameState gameState, String mapPathText, int targetX, int targetY) {
+            if (gameState == null || mapPathText == null || mapPathText.isBlank()) {
+                return;
+            }
+
+            try {
+                Path path = Path.of(mapPathText);
+                if (!Files.isRegularFile(path)) {
+                    path = MapDesignLibrary.MAP_FOLDER.resolve(mapPathText).normalize();
+                }
+                MapDesignLibrary.MapDesign targetMap = MapDesignLibrary.load(path);
+                gameState.changeDungeon(targetMap, targetX, targetY, path);
+                gameState.closeInteraction();
+            } catch (Exception exception) {
+                gameState.openInteraction(prompt(
+                        "Map Link",
+                        "Failed to travel: " + exception.getMessage(),
+                        closeOption("Close")
+                ));
+            }
+        }
+
+        private int parseInteractionInt(String value, int fallback) {
+            try {
+                return Integer.parseInt(value);
+            } catch (NumberFormatException ignored) {
+                return fallback;
+            }
+        }
+
+        private Interaction createAuthoredInteraction(
+                String interactionId,
+                GameState gameState,
+                MapEntity entity,
+                int tileX,
+                int tileY
+        ) {
+            if (gameState == null) {
+                return null;
+            }
+
+            var authoredDialogue = gameState.getAuthoredDialogue(interactionId);
+            if (authoredDialogue == null) {
+                return null;
+            }
+
+            boolean firstTalk = !gameState.hasSpokenToAuthoredDialogue(authoredDialogue.interactionId());
+            String startingNodeId = startingAuthoredNodeId(authoredDialogue, gameState, firstTalk);
+            Interaction interaction = createAuthoredNodeInteraction(
+                    authoredDialogue,
+                    gameState,
+                    entity,
+                    tileX,
+                    tileY,
+                    startingNodeId,
+                    "",
+                    firstTalk
+            );
+            gameState.markSpokenToAuthoredDialogue(authoredDialogue.interactionId());
+            return interaction;
+        }
+
+        private String startingAuthoredNodeId(
+                MapDesignLibrary.AuthoredDialogue authoredDialogue,
+                GameState gameState,
+                boolean firstTalk
+        ) {
+            if (firstTalk && findAuthoredDialogueNode(authoredDialogue, "firstTalk") != null) {
+                return "firstTalk";
+            }
+            if (!authoredDialogue.choices().isEmpty()) {
+                return "start";
+            }
+
+            MapDesignLibrary.AuthoredDialogueNode questNode = findRelevantAuthoredQuestNode(authoredDialogue, gameState);
+            return questNode == null ? "start" : questNode.nodeId();
+        }
+
+        private MapDesignLibrary.AuthoredDialogueNode findRelevantAuthoredQuestNode(
+                MapDesignLibrary.AuthoredDialogue authoredDialogue,
+                GameState gameState
+        ) {
+            if (authoredDialogue == null || gameState == null) {
+                return null;
+            }
+
+            for (MapDesignLibrary.AuthoredDialogueNode node : authoredDialogue.nodes()) {
+                if ("firstTalk".equals(node.nodeId())) {
+                    continue;
+                }
+                for (MapDesignLibrary.AuthoredDialogueChoice choice : node.choices()) {
+                    if (isAuthoredChoiceRelevantForCurrentQuestStage(gameState, choice)) {
+                        return node;
+                    }
+                }
+            }
+            return null;
+        }
+
+        private boolean isAuthoredChoiceRelevantForCurrentQuestStage(
+                GameState gameState,
+                MapDesignLibrary.AuthoredDialogueChoice choice
+        ) {
+            if (choice == null || choice.questId().isBlank() || choice.questStage() < 0) {
+                return false;
+            }
+
+            int currentStage = gameState.getQuestStagesView().getOrDefault(choice.questId(), 0);
+            int requiredStage = Math.max(0, choice.questStage() - 1);
+            return currentStage == requiredStage;
+        }
+
+        private Interaction createAuthoredNodeInteraction(
+                MapDesignLibrary.AuthoredDialogue authoredDialogue,
+                GameState gameState,
+                MapEntity entity,
+                int tileX,
+                int tileY,
+                String nodeId,
+                String extraText,
+                boolean firstTalk
+        ) {
+            boolean rootNode = nodeId == null || nodeId.isBlank() || "start".equals(nodeId);
+            MapDesignLibrary.AuthoredDialogueNode node = rootNode ? null : findAuthoredDialogueNode(authoredDialogue, nodeId);
+            String bodyText = rootNode
+                    ? authoredDialogue.bodyText()
+                    : node == null ? "This conversation path is missing." : node.bodyText();
+            if (extraText != null && !extraText.isBlank()) {
+                bodyText += extraText;
+            }
+            List<MapDesignLibrary.AuthoredDialogueChoice> choices = rootNode
+                    ? authoredDialogue.choices()
+                    : node == null ? List.of() : node.choices();
+            List<MapDesignLibrary.AuthoredDialogueChoice> visibleChoices = visibleAuthoredChoices(gameState, choices, firstTalk);
+            if (!visibleChoices.isEmpty()) {
+                List<InteractionOption> options = new ArrayList<>();
+                for (MapDesignLibrary.AuthoredDialogueChoice choice : visibleChoices) {
+                    options.add(option(choice.label(), () -> openAuthoredDialogueChoice(
+                            authoredDialogue,
+                            choice,
+                            gameState,
+                            entity,
+                            tileX,
+                            tileY,
+                            firstTalk
+                    )));
+                }
+                options.add(closeOption("Close"));
+                return dialogue(
+                        authoredDialogue.speakerName(),
+                        bodyText,
+                        null,
+                        entity == null ? null : entity.getStaticImage(),
+                        options.toArray(new InteractionOption[0])
+                );
+            }
+
+            String followUpInteractionId = authoredDialogue.followUpInteractionId();
+            if (rootNode
+                    && followUpInteractionId != null
+                    && !followUpInteractionId.isBlank()
+                    && !followUpInteractionId.equals(authoredDialogue.interactionId())
+                    && factories.containsKey(followUpInteractionId)) {
+                return dialogue(
+                        authoredDialogue.speakerName(),
+                        bodyText,
+                        null,
+                        entity == null ? null : entity.getStaticImage(),
+                        option("Continue", () -> {
+                            InteractionFactory followUpFactory = factories.get(followUpInteractionId);
+                            if (followUpFactory != null) {
+                                gameState.openInteraction(followUpFactory.create(new InteractionContext(gameState, entity, tileX, tileY)));
+                            }
+                        }),
+                        closeOption("Close")
+                );
+            }
+
+            return dialogue(
+                    authoredDialogue.speakerName(),
+                    bodyText,
+                    null,
+                    entity == null ? null : entity.getStaticImage(),
+                    closeOption("Close")
+            );
+        }
+
+        private void openAuthoredDialogueChoice(
+                MapDesignLibrary.AuthoredDialogue authoredDialogue,
+                MapDesignLibrary.AuthoredDialogueChoice choice,
+                GameState gameState,
+                MapEntity entity,
+                int tileX,
+                int tileY,
+                boolean firstTalk
+        ) {
+            String itemFailure = applyAuthoredChoiceItemAction(gameState, choice);
+            if (!itemFailure.isBlank()) {
+                gameState.openInteraction(dialogue(
+                        authoredDialogue.speakerName(),
+                        itemFailure,
+                        null,
+                        entity == null ? null : entity.getStaticImage(),
+                        closeOption("Close")
+                ));
+                return;
+            }
+
+            String rewardText = applyAuthoredChoiceReward(gameState, choice);
+            String questText = applyAuthoredChoiceQuestAction(gameState, choice);
+            if (!choice.targetNodeId().isBlank()) {
+                gameState.openInteraction(createAuthoredNodeInteraction(
+                        authoredDialogue,
+                        gameState,
+                        entity,
+                        tileX,
+                        tileY,
+                        choice.targetNodeId(),
+                        rewardText + questText,
+                        firstTalk
+                ));
+                return;
+            }
+
+            gameState.openInteraction(dialogue(
+                    authoredDialogue.speakerName(),
+                    choice.bodyText() + rewardText + questText,
+                    null,
+                    entity == null ? null : entity.getStaticImage(),
+                    closeOption("Close")
+            ));
+        }
+
+        private List<MapDesignLibrary.AuthoredDialogueChoice> visibleAuthoredChoices(
+                GameState gameState,
+                List<MapDesignLibrary.AuthoredDialogueChoice> choices,
+                boolean firstTalk
+        ) {
+            if (choices == null || choices.isEmpty()) {
+                return List.of();
+            }
+            List<MapDesignLibrary.AuthoredDialogueChoice> visibleChoices = new ArrayList<>();
+            for (MapDesignLibrary.AuthoredDialogueChoice choice : choices) {
+                if (isAuthoredChoiceVisible(gameState, choice, firstTalk)) {
+                    visibleChoices.add(choice);
+                }
+            }
+            return visibleChoices;
+        }
+
+        private boolean isAuthoredChoiceVisible(GameState gameState, MapDesignLibrary.AuthoredDialogueChoice choice, boolean firstTalk) {
+            if (choice == null) {
+                return false;
+            }
+            if (choice.firstTalkOnly() && !firstTalk) {
+                return false;
+            }
+            if (gameState != null && !choice.questId().isBlank() && choice.questStage() >= 0) {
+                int currentStage = gameState.getQuestStagesView().getOrDefault(choice.questId(), 0);
+                int requiredStage = Math.max(0, choice.questStage() - 1);
+                if (currentStage != requiredStage) {
+                    return false;
+                }
+            }
+            return gameState == null
+                    || (hasRequiredAuthoredChoiceItem(gameState, choice.requiredItemName())
+                    && hasRequiredAuthoredChoiceItem(gameState, choice.takeItemName()));
+        }
+
+        private boolean hasRequiredAuthoredChoiceItem(GameState gameState, String itemName) {
+            return itemName == null
+                    || itemName.isBlank()
+                    || gameState.getInventory().hasItemNamed(itemName);
+        }
+
+        private String applyAuthoredChoiceItemAction(GameState gameState, MapDesignLibrary.AuthoredDialogueChoice choice) {
+            if (gameState == null || choice == null || choice.takeItemName().isBlank()) {
+                return "";
+            }
+            if (gameState.getInventory().removeFirstItemNamed(choice.takeItemName())) {
+                return "";
+            }
+            return "You need " + choice.takeItemName() + " for that.";
+        }
+
+        private String applyAuthoredChoiceReward(GameState gameState, MapDesignLibrary.AuthoredDialogueChoice choice) {
+            if (gameState == null || choice == null) {
+                return "";
+            }
+
+            StringBuilder rewardText = new StringBuilder();
+            if (!choice.giveItemName().isBlank()) {
+                InventorySystem.Item item = createAuthoredChoiceRewardItem(gameState, choice.giveItemName());
+                if (item == null) {
+                    rewardText.append("\nMissing reward item: ").append(choice.giveItemName());
+                } else if (!gameState.getInventory().addItem(item)) {
+                    rewardText.append("\nInventory full: ").append(item.getName()).append(" lost");
+                } else {
+                    rewardText.append("\n+1 ").append(item.getName());
+                }
+            }
+
+            if (choice.giveGold() > 0) {
+                gameState.addGold(choice.giveGold());
+                rewardText.append("\n+").append(choice.giveGold()).append(" gold");
+            }
+
+            if (choice.giveSkill() != null && choice.giveSkillXp() > 0) {
+                gameState.getPlayerCharacter().addSkillExperience(choice.giveSkill(), choice.giveSkillXp());
+                rewardText.append("\n")
+                        .append(QuestLibrary.skillExperienceRewardText(choice.giveSkill(), choice.giveSkillXp()));
+            }
+
+            return rewardText.isEmpty() ? "" : "\n\n" + rewardText;
+        }
+
+        private InventorySystem.Item createAuthoredChoiceRewardItem(GameState gameState, String itemName) {
+            InventorySystem.Item customItem = gameState.createCustomItemByNameOrId(itemName);
+            if (customItem != null) {
+                return customItem;
+            }
+            for (ItemLibrary item : ItemLibrary.values()) {
+                if (itemName.equalsIgnoreCase(item.getDisplayName()) || itemName.equalsIgnoreCase(item.name())) {
+                    return item.createItem();
+                }
+            }
+            return null;
+        }
+
+        private MapDesignLibrary.AuthoredDialogueNode findAuthoredDialogueNode(
+                MapDesignLibrary.AuthoredDialogue authoredDialogue,
+                String nodeId
+        ) {
+            if (authoredDialogue == null || nodeId == null || nodeId.isBlank()) {
+                return null;
+            }
+            for (MapDesignLibrary.AuthoredDialogueNode node : authoredDialogue.nodes()) {
+                if (nodeId.equals(node.nodeId())) {
+                    return node;
+                }
+            }
+            return null;
+        }
+
+        private String applyAuthoredChoiceQuestAction(GameState gameState, MapDesignLibrary.AuthoredDialogueChoice choice) {
+            if (gameState == null
+                    || choice == null
+                    || choice.questId().isBlank()
+                    || choice.questStage() < 0) {
+                return "";
+            }
+
+            gameState.setQuestStage(choice.questId(), choice.questStage());
+            GameState.QuestDefinition quest = gameState.getQuestDefinition(choice.questId());
+            String questName = quest == null ? choice.questId() : quest.displayName();
+            return "\n\nQuest updated: " + questName;
         }
 
         public static InteractionRegistry createDefault() {
@@ -1496,7 +1886,7 @@ public final class InteractionSystem {
                 registry.register(dialogue.getInteractionId(), dialogue::create);
             }
 
-            registry.register("generated_dungeon_gate", context -> prompt(
+            registry.register(InteractionLibrary.GENERATED_DUNGEON_GATE.getInteractionId(), context -> prompt(
                     "Dungeon Gate",
                     "Go one floor deeper into a newly generated dungeon?",
                     option("Enter", () -> {
