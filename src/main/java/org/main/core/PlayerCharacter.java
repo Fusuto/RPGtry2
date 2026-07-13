@@ -402,7 +402,8 @@ public class PlayerCharacter {
 
         return switch (material) {
             case NONE -> 0;
-            case BRONZE, OAK, LEATHER -> 1;
+            case COPPER, OAK, LEATHER -> 1;
+            case BRONZE -> 3;
             case IRON, YEW, SILVER -> 5;
             case STEEL, IRONWOOD -> 10;
         };

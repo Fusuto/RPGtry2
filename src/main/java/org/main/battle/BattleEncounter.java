@@ -1,38 +1,28 @@
 package org.main.battle;
 
 import org.main.content.EnvironmentLibrary;
+import org.main.content.MapDesignLibrary;
 import org.main.core.GameBootstrap;
 import org.main.core.CharacterSkill;
+import org.main.core.GameConfiguration;
 import org.main.core.InventorySystem;
 import org.main.core.Library;
+import org.main.core.PaperDollRenderer;
 import org.main.core.PlayerCharacter;
 import org.main.core.PlayerStat;
 import org.main.engine.SoundSystem;
 import org.main.monsters.Monster;
 
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 
 public class BattleEncounter {
     private static final int FRONT_ROW_ACTOR_COUNT = 3;
     private static final int BATTLE_SLOT_COUNT = 3;
     private static final int BASE_PLAYER_ATTACK_DAMAGE = 5;
-    private static final int DEFENSE_XP_MINIMUM = 1;
-    private static final int DEFENSE_XP_PER_DAMAGE = 3;
-    private static final int ATTACK_XP_PER_ACTION = 5;
-    private static final int MAGIC_ACCURACY_XP_PER_CAST = 5;
-    private static final int STRENGTH_XP_MINIMUM = 1;
-    private static final int STRENGTH_XP_PER_DAMAGE = 4;
-    private static final int MAGIC_POWER_XP_MINIMUM = 1;
-    private static final int MAGIC_POWER_XP_PER_DAMAGE = 4;
-    private static final int MAGIC_HEALING_XP_MINIMUM = 4;
-    private static final int MAGIC_HEALING_XP_PER_HP = 4;
-    private static final double DEBUG_CRITICAL_HP_PERCENT = 0.10;
-    private static final int DEBUG_INVULNERABLE_TURNS = 1;
-    private static final double DEBUG_DAMAGE_REDUCTION = 1.0;
-    private static final double ENEMY_SKILL_INTELLIGENCE_DIVISOR = 10.0;
-    private static final int SMART_ENEMY_DAMAGE_SKILL_INTELLIGENCE = 7;
 
     private final List<BattleActor> allies;
     private final List<BattleActor> enemies;
@@ -50,6 +40,7 @@ public class BattleEncounter {
         this.soundSystem = soundSystem;
 
         assignFormations();
+        resetAllAttackCooldowns();
     }
 
     private void assignFormations() {
@@ -66,6 +57,19 @@ public class BattleEncounter {
 
             actor.setBattlePosition(row, slot);
         }
+    }
+
+    private void resetAllAttackCooldowns() {
+        for (BattleActor actor : allActors()) {
+            actor.resetAttackCooldown();
+        }
+    }
+
+    private List<BattleActor> allActors() {
+        List<BattleActor> actors = new ArrayList<>();
+        actors.addAll(allies);
+        actors.addAll(enemies);
+        return actors;
     }
 
     public static BattleEncounter fromMonster(List<Monster> monster) {
@@ -114,12 +118,13 @@ public class BattleEncounter {
 
         int equipmentAttackBonus = playerCharacter.getInventory() == null ? 0 : playerCharacter.getUsableWeaponStatBonus();
         int equipmentDefenseBonus = playerCharacter.getInventory() == null ? 0 : playerCharacter.getUsableArmorStatBonus();
+        BufferedImage playerBattleImage = new PaperDollRenderer().render(playerCharacter);
 
         BattleActor playerActor = new BattleActor(
                 playerCharacter.getName(),
                 playerCharacter.getMaxHp(),
                 playerCharacter.getCurrHp(),
-                null,
+                playerBattleImage,
                 Library.EntityType.ALLY,
                 BASE_PLAYER_ATTACK_DAMAGE + playerCharacter.getCombinedStat(PlayerStat.STRENGTH) + equipmentAttackBonus,
                 playerCharacter.getCombinedStat(PlayerStat.DEFENSE) + equipmentDefenseBonus
@@ -141,30 +146,33 @@ public class BattleEncounter {
 
         List<BattleActor> monsterActors = new ArrayList<>();
 
-        monster.forEach(monster1 -> {
-            var enemy = new BattleActor(
-                    monster1.getName(),
-                    monster1.getMaxHp(),
-                    monster1.getCurrentHp(),
-                    monster1.getImage(),
-                    Library.EntityType.ENEMY,
-                    monster1.getStat(PlayerStat.STRENGTH),
-                    monster1.getStat(PlayerStat.DEFENSE)
-            );
-            enemy.setAttackSoundPath(monster1.getAttackSoundPath());
-            enemy.setHitSoundPath(monster1.getDamageSoundPath());
-            enemy.configureMonsterCombatStats(monster1.getStatsView());
-            enemy.setSpeciesId(monster1.getType() == null ? monster1.getCustomId() : monster1.getType().name());
-            enemy.setExperienceReward(monster1.getXpReward());
-            monster1.getSkills().forEach(skill -> enemy.addSkill(skill.createSkill()));
-            monsterActors.add(enemy);
-        });
+        monster.forEach(monster1 -> monsterActors.add(createEnemyActor(monster1)));
 
         return new BattleEncounter(
                 List.of(playerActor),
                 monsterActors,
                 soundSystem
         );
+    }
+
+    private static BattleActor createEnemyActor(Monster monster) {
+        var enemy = new BattleActor(
+                monster.getName(),
+                monster.getMaxHp(),
+                monster.getCurrentHp(),
+                monster.getImage(),
+                Library.EntityType.ENEMY,
+                monster.getStat(PlayerStat.STRENGTH),
+                monster.getStat(PlayerStat.DEFENSE)
+        );
+        enemy.setAttackSoundPath(monster.getAttackSoundPath());
+        enemy.setHitSoundPath(monster.getDamageSoundPath());
+        enemy.configureMonsterCombatStats(monster.getStatsView());
+        enemy.setCombatAiIntelligence(monster.getCombatAiIntelligence());
+        enemy.setSpeciesId(monster.getCustomId());
+        enemy.setExperienceReward(monster.getXpReward());
+        monster.getSkills().forEach(skill -> enemy.addSkill(skill.createSkill()));
+        return enemy;
     }
 
     public List<BattleActor> getSelectableActorsForSkill(
@@ -292,7 +300,7 @@ public class BattleEncounter {
                 awardOffensiveSkillExperience(caster, skill, combatResult, damage);
                 target.addCombatSkillExperience(
                         CharacterSkill.DEFENSE,
-                        Math.max(DEFENSE_XP_MINIMUM, damage * DEFENSE_XP_PER_DAMAGE)
+                        Math.max(defenseXpMinimum(), damage * defenseXpPerDamage())
                 );
 
                 if (combatResult.hit()) {
@@ -310,11 +318,13 @@ public class BattleEncounter {
                 totalDamage += 0;
                 caster.addCombatSkillExperience(
                         CharacterSkill.MAGIC_POWER,
-                        Math.max(MAGIC_HEALING_XP_MINIMUM, healed * MAGIC_HEALING_XP_PER_HP)
+                        Math.max(magicHealingXpMinimum(), healed * magicHealingXpPerHp())
                 );
                 appendBattleMessage(target.getName() + " recovers " + healed + " HP.");
             } else if (skill.getEffectType().equals(Library.EffectType.DEFEND)) {
                 target.applyDefend(skill.getDefendTurns(), skill.getDamageReduction());
+            } else if (skill.getEffectType().equals(Library.EffectType.SUMMON)) {
+                appendBattleMessage(resolveSummon(caster, skill));
             }
         }
 
@@ -329,7 +339,7 @@ public class BattleEncounter {
             return Library.BattleResult.VICTORY;
         }
 
-        return handleEnemyTurn();
+        return Library.BattleResult.CONTINUE;
     }
 
     private String joinActorNames(List<BattleActor> actors) {
@@ -393,7 +403,7 @@ public class BattleEncounter {
         playSound(item.getUseSoundPath());
         battleMessage = actor.getName() + " uses " + item.getName() + " and recovers " + healed + " HP.";
 
-        return handleEnemyTurn();
+        return Library.BattleResult.CONTINUE;
     }
 
     public List<BattleActor> getValidTargets(
@@ -509,31 +519,9 @@ public class BattleEncounter {
             return Library.BattleResult.CONTINUE;
         }
 
-        CombatResolver.CombatResult combatResult = CombatResolver.resolveMelee(attacker, target);
-        int damage = target.takeDamage(combatResult.damage());
-        playSound(attacker.getAttackSoundPath());
-        if (combatResult.hit()) {
-            playSound(target.getHitSoundPath());
-        }
-        attacker.addCombatSkillExperience(CharacterSkill.ATTACK, ATTACK_XP_PER_ACTION);
-        attacker.addCombatSkillExperience(
-                CharacterSkill.STRENGTH,
-                Math.max(STRENGTH_XP_MINIMUM, damage * STRENGTH_XP_PER_DAMAGE)
-        );
-
-        battleMessage = attacker.getName()
-                + " attacks "
-                + target.getName()
-                + " and "
-                + combatResult.text()
-                + "!";
-
-        if (allEnemiesDefeated()) {
-            battleMessage = "Victory!";
-            return Library.BattleResult.VICTORY;
-        }
-
-        return handleEnemyTurn();
+        attacker.setPreferredAutoAttackTarget(target);
+        battleMessage = attacker.getName() + " will focus " + target.getName() + ".";
+        return Library.BattleResult.CONTINUE;
     }
 
     private void appendBattleMessage(String message) {
@@ -555,19 +543,83 @@ public class BattleEncounter {
         }
 
         if (skill.getTargetingMode() == Library.BattleTargetingMode.MAGIC) {
-            caster.addCombatSkillExperience(CharacterSkill.MAGIC_ACCURACY, MAGIC_ACCURACY_XP_PER_CAST);
+            caster.addCombatSkillExperience(CharacterSkill.MAGIC_ACCURACY, magicAccuracyXpPerCast());
             caster.addCombatSkillExperience(
                     CharacterSkill.MAGIC_POWER,
-                    Math.max(MAGIC_POWER_XP_MINIMUM, actualDamage * MAGIC_POWER_XP_PER_DAMAGE)
+                    Math.max(magicPowerXpMinimum(), actualDamage * magicPowerXpPerDamage())
             );
             return;
         }
 
-        caster.addCombatSkillExperience(CharacterSkill.ATTACK, ATTACK_XP_PER_ACTION);
-        caster.addCombatSkillExperience(
+        awardMeleeExperience(caster, actualDamage);
+    }
+
+    private void awardMeleeExperience(BattleActor actor, int actualDamage) {
+        actor.addCombatSkillExperience(CharacterSkill.ATTACK, attackXpPerAction());
+        actor.addCombatSkillExperience(
                 CharacterSkill.STRENGTH,
-                Math.max(STRENGTH_XP_MINIMUM, actualDamage * STRENGTH_XP_PER_DAMAGE)
+                Math.max(strengthXpMinimum(), actualDamage * strengthXpPerDamage())
         );
+    }
+
+    private int defenseXpMinimum() {
+        return GameConfiguration.intValue("battle.xp.defense.minimum", 1);
+    }
+
+    private int defenseXpPerDamage() {
+        return GameConfiguration.intValue("battle.xp.defense.perDamage", 3);
+    }
+
+    private int attackXpPerAction() {
+        return GameConfiguration.intValue("battle.xp.attack.perAction", 5);
+    }
+
+    private int strengthXpMinimum() {
+        return GameConfiguration.intValue("battle.xp.strength.minimum", 1);
+    }
+
+    private int strengthXpPerDamage() {
+        return GameConfiguration.intValue("battle.xp.strength.perDamage", 4);
+    }
+
+    private int magicAccuracyXpPerCast() {
+        return GameConfiguration.intValue("battle.xp.magicAccuracy.perCast", 5);
+    }
+
+    private int magicPowerXpMinimum() {
+        return GameConfiguration.intValue("battle.xp.magicPower.minimum", 1);
+    }
+
+    private int magicPowerXpPerDamage() {
+        return GameConfiguration.intValue("battle.xp.magicPower.perDamage", 4);
+    }
+
+    private int magicHealingXpMinimum() {
+        return GameConfiguration.intValue("battle.xp.magicHealing.minimum", 4);
+    }
+
+    private int magicHealingXpPerHp() {
+        return GameConfiguration.intValue("battle.xp.magicHealing.perHp", 4);
+    }
+
+    private double debugCriticalHpPercent() {
+        return GameConfiguration.doubleValue("battle.debug.criticalHpPercent", 0.10);
+    }
+
+    private int debugInvulnerableTurns() {
+        return GameConfiguration.intValue("battle.debug.invulnerableTurns", 1);
+    }
+
+    private double debugDamageReduction() {
+        return GameConfiguration.doubleValue("battle.debug.damageReduction", 1.0);
+    }
+
+    private double enemySkillIntelligenceDivisor() {
+        return GameConfiguration.doubleValue("battle.enemySkill.intelligenceDivisor", 10.0);
+    }
+
+    private int smartEnemyDamageSkillIntelligence() {
+        return GameConfiguration.intValue("battle.enemySkill.smartDamageIntelligence", 7);
     }
 
     public Library.BattleResult handleDebugDropHp(BattleActor target) {
@@ -576,91 +628,146 @@ public class BattleEncounter {
             return Library.BattleResult.CONTINUE;
         }
 
-        int criticalHp = Math.max(1, (int) Math.ceil(target.getMaxHp() * DEBUG_CRITICAL_HP_PERCENT));
+        int criticalHp = Math.max(1, (int) Math.ceil(target.getMaxHp() * debugCriticalHpPercent()));
         target.setCurrentHp(criticalHp);
-        target.applyDefend(DEBUG_INVULNERABLE_TURNS, DEBUG_DAMAGE_REDUCTION);
+        target.applyDefend(debugInvulnerableTurns(), debugDamageReduction());
         battleMessage = target.getName() + " drops to critical HP.";
-        return handleEnemyTurn();
+        return Library.BattleResult.CONTINUE;
     }
 
-    private Library.BattleResult handleEnemyTurn() {
-        StringBuilder turnSummary = new StringBuilder(battleMessage);
+    public Library.BattleResult updateAutoCombat(int deltaMs, boolean paused) {
+        if (paused) {
+            return Library.BattleResult.CONTINUE;
+        }
 
-        for (BattleActor attacker : enemies) {
+        double deltaSeconds = Math.max(0, deltaMs) / 1000.0;
+        StringBuilder turnSummary = new StringBuilder();
+
+        for (BattleActor attacker : allActors()) {
             if (!attacker.isAlive()) {
                 continue;
             }
 
+            attacker.tickAttackCooldown(deltaSeconds);
+
+            if (!attacker.isAttackReady()) {
+                continue;
+            }
+
             if (attacker.isStunned()) {
-                turnSummary
-                        .append(" ")
-                        .append(attacker.getName())
-                        .append(" is stunned!");
+                appendSummary(turnSummary, attacker.getName() + " is stunned!");
                 attacker.tickStatusDurations();
+                attacker.resetAttackCooldown();
                 continue;
             }
 
-            BattleActor target = getFirstLivingAlly();
-
-            if (target == null) {
-                battleMessage = "Defeat!";
-                return Library.BattleResult.DEFEAT;
-            }
-
-            BattleSkill selectedSkill = chooseEnemySkill(attacker);
-
-            if (selectedSkill != null) {
-                String skillSummary = resolveEnemySkill(attacker, selectedSkill);
-                turnSummary.append(" ").append(skillSummary);
-
-                if (getFirstLivingAlly() == null) {
-                    battleMessage = "Defeat!";
-                    return Library.BattleResult.DEFEAT;
-                }
-
-                attacker.tickStatusDurations();
-                continue;
-            }
-
-            CombatResolver.CombatResult combatResult = CombatResolver.resolveMelee(attacker, target);
-            int damage = target.takeDamage(combatResult.damage());
-            playSound(attacker.getAttackSoundPath());
-            if (combatResult.hit()) {
-                playSound(target.getHitSoundPath());
-            }
-            target.addCombatSkillExperience(
-                    CharacterSkill.DEFENSE,
-                    Math.max(DEFENSE_XP_MINIMUM, damage * DEFENSE_XP_PER_DAMAGE)
-            );
-
-            turnSummary
-                    .append(" ")
-                    .append(attacker.getName())
-                    .append(" attacks ")
-                    .append(target.getName())
-                    .append(" and ")
-                    .append(combatResult.text())
-                    .append("!");
-
-            if (!target.isAlive()) {
-                battleMessage = "Defeat!";
-                return Library.BattleResult.DEFEAT;
-            }
+            Library.BattleResult result = attacker.isEnemy()
+                    ? resolveEnemyAutoAction(attacker, turnSummary)
+                    : resolveAllyAutoAction(attacker, turnSummary);
 
             attacker.tickStatusDurations();
+            attacker.resetAttackCooldown();
+
+            if (result != Library.BattleResult.CONTINUE) {
+                return result;
+            }
         }
 
-        allies.forEach(BattleActor::tickStatusDurations);
-        battleMessage = turnSummary.toString();
+        if (!turnSummary.isEmpty()) {
+            battleMessage = turnSummary.toString();
+        }
         return Library.BattleResult.CONTINUE;
     }
 
+    private Library.BattleResult resolveAllyAutoAction(BattleActor attacker, StringBuilder turnSummary) {
+        BattleActor target = validPreferredTarget(attacker);
+        if (target == null) {
+            target = getFirstLivingEnemy();
+        }
+
+        if (target == null) {
+            battleMessage = "Victory!";
+            return Library.BattleResult.VICTORY;
+        }
+
+        if (!canTarget(attacker, target, Library.BattleTargetingMode.NORMAL_MELEE)) {
+            appendSummary(turnSummary, attacker.getName() + " cannot reach " + target.getName() + ".");
+            return Library.BattleResult.CONTINUE;
+        }
+
+        appendSummary(turnSummary, resolveMeleeAutoAction(attacker, target));
+        if (allEnemiesDefeated()) {
+            battleMessage = "Victory!";
+            return Library.BattleResult.VICTORY;
+        }
+        return Library.BattleResult.CONTINUE;
+    }
+
+    private BattleActor validPreferredTarget(BattleActor attacker) {
+        BattleActor target = attacker.getPreferredAutoAttackTarget();
+        if (target == null || !canTarget(attacker, target, Library.BattleTargetingMode.NORMAL_MELEE)) {
+            return null;
+        }
+        return target;
+    }
+
+    private Library.BattleResult resolveEnemyAutoAction(BattleActor attacker, StringBuilder turnSummary) {
+        BattleActor target = getFirstLivingAlly();
+        if (target == null) {
+            battleMessage = "Defeat!";
+            return Library.BattleResult.DEFEAT;
+        }
+
+        BattleSkill selectedSkill = chooseEnemySkill(attacker);
+        if (selectedSkill != null) {
+            appendSummary(turnSummary, resolveEnemySkill(attacker, selectedSkill));
+        } else {
+            appendSummary(turnSummary, resolveMeleeAutoAction(attacker, target));
+        }
+
+        if (getFirstLivingAlly() == null) {
+            battleMessage = "Defeat!";
+            return Library.BattleResult.DEFEAT;
+        }
+        return Library.BattleResult.CONTINUE;
+    }
+
+    private String resolveMeleeAutoAction(BattleActor attacker, BattleActor target) {
+        CombatResolver.CombatResult combatResult = CombatResolver.resolveMelee(attacker, target);
+        int damage = target.takeDamage(combatResult.damage());
+        playSound(attacker.getAttackSoundPath());
+        if (combatResult.hit()) {
+            playSound(target.getHitSoundPath());
+        }
+        awardMeleeExperience(attacker, damage);
+        target.addCombatSkillExperience(
+                CharacterSkill.DEFENSE,
+                Math.max(defenseXpMinimum(), damage * defenseXpPerDamage())
+        );
+        return attacker.getName()
+                + " attacks "
+                + target.getName()
+                + " and "
+                + combatResult.text()
+                + "!";
+    }
+
+    private void appendSummary(StringBuilder builder, String message) {
+        if (message == null || message.isBlank()) {
+            return;
+        }
+        if (!builder.isEmpty()) {
+            builder.append(" ");
+        }
+        builder.append(message);
+    }
+
     private BattleSkill chooseEnemySkill(BattleActor attacker) {
-        if (attacker == null || attacker.getIntelligence() <= 0 || attacker.getSkills().isEmpty()) {
+        if (attacker == null || attacker.getCombatAiIntelligence() <= 0 || attacker.getSkills().isEmpty()) {
             return null;
         }
 
-        double skillChance = attacker.getIntelligence() / ENEMY_SKILL_INTELLIGENCE_DIVISOR;
+        double skillChance = attacker.getCombatAiIntelligence() / enemySkillIntelligenceDivisor();
 
         if (Math.random() > skillChance) {
             return null;
@@ -668,6 +775,7 @@ public class BattleEncounter {
 
         List<BattleSkill> usableSkills = attacker.getSkills().stream()
                 .filter(skill -> !getSelectableActorsForSkill(attacker, skill).isEmpty())
+                .filter(skill -> !skill.isSummonSkill() || canSummon(attacker))
                 .toList();
 
         if (usableSkills.isEmpty()) {
@@ -711,7 +819,7 @@ public class BattleEncounter {
                 totalDamage += damage;
                 resolvedTarget.addCombatSkillExperience(
                         CharacterSkill.DEFENSE,
-                        Math.max(DEFENSE_XP_MINIMUM, damage * DEFENSE_XP_PER_DAMAGE)
+                        Math.max(defenseXpMinimum(), damage * defenseXpPerDamage())
                 );
                 if (combatResult.hit()) {
                     playSound(resolvedTarget.getHitSoundPath());
@@ -720,6 +828,8 @@ public class BattleEncounter {
                 resolvedTarget.healDamage(CombatResolver.resolveHealingAmount(attacker, skill));
             } else if (skill.getEffectType().equals(Library.EffectType.DEFEND)) {
                 resolvedTarget.applyDefend(skill.getDefendTurns(), skill.getDamageReduction());
+            } else if (skill.getEffectType().equals(Library.EffectType.SUMMON)) {
+                return resolveSummon(attacker, skill);
             }
         }
 
@@ -739,7 +849,7 @@ public class BattleEncounter {
     }
 
     private BattleActor selectEnemySkillTarget(BattleActor attacker, BattleSkill skill, List<BattleActor> targets) {
-        if (attacker.getIntelligence() >= SMART_ENEMY_DAMAGE_SKILL_INTELLIGENCE
+        if (attacker.getCombatAiIntelligence() >= smartEnemyDamageSkillIntelligence()
                 && skill.getEffectType() == Library.EffectType.DAMAGE) {
             return targets.stream()
                     .min(Comparator.comparingInt(BattleActor::getCurrentHp))
@@ -747,6 +857,47 @@ public class BattleEncounter {
         }
 
         return targets.getFirst();
+    }
+
+    private String resolveSummon(BattleActor caster, BattleSkill skill) {
+        if (caster == null || skill == null || !skill.isSummonSkill()) {
+            return "Nothing answers.";
+        }
+
+        if (!canSummon(caster)) {
+            return caster.getName() + " calls out, but there is no room.";
+        }
+
+        if (Math.random() > skill.getSummonChance()) {
+            playSound(skill.getUseSoundPath());
+            return caster.getName() + "'s " + skill.getName() + " fails.";
+        }
+
+        BattleActor summoned = createSummonedActor(caster, skill);
+        if (summoned == null) {
+            return "Nothing answers.";
+        }
+
+        getActorsOnSameSide(caster).add(summoned);
+        assignFormation(getActorsOnSameSide(caster));
+        playSound(skill.getUseSoundPath());
+        return caster.getName() + " uses " + skill.getName() + ". " + summoned.getName() + " joins the battle!";
+    }
+
+    private boolean canSummon(BattleActor caster) {
+        return caster != null && getActorsOnSameSide(caster).size() < maxActorsPerSide();
+    }
+
+    private BattleActor createSummonedActor(BattleActor caster, BattleSkill skill) {
+        return switch (skill.getSummonMode()) {
+            case SAME_SPECIES -> caster.copyForSummon(caster.getName());
+            case SKELETON -> createEnemyActor(MapDesignLibrary.createDefaultEnemy(MapDesignLibrary.ENEMY_SKELETON));
+            case NONE -> null;
+        };
+    }
+
+    private int maxActorsPerSide() {
+        return Math.max(1, GameConfiguration.intValue("battle.summon.maxActorsPerSide", 6));
     }
 
     private BattleActor getFirstLivingEnemy() {

@@ -143,6 +143,10 @@ public final class AssetLoader {
         return assets;
     }
 
+    public static List<String> listAssetFiles(String folderPath) {
+        return listResourceFiles(normalizeResourcePath(folderPath));
+    }
+
     public static Path generatedSoundsFolder() {
         return ApplicationPaths.dataFolder().resolve("sounds").resolve("generated");
     }

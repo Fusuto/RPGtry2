@@ -19,24 +19,6 @@ import java.util.Map;
 import java.util.Set;
 
 public class GameState {
-    private static final int RESOURCE_RESPAWN_MS = 5 * 60 * 1000;
-    private static final int GATHERING_ATTEMPT_INTERVAL_MS = 2500;
-    private static final int RESOURCE_ATTEMPTS_PER_EXHAUSTION_ROLL = 2;
-    private static final double RESOURCE_EXHAUSTION_CHANCE = 0.50;
-    private static final int MAX_RESOURCE_EXHAUSTION_LEVEL = 2;
-    private static final double BASE_FISHING_SUCCESS_CHANCE = 0.35;
-    private static final double FISHING_SUCCESS_CHANCE_PER_LEVEL = 0.03;
-    private static final double MAX_FISHING_SUCCESS_CHANCE = 0.85;
-    private static final int FISHING_XP_REWARD = 18;
-    private static final double BASE_MINING_SUCCESS_CHANCE = 0.40;
-    private static final double MINING_SUCCESS_CHANCE_PER_LEVEL = 0.03;
-    private static final double MAX_MINING_SUCCESS_CHANCE = 0.88;
-    private static final int MINING_XP_REWARD = 18;
-    private static final double BASE_COOKING_SUCCESS_CHANCE = 0.45;
-    private static final double COOKING_SUCCESS_CHANCE_PER_LEVEL = 0.035;
-    private static final double MAX_COOKING_SUCCESS_CHANCE = 0.90;
-    private static final int COOKING_XP_REWARD = 20;
-
     private DungeonMap dungeonMap;
     private final List<MapEntity> entities = new ArrayList<>();
     private final Map<String, String> tileInteractionIds = new HashMap<>();
@@ -44,6 +26,7 @@ public class GameState {
     private final Map<String, QuestDefinition> authoredQuestDefinitions = new HashMap<>();
     private final Map<String, MapDesignLibrary.CustomItem> customItems = new HashMap<>();
     private final Map<String, MapDesignLibrary.CustomLimb> customLimbs = new HashMap<>();
+    private final Map<String, MapRuntimeState> mapRuntimeStates = new HashMap<>();
     private final Set<String> spokenAuthoredDialogues = new HashSet<>();
     private final Set<String> removedEntityKeys = new HashSet<>();
     private final Map<String, Integer> questStages = new HashMap<>();
@@ -58,10 +41,8 @@ public class GameState {
     private double movementStartX = 1.0;
     private double movementStartY = 1.0;
     private double movementProgress = 1.0;
-    private static final int MOVEMENT_ANIMATION_DURATION_MS = 160;
     private double rotationStartOffsetRadians = 0.0;
     private double rotationProgress = 1.0;
-    private static final int ROTATION_ANIMATION_DURATION_MS = 220;
     private CameraMovementMode cameraMovementMode = CameraMovementMode.FLUID;
 
     private boolean miniMapUnlocked = false;
@@ -445,6 +426,71 @@ public class GameState {
         currentMapDesignPath = null;
     }
 
+    public void captureCurrentMapState() {
+        if (currentMapDesignPath == null || dungeonMap == null) {
+            return;
+        }
+
+        mapRuntimeStates.put(mapRuntimeKey(currentMapDesignPath), new MapRuntimeState(
+                currentMapDesignPath,
+                copyDungeonMap(dungeonMap),
+                new ArrayList<>(entities),
+                true,
+                new HashMap<>(tileInteractionIds),
+                new HashSet<>(removedEntityKeys),
+                copyResourceNodeSnapshots(),
+                getDiscoveredMiniMapTileKeys(),
+                new ArrayList<>(authoredDialogues.values()),
+                authoredQuestDefinitions.values().stream()
+                        .map(quest -> new MapDesignLibrary.AuthoredQuest(
+                                quest.id(),
+                                quest.displayName(),
+                                quest.stageDescriptions()
+                        ))
+                        .toList(),
+                new ArrayList<>(customItems.values()),
+                new ArrayList<>(customLimbs.values())
+        ));
+    }
+
+    public void travelToMapLink(Path targetPath, int targetX, int targetY) throws java.io.IOException {
+        captureCurrentMapState();
+        restoreOrLoadMap(targetPath, targetX, targetY);
+    }
+
+    public void restoreOrLoadMap(Path targetPath, int targetX, int targetY) throws java.io.IOException {
+        if (targetPath == null) {
+            throw new java.io.IOException("Target map path is missing.");
+        }
+
+        String key = mapRuntimeKey(targetPath);
+        MapRuntimeState state = mapRuntimeStates.get(key);
+        if (state != null && state.hasEntitySnapshot()) {
+            restoreRuntimeState(state, targetPath, targetX, targetY);
+            return;
+        }
+
+        MapDesignLibrary.MapDesign mapDesign = MapDesignLibrary.load(targetPath);
+        changeDungeon(mapDesign, targetX, targetY, targetPath);
+
+        state = mapRuntimeStates.get(key);
+        if (state != null) {
+            applySavedRuntimeState(state);
+        }
+    }
+
+    public Map<String, MapRuntimeState> getMapRuntimeStatesView() {
+        captureCurrentMapState();
+        return Map.copyOf(mapRuntimeStates);
+    }
+
+    public void setMapRuntimeStates(Map<String, MapRuntimeState> states) {
+        mapRuntimeStates.clear();
+        if (states != null) {
+            mapRuntimeStates.putAll(states);
+        }
+    }
+
     public enum MiniMapMode {
         OFF,
         DISCOVERED,
@@ -486,6 +532,71 @@ public class GameState {
         closeShop();
         closeInteraction();
         clearBattleState();
+    }
+
+    private void restoreRuntimeState(MapRuntimeState state, Path targetPath, int targetX, int targetY) {
+        dungeonMap = copyDungeonMap(state.dungeonMap());
+        entities.clear();
+        entities.addAll(state.entities());
+        tileInteractionIds.clear();
+        tileInteractionIds.putAll(state.tileInteractionIds());
+        removedEntityKeys.clear();
+        removedEntityKeys.addAll(state.removedEntityKeys());
+        restoreResourceNodeSnapshots(state.resourceNodeStates());
+        currentMapDesignPath = targetPath;
+        setAuthoredDialogues(state.authoredDialogues());
+        setAuthoredQuests(state.authoredQuests());
+        setCustomItems(state.customItems());
+        setCustomLimbs(state.customLimbs());
+        resetMiniMapDiscovery();
+        Point target = resolveTarget(targetX, targetY);
+        setPlayerPosition(target.x, target.y);
+        setDiscoveredMiniMapTileKeys(state.discoveredMiniMapTiles());
+        revealMiniMapTile(target.x, target.y);
+        closeInventory();
+        closeSkills();
+        closeQuests();
+        closeStats();
+        closeShop();
+        closeInteraction();
+        clearBattleState();
+    }
+
+    private void applySavedRuntimeState(MapRuntimeState state) {
+        if (state.dungeonMap() != null) {
+            dungeonMap = copyDungeonMap(state.dungeonMap());
+        }
+        Point currentPosition = new Point(playerX, playerY);
+        tileInteractionIds.clear();
+        tileInteractionIds.putAll(state.tileInteractionIds());
+        removedEntityKeys.clear();
+        removedEntityKeys.addAll(state.removedEntityKeys());
+        entities.removeIf(this::isEntityRemoved);
+        restoreResourceNodeSnapshots(state.resourceNodeStates());
+        setDiscoveredMiniMapTileKeys(state.discoveredMiniMapTiles());
+        revealMiniMapTile(currentPosition.x, currentPosition.y);
+    }
+
+    private Point resolveTarget(int targetX, int targetY) {
+        if (dungeonMap == null) {
+            return new Point(targetX, targetY);
+        }
+
+        int clampedX = Math.max(0, Math.min(dungeonMap.getWidth() - 1, targetX));
+        int clampedY = Math.max(0, Math.min(dungeonMap.getHeight() - 1, targetY));
+        if (!dungeonMap.getTile(clampedX, clampedY).blocksMovement()) {
+            return new Point(clampedX, clampedY);
+        }
+
+        for (int y = 0; y < dungeonMap.getHeight(); y++) {
+            for (int x = 0; x < dungeonMap.getWidth(); x++) {
+                if (!dungeonMap.getTile(x, y).blocksMovement()) {
+                    return new Point(x, y);
+                }
+            }
+        }
+
+        return new Point(1, 1);
     }
 
     public void setTileInteractionId(int x, int y, String interactionId) {
@@ -577,6 +688,20 @@ public class GameState {
     public InventorySystem.Item createCustomItem(String itemId) {
         MapDesignLibrary.CustomItem item = customItems.get(itemId);
         return item == null ? null : item.createItem();
+    }
+
+    public InventorySystem.Item createItemByNameOrId(String itemNameOrId) {
+        if (itemNameOrId == null || itemNameOrId.isBlank()) {
+            return null;
+        }
+        for (ItemLibrary libraryItem : ItemLibrary.values()) {
+            if (itemNameOrId.equalsIgnoreCase(libraryItem.name())
+                    || itemNameOrId.equalsIgnoreCase(libraryItem.getDisplayName())) {
+                return libraryItem.createItem();
+            }
+        }
+        InventorySystem.Item customItem = createCustomItemByNameOrId(itemNameOrId);
+        return customItem;
     }
 
     public InventorySystem.Item createCustomItemByNameOrId(String itemNameOrId) {
@@ -766,14 +891,14 @@ public class GameState {
         if (isMovementAnimating()) {
             movementProgress = Math.min(
                     1.0,
-                    movementProgress + (double) Math.max(0, deltaMs) / MOVEMENT_ANIMATION_DURATION_MS
+                    movementProgress + (double) Math.max(0, deltaMs) / movementAnimationDurationMs()
             );
         }
 
         if (isRotationAnimating()) {
             rotationProgress = Math.min(
                     1.0,
-                    rotationProgress + (double) Math.max(0, deltaMs) / ROTATION_ANIMATION_DURATION_MS
+                    rotationProgress + (double) Math.max(0, deltaMs) / rotationAnimationDurationMs()
             );
         }
     }
@@ -1083,7 +1208,7 @@ public class GameState {
 
         fishingElapsedMs += Math.max(0, deltaMs);
 
-        if (fishingElapsedMs < GATHERING_ATTEMPT_INTERVAL_MS) {
+        if (fishingElapsedMs < gatheringAttemptIntervalMs()) {
             return;
         }
 
@@ -1105,12 +1230,12 @@ public class GameState {
 
         int fishingLevel = Math.max(1, playerCharacter.getSkillLevel(CharacterSkill.FISHING));
         double successChance = Math.min(
-                MAX_FISHING_SUCCESS_CHANCE,
-                BASE_FISHING_SUCCESS_CHANCE + fishingLevel * FISHING_SUCCESS_CHANCE_PER_LEVEL
+                maxFishingSuccessChance(),
+                baseFishingSuccessChance() + fishingLevel * fishingSuccessChancePerLevel()
         );
 
         if (Math.random() <= successChance && getInventory().addItem(org.main.content.ItemLibrary.RAW_FISH.createItem())) {
-            int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.FISHING, FISHING_XP_REWARD);
+            int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.FISHING, fishingXpReward());
             advanceQuestIfAt(QuestLibrary.GATHERING_BASICS, 0, 1);
             fishingMessage = levelsGained > 0
                     ? "You catch a fish. Fishing level " + playerCharacter.getSkillLevel(CharacterSkill.FISHING) + "!"
@@ -1174,7 +1299,7 @@ public class GameState {
 
         miningElapsedMs += Math.max(0, deltaMs);
 
-        if (miningElapsedMs < GATHERING_ATTEMPT_INTERVAL_MS) {
+        if (miningElapsedMs < gatheringAttemptIntervalMs()) {
             return;
         }
 
@@ -1196,12 +1321,12 @@ public class GameState {
 
         int miningLevel = Math.max(1, playerCharacter.getSkillLevel(CharacterSkill.MINING));
         double successChance = Math.min(
-                MAX_MINING_SUCCESS_CHANCE,
-                BASE_MINING_SUCCESS_CHANCE + miningLevel * MINING_SUCCESS_CHANCE_PER_LEVEL
+                maxMiningSuccessChance(),
+                baseMiningSuccessChance() + miningLevel * miningSuccessChancePerLevel()
         );
 
         if (Math.random() <= successChance && getInventory().addItem(ItemLibrary.COPPER_ORE.createItem())) {
-            int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.MINING, MINING_XP_REWARD);
+            int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.MINING, miningXpReward());
             advanceQuestIfAt(QuestLibrary.GATHERING_BASICS, 2, 3);
             miningMessage = levelsGained > 0
                     ? "You mine copper ore. Mining level " + playerCharacter.getSkillLevel(CharacterSkill.MINING) + "!"
@@ -1256,30 +1381,30 @@ public class GameState {
     private void recordResourceAttempt(int x, int y) {
         ResourceNodeState state = getResourceNodeState(x, y);
 
-        if (state.exhaustionLevel >= MAX_RESOURCE_EXHAUSTION_LEVEL) {
+        if (state.exhaustionLevel >= maxResourceExhaustionLevel()) {
             return;
         }
 
         state.attemptsSinceLastExhaustionRoll++;
 
-        if (state.attemptsSinceLastExhaustionRoll < RESOURCE_ATTEMPTS_PER_EXHAUSTION_ROLL) {
+        if (state.attemptsSinceLastExhaustionRoll < resourceAttemptsPerExhaustionRoll()) {
             return;
         }
 
         state.attemptsSinceLastExhaustionRoll = 0;
 
-        if (Math.random() <= RESOURCE_EXHAUSTION_CHANCE) {
-            state.exhaustionLevel = Math.min(MAX_RESOURCE_EXHAUSTION_LEVEL, state.exhaustionLevel + 1);
+        if (Math.random() <= resourceExhaustionChance()) {
+            state.exhaustionLevel = Math.min(maxResourceExhaustionLevel(), state.exhaustionLevel + 1);
             updateResourceNodeVisual(x, y);
 
-            if (state.exhaustionLevel >= MAX_RESOURCE_EXHAUSTION_LEVEL) {
-                state.respawnRemainingMs = RESOURCE_RESPAWN_MS;
+            if (state.exhaustionLevel >= maxResourceExhaustionLevel()) {
+                state.respawnRemainingMs = resourceRespawnMs();
             }
         }
     }
 
     private boolean isResourceExhausted(int x, int y) {
-        return getResourceNodeState(x, y).exhaustionLevel >= MAX_RESOURCE_EXHAUSTION_LEVEL;
+        return getResourceNodeState(x, y).exhaustionLevel >= maxResourceExhaustionLevel();
     }
 
     private ResourceNodeState getResourceNodeState(int x, int y) {
@@ -1426,7 +1551,7 @@ public class GameState {
 
         cookingElapsedMs += Math.max(0, deltaMs);
 
-        if (cookingElapsedMs < GATHERING_ATTEMPT_INTERVAL_MS) {
+        if (cookingElapsedMs < gatheringAttemptIntervalMs()) {
             return;
         }
 
@@ -1468,8 +1593,8 @@ public class GameState {
 
         int cookingLevel = Math.max(1, playerCharacter.getSkillLevel(CharacterSkill.COOKING));
         double successChance = Math.min(
-                MAX_COOKING_SUCCESS_CHANCE,
-                BASE_COOKING_SUCCESS_CHANCE + cookingLevel * COOKING_SUCCESS_CHANCE_PER_LEVEL
+                maxCookingSuccessChance(),
+                baseCookingSuccessChance() + cookingLevel * cookingSuccessChancePerLevel()
         );
         boolean cooked = Math.random() <= successChance;
         InventorySystem.Item resultItem = cooked
@@ -1484,7 +1609,7 @@ public class GameState {
         advanceQuestIfAt(QuestLibrary.GATHERING_BASICS, 1, 2);
 
         if (cooked) {
-            int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.COOKING, COOKING_XP_REWARD);
+            int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.COOKING, cookingXpReward());
             cookingMessage = levelsGained > 0
                     ? "You cook the fish. Cooking level " + playerCharacter.getSkillLevel(CharacterSkill.COOKING) + "!"
                     : "You cook the fish. Cooking XP "
@@ -1565,7 +1690,7 @@ public class GameState {
 
         smeltingElapsedMs += Math.max(0, deltaMs);
 
-        if (smeltingElapsedMs < GATHERING_ATTEMPT_INTERVAL_MS) {
+        if (smeltingElapsedMs < gatheringAttemptIntervalMs()) {
             return;
         }
 
@@ -1646,7 +1771,7 @@ public class GameState {
         InventorySystem.Item selectedItem = getSelectedWorldUseItem();
         if (!RecipeLibrary.isSmithingMaterial(selectedItem)) {
             smithingMaterialName = null;
-            smithingMessage = "Use a copper bar from your inventory first, then interact with the anvil.";
+            smithingMessage = "Use a metal bar from your inventory first, then interact with the anvil.";
             return false;
         }
 
@@ -1746,6 +1871,59 @@ public class GameState {
         private int respawnRemainingMs = 0;
     }
 
+    private static String mapRuntimeKey(Path path) {
+        return path == null ? "" : MapDesignLibrary.resourcePathForMap(path).replace('\\', '/');
+    }
+
+    private static DungeonMap copyDungeonMap(DungeonMap source) {
+        if (source == null) {
+            return null;
+        }
+
+        Library.TileType[][] tiles = new Library.TileType[source.getHeight()][source.getWidth()];
+        int[][] themes = new int[source.getHeight()][source.getWidth()];
+        for (int y = 0; y < source.getHeight(); y++) {
+            for (int x = 0; x < source.getWidth(); x++) {
+                tiles[y][x] = source.getTile(x, y);
+                themes[y][x] = source.getEnvironmentThemeIndex(x, y);
+            }
+        }
+        return new DungeonMap(tiles, themes);
+    }
+
+    private Map<String, ResourceNodeSnapshot> copyResourceNodeSnapshots() {
+        Map<String, ResourceNodeSnapshot> snapshots = new HashMap<>();
+        for (Map.Entry<String, ResourceNodeState> entry : resourceNodeStates.entrySet()) {
+            ResourceNodeState state = entry.getValue();
+            snapshots.put(entry.getKey(), new ResourceNodeSnapshot(
+                    state.exhaustionLevel,
+                    state.attemptsSinceLastExhaustionRoll,
+                    state.respawnRemainingMs
+            ));
+        }
+        return snapshots;
+    }
+
+    private void restoreResourceNodeSnapshots(Map<String, ResourceNodeSnapshot> snapshots) {
+        resourceNodeStates.clear();
+        if (snapshots == null) {
+            return;
+        }
+
+        for (Map.Entry<String, ResourceNodeSnapshot> entry : snapshots.entrySet()) {
+            ResourceNodeSnapshot snapshot = entry.getValue();
+            if (entry.getKey() == null || snapshot == null) {
+                continue;
+            }
+            ResourceNodeState state = new ResourceNodeState();
+            state.exhaustionLevel = Math.max(0, snapshot.exhaustionLevel());
+            state.attemptsSinceLastExhaustionRoll = Math.max(0, snapshot.attemptsSinceLastExhaustionRoll());
+            state.respawnRemainingMs = Math.max(0, snapshot.respawnRemainingMs());
+            resourceNodeStates.put(entry.getKey(), state);
+            restoreResourceNode(entry.getKey());
+        }
+    }
+
     public int getDirection() {
         return direction;
     }
@@ -1828,6 +2006,86 @@ public class GameState {
         gameMode = GameMode.GAME_OVER;
     }
 
+    private int movementAnimationDurationMs() {
+        return Math.max(1, GameConfiguration.intValue("movement.animationDurationMs", 160));
+    }
+
+    private int rotationAnimationDurationMs() {
+        return Math.max(1, GameConfiguration.intValue("rotation.animationDurationMs", 220));
+    }
+
+    private int resourceRespawnMs() {
+        return Math.max(0, GameConfiguration.intValue("resource.respawnMs", 300000));
+    }
+
+    private int gatheringAttemptIntervalMs() {
+        return Math.max(1, GameConfiguration.intValue("resource.gatheringAttemptIntervalMs", 2500));
+    }
+
+    private int resourceAttemptsPerExhaustionRoll() {
+        return Math.max(1, GameConfiguration.intValue("resource.attemptsPerExhaustionRoll", 2));
+    }
+
+    private double resourceExhaustionChance() {
+        return clampChance(GameConfiguration.doubleValue("resource.exhaustionChance", 0.50));
+    }
+
+    private int maxResourceExhaustionLevel() {
+        return Math.max(1, GameConfiguration.intValue("resource.maxExhaustionLevel", 2));
+    }
+
+    private double baseFishingSuccessChance() {
+        return clampChance(GameConfiguration.doubleValue("fishing.baseSuccessChance", 0.35));
+    }
+
+    private double fishingSuccessChancePerLevel() {
+        return Math.max(0.0, GameConfiguration.doubleValue("fishing.successChancePerLevel", 0.03));
+    }
+
+    private double maxFishingSuccessChance() {
+        return clampChance(GameConfiguration.doubleValue("fishing.maxSuccessChance", 0.85));
+    }
+
+    private int fishingXpReward() {
+        return Math.max(0, GameConfiguration.intValue("fishing.xpReward", 18));
+    }
+
+    private double baseMiningSuccessChance() {
+        return clampChance(GameConfiguration.doubleValue("mining.baseSuccessChance", 0.40));
+    }
+
+    private double miningSuccessChancePerLevel() {
+        return Math.max(0.0, GameConfiguration.doubleValue("mining.successChancePerLevel", 0.03));
+    }
+
+    private double maxMiningSuccessChance() {
+        return clampChance(GameConfiguration.doubleValue("mining.maxSuccessChance", 0.88));
+    }
+
+    private int miningXpReward() {
+        return Math.max(0, GameConfiguration.intValue("mining.xpReward", 18));
+    }
+
+    private double baseCookingSuccessChance() {
+        return clampChance(GameConfiguration.doubleValue("cooking.baseSuccessChance", 0.45));
+    }
+
+    private double cookingSuccessChancePerLevel() {
+        return Math.max(0.0, GameConfiguration.doubleValue("cooking.successChancePerLevel", 0.035));
+    }
+
+    private double maxCookingSuccessChance() {
+        return clampChance(GameConfiguration.doubleValue("cooking.maxSuccessChance", 0.90));
+    }
+
+    private int cookingXpReward() {
+        return Math.max(0, GameConfiguration.intValue("cooking.xpReward", 20));
+    }
+
+    private double clampChance(double value) {
+        return Math.max(0.0, Math.min(1.0, value));
+    }
+
     public record QuestDefinition(String id, String displayName, List<String> stageDescriptions) {
         public QuestDefinition {
             id = id == null ? "" : id;
@@ -1848,6 +2106,40 @@ public class GameState {
         public String stageDescription(int stage) {
             int safeStage = Math.max(0, Math.min(maxStage(), stage));
             return stageDescriptions.get(safeStage);
+        }
+    }
+
+    public record ResourceNodeSnapshot(
+            int exhaustionLevel,
+            int attemptsSinceLastExhaustionRoll,
+            int respawnRemainingMs
+    ) {
+    }
+
+    public record MapRuntimeState(
+            Path mapPath,
+            DungeonMap dungeonMap,
+            List<MapEntity> entities,
+            boolean hasEntitySnapshot,
+            Map<String, String> tileInteractionIds,
+            Set<String> removedEntityKeys,
+            Map<String, ResourceNodeSnapshot> resourceNodeStates,
+            Set<String> discoveredMiniMapTiles,
+            List<MapDesignLibrary.AuthoredDialogue> authoredDialogues,
+            List<MapDesignLibrary.AuthoredQuest> authoredQuests,
+            List<MapDesignLibrary.CustomItem> customItems,
+            List<MapDesignLibrary.CustomLimb> customLimbs
+    ) {
+        public MapRuntimeState {
+            entities = entities == null ? List.of() : List.copyOf(entities);
+            tileInteractionIds = tileInteractionIds == null ? Map.of() : Map.copyOf(tileInteractionIds);
+            removedEntityKeys = removedEntityKeys == null ? Set.of() : Set.copyOf(removedEntityKeys);
+            resourceNodeStates = resourceNodeStates == null ? Map.of() : Map.copyOf(resourceNodeStates);
+            discoveredMiniMapTiles = discoveredMiniMapTiles == null ? Set.of() : Set.copyOf(discoveredMiniMapTiles);
+            authoredDialogues = authoredDialogues == null ? List.of() : List.copyOf(authoredDialogues);
+            authoredQuests = authoredQuests == null ? List.of() : List.copyOf(authoredQuests);
+            customItems = customItems == null ? List.of() : List.copyOf(customItems);
+            customLimbs = customLimbs == null ? List.of() : List.copyOf(customLimbs);
         }
     }
 }

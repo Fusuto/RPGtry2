@@ -2,25 +2,15 @@ package org.main.core;
 
 import org.main.content.GenericNpcLibrary;
 import org.main.content.InteractionLibrary;
+import org.main.content.MapDesignLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
-import org.main.monsters.Monster;
-import org.main.monsters.MonsterType;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
 public class DungeonGenerator {
-    private static final int MIN_SIZE = 17;
-    private static final int MAX_SIZE = 29;
-    private static final double MERCHANT_CHANCE = 0.10;
-    private static final double ROOM_CHANCE = 0.06;
-    private static final double MEDIUM_ROOM_CHANCE = 0.20;
-    private static final double DOOR_CHANCE = 0.22;
-    private static final double MONO_TYPE_CHANCE = 0.30;
-    private static final int TARGET_CARVED_CELL_DIVISOR = 5;
-
     private final Random random;
 
     public DungeonGenerator() {
@@ -65,7 +55,9 @@ public class DungeonGenerator {
     }
 
     private int randomOddSize() {
-        int size = MIN_SIZE + random.nextInt(MAX_SIZE - MIN_SIZE + 1);
+        int minSize = Math.max(3, GameConfiguration.intValue("dungeonGenerator.minSize", 17));
+        int maxSize = Math.max(minSize, GameConfiguration.intValue("dungeonGenerator.maxSize", 29));
+        int size = minSize + random.nextInt(maxSize - minSize + 1);
         return size % 2 == 0 ? size + 1 : size;
     }
 
@@ -87,7 +79,7 @@ public class DungeonGenerator {
 
         int width = tiles[0].length;
         int height = tiles.length;
-        int targetCells = (width * height) / TARGET_CARVED_CELL_DIVISOR;
+        int targetCells = (width * height) / Math.max(1, GameConfiguration.intValue("dungeonGenerator.targetCarvedCellDivisor", 5));
         Point current = start;
 
         while (carvedCells.size() < targetCells) {
@@ -106,15 +98,15 @@ public class DungeonGenerator {
             carveFloor(tiles, nextX, nextY, carvedCells);
             current = new Point(nextX, nextY);
 
-            if (random.nextDouble() < ROOM_CHANCE) {
+            if (random.nextDouble() < chance("dungeonGenerator.roomChance", 0.06)) {
                 carveRoom(tiles, current, carvedCells);
             }
         }
     }
 
     private void carveRoom(Library.TileType[][] tiles, Point center, List<Point> carvedCells) {
-        int halfWidth = random.nextDouble() < MEDIUM_ROOM_CHANCE ? 2 : 1;
-        int halfHeight = random.nextDouble() < MEDIUM_ROOM_CHANCE ? 2 : 1;
+        int halfWidth = random.nextDouble() < chance("dungeonGenerator.mediumRoomChance", 0.20) ? 2 : 1;
+        int halfHeight = random.nextDouble() < chance("dungeonGenerator.mediumRoomChance", 0.20) ? 2 : 1;
 
         for (int y = center.y() - halfHeight; y <= center.y() + halfHeight; y++) {
             for (int x = center.x() - halfWidth; x <= center.x() + halfWidth; x++) {
@@ -137,7 +129,7 @@ public class DungeonGenerator {
     private void placeDoors(Library.TileType[][] tiles) {
         for (int y = 1; y < tiles.length - 1; y++) {
             for (int x = 1; x < tiles[0].length - 1; x++) {
-                if (tiles[y][x] != Library.TileType.FLOOR || random.nextDouble() >= DOOR_CHANCE) {
+                if (tiles[y][x] != Library.TileType.FLOOR || random.nextDouble() >= chance("dungeonGenerator.doorChance", 0.22)) {
                     continue;
                 }
 
@@ -198,7 +190,7 @@ public class DungeonGenerator {
         }
     }
 
-    private void addMonsters(Library.TileType[][] tiles, List<MapEntity> entities, MonsterType dungeonMonsterType) {
+    private void addMonsters(Library.TileType[][] tiles, List<MapEntity> entities, MapDesignLibrary.CustomMob dungeonEnemyDefinition) {
         int openTiles = countOpenTiles(tiles);
         int monsterCount = Math.max(3, Math.min(9, openTiles / 18));
 
@@ -209,22 +201,22 @@ public class DungeonGenerator {
                 return;
             }
 
-            MonsterType monsterType = dungeonMonsterType == null ? randomMonsterType() : dungeonMonsterType;
-            entities.add(new MapEntity(new Monster(monsterType), candidate.x(), candidate.y()));
+            MapDesignLibrary.CustomMob enemyDefinition = dungeonEnemyDefinition == null ? randomMonsterType() : dungeonEnemyDefinition;
+            entities.add(new MapEntity(enemyDefinition.createMonster(), candidate.x(), candidate.y()));
         }
     }
 
-    private MonsterType chooseDungeonMonsterType() {
-        return random.nextDouble() < MONO_TYPE_CHANCE ? randomMonsterType() : null;
+    private MapDesignLibrary.CustomMob chooseDungeonMonsterType() {
+        return random.nextDouble() < chance("dungeonGenerator.monoTypeChance", 0.30) ? randomMonsterType() : null;
     }
 
-    private MonsterType randomMonsterType() {
-        MonsterType[] monsterTypes = MonsterType.values();
-        return monsterTypes[random.nextInt(monsterTypes.length)];
+    private MapDesignLibrary.CustomMob randomMonsterType() {
+        List<MapDesignLibrary.CustomMob> monsterTypes = MapDesignLibrary.defaultEnemies();
+        return monsterTypes.get(random.nextInt(monsterTypes.size()));
     }
 
     private void maybeAddMerchant(Library.TileType[][] tiles, List<MapEntity> entities) {
-        if (random.nextDouble() >= MERCHANT_CHANCE) {
+        if (random.nextDouble() >= chance("dungeonGenerator.merchantChance", 0.10)) {
             return;
         }
 
@@ -250,6 +242,10 @@ public class DungeonGenerator {
         }
 
         return null;
+    }
+
+    private double chance(String key, double fallback) {
+        return Math.max(0.0, Math.min(1.0, GameConfiguration.doubleValue(key, fallback)));
     }
 
     private int countOpenTiles(Library.TileType[][] tiles) {

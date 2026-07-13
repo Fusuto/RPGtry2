@@ -35,6 +35,7 @@ public class BattleRenderer {
     private Point mousePoint = null;
     private boolean skillWindowOpen = false;
     private boolean itemWindowOpen = false;
+    private boolean autoCombatPaused = false;
     private Rectangle skillWindowCloseBounds = new Rectangle();
     private Rectangle itemWindowCloseBounds = new Rectangle();
 
@@ -66,6 +67,10 @@ public class BattleRenderer {
 
     public void setAssets(BattleAssets assets) {
         this.assets = assets;
+    }
+
+    public void setAutoCombatPaused(boolean autoCombatPaused) {
+        this.autoCombatPaused = autoCombatPaused;
     }
 
     public BattleActor getActorAt(Point point) {
@@ -168,6 +173,7 @@ public class BattleRenderer {
          * consuming space inside the command panel.
          */
         drawBattleMessageOverlay(g, encounter, 0, 0, width, battleAreaHeight);
+        drawPausedIndicator(g, width, battleAreaHeight);
 
         drawCommandMenu(g, 0, battleAreaHeight, menuWidth, bottomHeight);
         drawPartyStatus(g, encounter, menuWidth, battleAreaHeight, width - menuWidth, bottomHeight);
@@ -566,9 +572,41 @@ public class BattleRenderer {
             actorBounds.put(actor, actorRectangle);
 
             drawHpBar(g, drawX, drawY - 18, spriteSize, 10, actor);
+            drawAttackChargeBar(g, drawX, drawY - 5, spriteSize, 5, actor);
             drawStatusIcons(g, actor, drawX, drawY - 34);
             drawActorSprite(g, actor, drawX, drawY, spriteSize, spriteSize);
         }
+    }
+
+    private void drawAttackChargeBar(Graphics2D g, int x, int y, int width, int height, BattleActor actor) {
+        g.setColor(new Color(18, 18, 18, 185));
+        g.fillRect(x, y, width, height);
+
+        int fillWidth = (int) Math.round(width * actor.getAttackCooldownProgress());
+        g.setColor(actor.isEnemy() ? new Color(224, 98, 76) : new Color(84, 180, 255));
+        g.fillRect(x, y, fillWidth, height);
+
+        g.setColor(new Color(245, 245, 245, 160));
+        g.drawRect(x, y, width, height);
+    }
+
+    private void drawPausedIndicator(Graphics2D g, int width, int battleAreaHeight) {
+        if (!autoCombatPaused) {
+            return;
+        }
+
+        String text = "Paused";
+        FontMetrics metrics = g.getFontMetrics();
+        int labelWidth = metrics.stringWidth(text) + 22;
+        int labelHeight = metrics.getHeight() + 10;
+        int labelX = (width - labelWidth) / 2;
+        int labelY = 16;
+
+        g.setColor(new Color(0, 0, 0, 155));
+        g.fillRoundRect(labelX, labelY, labelWidth, labelHeight, 10, 10);
+        g.setColor(new Color(255, 235, 150));
+        g.drawRoundRect(labelX, labelY, labelWidth, labelHeight, 10, 10);
+        g.drawString(text, labelX + 11, labelY + 5 + metrics.getAscent());
     }
 
     private void drawTargetingPreview(Graphics2D g) {

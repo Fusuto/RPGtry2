@@ -33,6 +33,7 @@ public class AetherBase extends JPanel implements KeyListener {
     private static final int PERFORMANCE_BACKGROUND_TOP_OFFSET = 2;
     private static final int PERFORMANCE_BACKGROUND_EXTRA_HEIGHT = 8;
     private static final int PERFORMANCE_BACKGROUND_ALPHA = 150;
+    private static final String TUTORIAL_MAP_FILE = "tutorial.properties";
     private static final Color PERFORMANCE_TEXT_COLOR = new Color(220, 240, 220);
 
     private final DungeonRenderer dungeonRenderer = new DungeonRenderer();
@@ -99,7 +100,8 @@ public class AetherBase extends JPanel implements KeyListener {
 
         RendererBootstrap.configureDefaultRenderers(dungeonRenderer, battleRenderer);
         installMouseInput();
-        GameBootstrap.seedTestContent(gameState);
+        loadInitialTestMap();
+        gameState.setGameMode(GameState.GameMode.START_MENU);
 
         Timer timer = new Timer(TARGET_FRAME_MS, e -> {
             long now = System.currentTimeMillis();
@@ -160,7 +162,7 @@ public class AetherBase extends JPanel implements KeyListener {
         gameState.updateMining(deltaMs);
         gameState.updateCooking(deltaMs);
         gameState.updateSmelting(deltaMs);
-        battleController.update();
+        battleController.update(deltaMs);
 
         for (MapEntity entity : gameState.getEntities()) {
             entity.update(deltaMs);
@@ -379,12 +381,45 @@ public class AetherBase extends JPanel implements KeyListener {
         }
 
         gameState.setPlayerCharacter(GameBootstrap.createPlayerCharacter(trimmedName, selectedPlayerRegion));
-        gameState.changeDungeon(DungeonMap.testMap(), 1, 1, List.of());
-        applyStarterEnvironmentThemes();
-        GameBootstrap.seedTestContent(gameState);
+        if (!loadTutorialMapForNewGame()) {
+            characterCreationMessage = "Tutorial map not found. Loaded test map.";
+            loadInitialTestMap();
+        } else {
+            characterCreationMessage = "";
+        }
         gameState.setGameMode(GameState.GameMode.DUNGEON);
         soundSystem.playAmbience(environment.getAmbienceSoundPath());
         repaint();
+    }
+
+    private boolean loadTutorialMapForNewGame() {
+        try {
+            Path tutorialPath = findTutorialMapPath();
+            MapDesignLibrary.MapDesign mapDesign = MapDesignLibrary.load(tutorialPath);
+            gameState.changeDungeon(mapDesign, tutorialPath);
+            applyMapEnvironmentThemes(mapDesign);
+            return true;
+        } catch (IOException exception) {
+            return false;
+        }
+    }
+
+    private Path findTutorialMapPath() throws IOException {
+        List<Path> savedMaps = MapDesignLibrary.listSavedMaps();
+        for (Path mapPath : savedMaps) {
+            if (mapPath.getFileName() != null
+                    && TUTORIAL_MAP_FILE.equalsIgnoreCase(mapPath.getFileName().toString())) {
+                return mapPath;
+            }
+        }
+
+        return Path.of(MapDesignLibrary.MAP_RESOURCE_FOLDER, TUTORIAL_MAP_FILE);
+    }
+
+    private void loadInitialTestMap() {
+        gameState.changeDungeon(DungeonMap.testMap(), 1, 1, List.of());
+        applyStarterEnvironmentThemes();
+        GameBootstrap.seedTestContent(gameState);
     }
 
     private void drawPerformanceOverlay(Graphics2D g) {

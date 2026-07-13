@@ -118,6 +118,42 @@ public enum SkillLibrary {
             0,
             0.0,
             0.5
+    ),
+
+    WAR_CRY(
+            "War Cry",
+            "Attempts to call another creature of the same kind.",
+            Library.SkillTargetShape.SINGLE_TARGET,
+            Library.EntityType.ALLY,
+            Library.BattleTargetingMode.MAGIC,
+            null,
+            0,
+            Library.EffectType.SUMMON,
+            0.0,
+            0,
+            0,
+            0.0,
+            0.0,
+            BattleSkill.SummonMode.SAME_SPECIES,
+            0.65
+    ),
+
+    RAISE_SKELETON(
+            "Raise Skeleton",
+            "Attempts to call a skeleton into the battle.",
+            Library.SkillTargetShape.SINGLE_TARGET,
+            Library.EntityType.ALLY,
+            Library.BattleTargetingMode.MAGIC,
+            null,
+            0,
+            Library.EffectType.SUMMON,
+            0.0,
+            0,
+            0,
+            0.0,
+            0.0,
+            BattleSkill.SummonMode.SKELETON,
+            0.75
     );
 
     private static final List<SkillLibrary> DEFAULT_PLAYER_SKILLS = List.of(
@@ -149,6 +185,8 @@ public enum SkillLibrary {
     private final int defendTurns;
     private final double damageReduction;
     private final double selfHealPercent;
+    private final BattleSkill.SummonMode summonMode;
+    private final double summonChance;
 
     SkillLibrary(
             String displayName,
@@ -171,6 +209,8 @@ public enum SkillLibrary {
                 0,
                 0,
                 0.0,
+                0.0,
+                BattleSkill.SummonMode.NONE,
                 0.0
         );
     }
@@ -190,6 +230,28 @@ public enum SkillLibrary {
             double damageReduction,
             double selfHealPercent
     ) {
+        this(displayName, description, targetShape, targetTeam, targetingMode, useSoundPath, damage, effectType,
+                stunChance, stunTurns, defendTurns, damageReduction, selfHealPercent,
+                BattleSkill.SummonMode.NONE, 0.0);
+    }
+
+    SkillLibrary(
+            String displayName,
+            String description,
+            Library.SkillTargetShape targetShape,
+            Library.EntityType targetTeam,
+            Library.BattleTargetingMode targetingMode,
+            String useSoundPath,
+            int damage,
+            Library.EffectType effectType,
+            double stunChance,
+            int stunTurns,
+            int defendTurns,
+            double damageReduction,
+            double selfHealPercent,
+            BattleSkill.SummonMode summonMode,
+            double summonChance
+    ) {
         this.displayName = displayName;
         this.description = description;
         this.targetShape = targetShape;
@@ -203,6 +265,8 @@ public enum SkillLibrary {
         this.defendTurns = defendTurns;
         this.damageReduction = damageReduction;
         this.selfHealPercent = selfHealPercent;
+        this.summonMode = summonMode == null ? BattleSkill.SummonMode.NONE : summonMode;
+        this.summonChance = Math.max(0.0, Math.min(1.0, summonChance));
     }
 
     public BattleSkill createSkill() {
@@ -219,7 +283,9 @@ public enum SkillLibrary {
                 stunTurns,
                 defendTurns,
                 damageReduction,
-                selfHealPercent
+                selfHealPercent,
+                summonMode,
+                summonChance
         );
     }
 
@@ -295,5 +361,13 @@ public enum SkillLibrary {
 
     public double getSelfHealPercent() {
         return selfHealPercent;
+    }
+
+    public BattleSkill.SummonMode getSummonMode() {
+        return summonMode;
+    }
+
+    public double getSummonChance() {
+        return summonChance;
     }
 }

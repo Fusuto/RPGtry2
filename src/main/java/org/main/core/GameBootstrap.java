@@ -6,11 +6,10 @@ import org.main.content.ItemLibrary;
 import org.main.content.GenericNpcLibrary;
 import org.main.content.GatheringNodeLibrary;
 import org.main.content.MainNpcLibrary;
+import org.main.content.MapDesignLibrary;
 import org.main.content.PlayerRegionLibrary;
 import org.main.content.SkillLibrary;
 import org.main.engine.MapEntity;
-import org.main.monsters.Monster;
-import org.main.monsters.MonsterType;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -58,7 +57,7 @@ public final class GameBootstrap {
             return;
         }
 
-        gameState.addEntityUnlessRemoved(new MapEntity(new Monster(MonsterType.SLIME), 8, 6));
+        gameState.addEntityUnlessRemoved(new MapEntity(MapDesignLibrary.createDefaultEnemy(MapDesignLibrary.ENEMY_SLIME), 8, 6));
         gameState.addEntityUnlessRemoved(MainNpcLibrary.TIPPING_THE_HAT_SKELETON.createEntity(8, 1));
         gameState.addEntityUnlessRemoved(GenericNpcLibrary.GOBLIN_MERCHANT.createEntity(2, 9));
         gameState.addEntityUnlessRemoved(CraftingNodeLibrary.CAMPFIRE.createEntity(6, 8));

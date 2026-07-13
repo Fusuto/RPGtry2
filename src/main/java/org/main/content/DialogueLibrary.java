@@ -2,8 +2,6 @@ package org.main.content;
 
 import org.main.core.*;
 import org.main.engine.MapEntity;
-import org.main.monsters.Monster;
-import org.main.monsters.MonsterType;
 
 public enum DialogueLibrary {
     OLD_GUARD_INTRO("old_guard_intro") {
@@ -50,7 +48,11 @@ public enum DialogueLibrary {
             if (questStage == 4) {
                 InventorySystem.Inventory inventory = context.getGameState().getInventory();
                 boolean hasHat = inventory.hasItemNamed(ItemLibrary.LEATHER_CAP.getDisplayName());
-                LimbItem rewardLimb = ButcherySystem.recreateLimb(MonsterType.SKELETON, LimbSlot.HEAD, GearDurability.GOOD);
+                LimbItem rewardLimb = ButcherySystem.recreateLimb(
+                        MapDesignLibrary.createDefaultEnemy(MapDesignLibrary.ENEMY_SKELETON),
+                        LimbSlot.HEAD,
+                        GearDurability.GOOD
+                );
                 String rewardText = "\n\nRewards:\n"
                         + QuestLibrary.skillExperienceRewardText(CharacterSkill.BUTCHERING, 45)
                         + "\n"
@@ -276,10 +278,10 @@ public enum DialogueLibrary {
     private static void ensureSlimeForQuest(InteractionSystem.InteractionContext context) {
         boolean slimeExists = context.getGameState().getEntities().stream()
                 .anyMatch(entity -> entity.getMonster() != null
-                        && entity.getMonster().getType() == MonsterType.SLIME);
+                        && MapDesignLibrary.ENEMY_SLIME.equals(entity.getMonster().getCustomId()));
 
         if (!slimeExists) {
-            context.getGameState().addEntity(new MapEntity(new Monster(MonsterType.SLIME), 8, 6));
+            context.getGameState().addEntity(new MapEntity(MapDesignLibrary.createDefaultEnemy(MapDesignLibrary.ENEMY_SLIME), 8, 6));
         }
     }
 }

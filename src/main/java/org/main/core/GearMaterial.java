@@ -2,9 +2,10 @@ package org.main.core;
 
 public enum GearMaterial {
     NONE("None", MaterialFamily.NONE, 0, 1.0),
-    BRONZE("Bronze", MaterialFamily.METAL, 1, 1.0),
-    IRON("Iron", MaterialFamily.METAL, 2, 1.4),
-    STEEL("Steel", MaterialFamily.METAL, 3, 1.9),
+    COPPER("Copper", MaterialFamily.METAL, 1, 1.0),
+    BRONZE("Bronze", MaterialFamily.METAL, 2, 1.25),
+    IRON("Iron", MaterialFamily.METAL, 3, 1.5),
+    STEEL("Steel", MaterialFamily.METAL, 4, 2.0),
     OAK("Oak", MaterialFamily.WOOD, 1, 1.0),
     YEW("Yew", MaterialFamily.WOOD, 2, 1.4),
     IRONWOOD("Ironwood", MaterialFamily.WOOD, 3, 1.9),

@@ -28,6 +28,7 @@ public class BattleActor {
     private int defendingTurns = 0;
     private double defenseDamageReduction = 0.0;
     private int intelligence = 0;
+    private int combatAiIntelligence = 0;
     private String speciesId;
     private int experienceReward = 0;
     private int attackStat = 1;
@@ -37,6 +38,8 @@ public class BattleActor {
     private int willpowerStat = 1;
     private int weaponBonus = 0;
     private int armorBonus = 0;
+    private double attackCooldownRemainingSeconds = 0.0;
+    private BattleActor preferredAutoAttackTarget;
     private final EnumMap<CharacterSkill, Integer> combatSkills = new EnumMap<>(CharacterSkill.class);
     private PlayerCharacter sourcePlayer;
 
@@ -151,6 +154,38 @@ public class BattleActor {
         return attackDamage;
     }
 
+    public void resetAttackCooldown() {
+        attackCooldownRemainingSeconds = BattleTiming.calculateAttackIntervalSeconds(getAgilityStat());
+    }
+
+    public void tickAttackCooldown(double deltaSeconds) {
+        attackCooldownRemainingSeconds = Math.max(0.0, attackCooldownRemainingSeconds - Math.max(0.0, deltaSeconds));
+    }
+
+    public boolean isAttackReady() {
+        return attackCooldownRemainingSeconds <= 0.0;
+    }
+
+    public double getAttackCooldownRemainingSeconds() {
+        return attackCooldownRemainingSeconds;
+    }
+
+    public double getAttackCooldownProgress() {
+        double interval = BattleTiming.calculateAttackIntervalSeconds(getAgilityStat());
+        if (interval <= 0.0) {
+            return 1.0;
+        }
+        return Math.max(0.0, Math.min(1.0, 1.0 - attackCooldownRemainingSeconds / interval));
+    }
+
+    public BattleActor getPreferredAutoAttackTarget() {
+        return preferredAutoAttackTarget;
+    }
+
+    public void setPreferredAutoAttackTarget(BattleActor preferredAutoAttackTarget) {
+        this.preferredAutoAttackTarget = preferredAutoAttackTarget;
+    }
+
     public int takeDamage(int amount) {
         int adjustedAmount = amount;
 
@@ -244,6 +279,15 @@ public class BattleActor {
 
     public void setIntelligence(int intelligence) {
         this.intelligence = Math.max(0, intelligence);
+        this.combatAiIntelligence = Math.max(this.combatAiIntelligence, this.intelligence);
+    }
+
+    public int getCombatAiIntelligence() {
+        return combatAiIntelligence;
+    }
+
+    public void setCombatAiIntelligence(int combatAiIntelligence) {
+        this.combatAiIntelligence = Math.max(0, combatAiIntelligence);
     }
 
     public int getAttackStat() {
@@ -354,6 +398,39 @@ public class BattleActor {
         setCombatSkillLevel(CharacterSkill.DEFENSE, Math.max(1, defense));
         setCombatSkillLevel(CharacterSkill.MAGIC_ACCURACY, Math.max(1, intelligence));
         setCombatSkillLevel(CharacterSkill.MAGIC_POWER, Math.max(1, willpower));
+    }
+
+    public BattleActor copyForSummon(String summonedName) {
+        BattleActor copy = new BattleActor(
+                summonedName == null || summonedName.isBlank() ? name : summonedName,
+                maxHp,
+                maxHp,
+                image,
+                EntityType,
+                attackDamage,
+                defense
+        );
+        copy.setAttackSoundPath(attackSoundPath);
+        copy.setHitSoundPath(hitSoundPath);
+        copy.setAttackStat(attackStat);
+        copy.setStrengthStat(strengthStat);
+        copy.setDefenseStat(defenseStat);
+        copy.setAgilityStat(agilityStat);
+        copy.setIntelligence(intelligence);
+        copy.setCombatAiIntelligence(combatAiIntelligence);
+        copy.setWillpowerStat(willpowerStat);
+        copy.setWeaponBonus(weaponBonus);
+        copy.setArmorBonus(armorBonus);
+        copy.setSpeciesId(speciesId);
+        copy.setExperienceReward(experienceReward);
+        for (Map.Entry<CharacterSkill, Integer> entry : combatSkills.entrySet()) {
+            copy.setCombatSkillLevel(entry.getKey(), entry.getValue());
+        }
+        for (BattleSkill skill : skills) {
+            copy.addSkill(skill);
+        }
+        copy.resetAttackCooldown();
+        return copy;
     }
 
     private int statValue(Map<PlayerStat, Integer> stats, PlayerStat stat) {

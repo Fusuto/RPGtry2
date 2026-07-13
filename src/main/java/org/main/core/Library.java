@@ -18,6 +18,8 @@ public final class Library {
         WALL(true),
         DOOR_CLOSED(true),
         DOOR_OPEN(false),
+        QUEST_DOOR_OPEN(false),
+        QUEST_DOOR_CLOSED(true),
         FISHING_WATER(true),
         WATER(true),
         TRAP(false),
@@ -35,11 +37,14 @@ public final class Library {
         }
 
         public boolean isWallLike() {
-            return this == WALL || this == DOOR_CLOSED;
+            return this == WALL || this == DOOR_CLOSED || this == QUEST_DOOR_CLOSED;
         }
 
         public boolean isDoor() {
-            return this == DOOR_CLOSED || this == DOOR_OPEN;
+            return this == DOOR_CLOSED
+                    || this == DOOR_OPEN
+                    || this == QUEST_DOOR_OPEN
+                    || this == QUEST_DOOR_CLOSED;
         }
     }
 
@@ -79,6 +84,7 @@ public final class Library {
     public enum EffectType{
         DAMAGE,
         HEAL,
-        DEFEND
+        DEFEND,
+        SUMMON
     }
 }

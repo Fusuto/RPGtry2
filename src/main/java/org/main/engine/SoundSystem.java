@@ -1,5 +1,7 @@
 package org.main.engine;
 
+import org.main.core.GameConfiguration;
+
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
@@ -8,8 +10,6 @@ import javax.sound.sampled.FloatControl;
 import javax.sound.sampled.LineEvent;
 
 public class SoundSystem {
-    private static final double DEFAULT_VOLUME = 0.20;
-
     private Clip ambienceClip;
     private String ambiencePath;
 
@@ -19,9 +19,13 @@ public class SoundSystem {
     private Clip loopingSoundClip;
     private String loopingSoundPath;
 
-    private double ambienceVolume = DEFAULT_VOLUME;
-    private double musicVolume = DEFAULT_VOLUME;
-    private double soundEffectVolume = DEFAULT_VOLUME;
+    private double ambienceVolume = defaultVolume();
+    private double musicVolume = defaultVolume();
+    private double soundEffectVolume = defaultVolume();
+
+    private static double defaultVolume() {
+        return Math.max(0.0, Math.min(1.0, GameConfiguration.doubleValue("sound.defaultVolume", 0.20)));
+    }
 
     public void playSound(String soundPath) {
         if (isBlank(soundPath)) {

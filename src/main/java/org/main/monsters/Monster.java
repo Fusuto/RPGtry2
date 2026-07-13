@@ -10,7 +10,6 @@ import java.util.List;
 import java.util.Map;
 
 public class Monster {
-    private final MonsterType type;
     private final String customId;
     private final String customName;
     private final EnumMap<PlayerStat, Integer> customStats;
@@ -19,23 +18,12 @@ public class Monster {
     private final BufferedImage customImage;
     private final String customAttackSoundPath;
     private final String customDamageSoundPath;
+    private final int customCombatAiIntelligence;
     private final List<SkillLibrary> customSkills;
+    private final String customPaperDollSourcePath;
+    private final List<DropEntry> customDrops;
 
     private int currentHp;
-
-    public Monster(MonsterType type) {
-        this.type = type;
-        this.customId = "";
-        this.customName = "";
-        this.customStats = emptyStats();
-        this.customXpReward = 0;
-        this.customDescription = "";
-        this.customImage = null;
-        this.customAttackSoundPath = "";
-        this.customDamageSoundPath = "";
-        this.customSkills = List.of();
-        this.currentHp = type.getMaxHp();
-    }
 
     public Monster(
             String customId,
@@ -44,25 +32,26 @@ public class Monster {
             int xpReward,
             String description,
             String imagePath,
+            String paperDollSourcePath,
             String attackSoundPath,
             String damageSoundPath,
-            List<SkillLibrary> skills
+            int combatAiIntelligence,
+            List<SkillLibrary> skills,
+            List<DropEntry> drops
     ) {
-        this.type = null;
         this.customId = customId == null ? "" : customId;
         this.customName = name == null || name.isBlank() ? "Custom Enemy" : name;
         this.customStats = safeStats(stats);
         this.customXpReward = Math.max(0, xpReward);
         this.customDescription = description == null ? "" : description;
         this.customImage = imagePath == null || imagePath.isBlank() ? null : AssetLoader.loadImage(imagePath);
+        this.customPaperDollSourcePath = paperDollSourcePath == null ? "" : paperDollSourcePath;
         this.customAttackSoundPath = attackSoundPath == null ? "" : attackSoundPath;
         this.customDamageSoundPath = damageSoundPath == null ? "" : damageSoundPath;
+        this.customCombatAiIntelligence = Math.max(0, combatAiIntelligence);
         this.customSkills = skills == null ? List.of() : List.copyOf(skills);
+        this.customDrops = drops == null ? List.of() : List.copyOf(drops);
         this.currentHp = getMaxHp();
-    }
-
-    public MonsterType getType() {
-        return type;
     }
 
     public String getCustomId() {
@@ -70,7 +59,7 @@ public class Monster {
     }
 
     public String getName() {
-        return type == null ? customName : type.getDisplayName();
+        return customName;
     }
 
     public int getCurrentHp() {
@@ -82,11 +71,11 @@ public class Monster {
     }
 
     public int getStat(PlayerStat stat) {
-        return type == null ? customStats.getOrDefault(stat, 0) : type.getStat(stat);
+        return customStats.getOrDefault(stat, 0);
     }
 
     public Map<PlayerStat, Integer> getStatsView() {
-        return type == null ? Map.copyOf(customStats) : type.getStatsView();
+        return Map.copyOf(customStats);
     }
 
     public int getAttack() {
@@ -98,23 +87,23 @@ public class Monster {
     }
 
     public int getXpReward() {
-        return type == null ? customXpReward : type.getXpReward();
+        return customXpReward;
     }
 
     public String getDescription() {
-        return type == null ? customDescription : type.getDescription();
+        return customDescription;
     }
 
     public BufferedImage getImage() {
-        return type == null ? customImage : type.getImg();
+        return customImage;
     }
 
     public String getAttackSoundPath() {
-        return type == null ? customAttackSoundPath : type.getAttackSoundPath();
+        return customAttackSoundPath;
     }
 
     public String getDamageSoundPath() {
-        return type == null ? customDamageSoundPath : type.getDamageSoundPath();
+        return customDamageSoundPath;
     }
 
     public int getIntelligence() {
@@ -122,7 +111,19 @@ public class Monster {
     }
 
     public List<SkillLibrary> getSkills() {
-        return type == null ? customSkills : type.getSkills();
+        return customSkills;
+    }
+
+    public int getCombatAiIntelligence() {
+        return customCombatAiIntelligence;
+    }
+
+    public String getPaperDollSourcePath() {
+        return customPaperDollSourcePath;
+    }
+
+    public List<DropEntry> getCustomDrops() {
+        return customDrops;
     }
 
     public boolean isAlive() {
@@ -155,5 +156,16 @@ public class Monster {
             }
         }
         return stats;
+    }
+
+    public record DropEntry(String itemId, double chance) {
+        public DropEntry {
+            itemId = itemId == null ? "" : itemId;
+            chance = Math.max(0.0, Math.min(1.0, chance));
+        }
+
+        public boolean rolls() {
+            return !itemId.isBlank() && Math.random() <= chance;
+        }
     }
 }

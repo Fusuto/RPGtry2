@@ -172,7 +172,17 @@ public class DungeonController {
 
         gameState.setPlayerPosition(nextPosition.x, nextPosition.y);
         gameState.startMovementAnimation(previousX, previousY, nextPosition.x, nextPosition.y);
+        sealQuestDoorBehindPlayer(previousX, previousY);
         playFootstepSound();
+    }
+
+    private void sealQuestDoorBehindPlayer(int previousX, int previousY) {
+        DungeonMap dungeonMap = gameState.getDungeonMap();
+        if (dungeonMap == null || dungeonMap.getTile(previousX, previousY) != Library.TileType.QUEST_DOOR_OPEN) {
+            return;
+        }
+
+        dungeonMap.setTile(previousX, previousY, Library.TileType.QUEST_DOOR_CLOSED);
     }
 
     private void playFootstepSound() {

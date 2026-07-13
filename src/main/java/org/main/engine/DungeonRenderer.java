@@ -497,7 +497,7 @@ public class DungeonRenderer {
     }
 
     private void drawDoorOverlayIfNeeded(Graphics2D g, RenderCommand command) {
-        if (command.tileType != Library.TileType.DOOR_CLOSED) {
+        if (!isClosedDoor(command.tileType)) {
             return;
         }
 
@@ -952,7 +952,7 @@ public class DungeonRenderer {
     }
 
     private Color getWallColor(RenderCommand command) {
-        if (command.tileType == Library.TileType.DOOR_CLOSED) {
+        if (isClosedDoor(command.tileType)) {
             int base = switch (command.depth) {
                 case 1 -> 110;
                 case 2 -> 85;
@@ -980,6 +980,11 @@ public class DungeonRenderer {
             case RIGHT -> new Color(Math.max(0, base - 10), Math.max(0, base - 10), Math.min(255, base + 5));
             case FLOOR, SPRITE -> Color.MAGENTA;
         };
+    }
+
+    private boolean isClosedDoor(Library.TileType tileType) {
+        return tileType == Library.TileType.DOOR_CLOSED
+                || tileType == Library.TileType.QUEST_DOOR_CLOSED;
     }
 
     private RelativePosition getRelativePosition(int worldX, int worldY) {

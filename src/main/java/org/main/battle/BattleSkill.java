@@ -17,6 +17,8 @@ public class BattleSkill {
     private final int defendTurns;
     private final double damageReduction;
     private final double selfHealPercent;
+    private final SummonMode summonMode;
+    private final double summonChance;
 
     public BattleSkill(
             String name,
@@ -57,6 +59,27 @@ public class BattleSkill {
             double damageReduction,
             double selfHealPercent
     ) {
+        this(name, description, targetShape, targetTeam, targetingMode, useSoundPath, effectType, damage,
+                stunChance, stunTurns, defendTurns, damageReduction, selfHealPercent, SummonMode.NONE, 0.0);
+    }
+
+    public BattleSkill(
+            String name,
+            String description,
+            Library.SkillTargetShape targetShape,
+            Library.EntityType targetTeam,
+            Library.BattleTargetingMode targetingMode,
+            String useSoundPath,
+            Library.EffectType effectType,
+            int damage,
+            double stunChance,
+            int stunTurns,
+            int defendTurns,
+            double damageReduction,
+            double selfHealPercent,
+            SummonMode summonMode,
+            double summonChance
+    ) {
         this.name = name;
         this.description = description;
         this.targetShape = targetShape;
@@ -70,6 +93,8 @@ public class BattleSkill {
         this.defendTurns = Math.max(0, defendTurns);
         this.damageReduction = Math.max(0.0, Math.min(0.95, damageReduction));
         this.selfHealPercent = Math.max(0.0, selfHealPercent);
+        this.summonMode = summonMode == null ? SummonMode.NONE : summonMode;
+        this.summonChance = Math.max(0.0, Math.min(1.0, summonChance));
     }
 
     public BattleSkill(
@@ -135,6 +160,24 @@ public class BattleSkill {
 
     public boolean healsCasterFromDamage() {
         return selfHealPercent > 0.0;
+    }
+
+    public SummonMode getSummonMode() {
+        return summonMode;
+    }
+
+    public double getSummonChance() {
+        return summonChance;
+    }
+
+    public boolean isSummonSkill() {
+        return effectType == Library.EffectType.SUMMON && summonMode != SummonMode.NONE;
+    }
+
+    public enum SummonMode {
+        NONE,
+        SAME_SPECIES,
+        SKELETON
     }
 }
 

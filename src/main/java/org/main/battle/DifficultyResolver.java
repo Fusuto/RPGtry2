@@ -2,6 +2,7 @@ package org.main.battle;
 
 import org.main.content.SkillLibrary;
 import org.main.core.CharacterSkill;
+import org.main.core.GameConfiguration;
 import org.main.core.Library;
 import org.main.core.PlayerCharacter;
 import org.main.core.PlayerStat;
@@ -11,10 +12,6 @@ import java.util.List;
 import java.util.Map;
 
 public final class DifficultyResolver {
-    private static final double OFFENSE_DIVISOR = 8.0;
-    private static final double SURVIVAL_DIVISOR = 10.0;
-    private static final int MIN_LEVEL = 1;
-
     private DifficultyResolver() {
     }
 
@@ -87,18 +84,29 @@ public final class DifficultyResolver {
                 + actor.getStrengthStat()
                 + actor.getCombatSkillLevel(CharacterSkill.STRENGTH)
                 + actor.getWeaponBonus();
+        double baselineAttackInterval = BattleTiming.calculateAttackIntervalSeconds(
+                GameConfiguration.intValue("battle.attackInterval.minimumAgility", 1)
+        );
+        double actorAttackInterval = BattleTiming.calculateAttackIntervalSeconds(actor.getAgilityStat());
+        double speedMultiplier = actorAttackInterval <= 0.0
+                ? 1.0
+                : baselineAttackInterval / actorAttackInterval;
+        speedMultiplier = Math.max(1.0, Math.min(speedMultiplier, speedMultiplierCap()));
+        double autoAttackPower = meleePackage * speedMultiplier / offenseDivisor();
+
         double magicPackage = actor.getIntelligence()
                 + actor.getWillpowerStat()
                 + actor.getCombatSkillLevel(CharacterSkill.MAGIC_ACCURACY)
                 + actor.getCombatSkillLevel(CharacterSkill.MAGIC_POWER);
-        double offensivePower = Math.max(meleePackage, magicPackage) / OFFENSE_DIVISOR;
+        double magicPower = magicPackage / offenseDivisor();
+        double offensivePower = Math.max(autoAttackPower, magicPower);
         double defensivePower = (actor.getDefenseStat()
                 + actor.getCombatSkillLevel(CharacterSkill.DEFENSE)
                 + actor.getArmorBonus()
-                + actor.getMaxHp()) / SURVIVAL_DIVISOR;
+                + actor.getMaxHp()) / survivalDivisor();
         double utilityPower = 0.0;
         double power = Math.max(1.0, offensivePower + defensivePower);
-        int level = Math.max(MIN_LEVEL, (int) Math.floor(power));
+        int level = Math.max(minLevel(), (int) Math.floor(power));
         return new DifficultyRating(level, power, offensivePower, defensivePower, utilityPower);
     }
 
@@ -110,7 +118,23 @@ public final class DifficultyResolver {
     }
 
     private static DifficultyRating emptyRating() {
-        return new DifficultyRating(MIN_LEVEL, 1.0, 0.0, 0.0, 0.0);
+        return new DifficultyRating(minLevel(), 1.0, 0.0, 0.0, 0.0);
+    }
+
+    private static double offenseDivisor() {
+        return Math.max(1.0, GameConfiguration.doubleValue("difficulty.offenseDivisor", 8.0));
+    }
+
+    private static double survivalDivisor() {
+        return Math.max(1.0, GameConfiguration.doubleValue("difficulty.survivalDivisor", 10.0));
+    }
+
+    private static double speedMultiplierCap() {
+        return Math.max(1.0, GameConfiguration.doubleValue("difficulty.speedMultiplierCap", 4.0));
+    }
+
+    private static int minLevel() {
+        return Math.max(1, GameConfiguration.intValue("difficulty.minimumLevel", 1));
     }
 
     public record DifficultyRating(

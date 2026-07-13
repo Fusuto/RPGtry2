@@ -5,7 +5,6 @@ import org.main.content.MapDesignLibrary;
 import org.main.content.PlayerRegionLibrary;
 import org.main.content.RecipeLibrary;
 import org.main.engine.DungeonMap;
-import org.main.monsters.MonsterType;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -80,6 +79,7 @@ public final class SaveSystem {
         properties.setProperty("world.mapDesignPath", mapDesignPathForSave(gameState.getCurrentMapDesignPath()));
         saveDungeonMap(properties, gameState.getDungeonMap());
         saveTileInteractions(properties, gameState);
+        saveMapRuntimeStates(properties, gameState.getMapRuntimeStatesView());
 
         gameState.getQuestStagesView().forEach((id, stage) -> properties.setProperty("quest." + id, String.valueOf(stage)));
 
@@ -129,6 +129,24 @@ public final class SaveSystem {
         int playerX = readInt(properties, "world.x", 1);
         int playerY = readInt(properties, "world.y", 1);
         Path mapDesignPath = readMapDesignPath(properties.getProperty("world.mapDesignPath", ""));
+        Map<String, GameState.MapRuntimeState> runtimeStates = loadMapRuntimeStates(properties);
+        if (runtimeStates.isEmpty() && mapDesignPath != null) {
+            runtimeStates.put(mapDesignPathForSave(mapDesignPath), new GameState.MapRuntimeState(
+                    mapDesignPath,
+                    dungeonMap,
+                    List.of(),
+                    false,
+                    loadTileInteractionMap(properties, "world.tileInteractions."),
+                    readSet(properties.getProperty("world.removedEntities", "")),
+                    Map.of(),
+                    readSet(properties.getProperty("world.discovered", "")),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of()
+            ));
+        }
+        gameState.setMapRuntimeStates(runtimeStates);
 
         if (dungeonMap.isOutOfBounds(playerX, playerY)) {
             playerX = 1;
@@ -137,10 +155,16 @@ public final class SaveSystem {
 
         gameState.setPlayerCharacter(player);
         gameState.setRemovedEntityKeys(readSet(properties.getProperty("world.removedEntities", "")));
-        if (mapDesignPath != null && Files.isRegularFile(mapDesignPath)) {
-            MapDesignLibrary.MapDesign mapDesign = MapDesignLibrary.load(mapDesignPath);
-            gameState.changeDungeon(mapDesign, playerX, playerY, mapDesignPath);
-        } else {
+        boolean loadedAuthoredMap = false;
+        if (mapDesignPath != null) {
+            try {
+                gameState.restoreOrLoadMap(mapDesignPath, playerX, playerY);
+                loadedAuthoredMap = true;
+            } catch (IOException ignored) {
+                loadedAuthoredMap = false;
+            }
+        }
+        if (!loadedAuthoredMap) {
             gameState.changeDungeon(
                     dungeonMap,
                     playerX,
@@ -158,7 +182,7 @@ public final class SaveSystem {
         restoreGold(gameState, readInt(properties, "world.gold", gameState.getGold()));
         gameState.setQuestStages(readQuestStages(properties));
 
-        if (currentFloor <= 1) {
+        if (currentFloor <= 1 && !loadedAuthoredMap) {
             GameBootstrap.seedTestContent(gameState);
         }
 
@@ -170,12 +194,16 @@ public final class SaveSystem {
     }
 
     private static void saveDungeonMap(Properties properties, DungeonMap dungeonMap) {
+        saveDungeonMap(properties, "world.map.", dungeonMap);
+    }
+
+    private static void saveDungeonMap(Properties properties, String prefix, DungeonMap dungeonMap) {
         if (dungeonMap == null) {
             return;
         }
 
-        properties.setProperty("world.map.width", String.valueOf(dungeonMap.getWidth()));
-        properties.setProperty("world.map.height", String.valueOf(dungeonMap.getHeight()));
+        properties.setProperty(prefix + "width", String.valueOf(dungeonMap.getWidth()));
+        properties.setProperty(prefix + "height", String.valueOf(dungeonMap.getHeight()));
 
         for (int y = 0; y < dungeonMap.getHeight(); y++) {
             StringBuilder tileRow = new StringBuilder();
@@ -191,14 +219,18 @@ public final class SaveSystem {
                 themeRow.append(dungeonMap.getEnvironmentThemeIndex(x, y));
             }
 
-            properties.setProperty("world.map.tiles." + y, tileRow.toString());
-            properties.setProperty("world.map.themes." + y, themeRow.toString());
+            properties.setProperty(prefix + "tiles." + y, tileRow.toString());
+            properties.setProperty(prefix + "themes." + y, themeRow.toString());
         }
     }
 
     private static DungeonMap loadDungeonMap(Properties properties) {
-        int width = readInt(properties, "world.map.width", 0);
-        int height = readInt(properties, "world.map.height", 0);
+        return loadDungeonMap(properties, "world.map.");
+    }
+
+    private static DungeonMap loadDungeonMap(Properties properties, String prefix) {
+        int width = readInt(properties, prefix + "width", 0);
+        int height = readInt(properties, prefix + "height", 0);
 
         if (width <= 0 || height <= 0) {
             return DungeonMap.testMap();
@@ -208,8 +240,8 @@ public final class SaveSystem {
         int[][] themes = new int[height][width];
 
         for (int y = 0; y < height; y++) {
-            List<String> tileValues = splitCsv(properties.getProperty("world.map.tiles." + y, ""));
-            List<String> themeValues = splitCsv(properties.getProperty("world.map.themes." + y, ""));
+            List<String> tileValues = splitCsv(properties.getProperty(prefix + "tiles." + y, ""));
+            List<String> themeValues = splitCsv(properties.getProperty(prefix + "themes." + y, ""));
 
             for (int x = 0; x < width; x++) {
                 tiles[y][x] = readTileType(tileValues, x);
@@ -257,6 +289,120 @@ public final class SaveSystem {
         }
     }
 
+    private static void saveMapRuntimeStates(Properties properties, Map<String, GameState.MapRuntimeState> states) {
+        if (states == null || states.isEmpty()) {
+            properties.setProperty("mapState.count", "0");
+            return;
+        }
+
+        properties.setProperty("mapState.count", String.valueOf(states.size()));
+        int index = 0;
+        for (Map.Entry<String, GameState.MapRuntimeState> entry : states.entrySet()) {
+            GameState.MapRuntimeState state = entry.getValue();
+            String prefix = "mapState." + index + ".";
+            properties.setProperty(prefix + "key", entry.getKey());
+            properties.setProperty(prefix + "path", mapDesignPathForSave(state.mapPath()));
+            properties.setProperty(prefix + "removed", join(state.removedEntityKeys()));
+            properties.setProperty(prefix + "discovered", join(state.discoveredMiniMapTiles()));
+            saveDungeonMap(properties, prefix + "map.", state.dungeonMap());
+            saveTileInteractionMap(properties, prefix + "tileInteraction.", state.tileInteractionIds());
+            saveResourceNodeSnapshots(properties, prefix + "resource.", state.resourceNodeStates());
+            index++;
+        }
+    }
+
+    private static Map<String, GameState.MapRuntimeState> loadMapRuntimeStates(Properties properties) {
+        int count = readInt(properties, "mapState.count", 0);
+        Map<String, GameState.MapRuntimeState> states = new HashMap<>();
+
+        for (int i = 0; i < count; i++) {
+            String prefix = "mapState." + i + ".";
+            Path path = readMapDesignPath(properties.getProperty(prefix + "path", ""));
+            String key = properties.getProperty(prefix + "key", mapDesignPathForSave(path));
+            DungeonMap map = loadDungeonMap(properties, prefix + "map.");
+            states.put(key, new GameState.MapRuntimeState(
+                    path,
+                    map,
+                    List.of(),
+                    false,
+                    loadTileInteractionMap(properties, prefix + "tileInteraction."),
+                    readSet(properties.getProperty(prefix + "removed", "")),
+                    loadResourceNodeSnapshots(properties, prefix + "resource."),
+                    readSet(properties.getProperty(prefix + "discovered", "")),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of()
+            ));
+        }
+
+        return states;
+    }
+
+    private static void saveTileInteractionMap(Properties properties, String prefix, Map<String, String> interactions) {
+        properties.setProperty(prefix + "count", String.valueOf(interactions == null ? 0 : interactions.size()));
+        if (interactions == null) {
+            return;
+        }
+        int index = 0;
+        for (Map.Entry<String, String> entry : interactions.entrySet()) {
+            properties.setProperty(prefix + index, entry.getKey() + "|" + entry.getValue());
+            index++;
+        }
+    }
+
+    private static Map<String, String> loadTileInteractionMap(Properties properties, String prefix) {
+        int count = readInt(properties, prefix + "count", 0);
+        Map<String, String> interactions = new HashMap<>();
+        for (int i = 0; i < count; i++) {
+            String value = properties.getProperty(prefix + i, "");
+            int separator = value.indexOf('|');
+            if (separator > 0 && separator < value.length() - 1) {
+                interactions.put(value.substring(0, separator), value.substring(separator + 1));
+            }
+        }
+        return interactions;
+    }
+
+    private static void saveResourceNodeSnapshots(
+            Properties properties,
+            String prefix,
+            Map<String, GameState.ResourceNodeSnapshot> resources
+    ) {
+        properties.setProperty(prefix + "count", String.valueOf(resources == null ? 0 : resources.size()));
+        if (resources == null) {
+            return;
+        }
+        int index = 0;
+        for (Map.Entry<String, GameState.ResourceNodeSnapshot> entry : resources.entrySet()) {
+            GameState.ResourceNodeSnapshot state = entry.getValue();
+            String itemPrefix = prefix + index + ".";
+            properties.setProperty(itemPrefix + "key", entry.getKey());
+            properties.setProperty(itemPrefix + "exhaustion", String.valueOf(state.exhaustionLevel()));
+            properties.setProperty(itemPrefix + "attempts", String.valueOf(state.attemptsSinceLastExhaustionRoll()));
+            properties.setProperty(itemPrefix + "respawn", String.valueOf(state.respawnRemainingMs()));
+            index++;
+        }
+    }
+
+    private static Map<String, GameState.ResourceNodeSnapshot> loadResourceNodeSnapshots(Properties properties, String prefix) {
+        int count = readInt(properties, prefix + "count", 0);
+        Map<String, GameState.ResourceNodeSnapshot> resources = new HashMap<>();
+        for (int i = 0; i < count; i++) {
+            String itemPrefix = prefix + i + ".";
+            String key = properties.getProperty(itemPrefix + "key", "");
+            if (key.isBlank()) {
+                continue;
+            }
+            resources.put(key, new GameState.ResourceNodeSnapshot(
+                    readInt(properties, itemPrefix + "exhaustion", 0),
+                    readInt(properties, itemPrefix + "attempts", 0),
+                    readInt(properties, itemPrefix + "respawn", 0)
+            ));
+        }
+        return resources;
+    }
+
     private static void saveInventory(Properties properties, InventorySystem.Inventory inventory) {
         if (inventory == null) {
             return;
@@ -299,7 +445,7 @@ public final class SaveSystem {
 
     private static void loadEquippedLimbs(Properties properties, PlayerCharacter player) {
         for (LimbSlot slot : LimbSlot.values()) {
-            LimbItem limb = readLimb(properties.getProperty("limb." + slot.name(), ""));
+            LimbItem limb = readCustomLimb(properties.getProperty("limb." + slot.name(), ""));
 
             if (limb != null) {
                 player.equipLimb(limb);
@@ -334,10 +480,6 @@ public final class SaveSystem {
     private static InventorySystem.Item readInventoryItem(String itemName) {
         if (itemName == null || itemName.isBlank()) {
             return null;
-        }
-
-        if (itemName.startsWith("LIMB|")) {
-            return readLimb(itemName);
         }
 
         if (itemName.startsWith("CUSTOM_LIMB|")) {
@@ -394,16 +536,7 @@ public final class SaveSystem {
             return "";
         }
 
-        if (limb.getMonsterType() == null) {
-            return customLimbKey(limb);
-        }
-
-        return "LIMB|"
-                + limb.getMonsterType().name()
-                + "|"
-                + limb.getLimbSlot().name()
-                + "|"
-                + limb.getCondition().name();
+        return customLimbKey(limb);
     }
 
     private static String customLimbKey(LimbItem limb) {
@@ -426,27 +559,11 @@ public final class SaveSystem {
                 + "|"
                 + encode(stats.toString())
                 + "|"
-                + encode(limb.getExamineText());
-    }
-
-    private static LimbItem readLimb(String value) {
-        if (value == null || !value.startsWith("LIMB|")) {
-            return null;
-        }
-
-        String[] parts = value.split("\\|");
-        if (parts.length < 4) {
-            return null;
-        }
-
-        try {
-            MonsterType monsterType = MonsterType.valueOf(parts[1]);
-            LimbSlot slot = LimbSlot.valueOf(parts[2]);
-            GearDurability condition = GearDurability.valueOf(parts[3]);
-            return ButcherySystem.recreateLimb(monsterType, slot, condition);
-        } catch (IllegalArgumentException ignored) {
-            return null;
-        }
+                + encode(limb.getExamineText())
+                + "|"
+                + encode(limb.getPaperDollSourcePath())
+                + "|"
+                + encode(limb.getSourceCreatureName());
     }
 
     private static LimbItem readCustomLimb(String value) {
@@ -472,7 +589,9 @@ public final class SaveSystem {
                 }
             }
             String examineText = parts.length >= 7 ? decode(parts[6]) : "";
-            return new LimbItem(name, null, slot, stats, List.of(), condition, iconPath, examineText);
+            String paperDollSourcePath = parts.length >= 8 ? decode(parts[7]) : "";
+            String sourceCreatureName = parts.length >= 9 ? decode(parts[8]) : "";
+            return new LimbItem(name, sourceCreatureName, slot, stats, List.of(), condition, iconPath, examineText, paperDollSourcePath);
         } catch (IllegalArgumentException ignored) {
             return null;
         }
@@ -509,13 +628,7 @@ public final class SaveSystem {
             return "";
         }
 
-        Path absoluteMapFolder = MapDesignLibrary.MAP_FOLDER.toAbsolutePath().normalize();
-        Path absolutePath = path.toAbsolutePath().normalize();
-        if (absolutePath.startsWith(absoluteMapFolder)) {
-            return MapDesignLibrary.MAP_FOLDER.resolve(absoluteMapFolder.relativize(absolutePath)).toString();
-        }
-
-        return path.toString();
+        return MapDesignLibrary.resourcePathForMap(path);
     }
 
     private static Path readMapDesignPath(String value) {

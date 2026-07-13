@@ -1,0 +1,217 @@
+package org.main.core;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Properties;
+
+public final class GameConfiguration {
+    private static final Path CONFIG_PATH = Path.of("data", "configuration.properties");
+    private static final String PACKAGED_CONFIG_PATH = "assets/configuration.properties";
+    private static final Map<String, String> DEFAULTS = new LinkedHashMap<>();
+    private static final Properties PROPERTIES = new Properties();
+
+    static {
+        defaults();
+        loadPackagedDefaults();
+        load();
+    }
+
+    private GameConfiguration() {
+    }
+
+    public static int intValue(String key, int fallback) {
+        String value = PROPERTIES.getProperty(key, DEFAULTS.getOrDefault(key, String.valueOf(fallback)));
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (RuntimeException exception) {
+            return fallback;
+        }
+    }
+
+    public static double doubleValue(String key, double fallback) {
+        String value = PROPERTIES.getProperty(key, DEFAULTS.getOrDefault(key, String.valueOf(fallback)));
+        try {
+            return Double.parseDouble(value.trim());
+        } catch (RuntimeException exception) {
+            return fallback;
+        }
+    }
+
+    public static String stringValue(String key, String fallback) {
+        String value = PROPERTIES.getProperty(key, DEFAULTS.getOrDefault(key, fallback));
+        return value == null ? fallback : value;
+    }
+
+    private static void load() {
+        PROPERTIES.putAll(DEFAULTS);
+
+        try {
+            Files.createDirectories(CONFIG_PATH.getParent());
+            if (Files.isRegularFile(CONFIG_PATH)) {
+                try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
+                    PROPERTIES.load(inputStream);
+                }
+            }
+            writeDefaultsAndCurrentValues();
+        } catch (IOException ignored) {
+            // Configuration is a convenience layer; bad disk state should not prevent the game from booting.
+        }
+    }
+
+    private static void loadPackagedDefaults() {
+        try (InputStream inputStream = GameConfiguration.class
+                .getClassLoader()
+                .getResourceAsStream(PACKAGED_CONFIG_PATH)) {
+            if (inputStream == null) {
+                return;
+            }
+
+            Properties packagedDefaults = new Properties();
+            packagedDefaults.load(inputStream);
+            for (String key : packagedDefaults.stringPropertyNames()) {
+                DEFAULTS.put(key, packagedDefaults.getProperty(key));
+            }
+        } catch (IOException ignored) {
+            // Java defaults remain as the final fallback if the packaged config cannot be read.
+        }
+    }
+
+    private static void writeDefaultsAndCurrentValues() throws IOException {
+        Properties output = new Properties();
+        for (Map.Entry<String, String> entry : DEFAULTS.entrySet()) {
+            output.setProperty(entry.getKey(), PROPERTIES.getProperty(entry.getKey(), entry.getValue()));
+        }
+
+        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
+            output.store(outputStream, "Aether editable gameplay configuration");
+        }
+    }
+
+    private static void put(String key, String value) {
+        DEFAULTS.put(key, value);
+    }
+
+    private static void defaults() {
+        put("battle.attackInterval.slowestSeconds", "4.2");
+        put("battle.attackInterval.fastestSeconds", "0.25");
+        put("battle.attackInterval.minimumAgility", "1");
+        put("battle.attackInterval.targetMaximumAgility", "99");
+
+        put("battle.hitChance.minimum", "0.05");
+        put("battle.hitChance.maximum", "0.95");
+        put("battle.roll.minimum", "1");
+        put("battle.damage.minimumMaxHit", "1");
+        put("battle.damage.rollInclusiveOffset", "1");
+        put("battle.damage.physicalStatDivisor", "3");
+        put("battle.damage.magicStatDivisor", "3");
+        put("battle.healing.statDivisor", "5");
+        put("battle.magicDefense.willpowerWeight", "0.70");
+        put("battle.magicDefense.skillWeight", "0.20");
+        put("battle.magicDefense.armorWeight", "0.10");
+        put("battle.physicalDefense.statWeight", "0.35");
+        put("battle.physicalDefense.skillWeight", "0.35");
+        put("battle.physicalDefense.agilityWeight", "0.15");
+        put("battle.rollComparison.divisor", "2.0");
+        put("battle.rollComparison.offset", "2.0");
+
+        put("battle.xp.defense.minimum", "1");
+        put("battle.xp.defense.perDamage", "3");
+        put("battle.xp.attack.perAction", "5");
+        put("battle.xp.magicAccuracy.perCast", "5");
+        put("battle.xp.strength.minimum", "1");
+        put("battle.xp.strength.perDamage", "4");
+        put("battle.xp.magicPower.minimum", "1");
+        put("battle.xp.magicPower.perDamage", "4");
+        put("battle.xp.magicHealing.minimum", "4");
+        put("battle.xp.magicHealing.perHp", "4");
+        put("battle.enemySkill.intelligenceDivisor", "10.0");
+        put("battle.enemySkill.smartDamageIntelligence", "7");
+        put("battle.lowHpWarning.threshold", "0.10");
+        put("battle.lowHpWarning.soundPath", "assets/sounds/generated/kurt_sample_2.wav");
+        put("battle.debug.criticalHpPercent", "0.10");
+        put("battle.debug.invulnerableTurns", "1");
+        put("battle.debug.damageReduction", "1.0");
+
+        put("difficulty.offenseDivisor", "8.0");
+        put("difficulty.survivalDivisor", "10.0");
+        put("difficulty.minimumLevel", "1");
+        put("difficulty.speedMultiplierCap", "4.0");
+        put("battle.summon.maxActorsPerSide", "6");
+
+        put("movement.animationDurationMs", "160");
+        put("rotation.animationDurationMs", "220");
+        put("sound.defaultVolume", "0.20");
+
+        put("resource.respawnMs", "300000");
+        put("resource.gatheringAttemptIntervalMs", "2500");
+        put("resource.attemptsPerExhaustionRoll", "2");
+        put("resource.exhaustionChance", "0.50");
+        put("resource.maxExhaustionLevel", "2");
+        put("fishing.baseSuccessChance", "0.35");
+        put("fishing.successChancePerLevel", "0.03");
+        put("fishing.maxSuccessChance", "0.85");
+        put("fishing.xpReward", "18");
+        put("mining.baseSuccessChance", "0.40");
+        put("mining.successChancePerLevel", "0.03");
+        put("mining.maxSuccessChance", "0.88");
+        put("mining.xpReward", "18");
+        put("cooking.baseSuccessChance", "0.45");
+        put("cooking.successChancePerLevel", "0.035");
+        put("cooking.maxSuccessChance", "0.90");
+        put("cooking.xpReward", "20");
+
+        put("dungeonGenerator.minSize", "17");
+        put("dungeonGenerator.maxSize", "29");
+        put("dungeonGenerator.merchantChance", "0.10");
+        put("dungeonGenerator.roomChance", "0.06");
+        put("dungeonGenerator.mediumRoomChance", "0.20");
+        put("dungeonGenerator.doorChance", "0.22");
+        put("dungeonGenerator.monoTypeChance", "0.30");
+        put("dungeonGenerator.targetCarvedCellDivisor", "5");
+
+        put("butchery.targetLegsLevel", "10");
+        put("butchery.targetArmsLevel", "20");
+        put("butchery.targetBodyLevel", "30");
+        put("butchery.targetHeadLevel", "40");
+        put("butchery.baseSuccess", "0.28");
+        put("butchery.successPerLevel", "0.025");
+        put("butchery.difficultyPenalty", "0.006");
+        put("butchery.minSuccess", "0.08");
+        put("butchery.maxSuccess", "0.90");
+        put("butchery.baseXp", "12");
+        put("grafting.conditionHelpMultiplier", "0.20");
+        put("grafting.baseSuccess", "0.25");
+        put("grafting.successPerLevel", "0.025");
+        put("grafting.minSuccess", "0.05");
+        put("grafting.maxSuccess", "0.92");
+        put("grafting.xpReward", "16");
+        put("grafting.conditionRiskChance", "0.35");
+        put("butchery.skillInheritChance", "0.35");
+        put("butchery.perfectConditionBaseChance", "0.05");
+        put("butchery.perfectConditionLevelBonus", "0.015");
+        put("butchery.perfectConditionDifficultyPenalty", "0.002");
+        put("butchery.perfectConditionMinChance", "0.02");
+        put("butchery.perfectConditionMaxChance", "0.70");
+        put("butchery.goodConditionRollCutoff", "0.35");
+        put("butchery.wornConditionRollCutoff", "0.68");
+        put("butchery.damagedConditionRollCutoff", "0.90");
+        put("butchery.difficultyHpDivisor", "5.0");
+        put("butchery.difficultyXpDivisor", "10.0");
+        put("butchery.weight.attackArmOrHead", "0.35");
+        put("butchery.weight.strengthArm", "0.50");
+        put("butchery.weight.defenseBody", "0.80");
+        put("butchery.weight.defenseHead", "0.20");
+        put("butchery.weight.agilityLegs", "0.70");
+        put("butchery.weight.agilityArm", "0.15");
+        put("butchery.weight.intelligenceHead", "1.0");
+        put("butchery.weight.willpowerHead", "0.55");
+        put("butchery.weight.willpowerBody", "0.35");
+        put("butchery.weight.vitalityBody", "0.80");
+        put("butchery.weight.vitalityLegs", "0.20");
+    }
+}

@@ -1,25 +1,22 @@
 package org.main.battle;
 
 import org.main.core.GameState;
+import org.main.core.GameConfiguration;
 import org.main.core.InventorySystem;
 import org.main.core.InteractionSystem;
 import org.main.core.Library;
 import org.main.content.SkillLibrary;
 import org.main.content.QuestLibrary;
 import org.main.content.EnvironmentLibrary;
-import org.main.content.MobDropsLibrary;
 import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
-import org.main.monsters.MonsterType;
+import org.main.monsters.Monster;
 
 import java.awt.Point;
 import java.awt.event.KeyEvent;
 import java.util.List;
 
 public class BattleController {
-    private static final String LOW_HP_WARNING_SOUND_PATH = "assets/sounds/generated/kurt_sample_2.wav";
-    private static final double LOW_HP_WARNING_THRESHOLD = 0.10;
-
     private final GameState gameState;
     private final BattleRenderer battleRenderer;
     private final SoundSystem soundSystem;
@@ -27,10 +24,6 @@ public class BattleController {
 
     private BattleSkill pendingSkill = null;
     private Library.BattleCommand pendingBattleCommand = null;
-
-    public BattleController(GameState gameState, BattleRenderer battleRenderer) {
-        this(gameState, battleRenderer, null, null);
-    }
 
     public BattleController(
             GameState gameState,
@@ -48,28 +41,47 @@ public class BattleController {
         battleRenderer.setMousePoint(point);
     }
 
-    public void update() {
-        if (soundSystem == null) {
-            return;
-        }
-
+    public void update(int deltaMs) {
         if (!gameState.isBattleMode() || gameState.getCurrentEncounter() == null) {
-            soundSystem.stopLoopingSound();
+            if (soundSystem != null) {
+                soundSystem.stopLoopingSound();
+            }
+            battleRenderer.setAutoCombatPaused(false);
             return;
         }
 
         BattleActor playerActor = gameState.getCurrentEncounter().getFirstLivingAlly();
 
         if (playerActor == null || playerActor.getMaxHp() <= 0) {
-            soundSystem.stopLoopingSound();
+            if (soundSystem != null) {
+                soundSystem.stopLoopingSound();
+            }
             return;
         }
 
-        if ((double) playerActor.getCurrentHp() / (double) playerActor.getMaxHp() <= LOW_HP_WARNING_THRESHOLD) {
-            soundSystem.playLoopingSound(LOW_HP_WARNING_SOUND_PATH);
-        } else {
-            soundSystem.stopLoopingSound();
+        if (soundSystem != null) {
+            if ((double) playerActor.getCurrentHp() / (double) playerActor.getMaxHp()
+                    <= GameConfiguration.doubleValue("battle.lowHpWarning.threshold", 0.10)) {
+                soundSystem.playLoopingSound(GameConfiguration.stringValue(
+                        "battle.lowHpWarning.soundPath",
+                        "assets/sounds/generated/kurt_sample_2.wav"
+                ));
+            } else {
+                soundSystem.stopLoopingSound();
+            }
         }
+
+        boolean paused = isAutoCombatPaused();
+        battleRenderer.setAutoCombatPaused(paused);
+        Library.BattleResult result = gameState.getCurrentEncounter().updateAutoCombat(deltaMs, paused);
+        handleBattleResult(result);
+    }
+
+    private boolean isAutoCombatPaused() {
+        return battleRenderer.isSkillWindowOpen()
+                || battleRenderer.isItemWindowOpen()
+                || pendingSkill != null
+                || pendingBattleCommand != null;
     }
 
     public void handleMouseClick(Point point) {
@@ -345,7 +357,7 @@ public class BattleController {
 
     private void endBattle(boolean removeEnemy) {
         int experienceReward = 0;
-        MonsterType defeatedMonsterType = null;
+        Monster defeatedMonster = null;
 
         if (removeEnemy && gameState.getCurrentEncounter() != null) {
             experienceReward = gameState.getCurrentEncounter().getDefeatedEnemyExperienceReward();
@@ -357,11 +369,10 @@ public class BattleController {
 
         if (removeEnemy && gameState.getCurrentEnemyEntity() != null) {
             MapEntity defeatedEnemy = gameState.getCurrentEnemyEntity();
-            defeatedMonsterType = defeatedEnemy.getMonster() == null ? null : defeatedEnemy.getMonster().getType();
+            defeatedMonster = defeatedEnemy.getMonster();
 
             if (defeatedEnemy.getMonster() != null
-                    && defeatedEnemy.getMonster().getType() != null
-                    && "SLIME".equals(defeatedEnemy.getMonster().getType().name())
+                    && "slime".equals(defeatedEnemy.getMonster().getCustomId())
                     && gameState.getQuestStage(QuestLibrary.SKELETON_HAT) == 1) {
                 gameState.setQuestStage(QuestLibrary.SKELETON_HAT, 2);
             }
@@ -385,8 +396,8 @@ public class BattleController {
         } else {
             gameState.clearBattleState();
 
-            if (removeEnemy && defeatedMonsterType != null) {
-                gameState.openInteraction(InteractionSystem.postBattleMenu(gameState, defeatedMonsterType, experienceReward, hpLost));
+            if (removeEnemy && defeatedMonster != null) {
+                gameState.openInteraction(InteractionSystem.postBattleMenu(gameState, defeatedMonster, experienceReward, hpLost));
             }
         }
 
@@ -407,17 +418,24 @@ public class BattleController {
             return;
         }
 
-        BattleActor playerActor = currentEncounter.getAllies().get(0);
+        BattleActor playerActor = currentEncounter.getAllies().getFirst();
         gameState.getPlayerCharacter().setCurrHp(playerActor.getCurrentHp());
     }
 
     private void spawnLootDrops(MapEntity defeatedEnemy) {
-        if (defeatedEnemy == null || defeatedEnemy.getMonster() == null || defeatedEnemy.getMonster().getType() == null) {
+        if (defeatedEnemy == null || defeatedEnemy.getMonster() == null) {
             return;
         }
 
-        for (InventorySystem.Item item : MobDropsLibrary.rollDrops(defeatedEnemy.getMonster().getType())) {
-            gameState.addEntity(new MapEntity(item, defeatedEnemy.getX(), defeatedEnemy.getY()));
+        Monster monster = defeatedEnemy.getMonster();
+        for (Monster.DropEntry drop : monster.getCustomDrops()) {
+            if (!drop.rolls()) {
+                continue;
+            }
+            InventorySystem.Item item = gameState.createItemByNameOrId(drop.itemId());
+            if (item != null) {
+                gameState.addEntity(new MapEntity(item, defeatedEnemy.getX(), defeatedEnemy.getY()));
+            }
         }
     }
 }

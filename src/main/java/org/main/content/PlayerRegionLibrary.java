@@ -68,7 +68,7 @@ public enum PlayerRegionLibrary {
         }
 
         private static LimbItem limb(String name, LimbSlot slot, Map<PlayerStat, Integer> stats) {
-            return new LimbItem(name, null, slot, stats, List.of(), org.main.core.GearDurability.PERFECT, ICON);
+            return new LimbItem(name, null, slot, stats, List.of(), org.main.core.GearDurability.PERFECT, ICON, "", ICON);
         }
     }
 }

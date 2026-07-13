@@ -70,7 +70,7 @@ public class OverworldHud {
     private final BufferedImage escapeIcon = AssetLoader.loadImage(A1_ICON_PATH + "SavePoint.png");
 
     private final Map<CharacterSkill, BufferedImage> skillIcons = new EnumMap<>(CharacterSkill.class);
-    private final Map<String, BufferedImage> portraitCache = new HashMap<>();
+    private final PaperDollRenderer paperDollRenderer = new PaperDollRenderer();
     private final Rectangle inventoryButtonBounds = new Rectangle();
     private final Rectangle skillsButtonBounds = new Rectangle();
     private final Rectangle questsButtonBounds = new Rectangle();
@@ -366,7 +366,7 @@ public class OverworldHud {
         drawImage(g, characterCardBackground, x, y, CHARACTER_CARD_WIDTH, CHARACTER_CARD_HEIGHT, false);
 
         Rectangle portraitBounds = new Rectangle(x + 22, y + 20, PORTRAIT_SIZE, PORTRAIT_SIZE);
-        drawPortrait(g, playerCharacter.getPortraitPath(), portraitBounds);
+        drawPaperDoll(g, playerCharacter, portraitBounds);
 
         g.setFont(g.getFont().deriveFont(Font.BOLD, 21f));
         g.setColor(new Color(248, 238, 205));
@@ -652,35 +652,22 @@ public class OverworldHud {
         }
     }
 
-    private void drawPortrait(Graphics2D g, String portraitPath, Rectangle bounds) {
-        BufferedImage portrait = loadPortrait(portraitPath);
-
+    private void drawPaperDoll(Graphics2D g, PlayerCharacter playerCharacter, Rectangle bounds) {
         g.setColor(new Color(17, 18, 21));
         g.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
         g.setColor(new Color(80, 82, 88));
         g.drawRect(bounds.x, bounds.y, bounds.width, bounds.height);
 
-        if (portrait != null) {
+        BufferedImage paperDoll = playerCharacter == null ? null : paperDollRenderer.render(playerCharacter);
+        if (paperDoll != null) {
             int size = Math.min(bounds.width, bounds.height);
-            drawImage(g, portrait, bounds.x + (bounds.width - size) / 2, bounds.y + (bounds.height - size) / 2, size, size, false);
+            drawImage(g, paperDoll, bounds.x + (bounds.width - size) / 2, bounds.y + (bounds.height - size) / 2, size, size, false);
             return;
         }
 
         g.setColor(new Color(175, 175, 175));
         g.fillOval(bounds.x + 18, bounds.y + 10, 26, 26);
         g.fillRoundRect(bounds.x + 12, bounds.y + 36, 38, 20, 14, 14);
-    }
-
-    private BufferedImage loadPortrait(String portraitPath) {
-        if (portraitPath == null || portraitPath.isBlank()) {
-            return null;
-        }
-
-        if (!portraitCache.containsKey(portraitPath)) {
-            portraitCache.put(portraitPath, AssetLoader.loadImage(portraitPath));
-        }
-
-        return portraitCache.get(portraitPath);
     }
 
     private void drawSkillCell(Graphics2D g, BufferedImage icon, int x, int y, int level, FontMetrics metrics) {

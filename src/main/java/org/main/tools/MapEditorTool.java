@@ -8,6 +8,7 @@ import org.main.content.InteractionLibrary;
 import org.main.content.ItemLibrary;
 import org.main.content.MainNpcLibrary;
 import org.main.content.MapDesignLibrary;
+import org.main.content.RecipeLibrary;
 import org.main.content.SkillLibrary;
 import org.main.content.ThemeLibrary;
 import org.main.core.CharacterSkill;
@@ -17,7 +18,6 @@ import org.main.core.InventorySystem;
 import org.main.core.Library;
 import org.main.core.LimbSlot;
 import org.main.core.PlayerStat;
-import org.main.monsters.MonsterType;
 
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
@@ -247,17 +247,9 @@ public class MapEditorTool extends JFrame {
             placeableBox.addItem(new PlaceableOption("Custom Limb: " + limb.displayName(), MapDesignLibrary.PlacementKind.ITEM, limb.limbId()));
         }
 
-        for (MonsterType monsterType : MonsterType.values()) {
-            placeableBox.addItem(new PlaceableOption(
-                    "Enemy: " + monsterType.name(),
-                    MapDesignLibrary.PlacementKind.ENEMY,
-                    monsterType.name()
-            ));
-        }
-
         for (MapDesignLibrary.CustomMob mob : design.customMobs()) {
             placeableBox.addItem(new PlaceableOption(
-                    "Custom Enemy: " + mob.displayName(),
+                    "Enemy: " + mob.displayName(),
                     MapDesignLibrary.PlacementKind.ENEMY,
                     mob.mobId()
             ));
@@ -299,7 +291,7 @@ public class MapEditorTool extends JFrame {
                 "New NPC",
                 "Hello there.",
                 "",
-                MonsterType.GOBLIN,
+                MapDesignLibrary.defaultEnemy(MapDesignLibrary.ENEMY_GOBLIN).imagePath(),
                 "",
                 -1,
                 List.of(),
@@ -314,7 +306,7 @@ public class MapEditorTool extends JFrame {
                 draft.speakerName(),
                 draft.bodyText(),
                 draft.followUpInteractionId(),
-                draft.visualType(),
+                draft.visualPath(),
                 "",
                 null,
                 0,
@@ -448,7 +440,7 @@ public class MapEditorTool extends JFrame {
                         dialogue.speakerName(),
                         dialogue.bodyText(),
                         dialogue.followUpInteractionId(),
-                        dialogue.visualType(),
+                        dialogue.visualPath(),
                         "",
                         null,
                         0,
@@ -497,6 +489,11 @@ public class MapEditorTool extends JFrame {
         JComboBox<StatTargetOption> statTargetBox = new JComboBox<>(statTargetOptions());
         JSpinner healSpinner = new JSpinner(new SpinnerNumberModel(existing == null ? 0 : existing.healAmount(), 0, 1000, 1));
         JSpinner valueSpinner = new JSpinner(new SpinnerNumberModel(existing == null ? 10 : existing.baseGoldValue(), 1, 100000, 1));
+        JCheckBox smithingRecipeBox = new JCheckBox("Add smithing recipe");
+        JSpinner smithingBarsSpinner = new JSpinner(new SpinnerNumberModel(existing == null ? 1 : existing.smithingRequiredBars(), 1, 100, 1));
+        JSpinner smithingLevelSpinner = new JSpinner(new SpinnerNumberModel(existing == null ? 1 : existing.smithingRequiredLevel(), 1, 100, 1));
+        JSpinner smithingXpSpinner = new JSpinner(new SpinnerNumberModel(existing == null ? 25 : existing.smithingXpReward(), 0, 100000, 1));
+        JLabel smithingMaterialLabel = new JLabel();
         JTextArea examineArea = new JTextArea(existing == null ? "A custom item." : existing.examineText(), 4, 30);
         examineArea.setLineWrap(true);
         examineArea.setWrapStyleWord(true);
@@ -504,9 +501,29 @@ public class MapEditorTool extends JFrame {
             typeBox.setSelectedItem(existing.itemType());
             materialBox.setSelectedItem(existing.material());
             selectStatTargetOption(statTargetBox, existing.statBonusTarget());
+            smithingRecipeBox.setSelected(existing.smithingRecipeEnabled());
         }
 
+        Runnable updateSmithingRecipeControls = () -> {
+            GearMaterial material = (GearMaterial) materialBox.getSelectedItem();
+            boolean metal = material != null && material.getFamily() == GearMaterial.MaterialFamily.METAL;
+            smithingRecipeBox.setEnabled(metal);
+            if (!metal) {
+                smithingRecipeBox.setSelected(false);
+            }
+            boolean enabled = metal && smithingRecipeBox.isSelected();
+            smithingBarsSpinner.setEnabled(enabled);
+            smithingLevelSpinner.setEnabled(enabled);
+            smithingXpSpinner.setEnabled(enabled);
+            smithingMaterialLabel.setText(metal
+                    ? "Uses " + RecipeLibrary.smithingMaterialNameFor(material)
+                    : "Metal materials only");
+        };
+
         browseButton.addActionListener(event -> browsePathInto(iconPathField));
+        materialBox.addActionListener(event -> updateSmithingRecipeControls.run());
+        smithingRecipeBox.addActionListener(event -> updateSmithingRecipeControls.run());
+        updateSmithingRecipeControls.run();
 
         JPanel panel = new JPanel(new BorderLayout(6, 6));
         JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
@@ -527,6 +544,16 @@ public class MapEditorTool extends JFrame {
         fields.add(healSpinner);
         fields.add(new JLabel("Base Value"));
         fields.add(valueSpinner);
+        fields.add(new JLabel("Smithing Recipe"));
+        fields.add(smithingRecipeBox);
+        fields.add(new JLabel("Recipe Material"));
+        fields.add(smithingMaterialLabel);
+        fields.add(new JLabel("Bars Required"));
+        fields.add(smithingBarsSpinner);
+        fields.add(new JLabel("Smithing Level"));
+        fields.add(smithingLevelSpinner);
+        fields.add(new JLabel("Smithing XP"));
+        fields.add(smithingXpSpinner);
         panel.add(fields, BorderLayout.NORTH);
         panel.add(new JScrollPane(examineArea), BorderLayout.CENTER);
 
@@ -564,22 +591,30 @@ public class MapEditorTool extends JFrame {
                 ((Number) healSpinner.getValue()).intValue(),
                 ((Number) valueSpinner.getValue()).intValue(),
                 examineArea.getText() == null ? "" : examineArea.getText().trim(),
-                ((StatTargetOption) statTargetBox.getSelectedItem()).stat()
+                ((StatTargetOption) statTargetBox.getSelectedItem()).stat(),
+                smithingRecipeBox.isSelected(),
+                ((Number) smithingBarsSpinner.getValue()).intValue(),
+                ((Number) smithingLevelSpinner.getValue()).intValue(),
+                ((Number) smithingXpSpinner.getValue()).intValue()
         );
     }
 
     private void createCustomMob() {
         JTextField nameField = new JTextField("Custom Enemy", 24);
         JTextField imagePathField = new JTextField("assets/images/generated/mobs/custom_enemy.png", 28);
+        JTextField paperDollSourceField = new JTextField("", 28);
         JButton browseButton = new JButton("Browse");
+        JButton paperDollBrowseButton = new JButton("Browse");
         Map<PlayerStat, JSpinner> statSpinners = enemyStatSpinners();
         JLabel hpLabel = new JLabel();
+        JSpinner combatAiSpinner = new JSpinner(new SpinnerNumberModel(1, 0, 10, 1));
         JSpinner xpSpinner = new JSpinner(new SpinnerNumberModel(10, 0, 100000, 1));
         JTextField attackSoundField = new JTextField("", 24);
         JTextField damageSoundField = new JTextField("", 24);
         JButton attackSoundBrowseButton = new JButton("Browse");
         JButton damageSoundBrowseButton = new JButton("Browse");
         JButton generateLimbsButton = new JButton("Generate Limbs");
+        JButton dropsButton = new JButton("Drops");
         JLabel meleeMaxDamageLabel = new JLabel();
         JSpinner spellBaseDamageSpinner = new JSpinner(new SpinnerNumberModel(5, 0, 1000, 1));
         JLabel spellMaxDamageLabel = new JLabel();
@@ -593,9 +628,11 @@ public class MapEditorTool extends JFrame {
         limbDescriptionArea.setWrapStyleWord(true);
         JLabel difficultyPreviewLabel = new JLabel();
         List<MapDesignLibrary.CustomLimb> generatedLimbs = new ArrayList<>();
+        List<MapDesignLibrary.CustomDropEntry> dropEntries = new ArrayList<>();
         String[] generatedMobId = {""};
 
         browseButton.addActionListener(event -> browsePathInto(imagePathField));
+        paperDollBrowseButton.addActionListener(event -> browsePathInto(paperDollSourceField));
         attackSoundBrowseButton.addActionListener(event -> browsePathInto(attackSoundField));
         damageSoundBrowseButton.addActionListener(event -> browsePathInto(damageSoundField));
         Runnable updateDifficultyPreview = () -> {
@@ -618,6 +655,7 @@ public class MapEditorTool extends JFrame {
                 updateDifficultyPreview.run();
             }
         });
+        dropsButton.addActionListener(event -> editDropEntries(dropEntries));
         updateDifficultyPreview.run();
         generateLimbsButton.addActionListener(event -> {
             String name = nameField.getText() == null ? "" : nameField.getText().trim();
@@ -634,6 +672,7 @@ public class MapEditorTool extends JFrame {
                     name,
                     statValuesFromSpinners(statSpinners),
                     limbDescriptionArea.getText() == null ? "" : limbDescriptionArea.getText().trim(),
+                    paperDollSourceField.getText() == null ? "" : paperDollSourceField.getText().trim(),
                     skillList.getSelectedValuesList()
             ));
             editGeneratedLimbs(generatedLimbs);
@@ -645,6 +684,8 @@ public class MapEditorTool extends JFrame {
         fields.add(nameField);
         fields.add(new JLabel("Sprite PNG"));
         fields.add(pathFieldPanel(imagePathField, browseButton));
+        fields.add(new JLabel("Paper-Doll Source"));
+        fields.add(pathFieldPanel(paperDollSourceField, paperDollBrowseButton));
         for (PlayerStat stat : PlayerStat.values()) {
             fields.add(new JLabel(stat.getDisplayName()));
             fields.add(statSpinners.get(stat));
@@ -659,6 +700,8 @@ public class MapEditorTool extends JFrame {
         fields.add(spellBaseDamageSpinner);
         fields.add(new JLabel("Spell Max Hit"));
         fields.add(spellMaxDamageLabel);
+        fields.add(new JLabel("Combat AI Intelligence"));
+        fields.add(combatAiSpinner);
         fields.add(new JLabel("XP Reward"));
         fields.add(xpSpinner);
         fields.add(new JLabel("Attack Sound"));
@@ -667,6 +710,8 @@ public class MapEditorTool extends JFrame {
         fields.add(pathFieldPanel(damageSoundField, damageSoundBrowseButton));
         fields.add(new JLabel("Limbs"));
         fields.add(generateLimbsButton);
+        fields.add(new JLabel("Loot Table"));
+        fields.add(dropsButton);
         panel.add(fields, BorderLayout.NORTH);
         JPanel textPanel = new JPanel(new BorderLayout(6, 6));
         textPanel.add(new JScrollPane(descriptionArea), BorderLayout.CENTER);
@@ -690,12 +735,15 @@ public class MapEditorTool extends JFrame {
                 mobId,
                 name,
                 imagePathField.getText() == null ? "" : imagePathField.getText().trim(),
+                paperDollSourceField.getText() == null ? "" : paperDollSourceField.getText().trim(),
                 statValuesFromSpinners(statSpinners),
                 ((Number) xpSpinner.getValue()).intValue(),
                 descriptionArea.getText() == null ? "" : descriptionArea.getText().trim(),
                 attackSoundField.getText() == null ? "" : attackSoundField.getText().trim(),
                 damageSoundField.getText() == null ? "" : damageSoundField.getText().trim(),
-                skillList.getSelectedValuesList()
+                ((Number) combatAiSpinner.getValue()).intValue(),
+                skillList.getSelectedValuesList(),
+                dropEntries
         );
         design.customMobs().add(mob);
         for (MapDesignLibrary.CustomLimb limb : generatedLimbs) {
@@ -803,6 +851,7 @@ public class MapEditorTool extends JFrame {
                 "Custom Limb",
                 LimbSlot.HEAD,
                 "assets/images/generated/limbs/custom_limb.png",
+                "",
                 "",
                 emptyStatMap(),
                 List.of()
@@ -949,6 +998,7 @@ public class MapEditorTool extends JFrame {
                 selected.limbSlot(),
                 selected.iconPath(),
                 selected.description(),
+                selected.paperDollSourcePath(),
                 selected.statBonuses(),
                 selected.skillIds()
         );
@@ -979,7 +1029,9 @@ public class MapEditorTool extends JFrame {
     private void editCustomMob(MapDesignLibrary.CustomMob selected) {
         JTextField nameField = new JTextField(selected.displayName(), 24);
         JTextField imagePathField = new JTextField(selected.imagePath(), 28);
+        JTextField paperDollSourceField = new JTextField(selected.paperDollSourcePath(), 28);
         JButton browseButton = new JButton("Browse");
+        JButton paperDollBrowseButton = new JButton("Browse");
         Map<PlayerStat, JSpinner> statSpinners = enemyStatSpinners();
         applyStatValuesToSpinners(statSpinners, selected.statValues());
         JLabel hpLabel = new JLabel();
@@ -987,6 +1039,7 @@ public class MapEditorTool extends JFrame {
         JLabel meleeMaxDamageLabel = new JLabel();
         JSpinner spellBaseDamageSpinner = new JSpinner(new SpinnerNumberModel(5, 0, 1000, 1));
         JLabel spellMaxDamageLabel = new JLabel();
+        JSpinner combatAiSpinner = new JSpinner(new SpinnerNumberModel(Math.min(10, selected.combatAiIntelligence()), 0, 10, 1));
         JSpinner xpSpinner = new JSpinner(new SpinnerNumberModel(selected.xpReward(), 0, 100000, 1));
         JTextField attackSoundField = new JTextField(selected.attackSoundPath(), 24);
         JTextField damageSoundField = new JTextField(selected.damageSoundPath(), 24);
@@ -998,10 +1051,14 @@ public class MapEditorTool extends JFrame {
         JTextArea descriptionArea = new JTextArea(selected.description(), 4, 30);
         descriptionArea.setLineWrap(true);
         descriptionArea.setWrapStyleWord(true);
+        List<MapDesignLibrary.CustomDropEntry> dropEntries = new ArrayList<>(selected.dropEntries());
+        JButton dropsButton = new JButton("Drops");
 
         browseButton.addActionListener(event -> browsePathInto(imagePathField));
+        paperDollBrowseButton.addActionListener(event -> browsePathInto(paperDollSourceField));
         attackSoundBrowseButton.addActionListener(event -> browsePathInto(attackSoundField));
         damageSoundBrowseButton.addActionListener(event -> browsePathInto(damageSoundField));
+        dropsButton.addActionListener(event -> editDropEntries(dropEntries));
         Runnable updatePreview = () -> {
             EnumMap<PlayerStat, Integer> statValues = statValuesFromSpinners(statSpinners);
             hpLabel.setText("HP = " + statValues.getOrDefault(PlayerStat.VITALITY, 1));
@@ -1030,6 +1087,8 @@ public class MapEditorTool extends JFrame {
         fields.add(nameField);
         fields.add(new JLabel("Sprite PNG"));
         fields.add(pathFieldPanel(imagePathField, browseButton));
+        fields.add(new JLabel("Paper-Doll Source"));
+        fields.add(pathFieldPanel(paperDollSourceField, paperDollBrowseButton));
         for (PlayerStat stat : PlayerStat.values()) {
             fields.add(new JLabel(stat.getDisplayName()));
             fields.add(statSpinners.get(stat));
@@ -1044,12 +1103,16 @@ public class MapEditorTool extends JFrame {
         fields.add(spellBaseDamageSpinner);
         fields.add(new JLabel("Spell Max Hit"));
         fields.add(spellMaxDamageLabel);
+        fields.add(new JLabel("Combat AI Intelligence"));
+        fields.add(combatAiSpinner);
         fields.add(new JLabel("XP Reward"));
         fields.add(xpSpinner);
         fields.add(new JLabel("Attack Sound"));
         fields.add(pathFieldPanel(attackSoundField, attackSoundBrowseButton));
         fields.add(new JLabel("Hit Sound"));
         fields.add(pathFieldPanel(damageSoundField, damageSoundBrowseButton));
+        fields.add(new JLabel("Loot Table"));
+        fields.add(dropsButton);
         panel.add(fields, BorderLayout.NORTH);
         panel.add(new JScrollPane(descriptionArea), BorderLayout.CENTER);
         panel.add(new JScrollPane(skillList), BorderLayout.EAST);
@@ -1069,12 +1132,15 @@ public class MapEditorTool extends JFrame {
                 selected.mobId(),
                 name,
                 imagePathField.getText() == null ? "" : imagePathField.getText().trim(),
+                paperDollSourceField.getText() == null ? "" : paperDollSourceField.getText().trim(),
                 statValuesFromSpinners(statSpinners),
                 ((Number) xpSpinner.getValue()).intValue(),
                 descriptionArea.getText() == null ? "" : descriptionArea.getText().trim(),
                 attackSoundField.getText() == null ? "" : attackSoundField.getText().trim(),
                 damageSoundField.getText() == null ? "" : damageSoundField.getText().trim(),
-                skillList.getSelectedValuesList()
+                ((Number) combatAiSpinner.getValue()).intValue(),
+                skillList.getSelectedValuesList(),
+                dropEntries
         );
         int index = design.customMobs().indexOf(selected);
         if (index >= 0) {
@@ -1138,6 +1204,7 @@ public class MapEditorTool extends JFrame {
             String enemyName,
             Map<PlayerStat, Integer> monsterStats,
             String limbDescription,
+            String paperDollSourcePath,
             List<SkillLibrary> enemySkills
     ) {
         Map<LimbSlot, List<SkillLibrary>> skillAssignments = assignSkillsToLimbs(enemySkills);
@@ -1157,6 +1224,7 @@ public class MapEditorTool extends JFrame {
                     DEFAULT_LIMB_ICON,
                     GearDurability.PERFECT,
                     limbDescription,
+                    paperDollSourcePath,
                     limbStats,
                     skillAssignments.getOrDefault(slot, List.of())
             ));
@@ -1239,6 +1307,7 @@ public class MapEditorTool extends JFrame {
                     selected.limbSlot(),
                     selected.iconPath(),
                     selected.description(),
+                    selected.paperDollSourcePath(),
                     selected.statBonuses(),
                     selected.skillIds()
             );
@@ -1250,6 +1319,87 @@ public class MapEditorTool extends JFrame {
         });
 
         JOptionPane.showMessageDialog(this, panel, "Generated Limbs", JOptionPane.PLAIN_MESSAGE);
+    }
+
+    private void editDropEntries(List<MapDesignLibrary.CustomDropEntry> drops) {
+        if (drops == null) {
+            return;
+        }
+
+        DefaultListModel<MapDesignLibrary.CustomDropEntry> model = new DefaultListModel<>();
+        for (MapDesignLibrary.CustomDropEntry drop : drops) {
+            model.addElement(drop);
+        }
+
+        JList<MapDesignLibrary.CustomDropEntry> dropList = new JList<>(model);
+        JComboBox<DropItemOption> itemBox = new JComboBox<>(dropItemOptions().toArray(new DropItemOption[0]));
+        JSpinner chanceSpinner = new JSpinner(new SpinnerNumberModel(100, 0, 100, 1));
+        JButton addButton = new JButton("Add Drop");
+        JButton removeButton = new JButton("Remove Selected");
+
+        addButton.addActionListener(event -> {
+            DropItemOption option = (DropItemOption) itemBox.getSelectedItem();
+            if (option == null || option.itemId().isBlank()) {
+                return;
+            }
+            double chance = ((Number) chanceSpinner.getValue()).doubleValue() / 100.0;
+            model.addElement(new MapDesignLibrary.CustomDropEntry(option.itemId(), chance));
+        });
+
+        removeButton.addActionListener(event -> {
+            int index = dropList.getSelectedIndex();
+            if (index >= 0) {
+                model.remove(index);
+            }
+        });
+
+        JPanel controls = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        controls.add(new JLabel("Item"));
+        controls.add(itemBox);
+        controls.add(new JLabel("Chance %"));
+        controls.add(chanceSpinner);
+        controls.add(addButton);
+        controls.add(removeButton);
+
+        JPanel panel = new JPanel(new BorderLayout(6, 6));
+        panel.add(new JScrollPane(dropList), BorderLayout.CENTER);
+        panel.add(controls, BorderLayout.SOUTH);
+
+        int result = JOptionPane.showConfirmDialog(this, panel, "Enemy Drops", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        drops.clear();
+        for (int i = 0; i < model.size(); i++) {
+            drops.add(model.get(i));
+        }
+    }
+
+    private List<DropItemOption> dropItemOptions() {
+        List<DropItemOption> options = new ArrayList<>();
+        for (ItemLibrary item : ItemLibrary.values()) {
+            options.add(new DropItemOption(item.name(), item.getDisplayName()));
+        }
+        for (MapDesignLibrary.CustomItem item : design.customItems()) {
+            options.add(new DropItemOption(item.itemId(), item.displayName()));
+        }
+        for (MapDesignLibrary.CustomLimb limb : design.customLimbs()) {
+            options.add(new DropItemOption(limb.limbId(), limb.displayName()));
+        }
+        return options;
+    }
+
+    private record DropItemOption(String itemId, String displayName) {
+        private DropItemOption {
+            itemId = itemId == null ? "" : itemId;
+            displayName = displayName == null || displayName.isBlank() ? itemId : displayName;
+        }
+
+        @Override
+        public String toString() {
+            return displayName + " [" + itemId + "]";
+        }
     }
 
     private EnumMap<PlayerStat, Integer> emptyStatMap() {
@@ -1308,6 +1458,8 @@ public class MapEditorTool extends JFrame {
         List<LimbSlot> preferences;
         if (skill == SkillLibrary.ABSORB || skill.getSelfHealPercent() > 0.0) {
             preferences = List.of(LimbSlot.HEAD, LimbSlot.LEFT_ARM, LimbSlot.RIGHT_ARM);
+        } else if (skill.getEffectType() == Library.EffectType.SUMMON) {
+            preferences = List.of(LimbSlot.HEAD, LimbSlot.LEFT_ARM, LimbSlot.RIGHT_ARM);
         } else if (skill.getEffectType() == Library.EffectType.DEFEND || skill.getDamageReduction() > 0.0) {
             preferences = List.of(LimbSlot.BODY, LimbSlot.LEGS);
         } else if (skill.getTargetingMode() == Library.BattleTargetingMode.MAGIC) {
@@ -1347,21 +1499,25 @@ public class MapEditorTool extends JFrame {
             LimbSlot limbSlot,
             String iconPath,
             String description,
+            String paperDollSourcePath,
             Map<PlayerStat, Integer> statValues,
             List<SkillLibrary> selectedSkills
     ) {
         JTextField nameField = new JTextField(displayName, 24);
         JTextField iconPathField = new JTextField(iconPath, 28);
+        JTextField paperDollSourceField = new JTextField(paperDollSourcePath == null ? "" : paperDollSourcePath, 28);
         JTextArea descriptionArea = new JTextArea(description == null ? "" : description, 4, 30);
         descriptionArea.setLineWrap(true);
         descriptionArea.setWrapStyleWord(true);
         JButton browseButton = new JButton("Browse");
+        JButton paperDollBrowseButton = new JButton("Browse");
         JComboBox<LimbSlot> slotBox = new JComboBox<>(LimbSlot.values());
         slotBox.setSelectedItem(limbSlot == null ? LimbSlot.HEAD : limbSlot);
         Map<PlayerStat, JSpinner> statSpinners = new EnumMap<>(PlayerStat.class);
         Map<SkillLibrary, JCheckBox> skillBoxes = new EnumMap<>(SkillLibrary.class);
 
         browseButton.addActionListener(event -> browsePathInto(iconPathField));
+        paperDollBrowseButton.addActionListener(event -> browsePathInto(paperDollSourceField));
 
         JPanel panel = new JPanel(new BorderLayout(6, 6));
         JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
@@ -1369,6 +1525,8 @@ public class MapEditorTool extends JFrame {
         fields.add(nameField);
         fields.add(new JLabel("Icon PNG"));
         fields.add(pathFieldPanel(iconPathField, browseButton));
+        fields.add(new JLabel("Paper-Doll Source"));
+        fields.add(pathFieldPanel(paperDollSourceField, paperDollBrowseButton));
         fields.add(new JLabel("Slot"));
         fields.add(slotBox);
         fields.add(new JLabel("Condition"));
@@ -1421,6 +1579,7 @@ public class MapEditorTool extends JFrame {
                 iconPathField.getText() == null ? "" : iconPathField.getText().trim(),
                 GearDurability.PERFECT,
                 descriptionArea.getText() == null ? "" : descriptionArea.getText().trim(),
+                paperDollSourceField.getText() == null ? "" : paperDollSourceField.getText().trim(),
                 stats,
                 skills
         );
@@ -1454,17 +1613,19 @@ public class MapEditorTool extends JFrame {
             return;
         }
 
-        JSpinner targetXSpinner = new JSpinner(new SpinnerNumberModel(1, 0, MAX_DIMENSION, 1));
-        JSpinner targetYSpinner = new JSpinner(new SpinnerNumberModel(1, 0, MAX_DIMENSION, 1));
-        JPanel panel = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        panel.add(new JLabel("Target X"));
-        panel.add(targetXSpinner);
-        panel.add(new JLabel("Target Y"));
-        panel.add(targetYSpinner);
+        MapDesignLibrary.MapDesign targetDesign;
+        try {
+            targetDesign = MapDesignLibrary.load(chooser.getSelectedFile().toPath());
+        } catch (IOException exception) {
+            setStatus("Target map failed: " + exception.getMessage());
+            return;
+        }
+
+        TargetMapPickerPanel pickerPanel = new TargetMapPickerPanel(targetDesign);
         int result = JOptionPane.showConfirmDialog(
                 this,
-                panel,
-                "Map Link Target",
+                new JScrollPane(pickerPanel),
+                "Choose Map Link Target",
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.PLAIN_MESSAGE
         );
@@ -1472,12 +1633,31 @@ public class MapEditorTool extends JFrame {
             return;
         }
 
+        Point selectedTarget = pickerPanel.getSelectedTile();
+        if (selectedTarget == null) {
+            setStatus("Map link target was not selected.");
+            return;
+        }
+
+        if (targetDesign.tiles()[selectedTarget.y][selectedTarget.x].blocksMovement()) {
+            int confirm = JOptionPane.showConfirmDialog(
+                    this,
+                    "The selected target tile blocks movement. Create this link anyway?",
+                    "Blocking Target",
+                    JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+            );
+            if (confirm != JOptionPane.OK_OPTION) {
+                return;
+            }
+        }
+
         String id = "map_link|"
                 + mapLinkPathForEditor(chooser.getSelectedFile().toPath())
                 + "|"
-                + ((Number) targetXSpinner.getValue()).intValue()
+                + selectedTarget.x
                 + "|"
-                + ((Number) targetYSpinner.getValue()).intValue();
+                + selectedTarget.y;
         PlaceableOption option = new PlaceableOption(
                 "Map Link: " + mapLinkLabel(id),
                 MapDesignLibrary.PlacementKind.INTERACTION,
@@ -1562,12 +1742,7 @@ public class MapEditorTool extends JFrame {
     }
 
     private String mapLinkPathForEditor(Path path) {
-        Path absoluteMapFolder = MapDesignLibrary.MAP_FOLDER.toAbsolutePath().normalize();
-        Path absolutePath = path.toAbsolutePath().normalize();
-        if (absolutePath.startsWith(absoluteMapFolder)) {
-            return absoluteMapFolder.relativize(absolutePath).toString().replace('\\', '/');
-        }
-        return path.toString().replace('\\', '/');
+        return MapDesignLibrary.resourcePathForMap(path);
     }
 
     private String mapLinkLabel(String id) {
@@ -1610,7 +1785,7 @@ public class MapEditorTool extends JFrame {
         );
         dialogueList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         dialogueList.setCellRenderer((list, value, index, isSelected, cellHasFocus) -> {
-            JLabel label = new JLabel(value.speakerName() + " [" + value.visualType().name() + ", " + value.interactionId() + "]");
+            JLabel label = new JLabel(value.speakerName() + " [" + value.visualPath() + ", " + value.interactionId() + "]");
             label.setOpaque(true);
             label.setBackground(isSelected ? list.getSelectionBackground() : list.getBackground());
             label.setForeground(isSelected ? list.getSelectionForeground() : list.getForeground());
@@ -1659,7 +1834,7 @@ public class MapEditorTool extends JFrame {
                 selected.speakerName(),
                 selected.bodyText(),
                 selected.followUpInteractionId(),
-                selected.visualType(),
+                selected.visualPath(),
                 selected.questId(),
                 selected.questStage(),
                 selected.choices(),
@@ -1679,7 +1854,7 @@ public class MapEditorTool extends JFrame {
                 draft.speakerName(),
                 draft.bodyText(),
                 draft.followUpInteractionId(),
-                draft.visualType(),
+                draft.visualPath(),
                 "",
                 null,
                 0,
@@ -1725,7 +1900,7 @@ public class MapEditorTool extends JFrame {
             String speakerName,
             String bodyText,
             String followUpInteractionId,
-            MonsterType visualType,
+            String visualPath,
             String questId,
             int questStage,
             List<MapDesignLibrary.AuthoredDialogueChoice> choices,
@@ -1734,8 +1909,14 @@ public class MapEditorTool extends JFrame {
         JTextField speakerField = new JTextField(speakerName, 24);
         JTextArea bodyArea = new JTextArea(bodyText, 7, 28);
         JTextArea branchArea = new JTextArea(formatDialogueTree(choices, nodes), 9, 32);
-        JComboBox<MonsterType> visualTypeBox = new JComboBox<>(MonsterType.values());
-        visualTypeBox.setSelectedItem(visualType == null ? MonsterType.GOBLIN : visualType);
+        JTextField visualPathField = new JTextField(
+                visualPath == null || visualPath.isBlank()
+                        ? MapDesignLibrary.defaultEnemy(MapDesignLibrary.ENEMY_GOBLIN).imagePath()
+                        : visualPath,
+                24
+        );
+        JButton visualBrowseButton = new JButton("Browse");
+        visualBrowseButton.addActionListener(event -> browsePathInto(visualPathField));
         JComboBox<FollowUpInteractionOption> followUpBox = new JComboBox<>(followUpOptions());
         selectFollowUpOption(followUpBox, followUpInteractionId);
         JComboBox<QuestActionOption> questActionBox = new JComboBox<>(questActionOptions());
@@ -1762,7 +1943,7 @@ public class MapEditorTool extends JFrame {
         JPanel optionsPanel = new JPanel(new BorderLayout(6, 6));
         JPanel visualPanel = new JPanel(new BorderLayout(6, 6));
         visualPanel.add(new JLabel("Visual"), BorderLayout.WEST);
-        visualPanel.add(visualTypeBox, BorderLayout.CENTER);
+        visualPanel.add(pathFieldPanel(visualPathField, visualBrowseButton), BorderLayout.CENTER);
         JPanel followUpPanel = new JPanel(new BorderLayout(6, 6));
         followUpPanel.add(new JLabel("Then"), BorderLayout.WEST);
         followUpPanel.add(followUpBox, BorderLayout.CENTER);
@@ -1804,7 +1985,7 @@ public class MapEditorTool extends JFrame {
                 enteredSpeakerName,
                 enteredBodyText,
                 selectedFollowUp == null ? "" : selectedFollowUp.interactionId(),
-                (MonsterType) visualTypeBox.getSelectedItem(),
+                visualPathField.getText() == null ? "" : visualPathField.getText().trim(),
                 selectedQuest == null ? "" : selectedQuest.questId(),
                 ((Number) questStageSpinner.getValue()).intValue(),
                 treeDraft.choices(),
@@ -2673,6 +2854,107 @@ public class MapEditorTool extends JFrame {
         SwingUtilities.invokeLater(() -> new MapEditorTool().setVisible(true));
     }
 
+    private static Color editorTileColor(Library.TileType tile, int adjustment) {
+        return switch (tile) {
+            case FLOOR -> new Color(84 + adjustment, 76 + adjustment, 64 + adjustment);
+            case WALL -> new Color(92 + adjustment, 96 + adjustment, 104 + adjustment);
+            case DOOR_CLOSED -> new Color(105 + adjustment, 72 + adjustment, 40 + adjustment);
+            case DOOR_OPEN -> new Color(72 + adjustment, 48 + adjustment, 28 + adjustment);
+            case QUEST_DOOR_OPEN -> new Color(138 + adjustment, 92 + adjustment, 36 + adjustment);
+            case QUEST_DOOR_CLOSED -> new Color(72 + adjustment, 32 + adjustment, 24 + adjustment);
+            case FISHING_WATER -> new Color(38, 88 + adjustment, 132 + adjustment);
+            case WATER -> new Color(24, 60 + adjustment, 104 + adjustment);
+            case TRAP -> new Color(120 + adjustment, 68, 68);
+            case STAIRS_DOWN -> new Color(60, 116 + adjustment, 72);
+            case STAIRS_UP -> new Color(116 + adjustment, 116 + adjustment, 72);
+        };
+    }
+
+    private static Color placementColor(MapDesignLibrary.PlacementKind kind) {
+        return switch (kind) {
+            case CRAFTING_NODE -> new Color(240, 130, 70);
+            case GATHERING_NODE -> new Color(90, 220, 130);
+            case GENERIC_NPC, MAIN_NPC, CUSTOM_NPC -> new Color(220, 90, 220);
+            case ITEM -> new Color(230, 210, 80);
+            case ENEMY -> new Color(230, 80, 70);
+            case AUTHORED_DIALOGUE_NPC -> new Color(130, 170, 245);
+            case INTERACTION -> new Color(90, 200, 230);
+        };
+    }
+
+    private static class TargetMapPickerPanel extends JPanel {
+        private static final int CELL_SIZE = 28;
+        private static final int PADDING = 12;
+        private final MapDesignLibrary.MapDesign targetDesign;
+        private Point selectedTile;
+
+        TargetMapPickerPanel(MapDesignLibrary.MapDesign targetDesign) {
+            this.targetDesign = targetDesign;
+            selectedTile = new Point(targetDesign.spawnX(), targetDesign.spawnY());
+            setPreferredSize(new Dimension(
+                    targetDesign.width() * CELL_SIZE + PADDING * 2,
+                    targetDesign.height() * CELL_SIZE + PADDING * 2
+            ));
+            addMouseListener(new MouseAdapter() {
+                @Override
+                public void mousePressed(MouseEvent event) {
+                    int x = (event.getX() - PADDING) / CELL_SIZE;
+                    int y = (event.getY() - PADDING) / CELL_SIZE;
+                    if (x >= 0 && x < targetDesign.width() && y >= 0 && y < targetDesign.height()) {
+                        selectedTile = new Point(x, y);
+                        repaint();
+                    }
+                }
+            });
+        }
+
+        Point getSelectedTile() {
+            return selectedTile == null ? null : new Point(selectedTile);
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            super.paintComponent(graphics);
+            Graphics2D g = (Graphics2D) graphics.create();
+            for (int y = 0; y < targetDesign.height(); y++) {
+                for (int x = 0; x < targetDesign.width(); x++) {
+                    int adjustment = targetDesign.themeIndexes()[y][x] == 1 ? 24 : 0;
+                    int drawX = PADDING + x * CELL_SIZE;
+                    int drawY = PADDING + y * CELL_SIZE;
+                    g.setColor(editorTileColor(targetDesign.tiles()[y][x], adjustment));
+                    g.fillRect(drawX, drawY, CELL_SIZE, CELL_SIZE);
+                    g.setColor(new Color(25, 25, 25));
+                    g.drawRect(drawX, drawY, CELL_SIZE, CELL_SIZE);
+                }
+            }
+
+            for (MapDesignLibrary.MapPlacement placement : targetDesign.placements()) {
+                g.setColor(placementColor(placement.kind()));
+                g.fillOval(
+                        PADDING + placement.x() * CELL_SIZE + CELL_SIZE / 4,
+                        PADDING + placement.y() * CELL_SIZE + CELL_SIZE / 4,
+                        CELL_SIZE / 2,
+                        CELL_SIZE / 2
+                );
+            }
+
+            g.setColor(Color.WHITE);
+            g.drawString("S", PADDING + targetDesign.spawnX() * CELL_SIZE + 9, PADDING + targetDesign.spawnY() * CELL_SIZE + 19);
+
+            if (selectedTile != null) {
+                g.setStroke(new BasicStroke(3));
+                g.setColor(Color.YELLOW);
+                g.drawRect(
+                        PADDING + selectedTile.x * CELL_SIZE + 2,
+                        PADDING + selectedTile.y * CELL_SIZE + 2,
+                        CELL_SIZE - 4,
+                        CELL_SIZE - 4
+                );
+            }
+            g.dispose();
+        }
+    }
+
     private final class MapCanvas extends JPanel {
         private static final int CELL_SIZE = 32;
 
@@ -2829,15 +3111,17 @@ public class MapEditorTool extends JFrame {
         private Color tileColor(Library.TileType tile, int themeIndex) {
             int adjustment = themeIndex == 1 ? 24 : 0;
             return switch (tile) {
-                case FLOOR -> new Color(84 + adjustment, 76 + adjustment, 64 + adjustment);
-                case WALL -> new Color(92 + adjustment, 96 + adjustment, 104 + adjustment);
-                case DOOR_CLOSED -> new Color(105 + adjustment, 72 + adjustment, 40 + adjustment);
-                case DOOR_OPEN -> new Color(72 + adjustment, 48 + adjustment, 28 + adjustment);
-                case FISHING_WATER -> new Color(38, 88 + adjustment, 132 + adjustment);
-                case WATER -> new Color(24, 60 + adjustment, 104 + adjustment);
-                case TRAP -> new Color(120 + adjustment, 68, 68);
-                case STAIRS_DOWN -> new Color(60, 116 + adjustment, 72);
-                case STAIRS_UP -> new Color(116 + adjustment, 116 + adjustment, 72);
+                case FLOOR -> editorTileColor(tile, adjustment);
+                case WALL -> editorTileColor(tile, adjustment);
+                case DOOR_CLOSED -> editorTileColor(tile, adjustment);
+                case DOOR_OPEN -> editorTileColor(tile, adjustment);
+                case QUEST_DOOR_OPEN -> editorTileColor(tile, adjustment);
+                case QUEST_DOOR_CLOSED -> editorTileColor(tile, adjustment);
+                case FISHING_WATER -> editorTileColor(tile, adjustment);
+                case WATER -> editorTileColor(tile, adjustment);
+                case TRAP -> editorTileColor(tile, adjustment);
+                case STAIRS_DOWN -> editorTileColor(tile, adjustment);
+                case STAIRS_UP -> editorTileColor(tile, adjustment);
             };
         }
 
@@ -2893,7 +3177,7 @@ public class MapEditorTool extends JFrame {
             String speakerName,
             String bodyText,
             String followUpInteractionId,
-            MonsterType visualType,
+            String visualPath,
             String questId,
             int questStage,
             List<MapDesignLibrary.AuthoredDialogueChoice> choices,

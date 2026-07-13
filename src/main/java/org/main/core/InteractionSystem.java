@@ -8,7 +8,7 @@ import org.main.content.QuestLibrary;
 import org.main.content.RecipeLibrary;
 import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
-import org.main.monsters.MonsterType;
+import org.main.monsters.Monster;
 
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
@@ -235,15 +235,15 @@ public final class InteractionSystem {
         return new Interaction(new AnvilInteractionContent(gameState)).allowInventoryOverlay();
     }
 
-    public static Interaction postBattleMenu(GameState gameState, MonsterType monsterType, int experienceReward, int hpLost) {
+    public static Interaction postBattleMenu(GameState gameState, Monster monster, int experienceReward, int hpLost) {
         List<InteractionOption> options = new ArrayList<>();
         PlayerCharacter player = gameState == null ? null : gameState.getPlayerCharacter();
 
-        options.add(option("Butcher Random Limb", () -> resolveButchery(gameState, monsterType, null)));
+        options.add(option("Butcher Random Limb", () -> resolveButchery(gameState, monster, null)));
 
         if (player != null) {
             for (LimbSlot slot : ButcherySystem.unlockedButcheryTargets(player)) {
-                options.add(option("Target " + slot.getDisplayName(), () -> resolveButchery(gameState, monsterType, slot)));
+                options.add(option("Target " + slot.getDisplayName(), () -> resolveButchery(gameState, monster, slot)));
             }
         }
 
@@ -254,7 +254,7 @@ public final class InteractionSystem {
                 + "\nHP lost: "
                 + Math.max(0, hpLost)
                 + "\nYou can attempt to butcher the "
-                + (monsterType == null ? "creature" : monsterType.getDisplayName())
+                + (monster == null ? "creature" : monster.getName())
                 + " for a graftable limb.";
 
         InteractionModel model = new InteractionModel(
@@ -308,12 +308,12 @@ public final class InteractionSystem {
         )));
     }
 
-    private static void resolveButchery(GameState gameState, MonsterType monsterType, LimbSlot requestedSlot) {
+    private static void resolveButchery(GameState gameState, Monster monster, LimbSlot requestedSlot) {
         if (gameState == null || gameState.getPlayerCharacter() == null) {
             return;
         }
 
-        var result = ButcherySystem.butcher(gameState.getPlayerCharacter(), monsterType, requestedSlot);
+        var result = ButcherySystem.butcher(gameState.getPlayerCharacter(), monster, requestedSlot);
         String message;
 
         if (result.isPresent()) {
@@ -1528,11 +1528,10 @@ public final class InteractionSystem {
 
             try {
                 Path path = Path.of(mapPathText);
-                if (!Files.isRegularFile(path)) {
+                if (!Files.isRegularFile(path) && !mapPathText.replace('\\', '/').startsWith("assets/")) {
                     path = MapDesignLibrary.MAP_FOLDER.resolve(mapPathText).normalize();
                 }
-                MapDesignLibrary.MapDesign targetMap = MapDesignLibrary.load(path);
-                gameState.changeDungeon(targetMap, targetX, targetY, path);
+                gameState.travelToMapLink(path, targetX, targetY);
                 gameState.closeInteraction();
             } catch (Exception exception) {
                 gameState.openInteraction(prompt(

@@ -7,13 +7,13 @@ import org.main.core.InventorySystem;
 import org.main.core.Library;
 import org.main.core.LimbItem;
 import org.main.core.LimbSlot;
+import org.main.core.PaperDollAssetLibrary;
 import org.main.core.PlayerStat;
 import org.main.core.GeneratedDungeon;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 import org.main.engine.AssetLoader;
 import org.main.monsters.Monster;
-import org.main.monsters.MonsterType;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -30,11 +30,126 @@ import java.util.Properties;
 import java.util.stream.Stream;
 
 public final class MapDesignLibrary {
-    public static final Path MAP_FOLDER = Path.of("data", "maps");
-    public static final Path CONTENT_FOLDER = Path.of("data", "content");
+    public static final String ENEMY_SLIME = "slime";
+    public static final String ENEMY_GOBLIN = "goblin";
+    public static final String ENEMY_SKELETON = "skeleton";
+    public static final String MAP_RESOURCE_FOLDER = "assets/editor/maps";
+    public static final String CONTENT_RESOURCE_FOLDER = "assets/editor/content";
+    public static final Path EDITOR_RESOURCE_FOLDER = Path.of("src", "main", "resources", "assets", "editor");
+    public static final Path MAP_FOLDER = EDITOR_RESOURCE_FOLDER.resolve("maps");
+    public static final Path CONTENT_FOLDER = EDITOR_RESOURCE_FOLDER.resolve("content");
     public static final Path SHARED_CONTENT_PATH = CONTENT_FOLDER.resolve("authored_content.properties");
+    public static final Path DATA_MAP_FOLDER = Path.of("data", "maps");
+    public static final Path DATA_CONTENT_FOLDER = Path.of("data", "content");
+    public static final Path DATA_SHARED_CONTENT_PATH = DATA_CONTENT_FOLDER.resolve("authored_content.properties");
 
     private MapDesignLibrary() {
+    }
+
+    public static List<CustomMob> defaultEnemies() {
+        return List.of(defaultSlime(), defaultGoblin(), defaultSkeleton());
+    }
+
+    public static CustomMob defaultEnemy(String enemyId) {
+        CustomMob enemy = findDefaultEnemy(enemyId);
+        return enemy == null ? defaultSlime() : enemy;
+    }
+
+    public static CustomMob findDefaultEnemy(String enemyId) {
+        if (enemyId == null) {
+            return null;
+        }
+        return switch (enemyId.toLowerCase(Locale.ROOT)) {
+            case ENEMY_GOBLIN -> defaultGoblin();
+            case ENEMY_SKELETON -> defaultSkeleton();
+            case ENEMY_SLIME -> defaultSlime();
+            default -> null;
+        };
+    }
+
+    public static Monster createDefaultEnemy(String enemyId) {
+        return defaultEnemy(enemyId).createMonster();
+    }
+
+    private static CustomMob defaultSlime() {
+        return new CustomMob(
+                ENEMY_SLIME,
+                "Slime",
+                "assets/images/monster/Nov-2015/mon/amorphous/jelly.png",
+                PaperDollAssetLibrary.DEFAULT_BASE,
+                stats(20, 5, 5, 0, 5, 5, 3),
+                10,
+                "A quivering mass of dungeon slime.",
+                "assets/sounds/generated/enemy_attack.wav",
+                "assets/sounds/generated/player_hit.wav",
+                5,
+                List.of(SkillLibrary.ABSORB),
+                List.of(
+                        new CustomDropEntry(ItemLibrary.SLIME.name(), 1.0),
+                        new CustomDropEntry(ItemLibrary.POTION.name(), 0.15)
+                )
+        );
+    }
+
+    private static CustomMob defaultGoblin() {
+        return new CustomMob(
+                ENEMY_GOBLIN,
+                "Goblin",
+                "assets/images/monster/Nov-2015/mon/goblin.png",
+                "assets/images/monster/Nov-2015/player/base/kobold_m.png",
+                stats(10, 4, 4, 1, 4, 4, 2),
+                12,
+                "A wiry goblin clutching a crude blade.",
+                "assets/sounds/generated/enemy_attack.wav",
+                "assets/sounds/generated/player_hit.wav",
+                4,
+                List.of(),
+                List.of(
+                        new CustomDropEntry(ItemLibrary.IRON_SWORD.name(), 0.12),
+                        new CustomDropEntry(ItemLibrary.POTION.name(), 0.20)
+                )
+        );
+    }
+
+    private static CustomMob defaultSkeleton() {
+        return new CustomMob(
+                ENEMY_SKELETON,
+                "Skeleton",
+                "assets/images/monster/Nov-2015/mon/undead/skeletons/skeleton_humanoid_small.png",
+                "assets/images/monster/Nov-2015/player/base/mummy_m.png",
+                stats(12, 5, 5, 2, 5, 2, 3),
+                18,
+                "A rattling corpse animated by old magic.",
+                "assets/sounds/generated/enemy_attack.wav",
+                "assets/sounds/generated/player_hit.wav",
+                2,
+                List.of(),
+                List.of(
+                        new CustomDropEntry(ItemLibrary.BONES.name(), 1.0),
+                        new CustomDropEntry(ItemLibrary.IRON_SWORD.name(), 0.10),
+                        new CustomDropEntry(ItemLibrary.LEATHER_CAP.name(), 0.08)
+                )
+        );
+    }
+
+    private static EnumMap<PlayerStat, Integer> stats(
+            int vitality,
+            int attack,
+            int strength,
+            int defense,
+            int agility,
+            int intelligence,
+            int willpower
+    ) {
+        EnumMap<PlayerStat, Integer> stats = new EnumMap<>(PlayerStat.class);
+        stats.put(PlayerStat.VITALITY, vitality);
+        stats.put(PlayerStat.ATTACK, attack);
+        stats.put(PlayerStat.STRENGTH, strength);
+        stats.put(PlayerStat.DEFENSE, defense);
+        stats.put(PlayerStat.AGILITY, agility);
+        stats.put(PlayerStat.INTELLIGENCE, intelligence);
+        stats.put(PlayerStat.WILLPOWER, willpower);
+        return stats;
     }
 
     public static MapDesign createBlank(int width, int height, ThemeLibrary primaryTheme, ThemeLibrary alternateTheme) {
@@ -111,7 +226,7 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "speakerName", authoredDialogue.speakerName());
             properties.setProperty(prefix + "bodyText", authoredDialogue.bodyText());
             properties.setProperty(prefix + "followUpInteractionId", authoredDialogue.followUpInteractionId());
-            properties.setProperty(prefix + "visualType", authoredDialogue.visualType().name());
+            properties.setProperty(prefix + "visualPath", authoredDialogue.visualPath());
             properties.setProperty(prefix + "rewardItemId", authoredDialogue.rewardItemId());
             properties.setProperty(prefix + "rewardSkill", authoredDialogue.rewardSkill() == null ? "" : authoredDialogue.rewardSkill().name());
             properties.setProperty(prefix + "rewardSkillXp", String.valueOf(authoredDialogue.rewardSkillXp()));
@@ -160,6 +275,10 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "baseGoldValue", String.valueOf(customItem.baseGoldValue()));
             properties.setProperty(prefix + "examineText", customItem.examineText());
             properties.setProperty(prefix + "statBonusTarget", customItem.statBonusTarget() == null ? "" : customItem.statBonusTarget().name());
+            properties.setProperty(prefix + "smithingRecipeEnabled", String.valueOf(customItem.smithingRecipeEnabled()));
+            properties.setProperty(prefix + "smithingRequiredBars", String.valueOf(customItem.smithingRequiredBars()));
+            properties.setProperty(prefix + "smithingRequiredLevel", String.valueOf(customItem.smithingRequiredLevel()));
+            properties.setProperty(prefix + "smithingXpReward", String.valueOf(customItem.smithingXpReward()));
         }
 
         properties.setProperty("customMob.count", String.valueOf(design.customMobs().size()));
@@ -169,6 +288,7 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "mobId", customMob.mobId());
             properties.setProperty(prefix + "displayName", customMob.displayName());
             properties.setProperty(prefix + "imagePath", customMob.imagePath());
+            properties.setProperty(prefix + "paperDollSourcePath", customMob.paperDollSourcePath());
             for (PlayerStat stat : PlayerStat.values()) {
                 properties.setProperty(prefix + "stat." + stat.name(), String.valueOf(customMob.statValues().getOrDefault(stat, 0)));
             }
@@ -176,7 +296,15 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "description", customMob.description());
             properties.setProperty(prefix + "attackSoundPath", customMob.attackSoundPath());
             properties.setProperty(prefix + "damageSoundPath", customMob.damageSoundPath());
+            properties.setProperty(prefix + "combatAiIntelligence", String.valueOf(customMob.combatAiIntelligence()));
             properties.setProperty(prefix + "skillIds", joinSkills(customMob.skillIds()));
+            properties.setProperty(prefix + "drop.count", String.valueOf(customMob.dropEntries().size()));
+            for (int dropIndex = 0; dropIndex < customMob.dropEntries().size(); dropIndex++) {
+                CustomDropEntry drop = customMob.dropEntries().get(dropIndex);
+                String dropPrefix = prefix + "drop." + dropIndex + ".";
+                properties.setProperty(dropPrefix + "itemId", drop.itemId());
+                properties.setProperty(dropPrefix + "chance", String.valueOf(drop.chance()));
+            }
         }
 
         properties.setProperty("customLimb.count", String.valueOf(design.customLimbs().size()));
@@ -189,6 +317,7 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "iconPath", customLimb.iconPath());
             properties.setProperty(prefix + "condition", customLimb.condition().name());
             properties.setProperty(prefix + "description", customLimb.description());
+            properties.setProperty(prefix + "paperDollSourcePath", customLimb.paperDollSourcePath());
             properties.setProperty(prefix + "skillIds", joinSkills(customLimb.skillIds()));
             for (PlayerStat stat : PlayerStat.values()) {
                 properties.setProperty(prefix + "stat." + stat.name(), String.valueOf(customLimb.statBonuses().getOrDefault(stat, 0)));
@@ -213,7 +342,7 @@ public final class MapDesignLibrary {
 
     public static MapDesign load(Path path) throws IOException {
         Properties properties = new Properties();
-        try (InputStream inputStream = Files.newInputStream(path)) {
+        try (InputStream inputStream = openMapDesignStream(path)) {
             properties.load(inputStream);
         }
 
@@ -260,7 +389,7 @@ public final class MapDesignLibrary {
             String speakerName = properties.getProperty(prefix + "speakerName", "");
             String bodyText = properties.getProperty(prefix + "bodyText", "");
             String followUpInteractionId = properties.getProperty(prefix + "followUpInteractionId", "");
-            MonsterType visualType = readMonsterType(properties.getProperty(prefix + "visualType", ""), MonsterType.GOBLIN);
+            String visualPath = properties.getProperty(prefix + "visualPath", legacyVisualPath(properties.getProperty(prefix + "visualType", "")));
             String rewardItemId = properties.getProperty(prefix + "rewardItemId", "");
             CharacterSkill rewardSkill = readSkill(properties.getProperty(prefix + "rewardSkill", ""));
             int rewardSkillXp = readInt(properties, prefix + "rewardSkillXp", 0);
@@ -300,7 +429,7 @@ public final class MapDesignLibrary {
                         speakerName,
                         bodyText,
                         followUpInteractionId,
-                        visualType,
+                        visualPath,
                         rewardItemId,
                         rewardSkill,
                         rewardSkillXp,
@@ -346,8 +475,26 @@ public final class MapDesignLibrary {
             int baseGoldValue = readInt(properties, prefix + "baseGoldValue", 10);
             String examineText = properties.getProperty(prefix + "examineText", "");
             PlayerStat statBonusTarget = readPlayerStat(properties.getProperty(prefix + "statBonusTarget", ""));
+            boolean smithingRecipeEnabled = Boolean.parseBoolean(properties.getProperty(prefix + "smithingRecipeEnabled", "false"));
+            int smithingRequiredBars = readInt(properties, prefix + "smithingRequiredBars", 1);
+            int smithingRequiredLevel = readInt(properties, prefix + "smithingRequiredLevel", 1);
+            int smithingXpReward = readInt(properties, prefix + "smithingXpReward", 25);
             if (!itemId.isBlank() && !itemName.isBlank()) {
-                customItems.add(new CustomItem(itemId, itemName, itemType, iconPath, material, healAmount, baseGoldValue, examineText, statBonusTarget));
+                customItems.add(new CustomItem(
+                        itemId,
+                        itemName,
+                        itemType,
+                        iconPath,
+                        material,
+                        healAmount,
+                        baseGoldValue,
+                        examineText,
+                        statBonusTarget,
+                        smithingRecipeEnabled,
+                        smithingRequiredBars,
+                        smithingRequiredLevel,
+                        smithingXpReward
+                ));
             }
         }
 
@@ -358,6 +505,7 @@ public final class MapDesignLibrary {
             String mobId = properties.getProperty(prefix + "mobId", "");
             String mobName = properties.getProperty(prefix + "displayName", "");
             String imagePath = properties.getProperty(prefix + "imagePath", "");
+            String paperDollSourcePath = properties.getProperty(prefix + "paperDollSourcePath", "");
             EnumMap<PlayerStat, Integer> statValues = new EnumMap<>(PlayerStat.class);
             for (PlayerStat stat : PlayerStat.values()) {
                 statValues.put(stat, readInt(properties, prefix + "stat." + stat.name(), stat == PlayerStat.VITALITY ? 1 : 0));
@@ -366,9 +514,20 @@ public final class MapDesignLibrary {
             String mobDescription = properties.getProperty(prefix + "description", "");
             String attackSoundPath = properties.getProperty(prefix + "attackSoundPath", "");
             String damageSoundPath = properties.getProperty(prefix + "damageSoundPath", "");
+            int combatAiIntelligence = readInt(properties, prefix + "combatAiIntelligence", statValues.getOrDefault(PlayerStat.INTELLIGENCE, 0));
             List<SkillLibrary> skillIds = readSkillList(properties.getProperty(prefix + "skillIds", ""));
+            int dropCount = readInt(properties, prefix + "drop.count", 0);
+            List<CustomDropEntry> dropEntries = new ArrayList<>();
+            for (int dropIndex = 0; dropIndex < dropCount; dropIndex++) {
+                String dropPrefix = prefix + "drop." + dropIndex + ".";
+                String itemId = properties.getProperty(dropPrefix + "itemId", "");
+                double chance = readDouble(properties, dropPrefix + "chance", 0.0);
+                if (!itemId.isBlank()) {
+                    dropEntries.add(new CustomDropEntry(itemId, chance));
+                }
+            }
             if (!mobId.isBlank() && !mobName.isBlank()) {
-                customMobs.add(new CustomMob(mobId, mobName, imagePath, statValues, xpReward, mobDescription, attackSoundPath, damageSoundPath, skillIds));
+                customMobs.add(new CustomMob(mobId, mobName, imagePath, paperDollSourcePath, statValues, xpReward, mobDescription, attackSoundPath, damageSoundPath, combatAiIntelligence, skillIds, dropEntries));
             }
         }
 
@@ -382,13 +541,14 @@ public final class MapDesignLibrary {
             String iconPath = properties.getProperty(prefix + "iconPath", "");
             GearDurability condition = readDurability(properties.getProperty(prefix + "condition", ""), GearDurability.PERFECT);
             String limbDescription = properties.getProperty(prefix + "description", "");
+            String paperDollSourcePath = properties.getProperty(prefix + "paperDollSourcePath", "");
             List<SkillLibrary> skillIds = readSkillList(properties.getProperty(prefix + "skillIds", ""));
             EnumMap<PlayerStat, Integer> statBonuses = new EnumMap<>(PlayerStat.class);
             for (PlayerStat stat : PlayerStat.values()) {
                 statBonuses.put(stat, readInt(properties, prefix + "stat." + stat.name(), 0));
             }
             if (!limbId.isBlank() && !limbName.isBlank()) {
-                customLimbs.add(new CustomLimb(limbId, limbName, limbSlot, iconPath, condition, limbDescription, statBonuses, skillIds));
+                customLimbs.add(new CustomLimb(limbId, limbName, limbSlot, iconPath, condition, limbDescription, paperDollSourcePath, statBonuses, skillIds));
             }
         }
 
@@ -409,20 +569,88 @@ public final class MapDesignLibrary {
         return new MapDesign(width, height, displayName, description, primaryTheme, alternateTheme, tiles, themeIndexes, placements, authoredDialogues, authoredQuests, customItems, customMobs, customLimbs, customNpcs, spawnX, spawnY);
     }
 
-    public static AuthoredContent loadSharedContent() throws IOException {
-        if (!Files.isRegularFile(SHARED_CONTENT_PATH)) {
-            return new AuthoredContent(List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+    private static InputStream openMapDesignStream(Path path) throws IOException {
+        if (path == null) {
+            throw new IOException("Map path is missing.");
         }
 
-        MapDesign contentDesign = load(SHARED_CONTENT_PATH);
-        return new AuthoredContent(
-                contentDesign.authoredDialogues(),
-                contentDesign.authoredQuests(),
-                contentDesign.customItems(),
-                contentDesign.customMobs(),
-                contentDesign.customLimbs(),
-                contentDesign.customNpcs()
-        );
+        if (Files.isRegularFile(path)) {
+            return Files.newInputStream(path);
+        }
+
+        return AssetLoader.openAssetStream(resourcePath(path));
+    }
+
+    private static String resourcePath(Path path) {
+        String normalized = path.toString().replace('\\', '/');
+        String resourcePrefix = "src/main/resources/";
+        if (normalized.startsWith(resourcePrefix)) {
+            return normalized.substring(resourcePrefix.length());
+        }
+        if (normalized.startsWith("assets/")) {
+            return normalized;
+        }
+        if (!normalized.contains("/") && !normalized.contains("\\")) {
+            return MAP_RESOURCE_FOLDER + "/" + normalized;
+        }
+        return normalized;
+    }
+
+    public static AuthoredContent loadSharedContent() throws IOException {
+        AuthoredContent defaultContent = defaultAuthoredContent();
+        AuthoredContent bundledContent = loadSharedContentFrom(Path.of(CONTENT_RESOURCE_FOLDER, "authored_content.properties"));
+        AuthoredContent dataContent = Files.isRegularFile(DATA_SHARED_CONTENT_PATH)
+                ? loadSharedContentFrom(DATA_SHARED_CONTENT_PATH)
+                : new AuthoredContent(List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+        return mergeContent(mergeContent(defaultContent, bundledContent), dataContent);
+    }
+
+    private static AuthoredContent defaultAuthoredContent() {
+        return new AuthoredContent(List.of(), List.of(), List.of(), defaultEnemies(), List.of(), List.of());
+    }
+
+    private static AuthoredContent loadSharedContentFrom(Path path) throws IOException {
+        try {
+            MapDesign contentDesign = load(path);
+            return new AuthoredContent(
+                    contentDesign.authoredDialogues(),
+                    contentDesign.authoredQuests(),
+                    contentDesign.customItems(),
+                    contentDesign.customMobs(),
+                    contentDesign.customLimbs(),
+                    contentDesign.customNpcs()
+            );
+        } catch (IOException exception) {
+            if (Files.isRegularFile(path)) {
+                throw exception;
+            }
+            return new AuthoredContent(List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+        }
+    }
+
+    private static AuthoredContent mergeContent(AuthoredContent base, AuthoredContent override) {
+        List<AuthoredDialogue> dialogues = new ArrayList<>(base.authoredDialogues());
+        List<AuthoredQuest> quests = new ArrayList<>(base.authoredQuests());
+        List<CustomItem> items = new ArrayList<>(base.customItems());
+        List<CustomMob> mobs = new ArrayList<>(base.customMobs());
+        List<CustomLimb> limbs = new ArrayList<>(base.customLimbs());
+        List<CustomNpc> npcs = new ArrayList<>(base.customNpcs());
+
+        mergeById(dialogues, override.authoredDialogues(), AuthoredDialogue::interactionId);
+        mergeById(quests, override.authoredQuests(), AuthoredQuest::questId);
+        mergeById(items, override.customItems(), CustomItem::itemId);
+        mergeById(mobs, override.customMobs(), CustomMob::mobId);
+        mergeById(limbs, override.customLimbs(), CustomLimb::limbId);
+        mergeById(npcs, override.customNpcs(), CustomNpc::npcId);
+        return new AuthoredContent(dialogues, quests, items, mobs, limbs, npcs);
+    }
+
+    private static <T> void mergeById(List<T> target, List<T> source, java.util.function.Function<T, String> idFunction) {
+        for (T entry : source) {
+            String id = idFunction.apply(entry);
+            target.removeIf(existing -> idFunction.apply(existing).equals(id));
+            target.add(entry);
+        }
     }
 
     public static void saveSharedContent(AuthoredContent content) throws IOException {
@@ -454,17 +682,47 @@ public final class MapDesignLibrary {
     }
 
     public static List<Path> listSavedMaps() throws IOException {
-        if (!Files.isDirectory(MAP_FOLDER)) {
-            return List.of();
+        List<Path> maps = new ArrayList<>();
+        addMapFiles(maps, MAP_FOLDER);
+        for (String resourcePath : AssetLoader.listAssetFiles(MAP_RESOURCE_FOLDER)) {
+            if (resourcePath.toLowerCase(Locale.ROOT).endsWith(".properties")) {
+                Path resourceMap = Path.of(resourcePath);
+                if (maps.stream().noneMatch(path -> path.getFileName().equals(resourceMap.getFileName()))) {
+                    maps.add(resourceMap);
+                }
+            }
+        }
+        addMapFiles(maps, DATA_MAP_FOLDER);
+        maps.sort(Comparator.comparing(path -> path.getFileName().toString()));
+        return maps;
+    }
+
+    private static void addMapFiles(List<Path> maps, Path folder) throws IOException {
+        if (!Files.isDirectory(folder)) {
+            return;
         }
 
-        try (Stream<Path> paths = Files.list(MAP_FOLDER)) {
-            return paths
-                    .filter(path -> Files.isRegularFile(path)
+        try (Stream<Path> paths = Files.list(folder)) {
+            paths.filter(path -> Files.isRegularFile(path)
                             && path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".properties"))
-                    .sorted(Comparator.comparing(path -> path.getFileName().toString()))
-                    .toList();
+                    .forEach(path -> {
+                        if (maps.stream().noneMatch(existing -> existing.getFileName().equals(path.getFileName()))) {
+                            maps.add(path);
+                        }
+                    });
         }
+    }
+
+    public static String resourcePathForMap(Path path) {
+        if (path == null) {
+            return "";
+        }
+        Path absoluteMapFolder = MAP_FOLDER.toAbsolutePath().normalize();
+        Path absolutePath = path.toAbsolutePath().normalize();
+        if (absolutePath.startsWith(absoluteMapFolder)) {
+            return MAP_RESOURCE_FOLDER + "/" + absoluteMapFolder.relativize(absolutePath).toString().replace('\\', '/');
+        }
+        return resourcePath(path);
     }
 
     public static List<ValidationIssue> validate(MapDesign design) {
@@ -613,10 +871,12 @@ public final class MapDesignLibrary {
                 case ENEMY -> {
                     dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
                     CustomMob customMob = findCustomMob(placement.id(), customMobs);
-                    Monster monster = customMob == null
-                            ? new Monster(MonsterType.valueOf(placement.id()))
-                            : customMob.createMonster();
-                    entities.add(new MapEntity(monster, placement.x(), placement.y()));
+                    if (customMob == null) {
+                        customMob = findDefaultEnemy(placement.id());
+                    }
+                    if (customMob != null) {
+                        entities.add(new MapEntity(customMob.createMonster(), placement.x(), placement.y()));
+                    }
                 }
                 case AUTHORED_DIALOGUE_NPC -> {
                     AuthoredDialogue dialogue = findAuthoredDialogue(placement.id(), authoredDialogues);
@@ -626,7 +886,7 @@ public final class MapDesignLibrary {
                             Library.EntityType.NPC,
                             placement.x(),
                             placement.y(),
-                            (dialogue == null ? MonsterType.GOBLIN : dialogue.visualType()).getImg()
+                            AssetLoader.loadImage(dialogue == null ? defaultEnemy(ENEMY_GOBLIN).imagePath() : dialogue.visualPath())
                     ).withInteractionId(placement.id()));
                 }
                 case INTERACTION -> tileInteractions.add(new GeneratedDungeon.TileInteraction(
@@ -827,8 +1087,9 @@ public final class MapDesignLibrary {
                     }
                 }
                 case ENEMY -> {
-                    if (findCustomMob(placement.id(), design.customMobs()) == null) {
-                        MonsterType.valueOf(placement.id());
+                    if (findCustomMob(placement.id(), design.customMobs()) == null
+                            && findDefaultEnemy(placement.id()) == null) {
+                        throw new IllegalArgumentException("Unknown enemy");
                     }
                 }
                 case AUTHORED_DIALOGUE_NPC -> {
@@ -1092,12 +1353,16 @@ public final class MapDesignLibrary {
         }
     }
 
-    private static MonsterType readMonsterType(String value, MonsterType fallback) {
-        try {
-            return MonsterType.valueOf(value);
-        } catch (IllegalArgumentException ignored) {
-            return fallback;
+    private static String legacyVisualPath(String value) {
+        if (value == null || value.isBlank()) {
+            return defaultEnemy(ENEMY_GOBLIN).imagePath();
         }
+        return switch (value.toUpperCase(Locale.ROOT)) {
+            case "SKELETON" -> defaultEnemy(ENEMY_SKELETON).imagePath();
+            case "SLIME" -> defaultEnemy(ENEMY_SLIME).imagePath();
+            case "GOBLIN" -> defaultEnemy(ENEMY_GOBLIN).imagePath();
+            default -> value;
+        };
     }
 
     private static InventorySystem.ItemType readItemType(String value, InventorySystem.ItemType fallback) {
@@ -1198,6 +1463,14 @@ public final class MapDesignLibrary {
         }
     }
 
+    private static double readDouble(Properties properties, String key, double fallback) {
+        try {
+            return Double.parseDouble(properties.getProperty(key, String.valueOf(fallback)));
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
     private static int readListInt(String[] values, int index, int fallback) {
         if (index < 0 || index >= values.length) {
             return fallback;
@@ -1282,7 +1555,7 @@ public final class MapDesignLibrary {
             String speakerName,
             String bodyText,
             String followUpInteractionId,
-            MonsterType visualType,
+            String visualPath,
             String rewardItemId,
             CharacterSkill rewardSkill,
             int rewardSkillXp,
@@ -1293,7 +1566,7 @@ public final class MapDesignLibrary {
             List<AuthoredDialogueNode> nodes
     ) {
         public AuthoredDialogue(String interactionId, String speakerName, String bodyText) {
-            this(interactionId, speakerName, bodyText, "", MonsterType.GOBLIN);
+            this(interactionId, speakerName, bodyText, "", defaultEnemy(ENEMY_GOBLIN).imagePath());
         }
 
         public AuthoredDialogue(
@@ -1302,7 +1575,7 @@ public final class MapDesignLibrary {
                 String bodyText,
                 String followUpInteractionId
         ) {
-            this(interactionId, speakerName, bodyText, followUpInteractionId, MonsterType.GOBLIN);
+            this(interactionId, speakerName, bodyText, followUpInteractionId, defaultEnemy(ENEMY_GOBLIN).imagePath());
         }
 
         public AuthoredDialogue(
@@ -1310,14 +1583,14 @@ public final class MapDesignLibrary {
                 String speakerName,
                 String bodyText,
                 String followUpInteractionId,
-                MonsterType visualType
+                String visualPath
         ) {
-            this(interactionId, speakerName, bodyText, followUpInteractionId, visualType, "", null, 0, 0, "", -1, List.of(), List.of());
+            this(interactionId, speakerName, bodyText, followUpInteractionId, visualPath, "", null, 0, 0, "", -1, List.of(), List.of());
         }
 
         public AuthoredDialogue {
             followUpInteractionId = followUpInteractionId == null ? "" : followUpInteractionId;
-            visualType = visualType == null ? MonsterType.GOBLIN : visualType;
+            visualPath = visualPath == null || visualPath.isBlank() ? defaultEnemy(ENEMY_GOBLIN).imagePath() : visualPath;
             rewardItemId = rewardItemId == null ? "" : rewardItemId;
             rewardSkillXp = Math.max(0, rewardSkillXp);
             rewardGold = Math.max(0, rewardGold);
@@ -1387,7 +1660,11 @@ public final class MapDesignLibrary {
             int healAmount,
             int baseGoldValue,
             String examineText,
-            PlayerStat statBonusTarget
+            PlayerStat statBonusTarget,
+            boolean smithingRecipeEnabled,
+            int smithingRequiredBars,
+            int smithingRequiredLevel,
+            int smithingXpReward
     ) {
         public CustomItem {
             itemId = itemId == null ? "" : itemId;
@@ -1398,6 +1675,10 @@ public final class MapDesignLibrary {
             healAmount = Math.max(0, healAmount);
             baseGoldValue = Math.max(1, baseGoldValue);
             examineText = examineText == null ? "" : examineText;
+            smithingRecipeEnabled = smithingRecipeEnabled && material.getFamily() == GearMaterial.MaterialFamily.METAL;
+            smithingRequiredBars = Math.max(1, smithingRequiredBars);
+            smithingRequiredLevel = Math.max(1, smithingRequiredLevel);
+            smithingXpReward = Math.max(0, smithingXpReward);
         }
 
         public InventorySystem.Item createItem() {
@@ -1420,17 +1701,21 @@ public final class MapDesignLibrary {
             String mobId,
             String displayName,
             String imagePath,
+            String paperDollSourcePath,
             Map<PlayerStat, Integer> statValues,
             int xpReward,
             String description,
             String attackSoundPath,
             String damageSoundPath,
-            List<SkillLibrary> skillIds
+            int combatAiIntelligence,
+            List<SkillLibrary> skillIds,
+            List<CustomDropEntry> dropEntries
     ) {
         public CustomMob {
             mobId = mobId == null ? "" : mobId;
             displayName = displayName == null || displayName.isBlank() ? "Custom Enemy" : displayName;
             imagePath = imagePath == null ? "" : imagePath;
+            paperDollSourcePath = paperDollSourcePath == null ? "" : paperDollSourcePath;
             EnumMap<PlayerStat, Integer> safeStats = new EnumMap<>(PlayerStat.class);
             for (PlayerStat stat : PlayerStat.values()) {
                 int defaultValue = stat == PlayerStat.VITALITY ? 1 : 0;
@@ -1442,7 +1727,9 @@ public final class MapDesignLibrary {
             description = description == null ? "" : description;
             attackSoundPath = attackSoundPath == null ? "" : attackSoundPath;
             damageSoundPath = damageSoundPath == null ? "" : damageSoundPath;
+            combatAiIntelligence = Math.max(0, combatAiIntelligence);
             skillIds = skillIds == null ? List.of() : List.copyOf(skillIds);
+            dropEntries = dropEntries == null ? List.of() : List.copyOf(dropEntries);
         }
 
         public Monster createMonster() {
@@ -1453,10 +1740,27 @@ public final class MapDesignLibrary {
                     xpReward,
                     description,
                     imagePath,
+                    paperDollSourcePath,
                     attackSoundPath,
                     damageSoundPath,
-                    skillIds
+                    combatAiIntelligence,
+                    skillIds,
+                    dropEntries.stream()
+                            .map(drop -> new Monster.DropEntry(drop.itemId(), drop.chance()))
+                            .toList()
             );
+        }
+    }
+
+    public record CustomDropEntry(String itemId, double chance) {
+        public CustomDropEntry {
+            itemId = itemId == null ? "" : itemId;
+            chance = Math.max(0.0, Math.min(1.0, chance));
+        }
+
+        @Override
+        public String toString() {
+            return itemId + " [" + Math.round(chance * 100.0) + "%]";
         }
     }
 
@@ -1467,6 +1771,7 @@ public final class MapDesignLibrary {
             String iconPath,
             GearDurability condition,
             String description,
+            String paperDollSourcePath,
             Map<PlayerStat, Integer> statBonuses,
             List<SkillLibrary> skillIds
     ) {
@@ -1477,6 +1782,7 @@ public final class MapDesignLibrary {
             iconPath = iconPath == null ? "" : iconPath;
             condition = condition == null ? GearDurability.PERFECT : condition;
             description = description == null ? "" : description;
+            paperDollSourcePath = paperDollSourcePath == null ? "" : paperDollSourcePath;
             EnumMap<PlayerStat, Integer> safeStats = new EnumMap<>(PlayerStat.class);
             if (statBonuses != null) {
                 for (PlayerStat stat : PlayerStat.values()) {
@@ -1496,7 +1802,8 @@ public final class MapDesignLibrary {
                     skillIds.stream().map(SkillLibrary::createSkill).toList(),
                     condition,
                     iconPath,
-                    description
+                    description,
+                    paperDollSourcePath
             );
         }
     }

@@ -2,7 +2,7 @@ package org.main.core;
 
 import org.main.battle.BattleSkill;
 import org.main.content.SkillLibrary;
-import org.main.monsters.MonsterType;
+import org.main.monsters.Monster;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -13,46 +13,7 @@ import java.util.concurrent.ThreadLocalRandom;
 
 public final class ButcherySystem {
     private static final String DEFAULT_LIMB_ICON = "assets/images/monster/Ancient/Oct-5-2010/player/hand1/misc/head.png";
-    private static final int TARGET_LEGS_LEVEL = 10;
-    private static final int TARGET_ARMS_LEVEL = 20;
-    private static final int TARGET_BODY_LEVEL = 30;
-    private static final int TARGET_HEAD_LEVEL = 40;
-    private static final double BUTCHERY_BASE_SUCCESS = 0.28;
-    private static final double BUTCHERY_SUCCESS_PER_LEVEL = 0.025;
-    private static final double BUTCHERY_DIFFICULTY_PENALTY = 0.006;
-    private static final double BUTCHERY_MIN_SUCCESS = 0.08;
-    private static final double BUTCHERY_MAX_SUCCESS = 0.90;
-    private static final int BUTCHERY_BASE_XP = 12;
-    private static final double GRAFT_CONDITION_HELP_MULTIPLIER = 0.20;
-    private static final double GRAFT_BASE_SUCCESS = 0.25;
-    private static final double GRAFT_SUCCESS_PER_LEVEL = 0.025;
-    private static final double GRAFT_MIN_SUCCESS = 0.05;
-    private static final double GRAFT_MAX_SUCCESS = 0.92;
-    private static final int GRAFT_XP_REWARD = 16;
-    private static final double GRAFT_CONDITION_RISK_CHANCE = 0.35;
-    private static final double SKILL_INHERIT_CHANCE = 0.35;
-    private static final double PERFECT_CONDITION_BASE_CHANCE = 0.05;
-    private static final double PERFECT_CONDITION_LEVEL_BONUS = 0.015;
-    private static final double PERFECT_CONDITION_DIFFICULTY_PENALTY = 0.002;
-    private static final double PERFECT_CONDITION_MIN_CHANCE = 0.02;
-    private static final double PERFECT_CONDITION_MAX_CHANCE = 0.70;
-    private static final double GOOD_CONDITION_ROLL_CUTOFF = 0.35;
-    private static final double WORN_CONDITION_ROLL_CUTOFF = 0.68;
-    private static final double DAMAGED_CONDITION_ROLL_CUTOFF = 0.90;
-    private static final double DIFFICULTY_HP_DIVISOR = 5.0;
-    private static final double DIFFICULTY_XP_DIVISOR = 10.0;
     private static final double NO_STAT_ALLOCATION = 0.0;
-    private static final double ATTACK_ARM_OR_HEAD_WEIGHT = 0.35;
-    private static final double STRENGTH_ARM_WEIGHT = 0.50;
-    private static final double DEFENSE_BODY_WEIGHT = 0.80;
-    private static final double DEFENSE_HEAD_WEIGHT = 0.20;
-    private static final double AGILITY_LEGS_WEIGHT = 0.70;
-    private static final double AGILITY_ARM_WEIGHT = 0.15;
-    private static final double INTELLIGENCE_HEAD_WEIGHT = 1.0;
-    private static final double WILLPOWER_HEAD_WEIGHT = 0.55;
-    private static final double WILLPOWER_BODY_WEIGHT = 0.35;
-    private static final double VITALITY_BODY_WEIGHT = 0.80;
-    private static final double VITALITY_LEGS_WEIGHT = 0.20;
 
     private ButcherySystem() {
     }
@@ -81,48 +42,53 @@ public final class ButcherySystem {
         int level = player == null ? 1 : player.getSkillLevel(CharacterSkill.BUTCHERING);
         List<LimbSlot> slots = new ArrayList<>();
 
-        if (level >= TARGET_LEGS_LEVEL) {
+        if (level >= targetLegsLevel()) {
             slots.add(LimbSlot.LEGS);
         }
 
-        if (level >= TARGET_ARMS_LEVEL) {
+        if (level >= targetArmsLevel()) {
             slots.add(LimbSlot.LEFT_ARM);
             slots.add(LimbSlot.RIGHT_ARM);
         }
 
-        if (level >= TARGET_BODY_LEVEL) {
+        if (level >= targetBodyLevel()) {
             slots.add(LimbSlot.BODY);
         }
 
-        if (level >= TARGET_HEAD_LEVEL) {
+        if (level >= targetHeadLevel()) {
             slots.add(LimbSlot.HEAD);
         }
 
         return slots;
     }
 
-    public static Optional<LimbItem> butcher(PlayerCharacter player, MonsterType monsterType, LimbSlot requestedSlot) {
-        if (player == null || monsterType == null) {
+    public static Optional<LimbItem> butcher(PlayerCharacter player, Monster monster, LimbSlot requestedSlot) {
+        if (monster == null) {
+            return Optional.empty();
+        }
+
+        if (player == null) {
             return Optional.empty();
         }
 
         int butcheringLevel = Math.max(1, player.getSkillLevel(CharacterSkill.BUTCHERING));
+        double difficulty = monsterDifficulty(monster);
         double successChance = clamp(
-                BUTCHERY_BASE_SUCCESS
-                        + butcheringLevel * BUTCHERY_SUCCESS_PER_LEVEL
-                        - monsterDifficulty(monsterType) * BUTCHERY_DIFFICULTY_PENALTY,
-                BUTCHERY_MIN_SUCCESS,
-                BUTCHERY_MAX_SUCCESS
+                butcheryBaseSuccess()
+                        + butcheringLevel * butcherySuccessPerLevel()
+                        - difficulty * butcheryDifficultyPenalty(),
+                butcheryMinSuccess(),
+                butcheryMaxSuccess()
         );
-        player.addSkillExperience(CharacterSkill.BUTCHERING, BUTCHERY_BASE_XP + monsterType.getXpReward());
+        player.addSkillExperience(CharacterSkill.BUTCHERING, butcheryBaseXp() + monster.getXpReward());
 
         if (ThreadLocalRandom.current().nextDouble() > successChance) {
             return Optional.empty();
         }
 
         LimbSlot slot = requestedSlot == null ? randomSlot() : requestedSlot;
-        GearDurability condition = rollCondition(butcheringLevel, monsterType);
-        return Optional.of(createLimb(monsterType, slot, condition));
+        GearDurability condition = rollCondition(butcheringLevel, difficulty);
+        return Optional.of(createCustomLimb(monster, slot, condition));
     }
 
     public static GraftResult graft(PlayerCharacter player, LimbItem limb, GraftApproach approach) {
@@ -132,17 +98,17 @@ public final class ButcherySystem {
 
         GraftApproach selectedApproach = approach == null ? GraftApproach.UNSKILLED : approach;
         int graftingLevel = Math.max(1, player.getSkillLevel(CharacterSkill.GRAFTING));
-        double conditionHelp = limb.getCondition().getStatMultiplier() * GRAFT_CONDITION_HELP_MULTIPLIER;
+        double conditionHelp = limb.getCondition().getStatMultiplier() * graftConditionHelpMultiplier();
         double chance = clamp(
-                GRAFT_BASE_SUCCESS + graftingLevel * GRAFT_SUCCESS_PER_LEVEL + conditionHelp + selectedApproach.chanceModifier,
-                GRAFT_MIN_SUCCESS,
-                GRAFT_MAX_SUCCESS
+                graftBaseSuccess() + graftingLevel * graftSuccessPerLevel() + conditionHelp + selectedApproach.chanceModifier,
+                graftMinSuccess(),
+                graftMaxSuccess()
         );
 
-        player.addSkillExperience(CharacterSkill.GRAFTING, GRAFT_XP_REWARD);
+        player.addSkillExperience(CharacterSkill.GRAFTING, graftXpReward());
 
         LimbItem graftedLimb = limb;
-        if (selectedApproach.risksCondition && ThreadLocalRandom.current().nextDouble() < GRAFT_CONDITION_RISK_CHANCE) {
+        if (selectedApproach.risksCondition && ThreadLocalRandom.current().nextDouble() < graftConditionRiskChance()) {
             graftedLimb = limb.withCondition(degrade(limb.getCondition()));
         }
 
@@ -154,52 +120,41 @@ public final class ButcherySystem {
         return new GraftResult(true, "Grafted " + graftedLimb.getName() + " onto " + graftedLimb.getLimbSlot().getDisplayName() + ".");
     }
 
-    public static LimbItem createLimb(MonsterType monsterType, LimbSlot slot, GearDurability condition) {
-        return createLimb(monsterType, slot, condition, true);
+    public static LimbItem recreateLimb(Monster monster, LimbSlot slot, GearDurability condition) {
+        return createCustomLimb(monster, slot, condition, false);
     }
 
-    public static LimbItem recreateLimb(MonsterType monsterType, LimbSlot slot, GearDurability condition) {
-        return createLimb(monsterType, slot, condition, false);
+    private static LimbItem createCustomLimb(Monster monster, LimbSlot slot, GearDurability condition) {
+        return createCustomLimb(monster, slot, condition, true);
     }
 
-    private static LimbItem createLimb(MonsterType monsterType, LimbSlot slot, GearDurability condition, boolean rollSkills) {
-        EnumMap<PlayerStat, Integer> stats = statsFor(monsterType, slot);
-        List<BattleSkill> skills = rollSkills ? skillsFor(monsterType, slot) : List.of();
-        String name = monsterType.getDisplayName() + " " + slot.getDisplayName();
+    private static LimbItem createCustomLimb(Monster monster, LimbSlot slot, GearDurability condition, boolean rollSkills) {
+        EnumMap<PlayerStat, Integer> stats = statsFor(monster.getStatsView(), slot);
+        String name = monster.getName() + " " + slot.getDisplayName();
 
         return new LimbItem(
                 name,
-                monsterType,
+                monster.getName(),
                 slot,
                 stats,
-                skills,
+                rollSkills ? skillsFor(monster, slot) : List.of(),
                 condition,
-                DEFAULT_LIMB_ICON
+                DEFAULT_LIMB_ICON,
+                monster.getDescription(),
+                monster.getPaperDollSourcePath()
         );
     }
 
-    private static EnumMap<PlayerStat, Integer> statsFor(MonsterType monsterType, LimbSlot slot) {
+    private static EnumMap<PlayerStat, Integer> statsFor(Map<PlayerStat, Integer> sourceStats, LimbSlot slot) {
         EnumMap<PlayerStat, Integer> stats = emptyStats();
-        EnumMap<PlayerStat, Integer> monsterStats = monsterStats(monsterType);
 
         for (PlayerStat stat : PlayerStat.values()) {
-            stats.put(stat, allocatedStat(monsterStats.getOrDefault(stat, 0), stat, slot));
+            stats.put(stat, allocatedStat(sourceStats.getOrDefault(stat, 0), stat, slot));
         }
 
         return stats;
     }
 
-    private static EnumMap<PlayerStat, Integer> monsterStats(MonsterType monsterType) {
-        EnumMap<PlayerStat, Integer> stats = new EnumMap<>(PlayerStat.class);
-        for (PlayerStat stat : PlayerStat.values()) {
-            stats.put(stat, 0);
-        }
-
-        for (PlayerStat stat : PlayerStat.values()) {
-            stats.put(stat, Math.max(0, monsterType.getStat(stat)));
-        }
-        return stats;
-    }
 
     private static EnumMap<PlayerStat, Integer> emptyStats() {
         EnumMap<PlayerStat, Integer> stats = new EnumMap<>(PlayerStat.class);
@@ -227,45 +182,45 @@ public final class ButcherySystem {
     private static double allocationWeight(PlayerStat stat, LimbSlot slot) {
         return switch (stat) {
             case ATTACK -> switch (slot) {
-                case LEFT_ARM, RIGHT_ARM, HEAD -> ATTACK_ARM_OR_HEAD_WEIGHT;
+                case LEFT_ARM, RIGHT_ARM, HEAD -> configuredDouble("butchery.weight.attackArmOrHead", 0.35);
                 default -> NO_STAT_ALLOCATION;
             };
             case STRENGTH -> switch (slot) {
-                case LEFT_ARM, RIGHT_ARM -> STRENGTH_ARM_WEIGHT;
+                case LEFT_ARM, RIGHT_ARM -> configuredDouble("butchery.weight.strengthArm", 0.50);
                 default -> NO_STAT_ALLOCATION;
             };
             case DEFENSE -> switch (slot) {
-                case BODY -> DEFENSE_BODY_WEIGHT;
-                case HEAD -> DEFENSE_HEAD_WEIGHT;
+                case BODY -> configuredDouble("butchery.weight.defenseBody", 0.80);
+                case HEAD -> configuredDouble("butchery.weight.defenseHead", 0.20);
                 default -> NO_STAT_ALLOCATION;
             };
             case AGILITY -> switch (slot) {
-                case LEGS -> AGILITY_LEGS_WEIGHT;
-                case LEFT_ARM, RIGHT_ARM -> AGILITY_ARM_WEIGHT;
+                case LEGS -> configuredDouble("butchery.weight.agilityLegs", 0.70);
+                case LEFT_ARM, RIGHT_ARM -> configuredDouble("butchery.weight.agilityArm", 0.15);
                 default -> NO_STAT_ALLOCATION;
             };
-            case INTELLIGENCE -> slot == LimbSlot.HEAD ? INTELLIGENCE_HEAD_WEIGHT : NO_STAT_ALLOCATION;
+            case INTELLIGENCE -> slot == LimbSlot.HEAD ? configuredDouble("butchery.weight.intelligenceHead", 1.0) : NO_STAT_ALLOCATION;
             case WILLPOWER -> switch (slot) {
-                case HEAD -> WILLPOWER_HEAD_WEIGHT;
-                case BODY -> WILLPOWER_BODY_WEIGHT;
+                case HEAD -> configuredDouble("butchery.weight.willpowerHead", 0.55);
+                case BODY -> configuredDouble("butchery.weight.willpowerBody", 0.35);
                 default -> NO_STAT_ALLOCATION;
             };
             case VITALITY -> switch (slot) {
-                case BODY -> VITALITY_BODY_WEIGHT;
-                case LEGS -> VITALITY_LEGS_WEIGHT;
+                case BODY -> configuredDouble("butchery.weight.vitalityBody", 0.80);
+                case LEGS -> configuredDouble("butchery.weight.vitalityLegs", 0.20);
                 default -> NO_STAT_ALLOCATION;
             };
         };
     }
 
-    private static List<BattleSkill> skillsFor(MonsterType monsterType, LimbSlot slot) {
-        if (monsterType == null || slot != LimbSlot.HEAD) {
+    private static List<BattleSkill> skillsFor(Monster monster, LimbSlot slot) {
+        if (monster == null || slot != LimbSlot.HEAD) {
             return List.of();
         }
 
         List<BattleSkill> skills = new ArrayList<>();
-        for (SkillLibrary skill : monsterType.getSkills()) {
-            if (ThreadLocalRandom.current().nextDouble() <= SKILL_INHERIT_CHANCE) {
+        for (SkillLibrary skill : monster.getSkills()) {
+            if (ThreadLocalRandom.current().nextDouble() <= skillInheritChance()) {
                 skills.add(skill.createSkill());
             }
         }
@@ -278,13 +233,13 @@ public final class ButcherySystem {
         return slots[ThreadLocalRandom.current().nextInt(slots.length)];
     }
 
-    private static GearDurability rollCondition(int butcheringLevel, MonsterType monsterType) {
+    private static GearDurability rollCondition(int butcheringLevel, double monsterDifficulty) {
         double perfectChance = clamp(
-                PERFECT_CONDITION_BASE_CHANCE
-                        + butcheringLevel * PERFECT_CONDITION_LEVEL_BONUS
-                        - monsterDifficulty(monsterType) * PERFECT_CONDITION_DIFFICULTY_PENALTY,
-                PERFECT_CONDITION_MIN_CHANCE,
-                PERFECT_CONDITION_MAX_CHANCE
+                perfectConditionBaseChance()
+                        + butcheringLevel * perfectConditionLevelBonus()
+                        - monsterDifficulty * perfectConditionDifficultyPenalty(),
+                perfectConditionMinChance(),
+                perfectConditionMaxChance()
         );
         double roll = ThreadLocalRandom.current().nextDouble();
 
@@ -292,15 +247,15 @@ public final class ButcherySystem {
             return GearDurability.PERFECT;
         }
 
-        if (roll < GOOD_CONDITION_ROLL_CUTOFF) {
+        if (roll < goodConditionRollCutoff()) {
             return GearDurability.GOOD;
         }
 
-        if (roll < WORN_CONDITION_ROLL_CUTOFF) {
+        if (roll < wornConditionRollCutoff()) {
             return GearDurability.WORN;
         }
 
-        if (roll < DAMAGED_CONDITION_ROLL_CUTOFF) {
+        if (roll < damagedConditionRollCutoff()) {
             return GearDurability.DAMAGED;
         }
 
@@ -316,19 +271,57 @@ public final class ButcherySystem {
         };
     }
 
-    private static double monsterDifficulty(MonsterType monsterType) {
-        return monsterType.getStat(PlayerStat.VITALITY) / DIFFICULTY_HP_DIVISOR
-                + monsterType.getStat(PlayerStat.ATTACK)
-                + monsterType.getStat(PlayerStat.STRENGTH)
-                + monsterType.getStat(PlayerStat.DEFENSE)
-                + monsterType.getStat(PlayerStat.AGILITY)
-                + monsterType.getStat(PlayerStat.INTELLIGENCE)
-                + monsterType.getStat(PlayerStat.WILLPOWER)
-                + monsterType.getXpReward() / DIFFICULTY_XP_DIVISOR;
+    private static double monsterDifficulty(Monster monster) {
+        if (monster == null) {
+            return 1.0;
+        }
+
+        double statTotal = 0.0;
+        for (PlayerStat stat : PlayerStat.values()) {
+            if (stat == PlayerStat.VITALITY) {
+                statTotal += monster.getStat(stat) / difficultyHpDivisor();
+            } else {
+                statTotal += monster.getStat(stat);
+            }
+        }
+        return statTotal + monster.getXpReward() / difficultyXpDivisor();
     }
 
     private static double clamp(double value, double min, double max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private static int targetLegsLevel() { return GameConfiguration.intValue("butchery.targetLegsLevel", 10); }
+    private static int targetArmsLevel() { return GameConfiguration.intValue("butchery.targetArmsLevel", 20); }
+    private static int targetBodyLevel() { return GameConfiguration.intValue("butchery.targetBodyLevel", 30); }
+    private static int targetHeadLevel() { return GameConfiguration.intValue("butchery.targetHeadLevel", 40); }
+    private static double butcheryBaseSuccess() { return configuredDouble("butchery.baseSuccess", 0.28); }
+    private static double butcherySuccessPerLevel() { return configuredDouble("butchery.successPerLevel", 0.025); }
+    private static double butcheryDifficultyPenalty() { return configuredDouble("butchery.difficultyPenalty", 0.006); }
+    private static double butcheryMinSuccess() { return configuredDouble("butchery.minSuccess", 0.08); }
+    private static double butcheryMaxSuccess() { return configuredDouble("butchery.maxSuccess", 0.90); }
+    private static int butcheryBaseXp() { return GameConfiguration.intValue("butchery.baseXp", 12); }
+    private static double graftConditionHelpMultiplier() { return configuredDouble("grafting.conditionHelpMultiplier", 0.20); }
+    private static double graftBaseSuccess() { return configuredDouble("grafting.baseSuccess", 0.25); }
+    private static double graftSuccessPerLevel() { return configuredDouble("grafting.successPerLevel", 0.025); }
+    private static double graftMinSuccess() { return configuredDouble("grafting.minSuccess", 0.05); }
+    private static double graftMaxSuccess() { return configuredDouble("grafting.maxSuccess", 0.92); }
+    private static int graftXpReward() { return GameConfiguration.intValue("grafting.xpReward", 16); }
+    private static double graftConditionRiskChance() { return configuredDouble("grafting.conditionRiskChance", 0.35); }
+    private static double skillInheritChance() { return configuredDouble("butchery.skillInheritChance", 0.35); }
+    private static double perfectConditionBaseChance() { return configuredDouble("butchery.perfectConditionBaseChance", 0.05); }
+    private static double perfectConditionLevelBonus() { return configuredDouble("butchery.perfectConditionLevelBonus", 0.015); }
+    private static double perfectConditionDifficultyPenalty() { return configuredDouble("butchery.perfectConditionDifficultyPenalty", 0.002); }
+    private static double perfectConditionMinChance() { return configuredDouble("butchery.perfectConditionMinChance", 0.02); }
+    private static double perfectConditionMaxChance() { return configuredDouble("butchery.perfectConditionMaxChance", 0.70); }
+    private static double goodConditionRollCutoff() { return configuredDouble("butchery.goodConditionRollCutoff", 0.35); }
+    private static double wornConditionRollCutoff() { return configuredDouble("butchery.wornConditionRollCutoff", 0.68); }
+    private static double damagedConditionRollCutoff() { return configuredDouble("butchery.damagedConditionRollCutoff", 0.90); }
+    private static double difficultyHpDivisor() { return Math.max(1.0, configuredDouble("butchery.difficultyHpDivisor", 5.0)); }
+    private static double difficultyXpDivisor() { return Math.max(1.0, configuredDouble("butchery.difficultyXpDivisor", 10.0)); }
+
+    private static double configuredDouble(String key, double fallback) {
+        return GameConfiguration.doubleValue(key, fallback);
     }
 
     public record GraftResult(boolean success, String message) {

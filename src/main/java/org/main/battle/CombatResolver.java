@@ -1,27 +1,11 @@
 package org.main.battle;
 
 import org.main.core.CharacterSkill;
+import org.main.core.GameConfiguration;
 
 import java.util.concurrent.ThreadLocalRandom;
 
 public final class CombatResolver {
-    private static final double MIN_HIT_CHANCE = 0.05;
-    private static final double MAX_HIT_CHANCE = 0.95;
-    private static final int MIN_ROLL_VALUE = 1;
-    private static final int MIN_DAMAGE_MAX_HIT = 1;
-    private static final int DAMAGE_ROLL_INCLUSIVE_OFFSET = 1;
-    private static final int PHYSICAL_STAT_DAMAGE_DIVISOR = 3;
-    private static final int MAGIC_STAT_DAMAGE_DIVISOR = 3;
-    private static final int HEALING_STAT_DIVISOR = 5;
-    private static final double MAGIC_DEFENSE_WILLPOWER_WEIGHT = 0.70;
-    private static final double MAGIC_DEFENSE_SKILL_WEIGHT = 0.20;
-    private static final double MAGIC_DEFENSE_ARMOR_WEIGHT = 0.10;
-    private static final double PHYSICAL_DEFENSE_STAT_WEIGHT = 0.35;
-    private static final double PHYSICAL_DEFENSE_SKILL_WEIGHT = 0.35;
-    private static final double PHYSICAL_DEFENSE_AGILITY_WEIGHT = 0.15;
-    private static final double ROLL_COMPARISON_DIVISOR = 2.0;
-    private static final double ROLL_COMPARISON_OFFSET = 2.0;
-
     private CombatResolver() {
     }
 
@@ -35,21 +19,21 @@ public final class CombatResolver {
     }
 
     public static CombatResult resolveSpell(BattleActor caster, BattleActor defender, BattleSkill skill) {
-        int accuracyRoll = Math.max(MIN_ROLL_VALUE,
+        int accuracyRoll = Math.max(minRollValue(),
                 caster.getIntelligence()
                         + caster.getCombatSkillLevel(CharacterSkill.MAGIC_ACCURACY)
         );
-        int defenseRoll = Math.max(MIN_ROLL_VALUE, (int) Math.round(
-                casterSafeWillpower(defender) * MAGIC_DEFENSE_WILLPOWER_WEIGHT
-                        + defender.getCombatSkillLevel(CharacterSkill.DEFENSE) * MAGIC_DEFENSE_SKILL_WEIGHT
-                        + defender.getArmorBonus() * MAGIC_DEFENSE_ARMOR_WEIGHT
+        int defenseRoll = Math.max(minRollValue(), (int) Math.round(
+                casterSafeWillpower(defender) * magicDefenseWillpowerWeight()
+                        + defender.getCombatSkillLevel(CharacterSkill.DEFENSE) * magicDefenseSkillWeight()
+                        + defender.getArmorBonus() * magicDefenseArmorWeight()
         ));
         double hitChance = hitChance(accuracyRoll, defenseRoll);
         boolean hit = roll(hitChance);
         int maxHit = Math.max(0,
                 (skill == null ? 0 : skill.getDamage())
-                        + caster.getWillpowerStat() / MAGIC_STAT_DAMAGE_DIVISOR
-                        + caster.getCombatSkillLevel(CharacterSkill.MAGIC_POWER) / MAGIC_STAT_DAMAGE_DIVISOR
+                        + caster.getWillpowerStat() / magicStatDamageDivisor()
+                        + caster.getCombatSkillLevel(CharacterSkill.MAGIC_POWER) / magicStatDamageDivisor()
         );
         int damage = hit ? randomDamage(maxHit) : 0;
 
@@ -62,14 +46,14 @@ public final class CombatResolver {
         }
 
         return Math.max(0,
-                skill.getDamage()
-                        + caster.getWillpowerStat() / HEALING_STAT_DIVISOR
-                        + caster.getCombatSkillLevel(CharacterSkill.MAGIC_POWER) / HEALING_STAT_DIVISOR
+                        skill.getDamage()
+                        + caster.getWillpowerStat() / healingStatDivisor()
+                        + caster.getCombatSkillLevel(CharacterSkill.MAGIC_POWER) / healingStatDivisor()
         );
     }
 
     private static CombatResult resolvePhysical(BattleActor attacker, BattleActor defender, int maxHitBonus, String verb) {
-        int accuracyRoll = Math.max(MIN_ROLL_VALUE,
+        int accuracyRoll = Math.max(minRollValue(),
                 attacker.getAttackStat()
                         + attacker.getCombatSkillLevel(CharacterSkill.ATTACK)
                         + attacker.getWeaponBonus()
@@ -77,9 +61,9 @@ public final class CombatResolver {
         int defenseRoll = physicalDefenseRoll(defender);
         double hitChance = hitChance(accuracyRoll, defenseRoll);
         boolean hit = roll(hitChance);
-        int maxHit = Math.max(MIN_DAMAGE_MAX_HIT,
-                MIN_DAMAGE_MAX_HIT
-                        + (attacker.getStrengthStat() + attacker.getCombatSkillLevel(CharacterSkill.STRENGTH)) / PHYSICAL_STAT_DAMAGE_DIVISOR
+        int maxHit = Math.max(minDamageMaxHit(),
+                minDamageMaxHit()
+                        + (attacker.getStrengthStat() + attacker.getCombatSkillLevel(CharacterSkill.STRENGTH)) / physicalStatDamageDivisor()
                         + attacker.getWeaponBonus()
                         + Math.max(0, maxHitBonus)
         );
@@ -89,29 +73,29 @@ public final class CombatResolver {
     }
 
     private static int physicalDefenseRoll(BattleActor defender) {
-        return Math.max(MIN_ROLL_VALUE, (int) Math.round(
-                defender.getDefenseStat() * PHYSICAL_DEFENSE_STAT_WEIGHT
-                        + defender.getCombatSkillLevel(CharacterSkill.DEFENSE) * PHYSICAL_DEFENSE_SKILL_WEIGHT
+        return Math.max(minRollValue(), (int) Math.round(
+                defender.getDefenseStat() * physicalDefenseStatWeight()
+                        + defender.getCombatSkillLevel(CharacterSkill.DEFENSE) * physicalDefenseSkillWeight()
                         + defender.getArmorBonus()
-                        + defender.getAgilityStat() * PHYSICAL_DEFENSE_AGILITY_WEIGHT
+                        + defender.getAgilityStat() * physicalDefenseAgilityWeight()
         ));
     }
 
     private static int casterSafeWillpower(BattleActor actor) {
-        return actor == null ? MIN_ROLL_VALUE : actor.getWillpowerStat();
+        return actor == null ? minRollValue() : actor.getWillpowerStat();
     }
 
     private static double hitChance(int attackRoll, int defenseRoll) {
         double chance;
 
         if (attackRoll > defenseRoll) {
-            chance = 1.0 - ((defenseRoll + ROLL_COMPARISON_OFFSET)
-                    / (ROLL_COMPARISON_DIVISOR * attackRoll + ROLL_COMPARISON_OFFSET));
+            chance = 1.0 - ((defenseRoll + rollComparisonOffset())
+                    / (rollComparisonDivisor() * attackRoll + rollComparisonOffset()));
         } else {
-            chance = attackRoll / (ROLL_COMPARISON_DIVISOR * defenseRoll + ROLL_COMPARISON_OFFSET);
+            chance = attackRoll / (rollComparisonDivisor() * defenseRoll + rollComparisonOffset());
         }
 
-        return Math.max(MIN_HIT_CHANCE, Math.min(MAX_HIT_CHANCE, chance));
+        return Math.max(minHitChance(), Math.min(maxHitChance(), chance));
     }
 
     private static boolean roll(double chance) {
@@ -123,8 +107,25 @@ public final class CombatResolver {
             return 0;
         }
 
-        return ThreadLocalRandom.current().nextInt(maxHit + DAMAGE_ROLL_INCLUSIVE_OFFSET);
+        return ThreadLocalRandom.current().nextInt(maxHit + damageRollInclusiveOffset());
     }
+
+    private static double minHitChance() { return GameConfiguration.doubleValue("battle.hitChance.minimum", 0.05); }
+    private static double maxHitChance() { return GameConfiguration.doubleValue("battle.hitChance.maximum", 0.95); }
+    private static int minRollValue() { return GameConfiguration.intValue("battle.roll.minimum", 1); }
+    private static int minDamageMaxHit() { return GameConfiguration.intValue("battle.damage.minimumMaxHit", 1); }
+    private static int damageRollInclusiveOffset() { return GameConfiguration.intValue("battle.damage.rollInclusiveOffset", 1); }
+    private static int physicalStatDamageDivisor() { return Math.max(1, GameConfiguration.intValue("battle.damage.physicalStatDivisor", 3)); }
+    private static int magicStatDamageDivisor() { return Math.max(1, GameConfiguration.intValue("battle.damage.magicStatDivisor", 3)); }
+    private static int healingStatDivisor() { return Math.max(1, GameConfiguration.intValue("battle.healing.statDivisor", 5)); }
+    private static double magicDefenseWillpowerWeight() { return GameConfiguration.doubleValue("battle.magicDefense.willpowerWeight", 0.70); }
+    private static double magicDefenseSkillWeight() { return GameConfiguration.doubleValue("battle.magicDefense.skillWeight", 0.20); }
+    private static double magicDefenseArmorWeight() { return GameConfiguration.doubleValue("battle.magicDefense.armorWeight", 0.10); }
+    private static double physicalDefenseStatWeight() { return GameConfiguration.doubleValue("battle.physicalDefense.statWeight", 0.35); }
+    private static double physicalDefenseSkillWeight() { return GameConfiguration.doubleValue("battle.physicalDefense.skillWeight", 0.35); }
+    private static double physicalDefenseAgilityWeight() { return GameConfiguration.doubleValue("battle.physicalDefense.agilityWeight", 0.15); }
+    private static double rollComparisonDivisor() { return GameConfiguration.doubleValue("battle.rollComparison.divisor", 2.0); }
+    private static double rollComparisonOffset() { return GameConfiguration.doubleValue("battle.rollComparison.offset", 2.0); }
 
     public record CombatResult(boolean hit, int damage, double hitChance, int maxHit, String text) {
     }

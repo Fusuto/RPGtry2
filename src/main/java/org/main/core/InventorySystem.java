@@ -63,6 +63,7 @@ public final class InventorySystem {
         private final String examineText;
         private final PlayerStat statBonusTarget;
         private final boolean stackable;
+        private final boolean materialTintApplied;
         private int quantity;
 
         public Item(String name, ItemType itemType, BufferedImage icon) {
@@ -133,13 +134,46 @@ public final class InventorySystem {
                 boolean stackable,
                 int quantity
         ) {
+            this(
+                    name,
+                    itemType,
+                    icon,
+                    useSoundPath,
+                    healAmount,
+                    material,
+                    durability,
+                    baseGoldValue,
+                    examineText,
+                    statBonusTarget,
+                    stackable,
+                    quantity,
+                    false
+            );
+        }
+
+        private Item(
+                String name,
+                ItemType itemType,
+                BufferedImage icon,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                boolean stackable,
+                int quantity,
+                boolean materialTintApplied
+        ) {
             this.name = name;
             this.itemType = itemType;
-            this.icon = icon;
             this.useSoundPath = useSoundPath;
             this.healAmount = Math.max(0, healAmount);
             this.material = material == null ? GearMaterial.NONE : material;
             this.durability = durability == null ? GearDurability.PERFECT : durability;
+            this.materialTintApplied = materialTintApplied || shouldApplyMaterialTint(icon, itemType, this.material);
+            this.icon = materialTintApplied ? icon : applyMaterialTint(icon, itemType, this.material);
             this.baseGoldValue = Math.max(1, baseGoldValue);
             this.examineText = examineText == null || examineText.isBlank()
                     ? "There is nothing unusual about it."
@@ -209,6 +243,63 @@ public final class InventorySystem {
             }
 
             return AssetLoader.loadImage(iconPath);
+        }
+
+        private static BufferedImage applyMaterialTint(BufferedImage source, ItemType itemType, GearMaterial material) {
+            if (!shouldApplyMaterialTint(source, itemType, material)) {
+                return source;
+            }
+
+            Color tint = materialTint(material);
+
+            BufferedImage tinted = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = tinted.createGraphics();
+            graphics.drawImage(source, 0, 0, null);
+            graphics.setComposite(AlphaComposite.SrcAtop.derive(materialTintStrength(material)));
+            graphics.setColor(tint);
+            graphics.fillRect(0, 0, source.getWidth(), source.getHeight());
+            graphics.dispose();
+            return tinted;
+        }
+
+        private static boolean shouldApplyMaterialTint(BufferedImage source, ItemType itemType, GearMaterial material) {
+            return source != null
+                    && itemType != null
+                    && material != null
+                    && material != GearMaterial.NONE
+                    && isTintableEquipmentType(itemType)
+                    && materialTint(material) != null;
+        }
+
+        private static boolean isTintableEquipmentType(ItemType itemType) {
+            return itemType == ItemType.WEAPON
+                    || itemType == ItemType.SHIELD
+                    || itemType == ItemType.HEAD_GEAR
+                    || itemType == ItemType.CHEST_ARMOR
+                    || itemType == ItemType.LEG_ARMOR;
+        }
+
+        private static Color materialTint(GearMaterial material) {
+            return switch (material) {
+                case COPPER -> new Color(150, 82, 44);
+                case BRONZE -> new Color(176, 126, 62);
+                case IRON -> new Color(165, 170, 176);
+                case STEEL -> new Color(205, 210, 214);
+                case SILVER -> new Color(180, 205, 220);
+                case OAK -> new Color(150, 104, 56);
+                case YEW -> new Color(94, 130, 72);
+                case IRONWOOD -> new Color(92, 92, 82);
+                case LEATHER -> new Color(120, 72, 44);
+                case NONE -> null;
+            };
+        }
+
+        private static float materialTintStrength(GearMaterial material) {
+            return switch (material) {
+                case IRON, STEEL, SILVER -> 0.35f;
+                case COPPER, BRONZE, OAK, YEW, IRONWOOD, LEATHER -> 0.45f;
+                case NONE -> 0.0f;
+            };
         }
 
         public String getName() {
@@ -316,7 +407,8 @@ public final class InventorySystem {
                     examineText,
                     statBonusTarget,
                     stackable,
-                    quantity
+                    quantity,
+                    materialTintApplied
             );
         }
     }
@@ -803,12 +895,15 @@ public final class InventorySystem {
         private static final int EQUIPMENT_GAP = 10;
         private static final int EQUIPMENT_TO_GRID_GAP = 18;
         private static final int STAT_PREVIEW_HEIGHT = 132;
+        private static final int PAPER_DOLL_PANEL_SIZE = 132;
+        private static final int PAPER_DOLL_IMAGE_SIZE = 96;
         private static final int LIMB_PANEL_WIDTH = 360;
         private static final int LIMB_PANEL_HEIGHT = 116;
 
         private final Inventory inventory;
         private final GameState gameState;
         private final SoundSystem soundSystem;
+        private final PaperDollRenderer paperDollRenderer = new PaperDollRenderer();
         private EquipmentSlot draggedEquipmentSlot = null;
 
         private final Rectangle[] inventorySlotBounds = new Rectangle[Inventory.SLOT_COUNT];
@@ -843,6 +938,7 @@ public final class InventorySystem {
             calculateBounds(panelWidth, panelHeight);
 
             drawStatPreview(g);
+            drawPaperDollPreview(g);
             drawLimbPanel(g, panelWidth);
             drawEquipmentSlots(g);
             drawInventoryGrid(g);
@@ -1351,7 +1447,9 @@ public final class InventorySystem {
 
             builder.append(limb.getName())
                     .append(" was cut from ")
-                    .append(limb.getMonsterType() == null ? "an unknown creature" : limb.getMonsterType().getDisplayName())
+                    .append(limb.getSourceCreatureName() == null || limb.getSourceCreatureName().isBlank()
+                            ? "an unknown creature"
+                            : limb.getSourceCreatureName())
                     .append(".\nCondition: ")
                     .append(limb.getCondition().getDisplayName())
                     .append("\nSlot: ")
@@ -1418,6 +1516,43 @@ public final class InventorySystem {
                 g.setColor(limb == null || limb.isBroken() ? new Color(224, 110, 100) : new Color(210, 204, 178));
                 g.drawString(text, x + 14, lineY);
                 lineY += 14;
+            }
+
+            g.setFont(oldFont);
+        }
+
+        private void drawPaperDollPreview(Graphics2D g) {
+            if (gameState == null || gameState.getPlayerCharacter() == null) {
+                return;
+            }
+
+            int x = 24;
+            int y = 24 + STAT_PREVIEW_HEIGHT + 12;
+
+            Composite oldComposite = g.getComposite();
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.82f));
+            g.setColor(new Color(8, 9, 13));
+            g.fillRoundRect(x, y, PAPER_DOLL_PANEL_SIZE, PAPER_DOLL_PANEL_SIZE, 8, 8);
+            g.setComposite(oldComposite);
+
+            g.setColor(new Color(112, 92, 58));
+            g.drawRoundRect(x, y, PAPER_DOLL_PANEL_SIZE, PAPER_DOLL_PANEL_SIZE, 8, 8);
+
+            Font oldFont = g.getFont();
+            g.setFont(oldFont.deriveFont(Font.BOLD, 14f));
+            g.setColor(new Color(238, 228, 190));
+            g.drawString("Body", x + 14, y + 24);
+
+            BufferedImage paperDoll = paperDollRenderer.render(gameState.getPlayerCharacter());
+            if (paperDoll != null) {
+                Object oldHint = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+                int imageX = x + (PAPER_DOLL_PANEL_SIZE - PAPER_DOLL_IMAGE_SIZE) / 2;
+                int imageY = y + 30;
+                g.drawImage(paperDoll, imageX, imageY, PAPER_DOLL_IMAGE_SIZE, PAPER_DOLL_IMAGE_SIZE, null);
+                if (oldHint != null) {
+                    g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, oldHint);
+                }
             }
 
             g.setFont(oldFont);
