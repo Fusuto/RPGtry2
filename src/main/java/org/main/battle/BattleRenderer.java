@@ -91,6 +91,10 @@ public class BattleRenderer {
         }
     }
 
+    public List<BattleActor> getSelectableTargetsView() {
+        return List.copyOf(selectableTargets);
+    }
+
     public void clearSelectableTargets() {
         selectableTargets.clear();
         clearPreviewSkill();
@@ -108,6 +112,11 @@ public class BattleRenderer {
 
     public boolean isSkillWindowOpen() {
         return skillWindowOpen;
+    }
+
+    public List<BattleSkill> getSkillChoices(BattleEncounter encounter) {
+        BattleActor actor = getFirstLivingAlly(encounter);
+        return actor == null ? List.of() : List.copyOf(actor.getSkills());
     }
 
     public void openItemWindow(InventorySystem.Inventory inventory) {
@@ -139,6 +148,10 @@ public class BattleRenderer {
 
     public boolean isItemWindowOpen() {
         return itemWindowOpen;
+    }
+
+    public List<BattleItemEntry> getBattleItemsView() {
+        return List.copyOf(battleItems);
     }
 
     public void draw(Graphics2D g, BattleEncounter encounter, int width, int height) {
@@ -249,7 +262,7 @@ public class BattleRenderer {
 
         drawSkillWindowTitle(g, windowX, windowY, windowWidth);
         drawSkillWindowCloseButton(g, windowX, windowY, windowWidth);
-        drawSkillRows(g, skills, windowX, windowY, windowWidth, windowHeight);
+        drawSkillRows(g, actor, skills, windowX, windowY, windowWidth, windowHeight);
     }
 
     private void drawItemWindow(Graphics2D g, int width, int height) {
@@ -415,6 +428,7 @@ public class BattleRenderer {
 
     private void drawSkillRows(
             Graphics2D g,
+            BattleActor actor,
             List<BattleSkill> skills,
             int windowX,
             int windowY,
@@ -441,10 +455,11 @@ public class BattleRenderer {
             Rectangle rowBounds = new Rectangle(rowX, rowY, contentWidth, rowHeight);
             skillBounds.put(skill, rowBounds);
 
-            g.setColor(new Color(45, 45, 45));
+            boolean ready = actor == null || actor.isSkillReady(skill);
+            g.setColor(ready ? new Color(45, 45, 45) : new Color(30, 30, 34));
             g.fillRect(rowX, rowY, contentWidth, rowHeight);
 
-            g.setColor(Color.WHITE);
+            g.setColor(ready ? Color.WHITE : new Color(120, 120, 125));
             g.drawRect(rowX, rowY, contentWidth, rowHeight);
 
             FontMetrics metrics = g.getFontMetrics();
@@ -455,6 +470,10 @@ public class BattleRenderer {
                     + metrics.getAscent();
 
             g.drawString(skill.getName(), textX, textY);
+            if (!ready) {
+                String cooldownText = Math.max(1, (int) Math.ceil(actor.getSkillCooldownRemainingSeconds(skill))) + "s";
+                g.drawString(cooldownText, rowX + contentWidth - metrics.stringWidth(cooldownText) - 10, textY);
+            }
         }
     }
 
@@ -1040,6 +1059,6 @@ public class BattleRenderer {
         return ellipsis;
     }
 
-    private record BattleItemEntry(int inventoryIndex, InventorySystem.Item item) {
+    public record BattleItemEntry(int inventoryIndex, InventorySystem.Item item) {
     }
 }

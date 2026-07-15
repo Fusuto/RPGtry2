@@ -19,6 +19,11 @@ public class BattleSkill {
     private final double selfHealPercent;
     private final SummonMode summonMode;
     private final double summonChance;
+    private final String summonSpeciesId;
+    private final String summonDisplayName;
+    private final String skillId;
+    private final double baseCooldownSeconds;
+    private final boolean consumesAutoAction;
 
     public BattleSkill(
             String name,
@@ -80,6 +85,75 @@ public class BattleSkill {
             SummonMode summonMode,
             double summonChance
     ) {
+        this(name, description, targetShape, targetTeam, targetingMode, useSoundPath, effectType, damage,
+                stunChance, stunTurns, defendTurns, damageReduction, selfHealPercent, summonMode, summonChance, "", "");
+    }
+
+    private BattleSkill(
+            String name,
+            String description,
+            Library.SkillTargetShape targetShape,
+            Library.EntityType targetTeam,
+            Library.BattleTargetingMode targetingMode,
+            String useSoundPath,
+            Library.EffectType effectType,
+            int damage,
+            double stunChance,
+            int stunTurns,
+            int defendTurns,
+            double damageReduction,
+            double selfHealPercent,
+            SummonMode summonMode,
+            double summonChance,
+            String summonSpeciesId,
+            String summonDisplayName
+    ) {
+        this(
+                name,
+                description,
+                targetShape,
+                targetTeam,
+                targetingMode,
+                useSoundPath,
+                effectType,
+                damage,
+                stunChance,
+                stunTurns,
+                defendTurns,
+                damageReduction,
+                selfHealPercent,
+                summonMode,
+                summonChance,
+                summonSpeciesId,
+                summonDisplayName,
+                "",
+                0.0,
+                true
+        );
+    }
+
+    private BattleSkill(
+            String name,
+            String description,
+            Library.SkillTargetShape targetShape,
+            Library.EntityType targetTeam,
+            Library.BattleTargetingMode targetingMode,
+            String useSoundPath,
+            Library.EffectType effectType,
+            int damage,
+            double stunChance,
+            int stunTurns,
+            int defendTurns,
+            double damageReduction,
+            double selfHealPercent,
+            SummonMode summonMode,
+            double summonChance,
+            String summonSpeciesId,
+            String summonDisplayName,
+            String skillId,
+            double baseCooldownSeconds,
+            boolean consumesAutoAction
+    ) {
         this.name = name;
         this.description = description;
         this.targetShape = targetShape;
@@ -95,6 +169,11 @@ public class BattleSkill {
         this.selfHealPercent = Math.max(0.0, selfHealPercent);
         this.summonMode = summonMode == null ? SummonMode.NONE : summonMode;
         this.summonChance = Math.max(0.0, Math.min(1.0, summonChance));
+        this.summonSpeciesId = summonSpeciesId == null ? "" : summonSpeciesId;
+        this.summonDisplayName = summonDisplayName == null ? "" : summonDisplayName;
+        this.skillId = skillId == null || skillId.isBlank() ? fallbackSkillId(name) : skillId;
+        this.baseCooldownSeconds = Math.max(0.0, baseCooldownSeconds);
+        this.consumesAutoAction = consumesAutoAction;
     }
 
     public BattleSkill(
@@ -170,8 +249,84 @@ public class BattleSkill {
         return summonChance;
     }
 
+    public String getSummonSpeciesId() {
+        return summonSpeciesId;
+    }
+
+    public String getSummonDisplayName() {
+        return summonDisplayName;
+    }
+
     public boolean isSummonSkill() {
         return effectType == Library.EffectType.SUMMON && summonMode != SummonMode.NONE;
+    }
+
+    public String getSkillId() {
+        return skillId;
+    }
+
+    public double getBaseCooldownSeconds() {
+        return baseCooldownSeconds;
+    }
+
+    public boolean consumesAutoAction() {
+        return consumesAutoAction;
+    }
+
+    public BattleSkill withSummonSource(String speciesId, String displayName) {
+        return new BattleSkill(
+                name,
+                description,
+                targetShape,
+                targetTeam,
+                targetingMode,
+                useSoundPath,
+                effectType,
+                damage,
+                stunChance,
+                stunTurns,
+                defendTurns,
+                damageReduction,
+                selfHealPercent,
+                summonMode,
+                summonChance,
+                speciesId,
+                displayName,
+                skillId,
+                baseCooldownSeconds,
+                consumesAutoAction
+        );
+    }
+
+    public BattleSkill withCooldown(String skillId, double baseCooldownSeconds, boolean consumesAutoAction) {
+        return new BattleSkill(
+                name,
+                description,
+                targetShape,
+                targetTeam,
+                targetingMode,
+                useSoundPath,
+                effectType,
+                damage,
+                stunChance,
+                stunTurns,
+                defendTurns,
+                damageReduction,
+                selfHealPercent,
+                summonMode,
+                summonChance,
+                summonSpeciesId,
+                summonDisplayName,
+                skillId,
+                baseCooldownSeconds,
+                consumesAutoAction
+        );
+    }
+
+    private static String fallbackSkillId(String name) {
+        return name == null || name.isBlank()
+                ? "skill"
+                : name.trim().toUpperCase().replaceAll("[^A-Z0-9]+", "_");
     }
 
     public enum SummonMode {

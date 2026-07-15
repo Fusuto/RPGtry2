@@ -27,7 +27,21 @@ public final class DifficultyResolver {
                 null,
                 Library.EntityType.ALLY
         );
-        actor.copyCombatProfileFrom(player);
+        actor.setAttackStat(player.getStat(PlayerStat.ATTACK));
+        actor.setStrengthStat(player.getStat(PlayerStat.STRENGTH));
+        actor.setDefenseStat(player.getStat(PlayerStat.DEFENSE));
+        actor.setAgilityStat(player.getStat(PlayerStat.AGILITY));
+        actor.setIntelligence(player.getStat(PlayerStat.INTELLIGENCE));
+        actor.setWillpowerStat(player.getStat(PlayerStat.WILLPOWER));
+        actor.setArmorBonus(0);
+        actor.setWeaponAccuracyBonus(0);
+        actor.setWeaponPowerBonus(0);
+        actor.setWeaponSpeedMultiplier(1.0);
+        actor.setCombatSkillLevel(CharacterSkill.ATTACK, player.getSkillLevel(CharacterSkill.ATTACK));
+        actor.setCombatSkillLevel(CharacterSkill.STRENGTH, player.getSkillLevel(CharacterSkill.STRENGTH));
+        actor.setCombatSkillLevel(CharacterSkill.DEFENSE, player.getSkillLevel(CharacterSkill.DEFENSE));
+        actor.setCombatSkillLevel(CharacterSkill.MAGIC_ACCURACY, player.getSkillLevel(CharacterSkill.MAGIC_ACCURACY));
+        actor.setCombatSkillLevel(CharacterSkill.MAGIC_POWER, player.getSkillLevel(CharacterSkill.MAGIC_POWER));
         for (BattleSkill skill : player.getBattleSkills()) {
             actor.addSkill(skill);
         }
@@ -83,11 +97,15 @@ public final class DifficultyResolver {
                 + actor.getCombatSkillLevel(CharacterSkill.ATTACK)
                 + actor.getStrengthStat()
                 + actor.getCombatSkillLevel(CharacterSkill.STRENGTH)
-                + actor.getWeaponBonus();
+                + actor.getWeaponAccuracyBonus()
+                + actor.getWeaponPowerBonus();
         double baselineAttackInterval = BattleTiming.calculateAttackIntervalSeconds(
                 GameConfiguration.intValue("battle.attackInterval.minimumAgility", 1)
         );
-        double actorAttackInterval = BattleTiming.calculateAttackIntervalSeconds(actor.getAgilityStat());
+        double actorAttackInterval = BattleTiming.calculateAttackIntervalSeconds(
+                actor.getAgilityStat(),
+                actor.getWeaponSpeedMultiplier()
+        );
         double speedMultiplier = actorAttackInterval <= 0.0
                 ? 1.0
                 : baselineAttackInterval / actorAttackInterval;

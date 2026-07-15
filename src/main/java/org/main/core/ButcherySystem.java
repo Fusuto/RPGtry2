@@ -134,6 +134,7 @@ public final class ButcherySystem {
 
         return new LimbItem(
                 name,
+                monster.getCustomId(),
                 monster.getName(),
                 slot,
                 stats,

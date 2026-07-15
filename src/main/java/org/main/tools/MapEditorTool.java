@@ -12,14 +12,17 @@ import org.main.content.RecipeLibrary;
 import org.main.content.SkillLibrary;
 import org.main.content.ThemeLibrary;
 import org.main.core.CharacterSkill;
+import org.main.core.GameConfiguration;
 import org.main.core.GearMaterial;
 import org.main.core.GearDurability;
 import org.main.core.InventorySystem;
 import org.main.core.Library;
 import org.main.core.LimbSlot;
 import org.main.core.PlayerStat;
+import org.main.core.WeaponType;
 
 import javax.swing.JButton;
+import javax.swing.BoxLayout;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.DefaultListModel;
@@ -44,6 +47,7 @@ import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
@@ -54,6 +58,8 @@ import java.awt.RenderingHints;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -61,6 +67,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -70,6 +77,7 @@ public class MapEditorTool extends JFrame {
     private static final int MIN_DIMENSION = 3;
     private static final int MAX_DIMENSION = 80;
     private static final String DEFAULT_LIMB_ICON = "assets/images/monster/Ancient/Oct-5-2010/player/hand1/misc/head.png";
+    private static final Path CONFIG_RESOURCE_PATH = Path.of("src", "main", "resources", "assets", "configuration.properties");
 
     private final MapCanvas mapCanvas = new MapCanvas();
     private final JLabel statusLabel = new JLabel("Ready.");
@@ -81,6 +89,8 @@ public class MapEditorTool extends JFrame {
     private final JComboBox<Library.TileType> tileTypeBox = new JComboBox<>(Library.TileType.values());
     private final JComboBox<PlaceableOption> placeableBox = new JComboBox<>();
     private final JTextField mapNameField = new JTextField("new_map", 14);
+    private String pendingTriggerId = "";
+    private String wiringTriggerId = "";
 
     private MapDesignLibrary.MapDesign design = MapDesignLibrary.createBlank(
             DEFAULT_WIDTH,
@@ -168,7 +178,10 @@ public class MapEditorTool extends JFrame {
         addMenuItem(menu, "Enemy", this::createCustomMob);
         addMenuItem(menu, "NPC", this::createCustomNpc);
         addMenuItem(menu, "Limb", this::createCustomLimb);
+        addMenuItem(menu, "Gathering Node", this::createCustomGatheringNode);
+        addMenuItem(menu, "Composite Recipe", this::createCompositeRecipe);
         addMenuItem(menu, "Map Link", this::createMapLink);
+        addMenuItem(menu, "Trigger", this::createTrigger);
         return menuButton("Create", menu);
     }
 
@@ -180,6 +193,10 @@ public class MapEditorTool extends JFrame {
         addMenuItem(menu, "Enemies", this::manageCustomMobs);
         addMenuItem(menu, "NPCs", this::manageCustomNpcs);
         addMenuItem(menu, "Limbs", this::manageCustomLimbs);
+        addMenuItem(menu, "Gathering Nodes", this::manageCustomGatheringNodes);
+        addMenuItem(menu, "Composite Recipes", this::manageCompositeRecipes);
+        addMenuItem(menu, "Abilities", this::manageAbilityConfiguration);
+        addMenuItem(menu, "Triggers", this::manageTriggers);
         return menuButton("Manage", menu);
     }
 
@@ -193,6 +210,93 @@ public class MapEditorTool extends JFrame {
         JMenuItem item = new JMenuItem(label);
         item.addActionListener(event -> action.run());
         menu.add(item);
+    }
+
+    private void manageAbilityConfiguration() {
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        JPanel fields = new JPanel(new java.awt.GridLayout(0, 3, 8, 6));
+        Map<SkillLibrary, JSpinner> cooldownSpinners = new EnumMap<>(SkillLibrary.class);
+
+        fields.add(new JLabel("Ability"));
+        fields.add(new JLabel("Cooldown"));
+        fields.add(new JLabel("Key"));
+
+        for (SkillLibrary skill : SkillLibrary.values()) {
+            String key = abilityCooldownKey(skill);
+            double currentCooldown = GameConfiguration.doubleValue(key, 0.0);
+            JSpinner cooldownSpinner = new JSpinner(new SpinnerNumberModel(currentCooldown, 0.0, 3600.0, 0.5));
+            cooldownSpinners.put(skill, cooldownSpinner);
+
+            fields.add(new JLabel(skill.getDisplayName()));
+            fields.add(cooldownSpinner);
+            fields.add(new JLabel(key));
+        }
+
+        JTextArea note = new JTextArea(
+                "Cooldowns are saved to the packaged configuration and mirrored to the editable runtime configuration."
+        );
+        note.setEditable(false);
+        note.setOpaque(false);
+        note.setLineWrap(true);
+        note.setWrapStyleWord(true);
+
+        panel.add(new JScrollPane(fields), BorderLayout.CENTER);
+        panel.add(note, BorderLayout.SOUTH);
+
+        int result = JOptionPane.showConfirmDialog(
+                this,
+                panel,
+                "Modify Abilities",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+        );
+        if (result != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        Properties properties = loadPackagedConfigurationProperties();
+        for (Map.Entry<SkillLibrary, JSpinner> entry : cooldownSpinners.entrySet()) {
+            String key = abilityCooldownKey(entry.getKey());
+            String value = formatConfigNumber(((Number) entry.getValue().getValue()).doubleValue());
+            properties.setProperty(key, value);
+            GameConfiguration.setValue(key, value);
+        }
+
+        try {
+            Files.createDirectories(CONFIG_RESOURCE_PATH.getParent());
+            try (OutputStream outputStream = Files.newOutputStream(CONFIG_RESOURCE_PATH)) {
+                properties.store(outputStream, "Aether packaged gameplay configuration");
+            }
+            setStatus("Updated ability cooldown configuration.");
+        } catch (IOException exception) {
+            setStatus("Ability configuration save failed: " + exception.getMessage());
+        }
+    }
+
+    private Properties loadPackagedConfigurationProperties() {
+        Properties properties = new Properties();
+        if (!Files.isRegularFile(CONFIG_RESOURCE_PATH)) {
+            return properties;
+        }
+
+        try (InputStream inputStream = Files.newInputStream(CONFIG_RESOURCE_PATH)) {
+            properties.load(inputStream);
+        } catch (IOException exception) {
+            setStatus("Ability configuration load warning: " + exception.getMessage());
+        }
+        return properties;
+    }
+
+    private static String abilityCooldownKey(SkillLibrary skill) {
+        return "battle.skillCooldown." + skill.name() + ".seconds";
+    }
+
+    private static String formatConfigNumber(double value) {
+        double safeValue = Math.max(0.0, value);
+        if (Math.rint(safeValue) == safeValue) {
+            return String.valueOf((long) safeValue);
+        }
+        return String.format(java.util.Locale.US, "%.2f", safeValue).replaceAll("0+$", "").replaceAll("\\.$", "");
     }
 
     private JPanel createFooter() {
@@ -233,6 +337,14 @@ public class MapEditorTool extends JFrame {
 
         for (MapDesignLibrary.CustomNpc npc : design.customNpcs()) {
             placeableBox.addItem(new PlaceableOption("Custom NPC: " + npc.displayName(), MapDesignLibrary.PlacementKind.CUSTOM_NPC, npc.npcId()));
+        }
+
+        for (MapDesignLibrary.CustomGatheringNode node : design.customGatheringNodes()) {
+            placeableBox.addItem(new PlaceableOption(
+                    "Gathering: " + node.displayName(),
+                    MapDesignLibrary.PlacementKind.GATHERING_NODE,
+                    node.nodeId()
+            ));
         }
 
         for (ItemLibrary item : ItemLibrary.values()) {
@@ -474,7 +586,10 @@ public class MapEditorTool extends JFrame {
                 existing == null ? "assets/images/generated/items/custom_item.png" : existing.iconPath(),
                 28
         );
+        JTextField paperDollOverlayField = new JTextField(existing == null ? "" : existing.paperDollOverlayPath(), 28);
         JButton browseButton = new JButton("Browse");
+        JButton paperDollBrowseButton = new JButton("Browse");
+        JComboBox<ItemTemplateOption> templateBox = new JComboBox<>(itemTemplateOptions());
         JComboBox<InventorySystem.ItemType> typeBox = new JComboBox<>(new InventorySystem.ItemType[]{
                 InventorySystem.ItemType.MISC,
                 InventorySystem.ItemType.CONSUMABLE,
@@ -486,6 +601,13 @@ public class MapEditorTool extends JFrame {
                 InventorySystem.ItemType.RING
         });
         JComboBox<GearMaterial> materialBox = new JComboBox<>(GearMaterial.values());
+        JComboBox<WeaponType> weaponTypeBox = new JComboBox<>(new WeaponType[]{
+                WeaponType.DAGGER,
+                WeaponType.SWORD,
+                WeaponType.MACE,
+                WeaponType.GREATSWORD
+        });
+        JLabel weaponTypeLabel = new JLabel("Weapon Type");
         JComboBox<StatTargetOption> statTargetBox = new JComboBox<>(statTargetOptions());
         JSpinner healSpinner = new JSpinner(new SpinnerNumberModel(existing == null ? 0 : existing.healAmount(), 0, 1000, 1));
         JSpinner valueSpinner = new JSpinner(new SpinnerNumberModel(existing == null ? 10 : existing.baseGoldValue(), 1, 100000, 1));
@@ -500,6 +622,7 @@ public class MapEditorTool extends JFrame {
         if (existing != null) {
             typeBox.setSelectedItem(existing.itemType());
             materialBox.setSelectedItem(existing.material());
+            weaponTypeBox.setSelectedItem(existing.weaponType());
             selectStatTargetOption(statTargetBox, existing.statBonusTarget());
             smithingRecipeBox.setSelected(existing.smithingRecipeEnabled());
         }
@@ -516,17 +639,59 @@ public class MapEditorTool extends JFrame {
             smithingLevelSpinner.setEnabled(enabled);
             smithingXpSpinner.setEnabled(enabled);
             smithingMaterialLabel.setText(metal
-                    ? "Uses " + RecipeLibrary.smithingMaterialNameFor(material)
-                    : "Metal materials only");
+                ? "Uses " + RecipeLibrary.smithingMaterialNameFor(material)
+                : "Metal materials only");
+        };
+        Runnable updateWeaponTypeControls = () -> {
+            boolean weapon = typeBox.getSelectedItem() == InventorySystem.ItemType.WEAPON;
+            weaponTypeLabel.setVisible(weapon);
+            weaponTypeBox.setEnabled(weapon);
+            weaponTypeBox.setVisible(weapon);
+            if (!weapon) {
+                weaponTypeBox.setSelectedItem(WeaponType.SWORD);
+            }
         };
 
         browseButton.addActionListener(event -> browsePathInto(iconPathField));
+        paperDollBrowseButton.addActionListener(event -> browsePathInto(paperDollOverlayField));
+        typeBox.addActionListener(event -> {
+            updateWeaponTypeControls.run();
+            updateSmithingRecipeControls.run();
+        });
         materialBox.addActionListener(event -> updateSmithingRecipeControls.run());
         smithingRecipeBox.addActionListener(event -> updateSmithingRecipeControls.run());
+        templateBox.addActionListener(event -> {
+            ItemTemplateOption template = (ItemTemplateOption) templateBox.getSelectedItem();
+            if (template == null || template.item() == null) {
+                return;
+            }
+            MapDesignLibrary.CustomItem item = template.item();
+            nameField.setText(item.displayName() + " Copy");
+            iconPathField.setText(item.iconPath());
+            paperDollOverlayField.setText(item.paperDollOverlayPath());
+            typeBox.setSelectedItem(item.itemType());
+            materialBox.setSelectedItem(item.material());
+            weaponTypeBox.setSelectedItem(item.weaponType() == WeaponType.NONE ? WeaponType.SWORD : item.weaponType());
+            selectStatTargetOption(statTargetBox, item.statBonusTarget());
+            healSpinner.setValue(item.healAmount());
+            valueSpinner.setValue(item.baseGoldValue());
+            smithingRecipeBox.setSelected(item.smithingRecipeEnabled());
+            smithingBarsSpinner.setValue(item.smithingRequiredBars());
+            smithingLevelSpinner.setValue(item.smithingRequiredLevel());
+            smithingXpSpinner.setValue(item.smithingXpReward());
+            examineArea.setText(item.examineText());
+            updateWeaponTypeControls.run();
+            updateSmithingRecipeControls.run();
+        });
+        updateWeaponTypeControls.run();
         updateSmithingRecipeControls.run();
 
         JPanel panel = new JPanel(new BorderLayout(6, 6));
         JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        if (existing == null) {
+            fields.add(new JLabel("Template"));
+            fields.add(templateBox);
+        }
         fields.add(new JLabel("Name"));
         fields.add(nameField);
         fields.add(new JLabel("Image"));
@@ -534,10 +699,17 @@ public class MapEditorTool extends JFrame {
         imagePanel.add(iconPathField, BorderLayout.CENTER);
         imagePanel.add(browseButton, BorderLayout.EAST);
         fields.add(imagePanel);
+        fields.add(new JLabel("Paper Doll Sprite"));
+        JPanel paperDollPanel = new JPanel(new BorderLayout(4, 4));
+        paperDollPanel.add(paperDollOverlayField, BorderLayout.CENTER);
+        paperDollPanel.add(paperDollBrowseButton, BorderLayout.EAST);
+        fields.add(paperDollPanel);
         fields.add(new JLabel("Type"));
         fields.add(typeBox);
         fields.add(new JLabel("Material"));
         fields.add(materialBox);
+        fields.add(weaponTypeLabel);
+        fields.add(weaponTypeBox);
         fields.add(new JLabel("Ring Stat"));
         fields.add(statTargetBox);
         fields.add(new JLabel("HP Restore"));
@@ -575,8 +747,10 @@ public class MapEditorTool extends JFrame {
         }
 
         String iconPath;
+        String paperDollOverlayPath;
         try {
             iconPath = normalizeCustomItemImagePath(iconPathField.getText(), name);
+            paperDollOverlayPath = normalizeOptionalCustomItemImagePath(paperDollOverlayField.getText(), name + "_paper_doll");
         } catch (Exception exception) {
             setStatus("Item image failed: " + exception.getMessage());
             return null;
@@ -587,6 +761,10 @@ public class MapEditorTool extends JFrame {
                 name,
                 (InventorySystem.ItemType) typeBox.getSelectedItem(),
                 iconPath,
+                paperDollOverlayPath,
+                typeBox.getSelectedItem() == InventorySystem.ItemType.WEAPON
+                        ? (WeaponType) weaponTypeBox.getSelectedItem()
+                        : WeaponType.NONE,
                 (GearMaterial) materialBox.getSelectedItem(),
                 ((Number) healSpinner.getValue()).intValue(),
                 ((Number) valueSpinner.getValue()).intValue(),
@@ -853,6 +1031,7 @@ public class MapEditorTool extends JFrame {
                 "assets/images/generated/limbs/custom_limb.png",
                 "",
                 "",
+                "",
                 emptyStatMap(),
                 List.of()
         );
@@ -864,6 +1043,466 @@ public class MapEditorTool extends JFrame {
         persistSharedContent("custom limb");
         populatePlaceables();
         setStatus("Created custom limb " + limb.displayName() + ".");
+    }
+
+    private void createCustomGatheringNode() {
+        JTextField nameField = new JTextField("Gathering Node", 24);
+        JComboBox<MapDesignLibrary.GatheringNodeType> typeBox = new JComboBox<>(MapDesignLibrary.GatheringNodeType.values());
+        JComboBox<CharacterSkill> skillBox = new JComboBox<>(CharacterSkill.values());
+        JSpinner requiredLevelSpinner = new JSpinner(new SpinnerNumberModel(1, 1, 100, 1));
+        JSpinner gatherXpSpinner = new JSpinner(new SpinnerNumberModel(18, 0, 100000, 1));
+        JSpinner frameDurationSpinner = new JSpinner(new SpinnerNumberModel(1000, 1, 100000, 1));
+        JSpinner visualScaleSpinner = new JSpinner(new SpinnerNumberModel(1.35, 0.1, 10.0, 0.05));
+        JCheckBox autoMetalOreBox = new JCheckBox("Auto-create metal ore from stage 0 image");
+        JComboBox<GearMaterial> materialBox = new JComboBox<>(metalMaterials());
+        JCheckBox smeltingBox = new JCheckBox("Create smelting recipe");
+        JSpinner smeltingLevelSpinner = new JSpinner(new SpinnerNumberModel(1, 1, 100, 1));
+        JSpinner smeltingXpSpinner = new JSpinner(new SpinnerNumberModel(7, 0, 100000, 1));
+        JTextField barImageField = new JTextField("assets/images/resourceMaterial/bronze_bar.png", 28);
+        JButton barBrowse = new JButton("Browse");
+        JTextField frameOneField = new JTextField("assets/images/generic/64x64/A_Rock1_Node1.png", 28);
+        JTextField frameTwoField = new JTextField("assets/images/generic/64x64/A_Rock1_Node2.png", 28);
+        JTextField frameThreeField = new JTextField("assets/images/generic/64x64/A_Rock1_Node3.png", 28);
+        JButton frameOneBrowse = new JButton("Browse");
+        JButton frameTwoBrowse = new JButton("Browse");
+        JButton frameThreeBrowse = new JButton("Browse");
+        JButton lootButton = new JButton("Edit Loot Table");
+        List<MapDesignLibrary.CustomDropEntry> lootEntries = new ArrayList<>();
+
+        skillBox.setSelectedItem(CharacterSkill.MINING);
+        frameOneBrowse.addActionListener(event -> browsePathInto(frameOneField));
+        frameTwoBrowse.addActionListener(event -> browsePathInto(frameTwoField));
+        frameThreeBrowse.addActionListener(event -> browsePathInto(frameThreeField));
+        barBrowse.addActionListener(event -> browsePathInto(barImageField));
+        lootButton.addActionListener(event -> editGatheringLootEntries(lootEntries));
+
+        JPanel fields = new JPanel();
+        fields.setLayout(new BoxLayout(fields, BoxLayout.Y_AXIS));
+        JPanel frameDurationRow = formRow("Frame Duration Ms", frameDurationSpinner);
+        fields.add(formRow("Name", nameField));
+        fields.add(formRow("Type", typeBox));
+        fields.add(formRow("Skill", skillBox));
+        fields.add(formRow("Required Level", requiredLevelSpinner));
+        fields.add(formRow("Gather XP", gatherXpSpinner));
+        fields.add(frameDurationRow);
+        fields.add(formRow("Visual Scale", visualScaleSpinner));
+        fields.add(formRow("Loot Table", lootButton));
+        fields.add(formRow("Metal Helper", autoMetalOreBox));
+        fields.add(formRow("Metal", materialBox));
+        fields.add(formRow("Smelting", smeltingBox));
+        fields.add(formRow("Smelting Level", smeltingLevelSpinner));
+        fields.add(formRow("Smelting XP", smeltingXpSpinner));
+        fields.add(formRow("Bar Icon", pathFieldPanel(barImageField, barBrowse)));
+        fields.add(formRow("Stage / Frame 0", pathFieldPanel(frameOneField, frameOneBrowse)));
+        fields.add(formRow("Stage / Frame 1", pathFieldPanel(frameTwoField, frameTwoBrowse)));
+        fields.add(formRow("Stage / Frame 2", pathFieldPanel(frameThreeField, frameThreeBrowse)));
+
+        Runnable updateGatheringNodeFields = () -> {
+            MapDesignLibrary.GatheringNodeType type = (MapDesignLibrary.GatheringNodeType) typeBox.getSelectedItem();
+            skillBox.setSelectedItem(MapDesignLibrary.defaultGatheringSkill(type));
+            boolean animated = gatheringNodeUsesAnimation(type);
+            frameDurationRow.setVisible(animated);
+            frameDurationSpinner.setValue(animated ? 260 : 1000);
+            visualScaleSpinner.setValue(animated ? 1.0 : 1.35);
+            fields.revalidate();
+            fields.repaint();
+        };
+        typeBox.addActionListener(event -> updateGatheringNodeFields.run());
+        updateGatheringNodeFields.run();
+
+        if (JOptionPane.showConfirmDialog(this, fields, "Create Gathering Node", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
+                != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        String name = nameField.getText() == null ? "" : nameField.getText().trim();
+        if (name.isBlank()) {
+            setStatus("Gathering node needs a name.");
+            return;
+        }
+
+        try {
+            List<String> frames = List.of(
+                    normalizeGeneratedImagePath(frameOneField.getText(), safeId(name) + "_stage_0", "gathering"),
+                    normalizeGeneratedImagePath(frameTwoField.getText(), safeId(name) + "_stage_1", "gathering"),
+                    normalizeGeneratedImagePath(frameThreeField.getText(), safeId(name) + "_stage_2", "gathering")
+            );
+            String smeltOutputItemId = "";
+            String outputItemId = lootEntries.isEmpty() ? "" : lootEntries.get(0).itemId();
+
+            if (autoMetalOreBox.isSelected()) {
+                GearMaterial material = (GearMaterial) materialBox.getSelectedItem();
+                String metalName = material == null ? "Metal" : material.getDisplayName();
+                String oreName = metalName + " Ore";
+                outputItemId = findItemIdByDisplayName(oreName);
+                if (outputItemId.isBlank()) {
+                    outputItemId = nextCustomItemId(oreName);
+                    design.customItems().add(new MapDesignLibrary.CustomItem(
+                            outputItemId,
+                            oreName,
+                            InventorySystem.ItemType.MISC,
+                            frames.get(0),
+                            "",
+                            WeaponType.NONE,
+                            GearMaterial.NONE,
+                            0,
+                            6,
+                            "Raw " + metalName.toLowerCase(java.util.Locale.ROOT) + " ore. Smelt it into a bar at a furnace.",
+                            null,
+                            false,
+                            1,
+                            1,
+                            0
+                    ));
+                }
+                lootEntries.clear();
+                lootEntries.add(new MapDesignLibrary.CustomDropEntry(outputItemId, 1.0));
+
+                if (smeltingBox.isSelected()) {
+                    String barName = RecipeLibrary.smithingMaterialNameFor(material);
+                    if (barName.isBlank()) {
+                        barName = metalName + " Bar";
+                    }
+                    smeltOutputItemId = findItemIdByDisplayName(barName);
+                    if (smeltOutputItemId.isBlank()) {
+                        smeltOutputItemId = nextCustomItemId(barName);
+                        String barImage = normalizeGeneratedImagePath(barImageField.getText(), safeId(barName), "items");
+                        design.customItems().add(new MapDesignLibrary.CustomItem(
+                                smeltOutputItemId,
+                                barName,
+                                InventorySystem.ItemType.MISC,
+                                barImage,
+                                "",
+                                WeaponType.NONE,
+                                GearMaterial.NONE,
+                                0,
+                                12,
+                                "A " + metalName.toLowerCase(java.util.Locale.ROOT) + " bar ready for smithing.",
+                                null,
+                                false,
+                                1,
+                                1,
+                                0
+                        ));
+                    }
+                }
+            }
+
+            if (lootEntries.isEmpty()) {
+                setStatus("Gathering node needs at least one loot entry or an auto metal output.");
+                return;
+            }
+
+            MapDesignLibrary.CustomGatheringNode node = new MapDesignLibrary.CustomGatheringNode(
+                    nextCustomGatheringNodeId(name),
+                    name,
+                    (MapDesignLibrary.GatheringNodeType) typeBox.getSelectedItem(),
+                    ((Number) requiredLevelSpinner.getValue()).intValue(),
+                    outputItemId,
+                    ((Number) gatherXpSpinner.getValue()).intValue(),
+                    smeltOutputItemId,
+                    ((Number) smeltingXpSpinner.getValue()).intValue(),
+                    frames,
+                    ((Number) frameDurationSpinner.getValue()).intValue(),
+                    ((Number) visualScaleSpinner.getValue()).doubleValue(),
+                    (CharacterSkill) skillBox.getSelectedItem(),
+                    new ArrayList<>(lootEntries),
+                    ((Number) smeltingLevelSpinner.getValue()).intValue()
+            );
+            design.customGatheringNodes().add(node);
+            persistSharedContent("gathering node");
+            populatePlaceables();
+            setStatus("Created gathering node " + node.displayName() + ".");
+        } catch (IOException exception) {
+            setStatus("Gathering node image save failed: " + exception.getMessage());
+        }
+    }
+
+    private void createCompositeRecipe() {
+        JTextField nameField = new JTextField("Composite Recipe", 24);
+        JComboBox<MapDesignLibrary.CompositeRecipeCategory> categoryBox =
+                new JComboBox<>(MapDesignLibrary.CompositeRecipeCategory.values());
+        JComboBox<DropItemOption> primaryBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
+        JComboBox<DropItemOption> secondaryBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
+        JComboBox<DropItemOption> outputBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
+        JComboBox<CharacterSkill> skillBox = new JComboBox<>(CharacterSkill.values());
+        JSpinner requiredLevelSpinner = new JSpinner(new SpinnerNumberModel(1, 1, 100, 1));
+        JSpinner xpSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100000, 1));
+        JCheckBox consumePrimaryBox = new JCheckBox("Consume primary", true);
+        JCheckBox consumeSecondaryBox = new JCheckBox("Consume secondary", true);
+        JCheckBox smeltingBox = new JCheckBox("Output can be smelted");
+        JComboBox<DropItemOption> smeltOutputBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
+        JSpinner smeltingLevelSpinner = new JSpinner(new SpinnerNumberModel(1, 1, 100, 1));
+        JSpinner smeltingXpSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100000, 1));
+        skillBox.setSelectedItem(CharacterSkill.SMITHING);
+
+        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        fields.add(new JLabel("Name"));
+        fields.add(nameField);
+        fields.add(new JLabel("Category"));
+        fields.add(categoryBox);
+        fields.add(new JLabel("Primary Item"));
+        fields.add(primaryBox);
+        fields.add(new JLabel("Secondary Item"));
+        fields.add(secondaryBox);
+        fields.add(new JLabel("Output Item"));
+        fields.add(outputBox);
+        fields.add(new JLabel("Skill"));
+        fields.add(skillBox);
+        fields.add(new JLabel("Required Level"));
+        fields.add(requiredLevelSpinner);
+        fields.add(new JLabel("XP Reward"));
+        fields.add(xpSpinner);
+        fields.add(new JLabel("Primary"));
+        fields.add(consumePrimaryBox);
+        fields.add(new JLabel("Secondary"));
+        fields.add(consumeSecondaryBox);
+        fields.add(new JLabel("Smelting"));
+        fields.add(smeltingBox);
+        fields.add(new JLabel("Smelt Output"));
+        fields.add(smeltOutputBox);
+        fields.add(new JLabel("Smelting Level"));
+        fields.add(smeltingLevelSpinner);
+        fields.add(new JLabel("Smelting XP"));
+        fields.add(smeltingXpSpinner);
+
+        if (JOptionPane.showConfirmDialog(this, fields, "Create Composite Recipe", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
+                != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        String name = nameField.getText() == null ? "" : nameField.getText().trim();
+        DropItemOption primary = (DropItemOption) primaryBox.getSelectedItem();
+        DropItemOption secondary = (DropItemOption) secondaryBox.getSelectedItem();
+        DropItemOption output = (DropItemOption) outputBox.getSelectedItem();
+        if (name.isBlank() || primary == null || secondary == null || output == null) {
+            setStatus("Composite recipe needs a name, two ingredients, and an output.");
+            return;
+        }
+
+        MapDesignLibrary.CustomCompositeRecipe recipe = new MapDesignLibrary.CustomCompositeRecipe(
+                nextCompositeRecipeId(name),
+                name,
+                (MapDesignLibrary.CompositeRecipeCategory) categoryBox.getSelectedItem(),
+                primary.itemId(),
+                secondary.itemId(),
+                output.itemId(),
+                (CharacterSkill) skillBox.getSelectedItem(),
+                ((Number) requiredLevelSpinner.getValue()).intValue(),
+                ((Number) xpSpinner.getValue()).intValue(),
+                consumePrimaryBox.isSelected(),
+                consumeSecondaryBox.isSelected(),
+                smeltingBox.isSelected() && smeltOutputBox.getSelectedItem() instanceof DropItemOption smeltOutput
+                        ? smeltOutput.itemId()
+                        : "",
+                ((Number) smeltingLevelSpinner.getValue()).intValue(),
+                ((Number) smeltingXpSpinner.getValue()).intValue()
+        );
+        design.customCompositeRecipes().add(recipe);
+        persistSharedContent("composite recipe");
+        setStatus("Created composite recipe " + recipe.displayName() + ".");
+    }
+
+    private void createCustomMiningRock() {
+        JTextField nameField = new JTextField("Copper Rock", 24);
+        JComboBox<GearMaterial> materialBox = new JComboBox<>(metalMaterials());
+        JSpinner requiredLevelSpinner = new JSpinner(new SpinnerNumberModel(1, 1, 100, 1));
+        JSpinner miningXpSpinner = new JSpinner(new SpinnerNumberModel(18, 0, 100000, 1));
+        JSpinner smeltingXpSpinner = new JSpinner(new SpinnerNumberModel(7, 0, 100000, 1));
+        JTextField frameOneField = new JTextField("assets/images/generic/64x64/A_Rock1_Node1.png", 28);
+        JTextField frameTwoField = new JTextField("assets/images/generic/64x64/A_Rock1_Node2.png", 28);
+        JTextField frameThreeField = new JTextField("assets/images/generic/64x64/A_Rock1_Node3.png", 28);
+        JTextField barImageField = new JTextField("assets/images/resourceMaterial/bronze_bar.png", 28);
+        JButton frameOneBrowse = new JButton("Browse");
+        JButton frameTwoBrowse = new JButton("Browse");
+        JButton frameThreeBrowse = new JButton("Browse");
+        JButton barBrowse = new JButton("Browse");
+        frameOneBrowse.addActionListener(event -> browsePathInto(frameOneField));
+        frameTwoBrowse.addActionListener(event -> browsePathInto(frameTwoField));
+        frameThreeBrowse.addActionListener(event -> browsePathInto(frameThreeField));
+        barBrowse.addActionListener(event -> browsePathInto(barImageField));
+
+        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        fields.add(new JLabel("Name"));
+        fields.add(nameField);
+        fields.add(new JLabel("Metal"));
+        fields.add(materialBox);
+        fields.add(new JLabel("Mining Level"));
+        fields.add(requiredLevelSpinner);
+        fields.add(new JLabel("Mining XP"));
+        fields.add(miningXpSpinner);
+        fields.add(new JLabel("Smelting XP"));
+        fields.add(smeltingXpSpinner);
+        fields.add(new JLabel("Rock Stage 0 / Ore Icon"));
+        fields.add(pathFieldPanel(frameOneField, frameOneBrowse));
+        fields.add(new JLabel("Rock Stage 1"));
+        fields.add(pathFieldPanel(frameTwoField, frameTwoBrowse));
+        fields.add(new JLabel("Rock Stage 2"));
+        fields.add(pathFieldPanel(frameThreeField, frameThreeBrowse));
+        fields.add(new JLabel("Bar Icon"));
+        fields.add(pathFieldPanel(barImageField, barBrowse));
+
+        if (JOptionPane.showConfirmDialog(this, fields, "Create Mining Rock", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
+                != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        String name = nameField.getText() == null ? "" : nameField.getText().trim();
+        if (name.isBlank()) {
+            setStatus("Mining rock needs a name.");
+            return;
+        }
+
+        GearMaterial material = (GearMaterial) materialBox.getSelectedItem();
+        String metalName = material == null ? "Metal" : material.getDisplayName();
+        String oreName = metalName + " Ore";
+        String barName = RecipeLibrary.smithingMaterialNameFor(material);
+        if (barName.isBlank()) {
+            barName = metalName + " Bar";
+        }
+
+        try {
+            List<String> frames = List.of(
+                    normalizeGeneratedImagePath(frameOneField.getText(), safeId(name) + "_stage_0", "gathering"),
+                    normalizeGeneratedImagePath(frameTwoField.getText(), safeId(name) + "_stage_1", "gathering"),
+                    normalizeGeneratedImagePath(frameThreeField.getText(), safeId(name) + "_stage_2", "gathering")
+            );
+            String oreItemId = findItemIdByDisplayName(oreName);
+            if (oreItemId.isBlank()) {
+                oreItemId = nextCustomItemId(oreName);
+                design.customItems().add(new MapDesignLibrary.CustomItem(
+                        oreItemId,
+                        oreName,
+                        InventorySystem.ItemType.MISC,
+                        frames.get(0),
+                        "",
+                        WeaponType.NONE,
+                        GearMaterial.NONE,
+                        0,
+                        6,
+                        "Raw " + metalName.toLowerCase(java.util.Locale.ROOT) + " ore. Smelt it into a bar at a furnace.",
+                        null,
+                        false,
+                        1,
+                        1,
+                        0
+                ));
+            }
+
+            String barItemId = findItemIdByDisplayName(barName);
+            if (barItemId.isBlank()) {
+                barItemId = nextCustomItemId(barName);
+                String barImage = normalizeGeneratedImagePath(barImageField.getText(), safeId(barName), "items");
+                design.customItems().add(new MapDesignLibrary.CustomItem(
+                        barItemId,
+                        barName,
+                        InventorySystem.ItemType.MISC,
+                        barImage,
+                        "",
+                        WeaponType.NONE,
+                        GearMaterial.NONE,
+                        0,
+                        12,
+                        "A " + metalName.toLowerCase(java.util.Locale.ROOT) + " bar ready for smithing.",
+                        null,
+                        false,
+                        1,
+                        1,
+                        0
+                ));
+            }
+
+            MapDesignLibrary.CustomGatheringNode node = new MapDesignLibrary.CustomGatheringNode(
+                    nextCustomGatheringNodeId(name),
+                    name,
+                    MapDesignLibrary.GatheringNodeType.MINING_ROCK,
+                    ((Number) requiredLevelSpinner.getValue()).intValue(),
+                    oreItemId,
+                    ((Number) miningXpSpinner.getValue()).intValue(),
+                    barItemId,
+                    ((Number) smeltingXpSpinner.getValue()).intValue(),
+                    frames,
+                    1000,
+                    1.35
+            );
+            design.customGatheringNodes().add(node);
+            persistSharedContent("mining rock");
+            populatePlaceables();
+            setStatus("Created mining rock " + node.displayName() + " and generated " + oreName + " / " + barName + ".");
+        } catch (IOException exception) {
+            setStatus("Mining rock image save failed: " + exception.getMessage());
+        }
+    }
+
+    private void createCustomFishingSpot() {
+        JTextField nameField = new JTextField("Fishing Spot", 24);
+        JComboBox<DropItemOption> outputBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
+        JSpinner requiredLevelSpinner = new JSpinner(new SpinnerNumberModel(1, 1, 100, 1));
+        JSpinner fishingXpSpinner = new JSpinner(new SpinnerNumberModel(18, 0, 100000, 1));
+        JTextField frameOneField = new JTextField("assets/images/monster/Nov-2015/dngn/water/shoals_shallow_water_disturbance1.png", 28);
+        JTextField frameTwoField = new JTextField("assets/images/monster/Nov-2015/dngn/water/shoals_shallow_water_disturbance2.png", 28);
+        JTextField frameThreeField = new JTextField("assets/images/monster/Nov-2015/dngn/water/shoals_shallow_water_disturbance3.png", 28);
+        JButton frameOneBrowse = new JButton("Browse");
+        JButton frameTwoBrowse = new JButton("Browse");
+        JButton frameThreeBrowse = new JButton("Browse");
+        frameOneBrowse.addActionListener(event -> browsePathInto(frameOneField));
+        frameTwoBrowse.addActionListener(event -> browsePathInto(frameTwoField));
+        frameThreeBrowse.addActionListener(event -> browsePathInto(frameThreeField));
+
+        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        fields.add(new JLabel("Name"));
+        fields.add(nameField);
+        fields.add(new JLabel("Output Item"));
+        fields.add(outputBox);
+        fields.add(new JLabel("Fishing Level"));
+        fields.add(requiredLevelSpinner);
+        fields.add(new JLabel("Fishing XP"));
+        fields.add(fishingXpSpinner);
+        fields.add(new JLabel("Frame 1"));
+        fields.add(pathFieldPanel(frameOneField, frameOneBrowse));
+        fields.add(new JLabel("Frame 2"));
+        fields.add(pathFieldPanel(frameTwoField, frameTwoBrowse));
+        fields.add(new JLabel("Frame 3"));
+        fields.add(pathFieldPanel(frameThreeField, frameThreeBrowse));
+
+        if (JOptionPane.showConfirmDialog(this, fields, "Create Fishing Spot", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
+                != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        DropItemOption output = (DropItemOption) outputBox.getSelectedItem();
+        String name = nameField.getText() == null ? "" : nameField.getText().trim();
+        if (name.isBlank() || output == null) {
+            setStatus("Fishing spot needs a name and output item.");
+            return;
+        }
+
+        try {
+            List<String> frames = List.of(
+                    normalizeGeneratedImagePath(frameOneField.getText(), safeId(name) + "_frame_1", "gathering"),
+                    normalizeGeneratedImagePath(frameTwoField.getText(), safeId(name) + "_frame_2", "gathering"),
+                    normalizeGeneratedImagePath(frameThreeField.getText(), safeId(name) + "_frame_3", "gathering")
+            );
+            MapDesignLibrary.CustomGatheringNode node = new MapDesignLibrary.CustomGatheringNode(
+                    nextCustomGatheringNodeId(name),
+                    name,
+                    MapDesignLibrary.GatheringNodeType.FISHING_SPOT,
+                    ((Number) requiredLevelSpinner.getValue()).intValue(),
+                    output.itemId(),
+                    ((Number) fishingXpSpinner.getValue()).intValue(),
+                    "",
+                    0,
+                    frames,
+                    260,
+                    1.0
+            );
+            design.customGatheringNodes().add(node);
+            persistSharedContent("fishing spot");
+            populatePlaceables();
+            setStatus("Created fishing spot " + node.displayName() + ".");
+        } catch (IOException exception) {
+            setStatus("Fishing spot image save failed: " + exception.getMessage());
+        }
     }
 
     private void manageCustomItems() {
@@ -903,6 +1542,26 @@ public class MapEditorTool extends JFrame {
                 limb -> limb.displayName() + " [" + limb.limbId() + "]",
                 this::editCustomLimb,
                 this::deleteCustomLimb
+        );
+    }
+
+    private void manageCustomGatheringNodes() {
+        manageCustomContent(
+                "Gathering Nodes",
+                design.customGatheringNodes(),
+                node -> node.displayName() + " [" + node.nodeId() + ", " + node.nodeType() + "]",
+                this::editCustomGatheringNode,
+                this::deleteCustomGatheringNode
+        );
+    }
+
+    private void manageCompositeRecipes() {
+        manageCustomContent(
+                "Composite Recipes",
+                design.customCompositeRecipes(),
+                recipe -> recipe.displayName() + " [" + recipe.recipeId() + ", " + recipe.category() + "]",
+                this::editCompositeRecipe,
+                this::deleteCompositeRecipe
         );
     }
 
@@ -998,6 +1657,7 @@ public class MapEditorTool extends JFrame {
                 selected.limbSlot(),
                 selected.iconPath(),
                 selected.description(),
+                selected.sourceCreatureId(),
                 selected.paperDollSourcePath(),
                 selected.statBonuses(),
                 selected.skillIds()
@@ -1024,6 +1684,228 @@ public class MapEditorTool extends JFrame {
         persistSharedContent("custom limb");
         populatePlaceables();
         setStatus("Deleted custom limb " + selected.displayName() + ".");
+    }
+
+    private void deleteCustomGatheringNode(MapDesignLibrary.CustomGatheringNode selected) {
+        if (!confirmDelete("gathering node", selected.displayName())) {
+            return;
+        }
+
+        design.customGatheringNodes().remove(selected);
+        design.placements().removeIf(placement ->
+                placement.kind() == MapDesignLibrary.PlacementKind.GATHERING_NODE
+                        && selected.nodeId().equals(placement.id()));
+        persistSharedContent("gathering node");
+        populatePlaceables();
+        setStatus("Deleted gathering node " + selected.displayName() + ".");
+    }
+
+    private void editCustomGatheringNode(MapDesignLibrary.CustomGatheringNode selected) {
+        JTextField nameField = new JTextField(selected.displayName(), 24);
+        JComboBox<MapDesignLibrary.GatheringNodeType> typeBox = new JComboBox<>(MapDesignLibrary.GatheringNodeType.values());
+        JComboBox<CharacterSkill> skillBox = new JComboBox<>(CharacterSkill.values());
+        JSpinner requiredLevelSpinner = new JSpinner(new SpinnerNumberModel(selected.requiredLevel(), 1, 100, 1));
+        JSpinner gatherXpSpinner = new JSpinner(new SpinnerNumberModel(selected.gatherXpReward(), 0, 100000, 1));
+        JSpinner frameDurationSpinner = new JSpinner(new SpinnerNumberModel(selected.frameDurationMs(), 1, 100000, 1));
+        JSpinner visualScaleSpinner = new JSpinner(new SpinnerNumberModel(selected.visualScale(), 0.1, 10.0, 0.05));
+        JSpinner smeltingLevelSpinner = new JSpinner(new SpinnerNumberModel(selected.smeltRequiredLevel(), 1, 100, 1));
+        JSpinner smeltingXpSpinner = new JSpinner(new SpinnerNumberModel(selected.smeltXpReward(), 0, 100000, 1));
+        JTextField smeltOutputField = new JTextField(selected.smeltOutputItemId(), 28);
+        JTextField frameOneField = new JTextField(framePathAt(selected, 0), 28);
+        JTextField frameTwoField = new JTextField(framePathAt(selected, 1), 28);
+        JTextField frameThreeField = new JTextField(framePathAt(selected, 2), 28);
+        JButton frameOneBrowse = new JButton("Browse");
+        JButton frameTwoBrowse = new JButton("Browse");
+        JButton frameThreeBrowse = new JButton("Browse");
+        JButton lootButton = new JButton("Edit Loot Table");
+        List<MapDesignLibrary.CustomDropEntry> lootEntries = new ArrayList<>(selected.lootEntries());
+
+        typeBox.setSelectedItem(selected.nodeType());
+        skillBox.setSelectedItem(selected.gatheringSkill());
+        frameOneBrowse.addActionListener(event -> browsePathInto(frameOneField));
+        frameTwoBrowse.addActionListener(event -> browsePathInto(frameTwoField));
+        frameThreeBrowse.addActionListener(event -> browsePathInto(frameThreeField));
+        lootButton.addActionListener(event -> editGatheringLootEntries(lootEntries));
+
+        JPanel fields = new JPanel();
+        fields.setLayout(new BoxLayout(fields, BoxLayout.Y_AXIS));
+        JPanel frameDurationRow = formRow("Frame Duration Ms", frameDurationSpinner);
+        fields.add(formRow("Name", nameField));
+        fields.add(formRow("Type", typeBox));
+        fields.add(formRow("Skill", skillBox));
+        fields.add(formRow("Required Level", requiredLevelSpinner));
+        fields.add(formRow("Gather XP", gatherXpSpinner));
+        fields.add(frameDurationRow);
+        fields.add(formRow("Visual Scale", visualScaleSpinner));
+        fields.add(formRow("Loot Table", lootButton));
+        fields.add(formRow("Smelt Output Item Id", smeltOutputField));
+        fields.add(formRow("Smelting Level", smeltingLevelSpinner));
+        fields.add(formRow("Smelting XP", smeltingXpSpinner));
+        fields.add(formRow("Stage / Frame 0", pathFieldPanel(frameOneField, frameOneBrowse)));
+        fields.add(formRow("Stage / Frame 1", pathFieldPanel(frameTwoField, frameTwoBrowse)));
+        fields.add(formRow("Stage / Frame 2", pathFieldPanel(frameThreeField, frameThreeBrowse)));
+
+        Runnable updateGatheringNodeFields = () -> {
+            MapDesignLibrary.GatheringNodeType type = (MapDesignLibrary.GatheringNodeType) typeBox.getSelectedItem();
+            boolean animated = gatheringNodeUsesAnimation(type);
+            frameDurationRow.setVisible(animated);
+            fields.revalidate();
+            fields.repaint();
+        };
+        typeBox.addActionListener(event -> updateGatheringNodeFields.run());
+        updateGatheringNodeFields.run();
+
+        if (JOptionPane.showConfirmDialog(this, fields, "Edit Gathering Node", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
+                != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        String name = nameField.getText() == null ? "" : nameField.getText().trim();
+        if (name.isBlank()) {
+            setStatus("Gathering node needs a name.");
+            return;
+        }
+        if (lootEntries.isEmpty()) {
+            setStatus("Gathering node needs at least one loot entry.");
+            return;
+        }
+
+        try {
+            List<String> frames = List.of(
+                    normalizeGeneratedImagePath(frameOneField.getText(), safeId(name) + "_stage_0", "gathering"),
+                    normalizeGeneratedImagePath(frameTwoField.getText(), safeId(name) + "_stage_1", "gathering"),
+                    normalizeGeneratedImagePath(frameThreeField.getText(), safeId(name) + "_stage_2", "gathering")
+            );
+            MapDesignLibrary.CustomGatheringNode edited = new MapDesignLibrary.CustomGatheringNode(
+                    selected.nodeId(),
+                    name,
+                    (MapDesignLibrary.GatheringNodeType) typeBox.getSelectedItem(),
+                    ((Number) requiredLevelSpinner.getValue()).intValue(),
+                    lootEntries.get(0).itemId(),
+                    ((Number) gatherXpSpinner.getValue()).intValue(),
+                    smeltOutputField.getText() == null ? "" : smeltOutputField.getText().trim(),
+                    ((Number) smeltingXpSpinner.getValue()).intValue(),
+                    frames,
+                    ((Number) frameDurationSpinner.getValue()).intValue(),
+                    ((Number) visualScaleSpinner.getValue()).doubleValue(),
+                    (CharacterSkill) skillBox.getSelectedItem(),
+                    new ArrayList<>(lootEntries),
+                    ((Number) smeltingLevelSpinner.getValue()).intValue()
+            );
+            int index = design.customGatheringNodes().indexOf(selected);
+            if (index >= 0) {
+                design.customGatheringNodes().set(index, edited);
+                persistSharedContent("gathering node");
+                populatePlaceables();
+                setStatus("Updated gathering node " + edited.displayName() + ".");
+            }
+        } catch (IOException exception) {
+            setStatus("Gathering node image save failed: " + exception.getMessage());
+        }
+    }
+
+    private void deleteCompositeRecipe(MapDesignLibrary.CustomCompositeRecipe selected) {
+        if (!confirmDelete("composite recipe", selected.displayName())) {
+            return;
+        }
+
+        design.customCompositeRecipes().remove(selected);
+        persistSharedContent("composite recipe");
+        setStatus("Deleted composite recipe " + selected.displayName() + ".");
+    }
+
+    private void editCompositeRecipe(MapDesignLibrary.CustomCompositeRecipe selected) {
+        JTextField nameField = new JTextField(selected.displayName(), 24);
+        JComboBox<MapDesignLibrary.CompositeRecipeCategory> categoryBox =
+                new JComboBox<>(MapDesignLibrary.CompositeRecipeCategory.values());
+        JComboBox<DropItemOption> primaryBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
+        JComboBox<DropItemOption> secondaryBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
+        JComboBox<DropItemOption> outputBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
+        JComboBox<CharacterSkill> skillBox = new JComboBox<>(CharacterSkill.values());
+        JSpinner requiredLevelSpinner = new JSpinner(new SpinnerNumberModel(selected.requiredLevel(), 1, 100, 1));
+        JSpinner xpSpinner = new JSpinner(new SpinnerNumberModel(selected.xpReward(), 0, 100000, 1));
+        JCheckBox consumePrimaryBox = new JCheckBox("Consume primary", selected.consumePrimary());
+        JCheckBox consumeSecondaryBox = new JCheckBox("Consume secondary", selected.consumeSecondary());
+        JCheckBox smeltingBox = new JCheckBox("Output can be smelted", !selected.smeltOutputItemId().isBlank());
+        JComboBox<DropItemOption> smeltOutputBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
+        JSpinner smeltingLevelSpinner = new JSpinner(new SpinnerNumberModel(selected.smeltRequiredLevel(), 1, 100, 1));
+        JSpinner smeltingXpSpinner = new JSpinner(new SpinnerNumberModel(selected.smeltXpReward(), 0, 100000, 1));
+
+        categoryBox.setSelectedItem(selected.category());
+        skillBox.setSelectedItem(selected.requiredSkill());
+        selectDropItem(primaryBox, selected.primaryItemId());
+        selectDropItem(secondaryBox, selected.secondaryItemId());
+        selectDropItem(outputBox, selected.outputItemId());
+        selectDropItem(smeltOutputBox, selected.smeltOutputItemId());
+
+        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        fields.add(new JLabel("Name"));
+        fields.add(nameField);
+        fields.add(new JLabel("Category"));
+        fields.add(categoryBox);
+        fields.add(new JLabel("Primary Item"));
+        fields.add(primaryBox);
+        fields.add(new JLabel("Secondary Item"));
+        fields.add(secondaryBox);
+        fields.add(new JLabel("Output Item"));
+        fields.add(outputBox);
+        fields.add(new JLabel("Skill"));
+        fields.add(skillBox);
+        fields.add(new JLabel("Required Level"));
+        fields.add(requiredLevelSpinner);
+        fields.add(new JLabel("XP Reward"));
+        fields.add(xpSpinner);
+        fields.add(new JLabel("Primary"));
+        fields.add(consumePrimaryBox);
+        fields.add(new JLabel("Secondary"));
+        fields.add(consumeSecondaryBox);
+        fields.add(new JLabel("Smelting"));
+        fields.add(smeltingBox);
+        fields.add(new JLabel("Smelt Output"));
+        fields.add(smeltOutputBox);
+        fields.add(new JLabel("Smelting Level"));
+        fields.add(smeltingLevelSpinner);
+        fields.add(new JLabel("Smelting XP"));
+        fields.add(smeltingXpSpinner);
+
+        if (JOptionPane.showConfirmDialog(this, fields, "Edit Composite Recipe", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
+                != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        String name = nameField.getText() == null ? "" : nameField.getText().trim();
+        DropItemOption primary = (DropItemOption) primaryBox.getSelectedItem();
+        DropItemOption secondary = (DropItemOption) secondaryBox.getSelectedItem();
+        DropItemOption output = (DropItemOption) outputBox.getSelectedItem();
+        if (name.isBlank() || primary == null || secondary == null || output == null) {
+            setStatus("Composite recipe needs a name, two ingredients, and an output.");
+            return;
+        }
+
+        MapDesignLibrary.CustomCompositeRecipe edited = new MapDesignLibrary.CustomCompositeRecipe(
+                selected.recipeId(),
+                name,
+                (MapDesignLibrary.CompositeRecipeCategory) categoryBox.getSelectedItem(),
+                primary.itemId(),
+                secondary.itemId(),
+                output.itemId(),
+                (CharacterSkill) skillBox.getSelectedItem(),
+                ((Number) requiredLevelSpinner.getValue()).intValue(),
+                ((Number) xpSpinner.getValue()).intValue(),
+                consumePrimaryBox.isSelected(),
+                consumeSecondaryBox.isSelected(),
+                smeltingBox.isSelected() && smeltOutputBox.getSelectedItem() instanceof DropItemOption smeltOutput
+                        ? smeltOutput.itemId()
+                        : "",
+                ((Number) smeltingLevelSpinner.getValue()).intValue(),
+                ((Number) smeltingXpSpinner.getValue()).intValue()
+        );
+        int index = design.customCompositeRecipes().indexOf(selected);
+        if (index >= 0) {
+            design.customCompositeRecipes().set(index, edited);
+            persistSharedContent("composite recipe");
+            setStatus("Updated composite recipe " + edited.displayName() + ".");
+        }
     }
 
     private void editCustomMob(MapDesignLibrary.CustomMob selected) {
@@ -1224,6 +2106,7 @@ public class MapEditorTool extends JFrame {
                     DEFAULT_LIMB_ICON,
                     GearDurability.PERFECT,
                     limbDescription,
+                    mobId,
                     paperDollSourcePath,
                     limbStats,
                     skillAssignments.getOrDefault(slot, List.of())
@@ -1307,6 +2190,7 @@ public class MapEditorTool extends JFrame {
                     selected.limbSlot(),
                     selected.iconPath(),
                     selected.description(),
+                    selected.sourceCreatureId(),
                     selected.paperDollSourcePath(),
                     selected.statBonuses(),
                     selected.skillIds()
@@ -1376,6 +2260,60 @@ public class MapEditorTool extends JFrame {
         }
     }
 
+    private void editGatheringLootEntries(List<MapDesignLibrary.CustomDropEntry> drops) {
+        if (drops == null) {
+            return;
+        }
+
+        DefaultListModel<MapDesignLibrary.CustomDropEntry> model = new DefaultListModel<>();
+        for (MapDesignLibrary.CustomDropEntry drop : drops) {
+            model.addElement(drop);
+        }
+
+        JList<MapDesignLibrary.CustomDropEntry> dropList = new JList<>(model);
+        JComboBox<DropItemOption> itemBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
+        JSpinner weightSpinner = new JSpinner(new SpinnerNumberModel(1.0, 0.0, 100.0, 0.05));
+        JButton addButton = new JButton("Add Loot");
+        JButton removeButton = new JButton("Remove Selected");
+
+        addButton.addActionListener(event -> {
+            DropItemOption option = (DropItemOption) itemBox.getSelectedItem();
+            if (option == null || option.itemId().isBlank()) {
+                return;
+            }
+            model.addElement(new MapDesignLibrary.CustomDropEntry(option.itemId(), ((Number) weightSpinner.getValue()).doubleValue()));
+        });
+
+        removeButton.addActionListener(event -> {
+            int index = dropList.getSelectedIndex();
+            if (index >= 0) {
+                model.remove(index);
+            }
+        });
+
+        JPanel controls = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        controls.add(new JLabel("Item"));
+        controls.add(itemBox);
+        controls.add(new JLabel("Weight"));
+        controls.add(weightSpinner);
+        controls.add(addButton);
+        controls.add(removeButton);
+
+        JPanel panel = new JPanel(new BorderLayout(6, 6));
+        panel.add(new JScrollPane(dropList), BorderLayout.CENTER);
+        panel.add(controls, BorderLayout.SOUTH);
+
+        int result = JOptionPane.showConfirmDialog(this, panel, "Gathering Loot", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        drops.clear();
+        for (int i = 0; i < model.size(); i++) {
+            drops.add(model.get(i));
+        }
+    }
+
     private List<DropItemOption> dropItemOptions() {
         List<DropItemOption> options = new ArrayList<>();
         for (ItemLibrary item : ItemLibrary.values()) {
@@ -1390,6 +2328,79 @@ public class MapEditorTool extends JFrame {
         return options;
     }
 
+    private List<DropItemOption> gatheringOutputItemOptions() {
+        List<DropItemOption> options = new ArrayList<>();
+        for (ItemLibrary item : ItemLibrary.values()) {
+            options.add(new DropItemOption(item.name(), item.getDisplayName()));
+        }
+        for (MapDesignLibrary.CustomItem item : design.customItems()) {
+            options.add(new DropItemOption(item.itemId(), item.displayName()));
+        }
+        return options;
+    }
+
+    private ItemTemplateOption[] itemTemplateOptions() {
+        List<ItemTemplateOption> options = new ArrayList<>();
+        options.add(new ItemTemplateOption("None", null));
+        for (ItemLibrary item : ItemLibrary.values()) {
+            options.add(new ItemTemplateOption(item.getDisplayName() + " [built-in]", builtInItemTemplate(item)));
+        }
+        for (MapDesignLibrary.CustomItem item : design.customItems()) {
+            options.add(new ItemTemplateOption(item.displayName() + " [custom]", item));
+        }
+        return options.toArray(new ItemTemplateOption[0]);
+    }
+
+    private MapDesignLibrary.CustomItem builtInItemTemplate(ItemLibrary item) {
+        return new MapDesignLibrary.CustomItem(
+                "",
+                item.getDisplayName(),
+                item.getItemType(),
+                item.getIconPath(),
+                "",
+                item.getWeaponType(),
+                item.getMaterial(),
+                item.getHealAmount(),
+                item.getBaseGoldValue(),
+                item.getExamineText(),
+                null,
+                false,
+                1,
+                1,
+                0
+        );
+    }
+
+    private String findItemIdByDisplayName(String displayName) {
+        if (displayName == null || displayName.isBlank()) {
+            return "";
+        }
+        for (ItemLibrary item : ItemLibrary.values()) {
+            if (displayName.equalsIgnoreCase(item.getDisplayName())) {
+                return item.name();
+            }
+        }
+        for (MapDesignLibrary.CustomItem item : design.customItems()) {
+            if (displayName.equalsIgnoreCase(item.displayName())) {
+                return item.itemId();
+            }
+        }
+        return "";
+    }
+
+    private void selectDropItem(JComboBox<DropItemOption> comboBox, String itemId) {
+        if (comboBox == null || itemId == null || itemId.isBlank()) {
+            return;
+        }
+        for (int i = 0; i < comboBox.getItemCount(); i++) {
+            DropItemOption option = comboBox.getItemAt(i);
+            if (option != null && itemId.equals(option.itemId())) {
+                comboBox.setSelectedIndex(i);
+                return;
+            }
+        }
+    }
+
     private record DropItemOption(String itemId, String displayName) {
         private DropItemOption {
             itemId = itemId == null ? "" : itemId;
@@ -1399,6 +2410,13 @@ public class MapEditorTool extends JFrame {
         @Override
         public String toString() {
             return displayName + " [" + itemId + "]";
+        }
+    }
+
+    private record ItemTemplateOption(String label, MapDesignLibrary.CustomItem item) {
+        @Override
+        public String toString() {
+            return label;
         }
     }
 
@@ -1499,12 +2517,14 @@ public class MapEditorTool extends JFrame {
             LimbSlot limbSlot,
             String iconPath,
             String description,
+            String sourceCreatureId,
             String paperDollSourcePath,
             Map<PlayerStat, Integer> statValues,
             List<SkillLibrary> selectedSkills
     ) {
         JTextField nameField = new JTextField(displayName, 24);
         JTextField iconPathField = new JTextField(iconPath, 28);
+        JTextField sourceCreatureIdField = new JTextField(sourceCreatureId == null ? "" : sourceCreatureId, 28);
         JTextField paperDollSourceField = new JTextField(paperDollSourcePath == null ? "" : paperDollSourcePath, 28);
         JTextArea descriptionArea = new JTextArea(description == null ? "" : description, 4, 30);
         descriptionArea.setLineWrap(true);
@@ -1527,6 +2547,8 @@ public class MapEditorTool extends JFrame {
         fields.add(pathFieldPanel(iconPathField, browseButton));
         fields.add(new JLabel("Paper-Doll Source"));
         fields.add(pathFieldPanel(paperDollSourceField, paperDollBrowseButton));
+        fields.add(new JLabel("Source Creature Id"));
+        fields.add(sourceCreatureIdField);
         fields.add(new JLabel("Slot"));
         fields.add(slotBox);
         fields.add(new JLabel("Condition"));
@@ -1579,6 +2601,7 @@ public class MapEditorTool extends JFrame {
                 iconPathField.getText() == null ? "" : iconPathField.getText().trim(),
                 GearDurability.PERFECT,
                 descriptionArea.getText() == null ? "" : descriptionArea.getText().trim(),
+                sourceCreatureIdField.getText() == null ? "" : sourceCreatureIdField.getText().trim(),
                 paperDollSourceField.getText() == null ? "" : paperDollSourceField.getText().trim(),
                 stats,
                 skills
@@ -1590,6 +2613,26 @@ public class MapEditorTool extends JFrame {
         imagePanel.add(pathField, BorderLayout.CENTER);
         imagePanel.add(browseButton, BorderLayout.EAST);
         return imagePanel;
+    }
+
+    private JPanel formRow(String label, Component component) {
+        JPanel row = new JPanel(new BorderLayout(6, 6));
+        JLabel rowLabel = new JLabel(label);
+        rowLabel.setPreferredSize(new Dimension(140, rowLabel.getPreferredSize().height));
+        row.add(rowLabel, BorderLayout.WEST);
+        row.add(component, BorderLayout.CENTER);
+        return row;
+    }
+
+    private String framePathAt(MapDesignLibrary.CustomGatheringNode node, int index) {
+        if (node == null || node.framePaths() == null || index < 0 || index >= node.framePaths().size()) {
+            return "";
+        }
+        return node.framePaths().get(index);
+    }
+
+    private boolean gatheringNodeUsesAnimation(MapDesignLibrary.GatheringNodeType type) {
+        return type == MapDesignLibrary.GatheringNodeType.FISHING_SPOT;
     }
 
     private void browsePathInto(JTextField pathField) {
@@ -1667,6 +2710,222 @@ public class MapEditorTool extends JFrame {
         placeableBox.setSelectedItem(option);
         paintModeBox.setSelectedItem(PaintMode.PLACE_OBJECT);
         setStatus("Created map link placement. Paint it onto a tile.");
+    }
+
+    private void createTrigger() {
+        String defaultId = nextTriggerId();
+        String id = JOptionPane.showInputDialog(this, "Trigger id", defaultId);
+        if (id == null) {
+            return;
+        }
+
+        id = id.trim();
+        if (id.isBlank()) {
+            setStatus("Trigger id cannot be blank.");
+            return;
+        }
+
+        if (findTrigger(id) != null) {
+            setStatus("Trigger id already exists: " + id + ".");
+            return;
+        }
+
+        pendingTriggerId = id;
+        wiringTriggerId = "";
+        paintModeBox.setSelectedItem(PaintMode.PLACE_TRIGGER);
+        setStatus("Click a floor tile to place trigger " + id + ".");
+    }
+
+    private void manageTriggers() {
+        if (design.triggers().isEmpty()) {
+            setStatus("No triggers to manage.");
+            return;
+        }
+
+        DefaultListModel<MapDesignLibrary.MapTrigger> model = new DefaultListModel<>();
+        for (MapDesignLibrary.MapTrigger trigger : design.triggers()) {
+            model.addElement(trigger);
+        }
+
+        JList<MapDesignLibrary.MapTrigger> triggerList = new JList<>(model);
+        triggerList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        triggerList.setCellRenderer((list, value, index, selected, focus) -> {
+            JLabel label = new JLabel(triggerLabel(value));
+            label.setOpaque(true);
+            label.setBackground(selected ? new Color(65, 95, 140) : list.getBackground());
+            label.setForeground(selected ? Color.WHITE : list.getForeground());
+            return label;
+        });
+
+        JButton renameButton = new JButton("Rename");
+        JButton wireButton = new JButton("Wire Targets");
+        JButton removeTargetButton = new JButton("Remove Target");
+        JButton deleteButton = new JButton("Delete");
+        JButton closeButton = new JButton("Close");
+        JPanel buttons = new JPanel();
+        buttons.add(renameButton);
+        buttons.add(wireButton);
+        buttons.add(removeTargetButton);
+        buttons.add(deleteButton);
+        buttons.add(closeButton);
+
+        JPanel panel = new JPanel(new BorderLayout(6, 6));
+        panel.add(new JScrollPane(triggerList), BorderLayout.CENTER);
+        panel.add(buttons, BorderLayout.SOUTH);
+
+        JOptionPane pane = new JOptionPane(panel, JOptionPane.PLAIN_MESSAGE, JOptionPane.DEFAULT_OPTION, null, new Object[]{});
+        var dialog = pane.createDialog(this, "Manage Triggers");
+
+        renameButton.addActionListener(event -> {
+            MapDesignLibrary.MapTrigger trigger = triggerList.getSelectedValue();
+            if (trigger == null) {
+                return;
+            }
+            String newId = JOptionPane.showInputDialog(dialog, "Trigger id", trigger.id());
+            if (newId == null || newId.trim().isBlank()) {
+                return;
+            }
+            newId = newId.trim();
+            if (!newId.equals(trigger.id()) && findTrigger(newId) != null) {
+                setStatus("Trigger id already exists: " + newId + ".");
+                return;
+            }
+            replaceTrigger(trigger, new MapDesignLibrary.MapTrigger(
+                    newId,
+                    trigger.x(),
+                    trigger.y(),
+                    trigger.fireMode(),
+                    trigger.oneShot(),
+                    trigger.actions()
+            ));
+            refreshTriggerList(model);
+            setStatus("Renamed trigger to " + newId + ".");
+            mapCanvas.repaint();
+        });
+
+        wireButton.addActionListener(event -> {
+            MapDesignLibrary.MapTrigger trigger = triggerList.getSelectedValue();
+            if (trigger == null) {
+                return;
+            }
+            wiringTriggerId = trigger.id();
+            pendingTriggerId = "";
+            paintModeBox.setSelectedItem(PaintMode.WIRE_TRIGGER);
+            setStatus("Click door tiles to wire targets for " + trigger.id() + ".");
+            dialog.dispose();
+        });
+
+        removeTargetButton.addActionListener(event -> {
+            MapDesignLibrary.MapTrigger trigger = triggerList.getSelectedValue();
+            if (trigger == null || trigger.actions().isEmpty()) {
+                return;
+            }
+            String[] targets = trigger.actions().stream()
+                    .map(action -> action.targetX() + "," + action.targetY())
+                    .toArray(String[]::new);
+            String selected = (String) JOptionPane.showInputDialog(
+                    dialog,
+                    "Remove target",
+                    "Trigger Target",
+                    JOptionPane.PLAIN_MESSAGE,
+                    null,
+                    targets,
+                    targets[0]
+            );
+            if (selected == null) {
+                return;
+            }
+            removeTriggerTarget(trigger.id(), selected);
+            refreshTriggerList(model);
+            setStatus("Removed trigger target " + selected + ".");
+            mapCanvas.repaint();
+        });
+
+        deleteButton.addActionListener(event -> {
+            MapDesignLibrary.MapTrigger trigger = triggerList.getSelectedValue();
+            if (trigger == null) {
+                return;
+            }
+            design.triggers().remove(trigger);
+            refreshTriggerList(model);
+            setStatus("Deleted trigger " + trigger.id() + ".");
+            mapCanvas.repaint();
+        });
+
+        closeButton.addActionListener(event -> dialog.dispose());
+        dialog.setVisible(true);
+    }
+
+    private String nextTriggerId() {
+        int index = design.triggers().size() + 1;
+        while (findTrigger("trigger_" + index) != null) {
+            index++;
+        }
+        return "trigger_" + index;
+    }
+
+    private MapDesignLibrary.MapTrigger findTrigger(String id) {
+        if (id == null) {
+            return null;
+        }
+        for (MapDesignLibrary.MapTrigger trigger : design.triggers()) {
+            if (id.equals(trigger.id())) {
+                return trigger;
+            }
+        }
+        return null;
+    }
+
+    private String triggerLabel(MapDesignLibrary.MapTrigger trigger) {
+        if (trigger == null) {
+            return "";
+        }
+        return trigger.id() + " @ " + trigger.x() + "," + trigger.y()
+                + " -> " + trigger.actions().size() + " door target(s)"
+                + " [On Entry, One Shot]";
+    }
+
+    private void refreshTriggerList(DefaultListModel<MapDesignLibrary.MapTrigger> model) {
+        model.clear();
+        for (MapDesignLibrary.MapTrigger trigger : design.triggers()) {
+            model.addElement(trigger);
+        }
+    }
+
+    private void replaceTrigger(MapDesignLibrary.MapTrigger oldTrigger, MapDesignLibrary.MapTrigger newTrigger) {
+        int index = design.triggers().indexOf(oldTrigger);
+        if (index >= 0) {
+            design.triggers().set(index, newTrigger);
+        }
+    }
+
+    private void removeTriggerTarget(String triggerId, String targetText) {
+        MapDesignLibrary.MapTrigger trigger = findTrigger(triggerId);
+        if (trigger == null || targetText == null) {
+            return;
+        }
+
+        String[] parts = targetText.split(",");
+        if (parts.length != 2) {
+            return;
+        }
+
+        try {
+            int targetX = Integer.parseInt(parts[0].trim());
+            int targetY = Integer.parseInt(parts[1].trim());
+            List<MapDesignLibrary.TriggerAction> actions = new ArrayList<>(trigger.actions());
+            actions.removeIf(action -> action.targetX() == targetX && action.targetY() == targetY);
+            replaceTrigger(trigger, new MapDesignLibrary.MapTrigger(
+                    trigger.id(),
+                    trigger.x(),
+                    trigger.y(),
+                    trigger.fireMode(),
+                    trigger.oneShot(),
+                    actions
+            ));
+        } catch (NumberFormatException ignored) {
+            // Ignore malformed editor selection.
+        }
     }
 
     private void showAuthoringHelp() {
@@ -1751,6 +3010,10 @@ public class MapEditorTool extends JFrame {
     }
 
     private String normalizeCustomItemImagePath(String rawPath, String itemName) throws IOException {
+        return normalizeGeneratedImagePath(rawPath, itemName, "items");
+    }
+
+    private String normalizeGeneratedImagePath(String rawPath, String itemName, String folderName) throws IOException {
         String trimmedPath = rawPath == null ? "" : rawPath.trim();
         if (trimmedPath.startsWith("assets/") || trimmedPath.startsWith("assets\\")) {
             return trimmedPath.replace('\\', '/');
@@ -1761,12 +3024,22 @@ public class MapEditorTool extends JFrame {
             return trimmedPath.replace('\\', '/');
         }
 
-        Path targetFolder = Path.of("src", "main", "resources", "assets", "images", "generated", "items");
+        String safeFolderName = folderName == null || folderName.isBlank() ? "items" : safeId(folderName);
+        Path targetFolder = Path.of("src", "main", "resources", "assets", "images", "generated", safeFolderName);
         Files.createDirectories(targetFolder);
         String fileName = safeId(itemName) + getFileExtension(source.getFileName().toString());
         Path target = targetFolder.resolve(fileName);
         Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
-        return "assets/images/generated/items/" + fileName;
+        return "assets/images/generated/" + safeFolderName + "/" + fileName;
+    }
+
+    private String normalizeOptionalCustomItemImagePath(String rawPath, String itemName) throws IOException {
+        String trimmedPath = rawPath == null ? "" : rawPath.trim();
+        if (trimmedPath.isBlank()) {
+            return "";
+        }
+
+        return normalizeCustomItemImagePath(trimmedPath, itemName);
     }
 
     private String getFileExtension(String fileName) {
@@ -2452,6 +3725,66 @@ public class MapEditorTool extends JFrame {
         return false;
     }
 
+    private String nextCustomGatheringNodeId(String nodeName) {
+        String base = safeId(nodeName);
+        if (base.isBlank()) {
+            base = "resource_node";
+        }
+
+        String prefix = "node_" + base;
+        String candidate = prefix;
+        int suffix = 2;
+        while (hasCustomGatheringNodeId(candidate)) {
+            candidate = prefix + "_" + suffix;
+            suffix++;
+        }
+        return candidate;
+    }
+
+    private boolean hasCustomGatheringNodeId(String nodeId) {
+        for (MapDesignLibrary.CustomGatheringNode node : design.customGatheringNodes()) {
+            if (node.nodeId().equals(nodeId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String nextCompositeRecipeId(String recipeName) {
+        String base = safeId(recipeName);
+        if (base.isBlank()) {
+            base = "composite_recipe";
+        }
+
+        String prefix = "recipe_" + base;
+        String candidate = prefix;
+        int suffix = 2;
+        while (hasCompositeRecipeId(candidate)) {
+            candidate = prefix + "_" + suffix;
+            suffix++;
+        }
+        return candidate;
+    }
+
+    private boolean hasCompositeRecipeId(String recipeId) {
+        for (MapDesignLibrary.CustomCompositeRecipe recipe : design.customCompositeRecipes()) {
+            if (recipe.recipeId().equals(recipeId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private GearMaterial[] metalMaterials() {
+        List<GearMaterial> materials = new ArrayList<>();
+        for (GearMaterial material : GearMaterial.values()) {
+            if (material.getFamily() == GearMaterial.MaterialFamily.METAL) {
+                materials.add(material);
+            }
+        }
+        return materials.toArray(new GearMaterial[0]);
+    }
+
     private String safeId(String value) {
         return value == null
                 ? ""
@@ -2643,6 +3976,9 @@ public class MapEditorTool extends JFrame {
                 design.customMobs(),
                 design.customLimbs(),
                 design.customNpcs(),
+                design.customGatheringNodes(),
+                design.customCompositeRecipes(),
+                design.triggers(),
                 design.spawnX(),
                 design.spawnY()
         );
@@ -2695,6 +4031,9 @@ public class MapEditorTool extends JFrame {
                 design.customMobs(),
                 design.customLimbs(),
                 design.customNpcs(),
+                design.customGatheringNodes(),
+                design.customCompositeRecipes(),
+                design.triggers(),
                 design.spawnX(),
                 design.spawnY()
         );
@@ -2776,6 +4115,16 @@ public class MapEditorTool extends JFrame {
                 design.customNpcs().add(npc);
             }
         }
+        for (MapDesignLibrary.CustomGatheringNode node : content.customGatheringNodes()) {
+            if (!hasCustomGatheringNodeId(node.nodeId())) {
+                design.customGatheringNodes().add(node);
+            }
+        }
+        for (MapDesignLibrary.CustomCompositeRecipe recipe : content.customCompositeRecipes()) {
+            if (!hasCompositeRecipeId(recipe.recipeId())) {
+                design.customCompositeRecipes().add(recipe);
+            }
+        }
     }
 
     private boolean saveSharedContentFromDesign() {
@@ -2790,7 +4139,9 @@ public class MapEditorTool extends JFrame {
                     design.customItems(),
                     design.customMobs(),
                     design.customLimbs(),
-                    design.customNpcs()
+                    design.customNpcs(),
+                    design.customGatheringNodes(),
+                    design.customCompositeRecipes()
             ));
             return true;
         } catch (IOException exception) {
@@ -2880,6 +4231,13 @@ public class MapEditorTool extends JFrame {
             case AUTHORED_DIALOGUE_NPC -> new Color(130, 170, 245);
             case INTERACTION -> new Color(90, 200, 230);
         };
+    }
+
+    private static boolean isDoorTile(Library.TileType tile) {
+        return tile == Library.TileType.DOOR_OPEN
+                || tile == Library.TileType.DOOR_CLOSED
+                || tile == Library.TileType.QUEST_DOOR_OPEN
+                || tile == Library.TileType.QUEST_DOOR_CLOSED;
     }
 
     private static class TargetMapPickerPanel extends JPanel {
@@ -2993,6 +4351,7 @@ public class MapEditorTool extends JFrame {
             }
 
             drawPlacements(g);
+            drawTriggers(g);
             drawSpawn(g);
             g.dispose();
         }
@@ -3022,6 +4381,27 @@ public class MapEditorTool extends JFrame {
                 g.drawOval(x + 6, y + 6, CELL_SIZE - 12, CELL_SIZE - 12);
                 String label = placement.kind().name().substring(0, 1);
                 g.drawString(label, x + (CELL_SIZE - metrics.stringWidth(label)) / 2, y + 20);
+            }
+        }
+
+        private void drawTriggers(Graphics2D g) {
+            g.setStroke(new BasicStroke(2.4f));
+            for (MapDesignLibrary.MapTrigger trigger : design.triggers()) {
+                int triggerCenterX = trigger.x() * CELL_SIZE + CELL_SIZE / 2;
+                int triggerCenterY = trigger.y() * CELL_SIZE + CELL_SIZE / 2;
+
+                g.setColor(new Color(255, 205, 70));
+                g.drawRect(trigger.x() * CELL_SIZE + 5, trigger.y() * CELL_SIZE + 5, CELL_SIZE - 10, CELL_SIZE - 10);
+                g.drawString("T", trigger.x() * CELL_SIZE + 10, trigger.y() * CELL_SIZE + 21);
+
+                for (MapDesignLibrary.TriggerAction action : trigger.actions()) {
+                    int targetCenterX = action.targetX() * CELL_SIZE + CELL_SIZE / 2;
+                    int targetCenterY = action.targetY() * CELL_SIZE + CELL_SIZE / 2;
+                    g.setColor(new Color(255, 205, 70, 150));
+                    g.drawLine(triggerCenterX, triggerCenterY, targetCenterX, targetCenterY);
+                    g.setColor(new Color(255, 105, 80));
+                    g.drawOval(action.targetX() * CELL_SIZE + 7, action.targetY() * CELL_SIZE + 7, CELL_SIZE - 14, CELL_SIZE - 14);
+                }
             }
         }
 
@@ -3060,6 +4440,8 @@ public class MapEditorTool extends JFrame {
                 case PLACE_OBJECT -> placeObject(x, y);
                 case ERASE_OBJECT -> eraseObject(x, y);
                 case SET_SPAWN -> setSpawn(x, y);
+                case PLACE_TRIGGER -> placeTrigger(x, y);
+                case WIRE_TRIGGER -> wireTriggerTarget(x, y);
             }
 
             repaint();
@@ -3087,6 +4469,9 @@ public class MapEditorTool extends JFrame {
                     design.customMobs(),
                     design.customLimbs(),
                     design.customNpcs(),
+                    design.customGatheringNodes(),
+                    design.customCompositeRecipes(),
+                    design.triggers(),
                     x,
                     y
             );
@@ -3105,7 +4490,117 @@ public class MapEditorTool extends JFrame {
         }
 
         private void eraseObject(int x, int y) {
+            int placementsBefore = design.placements().size();
             design.placements().removeIf(placement -> placement.x() == x && placement.y() == y);
+
+            int triggersBefore = design.triggers().size();
+            design.triggers().removeIf(trigger -> trigger.x() == x && trigger.y() == y);
+
+            int removedWireTargets = removeTriggerTargetsAt(x, y);
+            int removedPlacements = placementsBefore - design.placements().size();
+            int removedTriggers = triggersBefore - design.triggers().size();
+
+            if (removedTriggers > 0) {
+                setStatus("Removed trigger at " + x + "," + y + ".");
+            } else if (removedWireTargets > 0) {
+                setStatus("Removed " + removedWireTargets + " trigger wire target(s) at " + x + "," + y + ".");
+            } else if (removedPlacements > 0) {
+                setStatus("Removed placement at " + x + "," + y + ".");
+            } else {
+                setStatus("Nothing to erase at " + x + "," + y + ".");
+            }
+        }
+
+        private int removeTriggerTargetsAt(int x, int y) {
+            int removed = 0;
+            List<MapDesignLibrary.MapTrigger> updatedTriggers = new ArrayList<>();
+
+            for (MapDesignLibrary.MapTrigger trigger : design.triggers()) {
+                List<MapDesignLibrary.TriggerAction> actions = new ArrayList<>(trigger.actions());
+                int before = actions.size();
+                actions.removeIf(action -> action.targetX() == x && action.targetY() == y);
+                removed += before - actions.size();
+
+                if (before != actions.size()) {
+                    updatedTriggers.add(new MapDesignLibrary.MapTrigger(
+                            trigger.id(),
+                            trigger.x(),
+                            trigger.y(),
+                            trigger.fireMode(),
+                            trigger.oneShot(),
+                            actions
+                    ));
+                } else {
+                    updatedTriggers.add(trigger);
+                }
+            }
+
+            if (removed > 0) {
+                design.triggers().clear();
+                design.triggers().addAll(updatedTriggers);
+            }
+
+            return removed;
+        }
+
+        private void placeTrigger(int x, int y) {
+            if (pendingTriggerId == null || pendingTriggerId.isBlank()) {
+                setStatus("Use Create > Trigger first.");
+                return;
+            }
+
+            if (design.tiles()[y][x].blocksMovement()) {
+                setStatus("Triggers should be placed on walkable tiles.");
+                return;
+            }
+
+            MapDesignLibrary.MapTrigger trigger = new MapDesignLibrary.MapTrigger(
+                    pendingTriggerId,
+                    x,
+                    y,
+                    MapDesignLibrary.TriggerFireMode.ON_ENTRY,
+                    true,
+                    List.of()
+            );
+            design.triggers().removeIf(existing -> existing.id().equals(trigger.id()));
+            design.triggers().add(trigger);
+            wiringTriggerId = trigger.id();
+            pendingTriggerId = "";
+            paintModeBox.setSelectedItem(PaintMode.WIRE_TRIGGER);
+            setStatus("Placed " + trigger.id() + ". Click door tiles to wire close targets.");
+        }
+
+        private void wireTriggerTarget(int x, int y) {
+            MapDesignLibrary.MapTrigger trigger = findTrigger(wiringTriggerId);
+            if (trigger == null) {
+                setStatus("Choose Manage > Triggers > Wire Targets first.");
+                return;
+            }
+
+            if (!isDoorTile(design.tiles()[y][x])) {
+                setStatus("Trigger targets must be door tiles.");
+                return;
+            }
+
+            for (MapDesignLibrary.TriggerAction action : trigger.actions()) {
+                if (action.targetX() == x && action.targetY() == y) {
+                    removeTriggerTarget(trigger.id(), x + "," + y);
+                    setStatus("Removed wire from " + trigger.id() + " to door at " + x + "," + y + ".");
+                    return;
+                }
+            }
+
+            List<MapDesignLibrary.TriggerAction> actions = new ArrayList<>(trigger.actions());
+            actions.add(new MapDesignLibrary.TriggerAction(MapDesignLibrary.TriggerActionType.CLOSE_DOOR, x, y));
+            replaceTrigger(trigger, new MapDesignLibrary.MapTrigger(
+                    trigger.id(),
+                    trigger.x(),
+                    trigger.y(),
+                    trigger.fireMode(),
+                    trigger.oneShot(),
+                    actions
+            ));
+            setStatus("Wired " + trigger.id() + " to close door at " + x + "," + y + ".");
         }
 
         private Color tileColor(Library.TileType tile, int themeIndex) {
@@ -3224,7 +4719,9 @@ public class MapEditorTool extends JFrame {
         ALTERNATE_THEME("Alt Theme"),
         PLACE_OBJECT("Place Object"),
         ERASE_OBJECT("Erase Object"),
-        SET_SPAWN("Set Spawn");
+        SET_SPAWN("Set Spawn"),
+        PLACE_TRIGGER("Place Trigger"),
+        WIRE_TRIGGER("Wire Trigger");
 
         private final String label;
 

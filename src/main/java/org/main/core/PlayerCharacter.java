@@ -406,6 +406,7 @@ public class PlayerCharacter {
             case BRONZE -> 3;
             case IRON, YEW, SILVER -> 5;
             case STEEL, IRONWOOD -> 10;
+            default -> 1;
         };
     }
 
@@ -415,6 +416,30 @@ public class PlayerCharacter {
         }
 
         return inventory.getWeaponStatBonus();
+    }
+
+    public int getUsableWeaponAccuracyBonus() {
+        if (!canWieldWeapon()) {
+            return 0;
+        }
+
+        return inventory.getWeaponAccuracyBonus();
+    }
+
+    public int getUsableWeaponPowerBonus() {
+        if (!canWieldWeapon()) {
+            return 0;
+        }
+
+        return inventory.getWeaponPowerBonus();
+    }
+
+    public double getUsableWeaponSpeedMultiplier() {
+        if (!canWieldWeapon()) {
+            return 1.0;
+        }
+
+        return inventory.getWeaponSpeedMultiplier();
     }
 
     public int getUsableArmorStatBonus() {
@@ -452,13 +477,13 @@ public class PlayerCharacter {
     public int getMeleeAccuracy() {
         return getCombinedStat(PlayerStat.ATTACK)
                 + getSkillLevel(CharacterSkill.ATTACK)
-                + getUsableWeaponStatBonus();
+                + getUsableWeaponAccuracyBonus();
     }
 
     public int getMeleePower() {
         return getCombinedStat(PlayerStat.STRENGTH)
                 + getSkillLevel(CharacterSkill.STRENGTH)
-                + getUsableWeaponStatBonus();
+                + getUsableWeaponPowerBonus();
     }
 
     public int getDefenseRoll() {
@@ -519,9 +544,19 @@ public class PlayerCharacter {
 
         for (LimbItem limb : equippedLimbs.values()) {
             if (limb != null && !limb.isBroken()) {
-                battleSkills.addAll(limb.getSkills());
+                for (BattleSkill skill : limb.getSkills()) {
+                    battleSkills.add(skillFromLimb(skill, limb));
+                }
             }
         }
+    }
+
+    private BattleSkill skillFromLimb(BattleSkill skill, LimbItem limb) {
+        if (skill == null || limb == null || skill.getSummonMode() != BattleSkill.SummonMode.SAME_SPECIES) {
+            return skill;
+        }
+
+        return skill.withSummonSource(limb.getSourceCreatureId(), limb.getSourceCreatureName());
     }
 
     private void recalculateMaxHp(boolean healToFull) {

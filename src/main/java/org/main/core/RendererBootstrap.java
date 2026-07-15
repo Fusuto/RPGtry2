@@ -3,7 +3,7 @@ package org.main.core;
 import org.main.battle.BattleAssets;
 import org.main.battle.BattleRenderer;
 import org.main.content.EnvironmentLibrary;
-import org.main.engine.DungeonRenderer;
+import org.main.engine.DungeonRenderSystem;
 import org.main.engine.TextureManager;
 
 public final class RendererBootstrap {
@@ -11,14 +11,14 @@ public final class RendererBootstrap {
     }
 
     public static void configureDefaultRenderers(
-            DungeonRenderer dungeonRenderer,
+            DungeonRenderSystem dungeonRenderSystem,
             BattleRenderer battleRenderer
     ) {
         TextureManager textureManager = new TextureManager();
         textureManager.loadFromFolder("assets/images/building");
 
-        dungeonRenderer.setTextureManager(textureManager);
-        dungeonRenderer.setEnvironmentThemes(EnvironmentLibrary.STARTER_DUNGEON.getThemes());
+        dungeonRenderSystem.setTextureManager(textureManager);
+        dungeonRenderSystem.setEnvironmentThemes(EnvironmentLibrary.STARTER_DUNGEON.getThemes());
 
         battleRenderer.setAssets(BattleAssets.loadDefault());
     }

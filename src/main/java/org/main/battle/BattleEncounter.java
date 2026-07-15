@@ -35,8 +35,8 @@ public class BattleEncounter {
     }
 
     public BattleEncounter(List<BattleActor> allies, List<BattleActor> enemies, SoundSystem soundSystem) {
-        this.allies = allies;
-        this.enemies = enemies;
+        this.allies = allies == null ? new ArrayList<>() : new ArrayList<>(allies);
+        this.enemies = enemies == null ? new ArrayList<>() : new ArrayList<>(enemies);
         this.soundSystem = soundSystem;
 
         assignFormations();
@@ -156,12 +156,16 @@ public class BattleEncounter {
     }
 
     private static BattleActor createEnemyActor(Monster monster) {
+        return createMonsterActor(monster, Library.EntityType.ENEMY);
+    }
+
+    private static BattleActor createMonsterActor(Monster monster, Library.EntityType entityType) {
         var enemy = new BattleActor(
                 monster.getName(),
                 monster.getMaxHp(),
                 monster.getCurrentHp(),
                 monster.getImage(),
-                Library.EntityType.ENEMY,
+                entityType,
                 monster.getStat(PlayerStat.STRENGTH),
                 monster.getStat(PlayerStat.DEFENSE)
         );
@@ -275,11 +279,24 @@ public class BattleEncounter {
             return Library.BattleResult.CONTINUE;
         }
 
+        if (!caster.isSkillReady(skill)) {
+            battleMessage = skill.getName() + " is not ready.";
+            return Library.BattleResult.CONTINUE;
+        }
+
+        if (skill.isSummonSkill()) {
+            startManualSkillCost(caster, skill);
+            battleMessage = caster.getName() + " uses " + skill.getName() + ".";
+            appendBattleMessage(resolveSummon(caster, skill));
+            return Library.BattleResult.CONTINUE;
+        }
+
         if (targets == null || targets.isEmpty()) {
             battleMessage = "No valid targets.";
             return Library.BattleResult.CONTINUE;
         }
 
+        startManualSkillCost(caster, skill);
         battleMessage = caster.getName()
                 + " uses "
                 + skill.getName()
@@ -323,8 +340,6 @@ public class BattleEncounter {
                 appendBattleMessage(target.getName() + " recovers " + healed + " HP.");
             } else if (skill.getEffectType().equals(Library.EffectType.DEFEND)) {
                 target.applyDefend(skill.getDefendTurns(), skill.getDamageReduction());
-            } else if (skill.getEffectType().equals(Library.EffectType.SUMMON)) {
-                appendBattleMessage(resolveSummon(caster, skill));
             }
         }
 
@@ -340,6 +355,17 @@ public class BattleEncounter {
         }
 
         return Library.BattleResult.CONTINUE;
+    }
+
+    private void startManualSkillCost(BattleActor caster, BattleSkill skill) {
+        if (caster == null || skill == null) {
+            return;
+        }
+
+        caster.startSkillCooldown(skill);
+        if (skill.consumesAutoAction()) {
+            caster.resetAttackCooldown();
+        }
     }
 
     private String joinActorNames(List<BattleActor> actors) {
@@ -648,6 +674,7 @@ public class BattleEncounter {
                 continue;
             }
 
+            attacker.tickSkillCooldowns(deltaSeconds);
             attacker.tickAttackCooldown(deltaSeconds);
 
             if (!attacker.isAttackReady()) {
@@ -774,6 +801,7 @@ public class BattleEncounter {
         }
 
         List<BattleSkill> usableSkills = attacker.getSkills().stream()
+                .filter(attacker::isSkillReady)
                 .filter(skill -> !getSelectableActorsForSkill(attacker, skill).isEmpty())
                 .filter(skill -> !skill.isSummonSkill() || canSummon(attacker))
                 .toList();
@@ -791,7 +819,37 @@ public class BattleEncounter {
             return drainSkill;
         }
 
-        return usableSkills.getFirst();
+        BattleSkill summonSkill = usableSkills.stream()
+                .filter(BattleSkill::isSummonSkill)
+                .findFirst()
+                .orElse(null);
+
+        if (summonSkill != null) {
+            return summonSkill;
+        }
+
+        BattleSkill damageSkill = usableSkills.stream()
+                .filter(skill -> skill.getEffectType() == Library.EffectType.DAMAGE)
+                .findFirst()
+                .orElse(null);
+
+        if (damageSkill != null) {
+            return damageSkill;
+        }
+
+        BattleSkill defendSkill = usableSkills.stream()
+                .filter(skill -> skill.getEffectType() == Library.EffectType.DEFEND)
+                .findFirst()
+                .orElse(null);
+
+        if (defendSkill != null && attacker.getCurrentHp() < attacker.getMaxHp() && attacker.getDefendingTurns() <= 0) {
+            return defendSkill;
+        }
+
+        return usableSkills.stream()
+                .filter(skill -> skill.getEffectType() != Library.EffectType.DEFEND)
+                .findFirst()
+                .orElse(null);
     }
 
     private String resolveEnemySkill(BattleActor attacker, BattleSkill skill) {
@@ -808,6 +866,7 @@ public class BattleEncounter {
             return attacker.getName() + " hesitates.";
         }
 
+        attacker.startSkillCooldown(skill);
         int totalDamage = 0;
 
         for (BattleActor resolvedTarget : resolvedTargets) {
@@ -890,10 +949,28 @@ public class BattleEncounter {
 
     private BattleActor createSummonedActor(BattleActor caster, BattleSkill skill) {
         return switch (skill.getSummonMode()) {
-            case SAME_SPECIES -> caster.copyForSummon(caster.getName());
-            case SKELETON -> createEnemyActor(MapDesignLibrary.createDefaultEnemy(MapDesignLibrary.ENEMY_SKELETON));
+            case SAME_SPECIES -> createSameSpeciesSummon(caster, skill);
+            case SKELETON -> createMonsterActor(MapDesignLibrary.createDefaultEnemy(MapDesignLibrary.ENEMY_SKELETON), caster.getEntityType());
             case NONE -> null;
         };
+    }
+
+    private BattleActor createSameSpeciesSummon(BattleActor caster, BattleSkill skill) {
+        if (caster == null) {
+            return null;
+        }
+
+        String speciesId = skill == null ? "" : skill.getSummonSpeciesId();
+        if (caster.isEnemy() && (speciesId == null || speciesId.isBlank())) {
+            return caster.copyForSummon(caster.getName());
+        }
+
+        Monster summonedMonster = MapDesignLibrary.createEnemyById(speciesId);
+        if (summonedMonster == null) {
+            return null;
+        }
+
+        return createMonsterActor(summonedMonster, caster.getEntityType());
     }
 
     private int maxActorsPerSide() {

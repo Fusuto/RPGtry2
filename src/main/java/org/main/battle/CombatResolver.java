@@ -56,7 +56,7 @@ public final class CombatResolver {
         int accuracyRoll = Math.max(minRollValue(),
                 attacker.getAttackStat()
                         + attacker.getCombatSkillLevel(CharacterSkill.ATTACK)
-                        + attacker.getWeaponBonus()
+                        + attacker.getWeaponAccuracyBonus()
         );
         int defenseRoll = physicalDefenseRoll(defender);
         double hitChance = hitChance(accuracyRoll, defenseRoll);
@@ -64,7 +64,7 @@ public final class CombatResolver {
         int maxHit = Math.max(minDamageMaxHit(),
                 minDamageMaxHit()
                         + (attacker.getStrengthStat() + attacker.getCombatSkillLevel(CharacterSkill.STRENGTH)) / physicalStatDamageDivisor()
-                        + attacker.getWeaponBonus()
+                        + attacker.getWeaponPowerBonus()
                         + Math.max(0, maxHitBonus)
         );
         int damage = hit ? randomDamage(maxHit) : 0;

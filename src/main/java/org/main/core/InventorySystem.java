@@ -62,6 +62,8 @@ public final class InventorySystem {
         private final int baseGoldValue;
         private final String examineText;
         private final PlayerStat statBonusTarget;
+        private final String paperDollOverlayPath;
+        private final WeaponType weaponType;
         private final boolean stackable;
         private final boolean materialTintApplied;
         private int quantity;
@@ -117,7 +119,40 @@ public final class InventorySystem {
                 String examineText,
                 PlayerStat statBonusTarget
         ) {
-            this(name, itemType, icon, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, false, 1);
+            this(name, itemType, icon, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, "");
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                BufferedImage icon,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                String paperDollOverlayPath
+        ) {
+            this(name, itemType, icon, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, paperDollOverlayPath, defaultWeaponType(itemType));
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                BufferedImage icon,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                String paperDollOverlayPath,
+                WeaponType weaponType
+        ) {
+            this(name, itemType, icon, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, false, 1, false, paperDollOverlayPath, weaponType);
         }
 
         public Item(
@@ -147,7 +182,9 @@ public final class InventorySystem {
                     statBonusTarget,
                     stackable,
                     quantity,
-                    false
+                    false,
+                    "",
+                    defaultWeaponType(itemType)
             );
         }
 
@@ -164,7 +201,9 @@ public final class InventorySystem {
                 PlayerStat statBonusTarget,
                 boolean stackable,
                 int quantity,
-                boolean materialTintApplied
+                boolean materialTintApplied,
+                String paperDollOverlayPath,
+                WeaponType weaponType
         ) {
             this.name = name;
             this.itemType = itemType;
@@ -179,8 +218,16 @@ public final class InventorySystem {
                     ? "There is nothing unusual about it."
                     : examineText;
             this.statBonusTarget = statBonusTarget;
+            this.paperDollOverlayPath = paperDollOverlayPath == null ? "" : paperDollOverlayPath.trim();
+            this.weaponType = itemType == ItemType.WEAPON
+                    ? (weaponType == null || weaponType == WeaponType.NONE ? WeaponType.SWORD : weaponType)
+                    : WeaponType.NONE;
             this.stackable = stackable;
             this.quantity = Math.max(1, quantity);
+        }
+
+        private static WeaponType defaultWeaponType(ItemType itemType) {
+            return itemType == ItemType.WEAPON ? WeaponType.SWORD : WeaponType.NONE;
         }
 
         public Item(String name, ItemType itemType, String iconPath) {
@@ -237,6 +284,39 @@ public final class InventorySystem {
             this(name, itemType, loadIcon(iconPath), useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget);
         }
 
+        public Item(
+                String name,
+                ItemType itemType,
+                String iconPath,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                String paperDollOverlayPath
+        ) {
+            this(name, itemType, loadIcon(iconPath), useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, paperDollOverlayPath);
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                String iconPath,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                String paperDollOverlayPath,
+                WeaponType weaponType
+        ) {
+            this(name, itemType, loadIcon(iconPath), useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, paperDollOverlayPath, weaponType);
+        }
+
         private static BufferedImage loadIcon(String iconPath) {
             if (iconPath == null || iconPath.isBlank()) {
                 return null;
@@ -257,6 +337,21 @@ public final class InventorySystem {
             graphics.drawImage(source, 0, 0, null);
             graphics.setComposite(AlphaComposite.SrcAtop.derive(materialTintStrength(material)));
             graphics.setColor(tint);
+            graphics.fillRect(0, 0, source.getWidth(), source.getHeight());
+            graphics.dispose();
+            return tinted;
+        }
+
+        public static BufferedImage applyBurntTint(BufferedImage source) {
+            if (source == null) {
+                return null;
+            }
+
+            BufferedImage tinted = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = tinted.createGraphics();
+            graphics.drawImage(source, 0, 0, null);
+            graphics.setComposite(AlphaComposite.SrcAtop.derive(0.78f));
+            graphics.setColor(new Color(12, 10, 8));
             graphics.fillRect(0, 0, source.getWidth(), source.getHeight());
             graphics.dispose();
             return tinted;
@@ -291,6 +386,7 @@ public final class InventorySystem {
                 case IRONWOOD -> new Color(92, 92, 82);
                 case LEATHER -> new Color(120, 72, 44);
                 case NONE -> null;
+                default -> new Color(180, 180, 180);
             };
         }
 
@@ -299,6 +395,7 @@ public final class InventorySystem {
                 case IRON, STEEL, SILVER -> 0.35f;
                 case COPPER, BRONZE, OAK, YEW, IRONWOOD, LEATHER -> 0.45f;
                 case NONE -> 0.0f;
+                default -> 0.35f;
             };
         }
 
@@ -365,12 +462,38 @@ public final class InventorySystem {
             return statBonusTarget;
         }
 
+        public String getPaperDollOverlayPath() {
+            return paperDollOverlayPath;
+        }
+
+        public WeaponType getWeaponType() {
+            return weaponType;
+        }
+
         public int getEffectiveStatBonus() {
             if (!isEquippable()) {
                 return 0;
             }
 
             return (int) Math.round(material.getStatBonus() * durability.getStatMultiplier());
+        }
+
+        public int getWeaponAccuracyBonus() {
+            if (itemType != ItemType.WEAPON) {
+                return 0;
+            }
+            return Math.max(0, getEffectiveStatBonus() + weaponType.getAccuracyBonus());
+        }
+
+        public int getWeaponPowerBonus() {
+            if (itemType != ItemType.WEAPON) {
+                return 0;
+            }
+            return Math.max(0, getEffectiveStatBonus() + weaponType.getPowerBonus());
+        }
+
+        public double getWeaponSpeedMultiplier() {
+            return itemType == ItemType.WEAPON ? weaponType.getSpeedMultiplier() : 1.0;
         }
 
         public int getCalculatedBuyPrice() {
@@ -408,7 +531,9 @@ public final class InventorySystem {
                     statBonusTarget,
                     stackable,
                     quantity,
-                    materialTintApplied
+                    materialTintApplied,
+                    paperDollOverlayPath,
+                    weaponType
             );
         }
     }
@@ -448,6 +573,21 @@ public final class InventorySystem {
         public int getWeaponStatBonus() {
             Item weapon = equippedItems.get(EquipmentSlot.WEAPON);
             return weapon == null ? 0 : weapon.getEffectiveStatBonus();
+        }
+
+        public int getWeaponAccuracyBonus() {
+            Item weapon = equippedItems.get(EquipmentSlot.WEAPON);
+            return weapon == null ? 0 : weapon.getWeaponAccuracyBonus();
+        }
+
+        public int getWeaponPowerBonus() {
+            Item weapon = equippedItems.get(EquipmentSlot.WEAPON);
+            return weapon == null ? 0 : weapon.getWeaponPowerBonus();
+        }
+
+        public double getWeaponSpeedMultiplier() {
+            Item weapon = equippedItems.get(EquipmentSlot.WEAPON);
+            return weapon == null ? 1.0 : weapon.getWeaponSpeedMultiplier();
         }
 
         public int getArmorStatBonus() {
@@ -1112,6 +1252,10 @@ public final class InventorySystem {
             }
 
             if (gameState != null) {
+                if (gameState.hasSelectedWorldUseItem()
+                        && gameState.tryUseSelectedWorldItemOnInventoryItem(inventoryIndex)) {
+                    return true;
+                }
                 gameState.selectWorldUseItem(inventoryIndex);
                 return true;
             }
@@ -1144,6 +1288,11 @@ public final class InventorySystem {
         private boolean selectItemForWorldUse(int inventoryIndex) {
             if (gameState == null || inventory().getItem(inventoryIndex) == null) {
                 return false;
+            }
+
+            if (gameState.hasSelectedWorldUseItem()
+                    && gameState.tryUseSelectedWorldItemOnInventoryItem(inventoryIndex)) {
+                return true;
             }
 
             gameState.selectWorldUseItem(inventoryIndex);
@@ -1412,7 +1561,7 @@ public final class InventorySystem {
             examineTooltipTitle = item == null ? "Examine" : item.getName();
             examineTooltipText = item instanceof LimbItem limb
                     ? limbExamineText(limb)
-                    : item == null ? "There is nothing to examine." : item.getExamineText();
+                    : itemExamineText(item);
             examineTooltipPoint = mousePoint == null ? new Point(24, 24) : new Point(mousePoint);
         }
 
@@ -1434,6 +1583,20 @@ public final class InventorySystem {
 
             clearExamineTooltip();
             return true;
+        }
+
+        private String itemExamineText(Item item) {
+            if (item == null) {
+                return "There is nothing to examine.";
+            }
+            if (item.getItemType() != ItemType.WEAPON) {
+                return item.getExamineText();
+            }
+            return item.getExamineText()
+                    + "\n\nType: " + item.getWeaponType().getDisplayName()
+                    + "\nAccuracy: " + item.getWeaponAccuracyBonus()
+                    + "\nPower: " + item.getWeaponPowerBonus()
+                    + "\nSpeed: " + Math.round(item.getWeaponSpeedMultiplier() * 100.0) + "% interval";
         }
 
         private String limbExamineText(LimbItem limb) {
@@ -1564,26 +1727,28 @@ public final class InventorySystem {
             }
 
             PlayerCharacter player = gameState.getPlayerCharacter();
-            int currentWeaponBonus = player.getUsableWeaponStatBonus();
-            int currentAttack = currentWeaponBonus + player.getEquipmentStatBonus(PlayerStat.ATTACK);
-            int currentDamage = currentWeaponBonus + player.getEquipmentStatBonus(PlayerStat.STRENGTH);
+            int currentAttack = player.getUsableWeaponAccuracyBonus() + player.getEquipmentStatBonus(PlayerStat.ATTACK);
+            int currentDamage = player.getUsableWeaponPowerBonus() + player.getEquipmentStatBonus(PlayerStat.STRENGTH);
             int currentDefense = player.getUsableArmorStatBonus() + player.getEquipmentStatBonus(PlayerStat.DEFENSE);
             int currentSpellcasting = player.getEquipmentStatBonus(PlayerStat.INTELLIGENCE)
                     + player.getUsableMagicAccuracyBonus();
             int currentPotency = player.getEquipmentStatBonus(PlayerStat.WILLPOWER);
+            int currentSpeed = (int) Math.round(player.getUsableWeaponSpeedMultiplier() * 100.0);
             int previewAttack = currentAttack;
             int previewDamage = currentDamage;
             int previewDefense = currentDefense;
             int previewSpellcasting = currentSpellcasting;
             int previewPotency = currentPotency;
+            int previewSpeed = currentSpeed;
 
             if (draggedItem != null && draggedItem.isEquippable()) {
                 if (draggedItem.getItemType() == ItemType.WEAPON) {
                     Item currentWeapon = inventory().getEquippedItem(EquipmentSlot.WEAPON);
-                    int weaponDelta = - (currentWeapon == null ? 0 : currentWeapon.getEffectiveStatBonus())
-                            + draggedItem.getEffectiveStatBonus();
-                    previewAttack = currentAttack + weaponDelta;
-                    previewDamage = currentDamage + weaponDelta;
+                    int currentWeaponAccuracy = currentWeapon == null ? 0 : currentWeapon.getWeaponAccuracyBonus();
+                    int currentWeaponPower = currentWeapon == null ? 0 : currentWeapon.getWeaponPowerBonus();
+                    previewAttack = currentAttack - currentWeaponAccuracy + draggedItem.getWeaponAccuracyBonus();
+                    previewDamage = currentDamage - currentWeaponPower + draggedItem.getWeaponPowerBonus();
+                    previewSpeed = (int) Math.round(draggedItem.getWeaponSpeedMultiplier() * 100.0);
                 } else {
                     EquipmentSlot slot = previewSlotForItem(draggedItem);
                     Item currentEquipped = slot == null ? null : inventory().getEquippedItem(slot);
@@ -1632,8 +1797,9 @@ public final class InventorySystem {
             drawStatLine(g, "Defense", currentDefense, previewDefense, x + 14, y + 66);
             drawStatLine(g, "Spellcasting", currentSpellcasting, previewSpellcasting, x + 174, y + 66);
             drawStatLine(g, "Spell Potency", currentPotency, previewPotency, x + 14, y + 86);
+            drawPercentLine(g, "Speed", currentSpeed, previewSpeed, x + 174, y + 86);
             g.setColor(new Color(178, 170, 148));
-            g.drawString("Rings improve spellcasting.", x + 14, y + 112);
+            g.drawString("Weapon speed is attack interval: lower is faster.", x + 14, y + 112);
             g.setFont(oldFont);
         }
 
@@ -1808,6 +1974,19 @@ public final class InventorySystem {
 
             g.setColor(delta > 0 ? new Color(92, 225, 112) : new Color(224, 74, 74));
             g.drawString((delta > 0 ? " +" : " ") + delta, x + 70, y);
+        }
+
+        private void drawPercentLine(Graphics2D g, String label, int current, int preview, int x, int y) {
+            int delta = preview - current;
+            g.setColor(new Color(210, 204, 178));
+            g.drawString(label + " " + current + "%", x, y);
+
+            if (delta == 0) {
+                return;
+            }
+
+            g.setColor(delta < 0 ? new Color(92, 225, 112) : new Color(224, 74, 74));
+            g.drawString((delta > 0 ? " +" : " ") + delta + "%", x + 70, y);
         }
 
         private void drawSlot(Graphics2D g, Rectangle bounds, String label) {

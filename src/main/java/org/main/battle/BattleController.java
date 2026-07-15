@@ -128,33 +128,67 @@ public class BattleController {
         }
     }
 
-    private void handleSkillWindowClick(Point clickPoint) {
-        if (battleRenderer.isSkillWindowCloseButtonAt(clickPoint)) {
-            battleRenderer.closeSkillWindow();
+    public void handleBattleCommand(Library.BattleCommand command) {
+        BattleEncounter currentEncounter = gameState.getCurrentEncounter();
+
+        if (currentEncounter == null) {
             return;
         }
 
-        BattleSkill clickedSkill = battleRenderer.getSkillAt(clickPoint);
-
-        if (clickedSkill == null) {
+        if (command == Library.BattleCommand.ATTACK) {
+            beginAttackTargeting(currentEncounter);
             return;
         }
 
-        beginSkillTargeting(clickedSkill);
+        if (command == Library.BattleCommand.SKILL) {
+            openSkillWindow(currentEncounter);
+            return;
+        }
+
+        if (command == Library.BattleCommand.ITEMS) {
+            openItemWindow(currentEncounter);
+            return;
+        }
+
+        Library.BattleResult result = currentEncounter.handleRunCommand(command);
+        handleBattleResult(result);
     }
 
-    private void handleItemWindowClick(Point clickPoint) {
-        if (battleRenderer.isItemWindowCloseButtonAt(clickPoint)) {
-            battleRenderer.closeItemWindow();
-            return;
+    public boolean isSkillWindowOpen() {
+        return battleRenderer.isSkillWindowOpen();
+    }
+
+    public boolean isItemWindowOpen() {
+        return battleRenderer.isItemWindowOpen();
+    }
+
+    public BattleSkill getPendingSkill() {
+        return pendingSkill;
+    }
+
+    public Library.BattleCommand getPendingBattleCommand() {
+        return pendingBattleCommand;
+    }
+
+    public List<BattleActor> getSelectableTargetsView() {
+        return battleRenderer.getSelectableTargetsView();
+    }
+
+    public List<BattleSkill> getSkillChoicesView() {
+        return battleRenderer.getSkillChoices(gameState.getCurrentEncounter());
+    }
+
+    public List<BattleRenderer.BattleItemEntry> getBattleItemsView() {
+        return battleRenderer.getBattleItemsView();
+    }
+
+    public void selectSkill(BattleSkill skill) {
+        if (skill != null) {
+            beginSkillTargeting(skill);
         }
+    }
 
-        Integer inventoryIndex = battleRenderer.getBattleItemIndexAt(clickPoint);
-
-        if (inventoryIndex == null) {
-            return;
-        }
-
+    public void selectBattleItem(int inventoryIndex) {
         BattleEncounter currentEncounter = gameState.getCurrentEncounter();
 
         if (currentEncounter == null) {
@@ -170,6 +204,101 @@ public class BattleController {
         handleBattleResult(result);
     }
 
+    public void selectBattleActor(BattleActor selectedActor) {
+        BattleEncounter currentEncounter = gameState.getCurrentEncounter();
+
+        if (currentEncounter == null || selectedActor == null) {
+            return;
+        }
+
+        if (pendingSkill != null) {
+            selectSkillTarget(currentEncounter, selectedActor);
+            return;
+        }
+
+        if (pendingBattleCommand == Library.BattleCommand.ATTACK) {
+            Library.BattleResult result = currentEncounter.handleAttack(selectedActor);
+
+            pendingBattleCommand = null;
+            battleRenderer.clearSelectableTargets();
+
+            handleBattleResult(result);
+        }
+    }
+
+    public boolean hasCurrentBattleChoices() {
+        return battleRenderer.isSkillWindowOpen()
+                || battleRenderer.isItemWindowOpen()
+                || pendingSkill != null
+                || pendingBattleCommand != null;
+    }
+
+    public void selectCurrentBattleChoice(int choiceIndex) {
+        if (choiceIndex < 0) {
+            return;
+        }
+
+        if (battleRenderer.isSkillWindowOpen()) {
+            List<BattleSkill> skills = getSkillChoicesView();
+            if (choiceIndex < skills.size()) {
+                selectSkill(skills.get(choiceIndex));
+            }
+            return;
+        }
+
+        if (battleRenderer.isItemWindowOpen()) {
+            List<BattleRenderer.BattleItemEntry> items = getBattleItemsView();
+            if (choiceIndex < items.size()) {
+                selectBattleItem(items.get(choiceIndex).inventoryIndex());
+            }
+            return;
+        }
+
+        List<BattleActor> targets = getSelectableTargetsView();
+        if (choiceIndex < targets.size()) {
+            selectBattleActor(targets.get(choiceIndex));
+        }
+    }
+
+    public void cancelBattleSelection() {
+        pendingSkill = null;
+        pendingBattleCommand = null;
+        battleRenderer.closeSkillWindow();
+        battleRenderer.closeItemWindow();
+        battleRenderer.clearSelectableTargets();
+        battleRenderer.clearPreviewSkill();
+    }
+
+    private void handleSkillWindowClick(Point clickPoint) {
+        if (battleRenderer.isSkillWindowCloseButtonAt(clickPoint)) {
+            battleRenderer.closeSkillWindow();
+            return;
+        }
+
+        BattleSkill clickedSkill = battleRenderer.getSkillAt(clickPoint);
+
+        if (clickedSkill == null) {
+            return;
+        }
+
+        selectSkill(clickedSkill);
+    }
+
+    private void handleItemWindowClick(Point clickPoint) {
+        if (battleRenderer.isItemWindowCloseButtonAt(clickPoint)) {
+            battleRenderer.closeItemWindow();
+            return;
+        }
+
+        Integer inventoryIndex = battleRenderer.getBattleItemIndexAt(clickPoint);
+
+        if (inventoryIndex == null) {
+            return;
+        }
+
+        selectBattleItem(inventoryIndex);
+    }
+
     private void beginSkillTargeting(BattleSkill skill) {
         BattleEncounter currentEncounter = gameState.getCurrentEncounter();
 
@@ -182,6 +311,30 @@ public class BattleController {
         if (caster == null) {
             currentEncounter.setBattleMessage("No one can use that skill.");
             battleRenderer.closeSkillWindow();
+            return;
+        }
+
+        if (!caster.isSkillReady(skill)) {
+            currentEncounter.setBattleMessage(skill.getName() + " is not ready.");
+            battleRenderer.closeSkillWindow();
+            battleRenderer.clearPreviewSkill();
+            return;
+        }
+
+        if (skill.isSummonSkill()) {
+            Library.BattleResult result = currentEncounter.handleSkill(
+                    caster,
+                    skill,
+                    List.of()
+            );
+
+            pendingBattleCommand = null;
+            pendingSkill = null;
+            battleRenderer.closeSkillWindow();
+            battleRenderer.clearSelectableTargets();
+            battleRenderer.clearPreviewSkill();
+
+            handleBattleResult(result);
             return;
         }
 
@@ -219,6 +372,26 @@ public class BattleController {
             return;
         }
 
+        selectBattleActor(selectedActor);
+    }
+
+    private void handleTargetClick(Point clickPoint) {
+        BattleEncounter currentEncounter = gameState.getCurrentEncounter();
+
+        if (currentEncounter == null) {
+            return;
+        }
+
+        BattleActor target = battleRenderer.getActorAt(clickPoint);
+
+        if (target == null) {
+            return;
+        }
+
+        selectBattleActor(target);
+    }
+
+    private void selectSkillTarget(BattleEncounter currentEncounter, BattleActor selectedActor) {
         BattleActor caster = currentEncounter.getFirstLivingAlly();
 
         if (!currentEncounter.canSelectActorForSkill(caster, selectedActor, pendingSkill)) {
@@ -253,55 +426,6 @@ public class BattleController {
         battleRenderer.clearSelectableTargets();
         battleRenderer.clearPreviewSkill();
 
-        handleBattleResult(result);
-    }
-
-    private void handleTargetClick(Point clickPoint) {
-        BattleEncounter currentEncounter = gameState.getCurrentEncounter();
-
-        if (currentEncounter == null) {
-            return;
-        }
-
-        BattleActor target = battleRenderer.getActorAt(clickPoint);
-
-        if (target == null) {
-            return;
-        }
-
-        if (pendingBattleCommand == Library.BattleCommand.ATTACK) {
-            Library.BattleResult result = currentEncounter.handleAttack(target);
-
-            pendingBattleCommand = null;
-            battleRenderer.clearSelectableTargets();
-
-            handleBattleResult(result);
-        }
-    }
-
-    private void handleBattleCommand(Library.BattleCommand command) {
-        BattleEncounter currentEncounter = gameState.getCurrentEncounter();
-
-        if (currentEncounter == null) {
-            return;
-        }
-
-        if (command == Library.BattleCommand.ATTACK) {
-            beginAttackTargeting(currentEncounter);
-            return;
-        }
-
-        if (command == Library.BattleCommand.SKILL) {
-            openSkillWindow(currentEncounter);
-            return;
-        }
-
-        if (command == Library.BattleCommand.ITEMS) {
-            openItemWindow(currentEncounter);
-            return;
-        }
-
-        Library.BattleResult result = currentEncounter.handleRunCommand(command);
         handleBattleResult(result);
     }
 

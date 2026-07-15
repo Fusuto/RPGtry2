@@ -3,6 +3,7 @@ package org.main.core;
 public enum GearMaterial {
     NONE("None", MaterialFamily.NONE, 0, 1.0),
     COPPER("Copper", MaterialFamily.METAL, 1, 1.0),
+    TIN("Tin", MaterialFamily.METAL, 0, 1.0),
     BRONZE("Bronze", MaterialFamily.METAL, 2, 1.25),
     IRON("Iron", MaterialFamily.METAL, 3, 1.5),
     STEEL("Steel", MaterialFamily.METAL, 4, 2.0),

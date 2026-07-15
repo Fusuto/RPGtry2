@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 public class LimbItem extends InventorySystem.Item {
+    private final String sourceCreatureId;
     private final String sourceCreatureName;
     private final LimbSlot limbSlot;
     private final EnumMap<PlayerStat, Integer> baseStats;
@@ -54,7 +55,23 @@ public class LimbItem extends InventorySystem.Item {
             String examineText,
             String paperDollSourcePath
     ) {
+        this(name, "", sourceCreatureName, limbSlot, baseStats, skills, condition, iconPath, examineText, paperDollSourcePath);
+    }
+
+    public LimbItem(
+            String name,
+            String sourceCreatureId,
+            String sourceCreatureName,
+            LimbSlot limbSlot,
+            Map<PlayerStat, Integer> baseStats,
+            List<BattleSkill> skills,
+            GearDurability condition,
+            String iconPath,
+            String examineText,
+            String paperDollSourcePath
+    ) {
         super(name, InventorySystem.ItemType.LIMB, loadIcon(iconPath), null, 0, GearMaterial.NONE, condition, 25);
+        this.sourceCreatureId = sourceCreatureId == null ? "" : sourceCreatureId;
         this.sourceCreatureName = sourceCreatureName == null ? "" : sourceCreatureName;
         this.limbSlot = limbSlot;
         this.baseStats = new EnumMap<>(PlayerStat.class);
@@ -71,6 +88,10 @@ public class LimbItem extends InventorySystem.Item {
 
     private static BufferedImage loadIcon(String iconPath) {
         return iconPath == null || iconPath.isBlank() ? null : AssetLoader.loadImage(iconPath);
+    }
+
+    public String getSourceCreatureId() {
+        return sourceCreatureId;
     }
 
     public String getSourceCreatureName() {
@@ -117,6 +138,7 @@ public class LimbItem extends InventorySystem.Item {
     public LimbItem withCondition(GearDurability newCondition) {
         return new LimbItem(
                 getName(),
+                sourceCreatureId,
                 sourceCreatureName,
                 limbSlot,
                 baseStats,

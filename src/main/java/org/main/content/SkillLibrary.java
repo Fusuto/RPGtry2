@@ -1,6 +1,7 @@
 package org.main.content;
 
 import org.main.battle.BattleSkill;
+import org.main.core.GameConfiguration;
 import org.main.core.Library;
 
 import java.util.List;
@@ -286,7 +287,25 @@ public enum SkillLibrary {
                 selfHealPercent,
                 summonMode,
                 summonChance
-        );
+        ).withCooldown(name(), configuredCooldownSeconds(), true);
+    }
+
+    private double configuredCooldownSeconds() {
+        return Math.max(0.0, GameConfiguration.doubleValue(
+                "battle.skillCooldown." + name() + ".seconds",
+                defaultCooldownSeconds()
+        ));
+    }
+
+    private double defaultCooldownSeconds() {
+        return switch (this) {
+            case WAIT, DEBUG_DROP_HP -> 0.0;
+            case BASH, DEFEND -> 6.0;
+            case PIERCING_LINE, CRUSH_COLUMN -> 7.0;
+            case FIREBALL, ABSORB -> 8.0;
+            case HEAL -> 10.0;
+            case WAR_CRY, RAISE_SKELETON -> 20.0;
+        };
     }
 
     public static List<BattleSkill> createDefaultPlayerSkills() {

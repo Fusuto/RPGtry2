@@ -1,0 +1,555 @@
+package org.main.experimental;
+
+import org.main.battle.DifficultyResolver;
+import org.main.core.GameConfiguration;
+import org.main.core.Library;
+import org.main.engine.DungeonRenderContext;
+import org.main.engine.DungeonRenderDebugInfo;
+import org.main.engine.EnvironmentTheme;
+import org.main.engine.MapEntity;
+import org.main.engine.RealtimeDungeonViewport;
+import org.main.engine.TextureManager;
+
+import java.awt.Dimension;
+import java.awt.Point;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.lwjgl.glfw.GLFW.*;
+import static org.lwjgl.opengl.GL.createCapabilities;
+import static org.lwjgl.opengl.GL11.*;
+import static org.lwjgl.system.MemoryUtil.NULL;
+
+public class LwjglDungeonViewport implements RealtimeDungeonViewport {
+    private static final int MAX_DIFFICULTY_LABEL_DEPTH = 3;
+
+    private final LwjglTextureCache textureCache = new LwjglTextureCache();
+    private final LwjglDungeonSceneBuilder sceneBuilder;
+    private final int windowWidth;
+    private final int windowHeight;
+    private final double wallHeight;
+    private final double eyeHeight;
+    private final double fovDegrees;
+    private final double nearPlane;
+    private final double farPlane;
+    private final boolean resizable;
+    private int maxDepth;
+    private long window;
+    private boolean debugVisible;
+    private int visibleTiles;
+    private int floorQuads;
+    private int wallQuads;
+    private int spriteQuads;
+    private double lastFrameMs;
+    private double smoothedFrameMs = 16.0;
+    private CameraLookState lastLookState = CameraLookState.centered();
+    private List<EnemyLabel> enemyLabels = List.of();
+
+    public LwjglDungeonViewport(TextureManager textureManager, List<EnvironmentTheme> environmentThemes) {
+        List<EnvironmentTheme> safeThemes = environmentThemes == null || environmentThemes.isEmpty()
+                ? List.of(EnvironmentTheme.defaultTheme())
+                : new ArrayList<>(environmentThemes);
+        this.sceneBuilder = new LwjglDungeonSceneBuilder(textureManager, safeThemes);
+        this.windowWidth = Math.max(320, GameConfiguration.intValue("renderer.prototype.windowWidth", 1280));
+        this.windowHeight = Math.max(240, GameConfiguration.intValue("renderer.prototype.windowHeight", 720));
+        this.maxDepth = Math.max(1, GameConfiguration.intValue("renderer.prototype.maxDepth", 12));
+        this.wallHeight = Math.max(0.1, GameConfiguration.doubleValue("renderer.prototype.wallHeight", 1.0));
+        this.eyeHeight = Math.max(0.05, GameConfiguration.doubleValue("renderer.prototype.eyeHeight", 0.55));
+        this.fovDegrees = Math.max(20.0, Math.min(120.0, GameConfiguration.doubleValue("renderer.prototype.fovDegrees", 70.0)));
+        this.nearPlane = Math.max(0.01, GameConfiguration.doubleValue("renderer.prototype.nearPlane", 0.05));
+        this.farPlane = Math.max(nearPlane + 1.0, GameConfiguration.doubleValue("renderer.prototype.farPlane", 64.0));
+        this.resizable = Boolean.parseBoolean(GameConfiguration.stringValue("renderer.prototype.resizable", "true"));
+        this.debugVisible = Boolean.parseBoolean(GameConfiguration.stringValue(
+                "renderer.prototype.debug.defaultVisible",
+                "false"
+        ));
+    }
+
+    @Override
+    public void initialize() {
+        if (!glfwInit()) {
+            throw new IllegalStateException("Unable to initialize GLFW.");
+        }
+
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        glfwWindowHint(GLFW_RESIZABLE, resizable ? GLFW_TRUE : GLFW_FALSE);
+        window = glfwCreateWindow(windowWidth, windowHeight, "Aether LWJGL Dungeon Prototype", NULL, NULL);
+        if (window == NULL) {
+            glfwTerminate();
+            throw new IllegalStateException("Unable to create LWJGL prototype window.");
+        }
+
+        glfwMakeContextCurrent(window);
+        glfwSwapInterval(1);
+        createCapabilities();
+        glfwShowWindow(window);
+
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);
+        glEnable(GL_TEXTURE_2D);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glEnable(GL_ALPHA_TEST);
+        glAlphaFunc(GL_GREATER, 0.10f);
+        glClearColor(0.04f, 0.04f, 0.07f, 1.0f);
+    }
+
+    @Override
+    public void renderFrame(DungeonRenderContext context) {
+        renderFrame(context, CameraLookState.centered());
+    }
+
+    public void renderFrame(DungeonRenderContext context, CameraLookState lookState) {
+        renderFrame(context, lookState, null, null);
+    }
+
+    public void renderFrame(
+            DungeonRenderContext context,
+            CameraLookState lookState,
+            LwjglTextOverlayRenderer overlayRenderer,
+            org.main.core.AetherGameRuntime runtime
+    ) {
+        long frameStart = System.nanoTime();
+        int[] width = new int[1];
+        int[] height = new int[1];
+        glfwGetFramebufferSize(window, width, height);
+        int framebufferWidth = Math.max(1, width[0]);
+        int framebufferHeight = Math.max(1, height[0]);
+        CameraLookState safeLookState = lookState == null ? CameraLookState.centered() : lookState;
+        lastLookState = safeLookState;
+
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        if (shouldRenderDungeon(runtime)) {
+            configureProjection(framebufferWidth, framebufferHeight);
+            configureCamera(context, safeLookState);
+
+            double cameraYawDegrees = animatedYawDegrees(context) + safeLookState.yawOffsetDegrees();
+            LwjglDungeonSceneBuilder.Scene scene = sceneBuilder.build(context, maxDepth, wallHeight, cameraYawDegrees);
+            visibleTiles = scene.visibleTiles();
+            floorQuads = scene.floorQuads();
+            wallQuads = scene.wallQuads();
+            spriteQuads = scene.spriteQuads();
+            enemyLabels = projectEnemyLabels(
+                    context,
+                    safeLookState,
+                    framebufferWidth,
+                    framebufferHeight
+            );
+
+            for (LwjglDungeonSceneBuilder.TexturedQuad quad : scene.quads()) {
+                drawQuad(quad);
+            }
+        } else {
+            visibleTiles = 0;
+            floorQuads = 0;
+            wallQuads = 0;
+            spriteQuads = 0;
+            enemyLabels = List.of();
+        }
+
+        if (overlayRenderer != null && runtime != null) {
+            overlayRenderer.setEnemyLabels(enemyLabels);
+            overlayRenderer.setViewportDebugLines(viewportDebugLines());
+            overlayRenderer.render(runtime, framebufferWidth, framebufferHeight);
+        }
+
+        glfwSwapBuffers(window);
+        lastFrameMs = (System.nanoTime() - frameStart) / 1_000_000.0;
+        smoothedFrameMs = smoothedFrameMs * 0.90 + lastFrameMs * 0.10;
+        if (debugVisible) {
+            updateWindowTitle();
+        }
+    }
+
+    private boolean shouldRenderDungeon(org.main.core.AetherGameRuntime runtime) {
+        return runtime == null || runtime.gameState().isDungeonMode();
+    }
+
+    @Override
+    public void shutdown() {
+        textureCache.shutdown();
+        if (window != NULL) {
+            glfwDestroyWindow(window);
+            window = NULL;
+        }
+        glfwTerminate();
+    }
+
+    @Override
+    public DungeonRenderDebugInfo getDebugInfo() {
+        return new DungeonRenderDebugInfo(
+                "Tiles " + visibleTiles + " Quads " + totalQuads(),
+                maxDepth,
+                "lwjgl"
+        );
+    }
+
+    public String sceneSummary() {
+        return "depth=" + maxDepth
+                + ", tiles=" + visibleTiles
+                + ", floors=" + floorQuads
+                + ", walls=" + wallQuads
+                + ", sprites=" + spriteQuads
+                + ", textures=" + textureCache.textureCount();
+    }
+
+    public long windowHandle() {
+        return window;
+    }
+
+    public Dimension framebufferSize() {
+        if (window == NULL) {
+            return new Dimension(windowWidth, windowHeight);
+        }
+
+        int[] width = new int[1];
+        int[] height = new int[1];
+        glfwGetFramebufferSize(window, width, height);
+        return new Dimension(Math.max(1, width[0]), Math.max(1, height[0]));
+    }
+
+    public Point framebufferPoint(double cursorX, double cursorY) {
+        if (window == NULL) {
+            return new Point((int) Math.round(cursorX), (int) Math.round(cursorY));
+        }
+
+        int[] windowWidthValue = new int[1];
+        int[] windowHeightValue = new int[1];
+        glfwGetWindowSize(window, windowWidthValue, windowHeightValue);
+        int safeWindowWidth = Math.max(1, windowWidthValue[0]);
+        int safeWindowHeight = Math.max(1, windowHeightValue[0]);
+        Dimension framebufferSize = framebufferSize();
+
+        int framebufferX = (int) Math.round(cursorX * framebufferSize.width / (double) safeWindowWidth);
+        int framebufferY = (int) Math.round(cursorY * framebufferSize.height / (double) safeWindowHeight);
+        return new Point(
+                Math.max(0, Math.min(framebufferSize.width - 1, framebufferX)),
+                Math.max(0, Math.min(framebufferSize.height - 1, framebufferY))
+        );
+    }
+
+    public boolean shouldClose() {
+        return glfwWindowShouldClose(window);
+    }
+
+    public void requestClose() {
+        glfwSetWindowShouldClose(window, true);
+    }
+
+    public void pollEvents() {
+        glfwPollEvents();
+    }
+
+    public void increaseDepth() {
+        maxDepth++;
+    }
+
+    public void decreaseDepth() {
+        maxDepth = Math.max(1, maxDepth - 1);
+    }
+
+    public boolean toggleDebug() {
+        debugVisible = !debugVisible;
+        if (!debugVisible) {
+            glfwSetWindowTitle(window, "Aether LWJGL Dungeon Prototype");
+        }
+        return debugVisible;
+    }
+
+    public void setEnvironmentThemes(List<EnvironmentTheme> environmentThemes) {
+        sceneBuilder.setEnvironmentThemes(environmentThemes);
+    }
+
+    public List<EnemyLabel> getEnemyLabelsView() {
+        return List.copyOf(enemyLabels);
+    }
+
+    private void configureProjection(int framebufferWidth, int framebufferHeight) {
+        glViewport(0, 0, framebufferWidth, framebufferHeight);
+        double aspect = framebufferWidth / (double) framebufferHeight;
+        double top = Math.tan(Math.toRadians(fovDegrees) / 2.0) * nearPlane;
+        double right = top * aspect;
+
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glFrustum(-right, right, -top, top, nearPlane, farPlane);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+    }
+
+    private void configureCamera(DungeonRenderContext context, CameraLookState lookState) {
+        double yaw = animatedYawDegrees(context) + lookState.yawOffsetDegrees();
+        glRotated(lookState.pitchOffsetDegrees(), 1.0, 0.0, 0.0);
+        glRotated(-yaw, 0.0, 1.0, 0.0);
+        glTranslated(
+                -animatedCameraX(context),
+                -eyeHeight,
+                -animatedCameraZ(context)
+        );
+    }
+
+    private double animatedYawDegrees(DungeonRenderContext context) {
+        return yawDegrees(context.direction()) - Math.toDegrees(context.cameraRotationRadians());
+    }
+
+    private double animatedCameraX(DungeonRenderContext context) {
+        return context.playerX()
+                + 0.5
+                + forwardX(context.direction()) * context.cameraOffsetForward()
+                + rightX(context.direction()) * context.cameraOffsetSide();
+    }
+
+    private double animatedCameraZ(DungeonRenderContext context) {
+        return context.playerY()
+                + 0.5
+                + forwardY(context.direction()) * context.cameraOffsetForward()
+                + rightY(context.direction()) * context.cameraOffsetSide();
+    }
+
+    private double yawDegrees(int direction) {
+        return switch (direction) {
+            case 1 -> -90.0;
+            case 2 -> 180.0;
+            case 3 -> 90.0;
+            default -> 0.0;
+        };
+    }
+
+    private int forwardX(int direction) {
+        return switch (direction) {
+            case 1 -> 1;
+            case 3 -> -1;
+            default -> 0;
+        };
+    }
+
+    private int forwardY(int direction) {
+        return switch (direction) {
+            case 0 -> -1;
+            case 2 -> 1;
+            default -> 0;
+        };
+    }
+
+    private int rightX(int direction) {
+        return switch (direction) {
+            case 0 -> 1;
+            case 2 -> -1;
+            default -> 0;
+        };
+    }
+
+    private int rightY(int direction) {
+        return switch (direction) {
+            case 1 -> 1;
+            case 3 -> -1;
+            default -> 0;
+        };
+    }
+
+    private List<EnemyLabel> projectEnemyLabels(
+            DungeonRenderContext context,
+            CameraLookState lookState,
+            int framebufferWidth,
+            int framebufferHeight
+    ) {
+        if (context == null || context.playerCharacter() == null || context.entities() == null) {
+            return List.of();
+        }
+
+        DifficultyResolver.DifficultyRating playerRating = DifficultyResolver.ratePlayer(context.playerCharacter());
+        List<EnemyLabel> labels = new ArrayList<>();
+        for (MapEntity entity : context.entities()) {
+            EnemyLabel label = projectEnemyLabel(context, lookState, framebufferWidth, framebufferHeight, playerRating, entity);
+            if (label != null) {
+                labels.add(label);
+            }
+        }
+        return labels;
+    }
+
+    private EnemyLabel projectEnemyLabel(
+            DungeonRenderContext context,
+            CameraLookState lookState,
+            int framebufferWidth,
+            int framebufferHeight,
+            DifficultyResolver.DifficultyRating playerRating,
+            MapEntity entity
+    ) {
+        if (entity == null
+                || entity.getType() != Library.EntityType.ENEMY
+                || entity.getMonster() == null
+                || context.map() == null
+                || context.map().isOutOfBounds(entity.getX(), entity.getY())
+                || (context.map().getTile(entity.getX(), entity.getY()).isWallLike() && !entity.shouldRenderOnWall())) {
+            return null;
+        }
+
+        double tileDistance = Math.hypot(entity.getX() - context.playerX(), entity.getY() - context.playerY());
+        if (tileDistance > Math.min(maxDepth, MAX_DIFFICULTY_LABEL_DEPTH)
+                || !hasLineOfSight(context, entity.getX(), entity.getY())) {
+            return null;
+        }
+
+        Point screenPoint = projectWorldPoint(
+                context,
+                lookState,
+                entity.getX() + 0.5,
+                Math.max(0.45, 0.90 * entity.getVisualScale()),
+                entity.getY() + 0.5,
+                framebufferWidth,
+                framebufferHeight
+        );
+        if (screenPoint == null) {
+            return null;
+        }
+
+        DifficultyResolver.DifficultyComparison comparison = DifficultyResolver.compare(
+                playerRating,
+                DifficultyResolver.rateMonster(entity.getMonster())
+        );
+        return new EnemyLabel(screenPoint.x, screenPoint.y, comparison.compactLabel(), comparison.band());
+    }
+
+    private Point projectWorldPoint(
+            DungeonRenderContext context,
+            CameraLookState lookState,
+            double worldX,
+            double worldY,
+            double worldZ,
+            int framebufferWidth,
+            int framebufferHeight
+    ) {
+        double dx = worldX - animatedCameraX(context);
+        double dy = worldY - eyeHeight;
+        double dz = worldZ - animatedCameraZ(context);
+
+        double yawRadians = Math.toRadians(-(animatedYawDegrees(context) + lookState.yawOffsetDegrees()));
+        double yawCos = Math.cos(yawRadians);
+        double yawSin = Math.sin(yawRadians);
+        double viewX = dx * yawCos + dz * yawSin;
+        double yawedZ = -dx * yawSin + dz * yawCos;
+
+        double pitchRadians = Math.toRadians(lookState.pitchOffsetDegrees());
+        double pitchCos = Math.cos(pitchRadians);
+        double pitchSin = Math.sin(pitchRadians);
+        double viewY = dy * pitchCos - yawedZ * pitchSin;
+        double viewZ = dy * pitchSin + yawedZ * pitchCos;
+
+        if (viewZ >= -nearPlane) {
+            return null;
+        }
+
+        double aspect = framebufferWidth / (double) framebufferHeight;
+        double tanHalfFov = Math.tan(Math.toRadians(fovDegrees) / 2.0);
+        double ndcX = (viewX / -viewZ) / (tanHalfFov * aspect);
+        double ndcY = (viewY / -viewZ) / tanHalfFov;
+        if (ndcX < -1.1 || ndcX > 1.1 || ndcY < -1.1 || ndcY > 1.1) {
+            return null;
+        }
+
+        int screenX = (int) Math.round((ndcX + 1.0) * 0.5 * framebufferWidth);
+        int screenY = (int) Math.round((1.0 - ndcY) * 0.5 * framebufferHeight);
+        return new Point(screenX, screenY);
+    }
+
+    private boolean hasLineOfSight(DungeonRenderContext context, int targetX, int targetY) {
+        int x0 = context.playerX();
+        int y0 = context.playerY();
+        int dx = Math.abs(targetX - x0);
+        int dy = Math.abs(targetY - y0);
+        int sx = x0 < targetX ? 1 : -1;
+        int sy = y0 < targetY ? 1 : -1;
+        int error = dx - dy;
+        int x = x0;
+        int y = y0;
+
+        while (x != targetX || y != targetY) {
+            int doubledError = error * 2;
+            if (doubledError > -dy) {
+                error -= dy;
+                x += sx;
+            }
+            if (doubledError < dx) {
+                error += dx;
+                y += sy;
+            }
+
+            if (x == targetX && y == targetY) {
+                return true;
+            }
+
+            if (context.map().isWallLike(x, y)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void drawQuad(LwjglDungeonSceneBuilder.TexturedQuad quad) {
+        textureCache.bind(quad.texture());
+        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        glBegin(GL_QUADS);
+        drawVertex(quad.topLeft());
+        drawVertex(quad.topRight());
+        drawVertex(quad.bottomRight());
+        drawVertex(quad.bottomLeft());
+        glEnd();
+    }
+
+    private void drawVertex(LwjglDungeonSceneBuilder.Vertex vertex) {
+        glTexCoord2d(vertex.u(), vertex.v());
+        glVertex3d(vertex.x(), vertex.y(), vertex.z());
+    }
+
+    private int totalQuads() {
+        return floorQuads + wallQuads + spriteQuads;
+    }
+
+    private void updateWindowTitle() {
+        int fps = smoothedFrameMs <= 0.0 ? 0 : (int) Math.round(1000.0 / smoothedFrameMs);
+        glfwSetWindowTitle(
+                window,
+                "Aether LWJGL Mesh Prototype | FPS " + fps
+                        + " | Frame " + String.format("%.2f", smoothedFrameMs) + " ms"
+                        + " | Depth " + maxDepth
+                        + " | Tiles " + visibleTiles
+                        + " | Floors " + floorQuads
+                        + " | Walls " + wallQuads
+                        + " | Sprites " + spriteQuads
+                        + " | Textures " + textureCache.textureCount()
+        );
+    }
+
+    private List<String> viewportDebugLines() {
+        int fps = smoothedFrameMs <= 0.0 ? 0 : (int) Math.round(1000.0 / smoothedFrameMs);
+        List<String> lines = new ArrayList<>();
+        lines.add("Renderer lwjgl");
+        lines.add("FPS " + fps);
+        lines.add("Frame " + String.format("%.2f", smoothedFrameMs) + " ms");
+        lines.add("Depth " + maxDepth);
+        lines.add("Tiles " + visibleTiles);
+        lines.add("Quads F" + floorQuads + " W" + wallQuads + " S" + spriteQuads);
+        lines.add("Textures " + textureCache.textureCount());
+        if (lastLookState.active()
+                || Math.abs(lastLookState.yawOffsetDegrees()) > 0.001
+                || Math.abs(lastLookState.pitchOffsetDegrees()) > 0.001) {
+            lines.add("Look "
+                    + String.format("%.1f", lastLookState.yawOffsetDegrees())
+                    + "/"
+                    + String.format("%.1f", lastLookState.pitchOffsetDegrees()));
+        }
+        return lines;
+    }
+
+    public record EnemyLabel(
+            int x,
+            int y,
+            String text,
+            DifficultyResolver.DifficultyBand band
+    ) {
+    }
+}

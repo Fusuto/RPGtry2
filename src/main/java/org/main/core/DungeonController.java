@@ -104,7 +104,10 @@ public class DungeonController {
     public void interact() {
         int targetX = gameState.getPlayerX() + forwardX();
         int targetY = gameState.getPlayerY() + forwardY();
+        interactAt(targetX, targetY);
+    }
 
+    public void interactAt(int targetX, int targetY) {
         MapEntity targetEntity = getEntityAt(targetX, targetY);
 
         /*
@@ -172,17 +175,8 @@ public class DungeonController {
 
         gameState.setPlayerPosition(nextPosition.x, nextPosition.y);
         gameState.startMovementAnimation(previousX, previousY, nextPosition.x, nextPosition.y);
-        sealQuestDoorBehindPlayer(previousX, previousY);
+        gameState.evaluateEntryTrigger(nextPosition.x, nextPosition.y);
         playFootstepSound();
-    }
-
-    private void sealQuestDoorBehindPlayer(int previousX, int previousY) {
-        DungeonMap dungeonMap = gameState.getDungeonMap();
-        if (dungeonMap == null || dungeonMap.getTile(previousX, previousY) != Library.TileType.QUEST_DOOR_OPEN) {
-            return;
-        }
-
-        dungeonMap.setTile(previousX, previousY, Library.TileType.QUEST_DOOR_CLOSED);
     }
 
     private void playFootstepSound() {

@@ -4,6 +4,7 @@ import org.main.core.InventorySystem;
 import org.main.core.GearDurability;
 import org.main.core.GearMaterial;
 import org.main.engine.AssetLoader;
+import org.main.core.WeaponType;
 
 public enum ItemLibrary {
     GOLD(
@@ -159,6 +160,7 @@ public enum ItemLibrary {
     private final GearDurability durability;
     private final int baseGoldValue;
     private final String examineText;
+    private final WeaponType weaponType;
 
     ItemLibrary(
             String displayName,
@@ -171,6 +173,21 @@ public enum ItemLibrary {
             int baseGoldValue,
             String examineText
     ) {
+        this(displayName, itemType, iconPath, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, null);
+    }
+
+    ItemLibrary(
+            String displayName,
+            InventorySystem.ItemType itemType,
+            String iconPath,
+            String useSoundPath,
+            int healAmount,
+            GearMaterial material,
+            GearDurability durability,
+            int baseGoldValue,
+            String examineText,
+            WeaponType weaponType
+    ) {
         this.displayName = displayName;
         this.itemType = itemType;
         this.iconPath = iconPath;
@@ -180,6 +197,9 @@ public enum ItemLibrary {
         this.durability = durability == null ? GearDurability.PERFECT : durability;
         this.baseGoldValue = Math.max(1, baseGoldValue);
         this.examineText = examineText == null ? "" : examineText;
+        this.weaponType = itemType == InventorySystem.ItemType.WEAPON
+                ? (weaponType == null || weaponType == WeaponType.NONE ? WeaponType.SWORD : weaponType)
+                : WeaponType.NONE;
     }
 
     public InventorySystem.Item createItem() {
@@ -187,7 +207,25 @@ public enum ItemLibrary {
             return createGold(1);
         }
 
-        return new InventorySystem.Item(displayName, itemType, iconPath, useSoundPath, healAmount, material, durability, baseGoldValue, examineText);
+        if (this == BURNT_FISH) {
+            return createBurntFish();
+        }
+
+        return new InventorySystem.Item(displayName, itemType, iconPath, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, null, "", weaponType);
+    }
+
+    private InventorySystem.Item createBurntFish() {
+        return new InventorySystem.Item(
+                displayName,
+                itemType,
+                InventorySystem.Item.applyBurntTint(AssetLoader.loadImage(COOKED_FISH.iconPath)),
+                useSoundPath,
+                healAmount,
+                material,
+                durability,
+                baseGoldValue,
+                examineText
+        );
     }
 
     public static InventorySystem.Item createGold(int amount) {
@@ -215,6 +253,10 @@ public enum ItemLibrary {
         return itemType;
     }
 
+    public String getIconPath() {
+        return iconPath;
+    }
+
     public String getUseSoundPath() {
         return useSoundPath;
     }
@@ -229,6 +271,18 @@ public enum ItemLibrary {
 
     public GearDurability getDurability() {
         return durability;
+    }
+
+    public int getBaseGoldValue() {
+        return baseGoldValue;
+    }
+
+    public String getExamineText() {
+        return examineText;
+    }
+
+    public WeaponType getWeaponType() {
+        return weaponType;
     }
 
     public static ItemLibrary fromDisplayName(String displayName) {

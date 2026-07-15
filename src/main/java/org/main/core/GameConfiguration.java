@@ -47,6 +47,22 @@ public final class GameConfiguration {
         return value == null ? fallback : value;
     }
 
+    public static void setValue(String key, String value) {
+        if (key == null || key.isBlank()) {
+            return;
+        }
+
+        String safeValue = value == null ? "" : value.trim();
+        PROPERTIES.setProperty(key, safeValue);
+        DEFAULTS.putIfAbsent(key, safeValue);
+        try {
+            Files.createDirectories(CONFIG_PATH.getParent());
+            writeDefaultsAndCurrentValues();
+        } catch (IOException ignored) {
+            // Runtime config edits should not crash editor/game tools.
+        }
+    }
+
     private static void load() {
         PROPERTIES.putAll(DEFAULTS);
 
@@ -136,6 +152,19 @@ public final class GameConfiguration {
         put("battle.debug.criticalHpPercent", "0.10");
         put("battle.debug.invulnerableTurns", "1");
         put("battle.debug.damageReduction", "1.0");
+        put("battle.skillCooldown.willpowerReductionPerPoint", "0.02");
+        put("battle.skillCooldown.minimumMultiplier", "0.50");
+        put("battle.skillCooldown.WAIT.seconds", "0");
+        put("battle.skillCooldown.DEBUG_DROP_HP.seconds", "0");
+        put("battle.skillCooldown.BASH.seconds", "6");
+        put("battle.skillCooldown.DEFEND.seconds", "6");
+        put("battle.skillCooldown.PIERCING_LINE.seconds", "7");
+        put("battle.skillCooldown.CRUSH_COLUMN.seconds", "7");
+        put("battle.skillCooldown.FIREBALL.seconds", "8");
+        put("battle.skillCooldown.ABSORB.seconds", "8");
+        put("battle.skillCooldown.HEAL.seconds", "10");
+        put("battle.skillCooldown.WAR_CRY.seconds", "20");
+        put("battle.skillCooldown.RAISE_SKELETON.seconds", "20");
 
         put("difficulty.offenseDivisor", "8.0");
         put("difficulty.survivalDivisor", "10.0");
@@ -143,8 +172,29 @@ public final class GameConfiguration {
         put("difficulty.speedMultiplierCap", "4.0");
         put("battle.summon.maxActorsPerSide", "6");
 
+        put("renderer.backend", "java2d");
+        put("renderer.maxDepth", "5");
+        put("renderer.prototype.maxDepth", "12");
+        put("renderer.prototype.windowWidth", "1280");
+        put("renderer.prototype.windowHeight", "720");
+        put("renderer.prototype.resizable", "true");
+        put("renderer.prototype.wallHeight", "1.0");
+        put("renderer.prototype.eyeHeight", "0.55");
+        put("renderer.prototype.fovDegrees", "70");
+        put("renderer.prototype.nearPlane", "0.05");
+        put("renderer.prototype.farPlane", "64");
+        put("renderer.prototype.input.actionCooldownMs", "150");
+        put("renderer.prototype.debug.defaultVisible", "false");
+        put("renderer.prototype.mouseLook.enabled", "true");
+        put("renderer.prototype.mouseLook.sensitivity", "0.12");
+        put("renderer.prototype.mouseLook.maxYawDegrees", "90");
+        put("renderer.prototype.mouseLook.maxPitchDegrees", "35");
+        put("renderer.prototype.mouseLook.recenterOnRelease", "true");
+        put("renderer.prototype.mouseLook.invertX", "false");
+        put("renderer.prototype.mouseLook.invertY", "false");
+
         put("movement.animationDurationMs", "160");
-        put("rotation.animationDurationMs", "220");
+        put("rotation.animationDurationMs", "360");
         put("sound.defaultVolume", "0.20");
 
         put("resource.respawnMs", "300000");

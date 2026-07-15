@@ -25,6 +25,12 @@ public final class PaperDollAssetLibrary {
             return "";
         }
 
+        if (item.isEquippable()
+                && item.getPaperDollOverlayPath() != null
+                && !item.getPaperDollOverlayPath().isBlank()) {
+            return item.getPaperDollOverlayPath();
+        }
+
         String name = item.getName() == null ? "" : item.getName().toLowerCase();
         return switch (slot) {
             case HEAD -> firstKnown(name,

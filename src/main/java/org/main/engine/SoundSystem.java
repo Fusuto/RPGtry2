@@ -113,6 +113,14 @@ public class SoundSystem {
         return ambienceVolume;
     }
 
+    public String getAmbiencePath() {
+        return ambiencePath;
+    }
+
+    public boolean isAmbienceRunning() {
+        return isClipRunning(ambienceClip);
+    }
+
     public void setAmbienceVolume(double ambienceVolume) {
         this.ambienceVolume = clampVolume(ambienceVolume);
         applyVolume(ambienceClip, this.ambienceVolume);
@@ -126,6 +134,14 @@ public class SoundSystem {
         return musicVolume;
     }
 
+    public String getMusicPath() {
+        return musicPath;
+    }
+
+    public boolean isMusicRunning() {
+        return isClipRunning(musicClip);
+    }
+
     public void setMusicVolume(double musicVolume) {
         this.musicVolume = clampVolume(musicVolume);
         applyVolume(musicClip, this.musicVolume);
@@ -137,6 +153,14 @@ public class SoundSystem {
 
     public double getSoundEffectVolume() {
         return soundEffectVolume;
+    }
+
+    public String getLoopingSoundPath() {
+        return loopingSoundPath;
+    }
+
+    public boolean isLoopingSoundRunning() {
+        return isClipRunning(loopingSoundClip);
     }
 
     public void setSoundEffectVolume(double soundEffectVolume) {

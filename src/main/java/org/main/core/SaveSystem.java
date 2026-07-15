@@ -11,6 +11,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.EnumMap;
@@ -140,6 +141,10 @@ public final class SaveSystem {
                     readSet(properties.getProperty("world.removedEntities", "")),
                     Map.of(),
                     readSet(properties.getProperty("world.discovered", "")),
+                    List.of(),
+                    Set.of(),
+                    List.of(),
+                    List.of(),
                     List.of(),
                     List.of(),
                     List.of(),
@@ -304,9 +309,11 @@ public final class SaveSystem {
             properties.setProperty(prefix + "path", mapDesignPathForSave(state.mapPath()));
             properties.setProperty(prefix + "removed", join(state.removedEntityKeys()));
             properties.setProperty(prefix + "discovered", join(state.discoveredMiniMapTiles()));
+            properties.setProperty(prefix + "firedTriggers", join(state.firedTriggerIds()));
             saveDungeonMap(properties, prefix + "map.", state.dungeonMap());
             saveTileInteractionMap(properties, prefix + "tileInteraction.", state.tileInteractionIds());
             saveResourceNodeSnapshots(properties, prefix + "resource.", state.resourceNodeStates());
+            saveMapTriggers(properties, prefix + "trigger.", state.mapTriggers());
             index++;
         }
     }
@@ -329,6 +336,10 @@ public final class SaveSystem {
                     readSet(properties.getProperty(prefix + "removed", "")),
                     loadResourceNodeSnapshots(properties, prefix + "resource."),
                     readSet(properties.getProperty(prefix + "discovered", "")),
+                    loadMapTriggers(properties, prefix + "trigger."),
+                    readSet(properties.getProperty(prefix + "firedTriggers", "")),
+                    List.of(),
+                    List.of(),
                     List.of(),
                     List.of(),
                     List.of(),
@@ -337,6 +348,81 @@ public final class SaveSystem {
         }
 
         return states;
+    }
+
+    private static void saveMapTriggers(
+            Properties properties,
+            String prefix,
+            List<MapDesignLibrary.MapTrigger> triggers
+    ) {
+        properties.setProperty(prefix + "count", String.valueOf(triggers == null ? 0 : triggers.size()));
+        if (triggers == null) {
+            return;
+        }
+
+        for (int i = 0; i < triggers.size(); i++) {
+            MapDesignLibrary.MapTrigger trigger = triggers.get(i);
+            String triggerPrefix = prefix + i + ".";
+            properties.setProperty(triggerPrefix + "id", trigger.id());
+            properties.setProperty(triggerPrefix + "x", String.valueOf(trigger.x()));
+            properties.setProperty(triggerPrefix + "y", String.valueOf(trigger.y()));
+            properties.setProperty(triggerPrefix + "fireMode", trigger.fireMode().name());
+            properties.setProperty(triggerPrefix + "oneShot", String.valueOf(trigger.oneShot()));
+            properties.setProperty(triggerPrefix + "action.count", String.valueOf(trigger.actions().size()));
+            for (int actionIndex = 0; actionIndex < trigger.actions().size(); actionIndex++) {
+                MapDesignLibrary.TriggerAction action = trigger.actions().get(actionIndex);
+                String actionPrefix = triggerPrefix + "action." + actionIndex + ".";
+                properties.setProperty(actionPrefix + "type", action.type().name());
+                properties.setProperty(actionPrefix + "targetX", String.valueOf(action.targetX()));
+                properties.setProperty(actionPrefix + "targetY", String.valueOf(action.targetY()));
+            }
+        }
+    }
+
+    private static List<MapDesignLibrary.MapTrigger> loadMapTriggers(Properties properties, String prefix) {
+        int count = readInt(properties, prefix + "count", 0);
+        List<MapDesignLibrary.MapTrigger> triggers = new ArrayList<>();
+
+        for (int i = 0; i < count; i++) {
+            String triggerPrefix = prefix + i + ".";
+            String id = properties.getProperty(triggerPrefix + "id", "");
+            if (id.isBlank()) {
+                continue;
+            }
+
+            int actionCount = readInt(properties, triggerPrefix + "action.count", 0);
+            List<MapDesignLibrary.TriggerAction> actions = new ArrayList<>();
+            for (int actionIndex = 0; actionIndex < actionCount; actionIndex++) {
+                String actionPrefix = triggerPrefix + "action." + actionIndex + ".";
+                MapDesignLibrary.TriggerActionType type = readEnum(
+                        properties,
+                        actionPrefix + "type",
+                        MapDesignLibrary.TriggerActionType.class,
+                        MapDesignLibrary.TriggerActionType.CLOSE_DOOR
+                );
+                actions.add(new MapDesignLibrary.TriggerAction(
+                        type,
+                        readInt(properties, actionPrefix + "targetX", 0),
+                        readInt(properties, actionPrefix + "targetY", 0)
+                ));
+            }
+
+            triggers.add(new MapDesignLibrary.MapTrigger(
+                    id,
+                    readInt(properties, triggerPrefix + "x", 0),
+                    readInt(properties, triggerPrefix + "y", 0),
+                    readEnum(
+                            properties,
+                            triggerPrefix + "fireMode",
+                            MapDesignLibrary.TriggerFireMode.class,
+                            MapDesignLibrary.TriggerFireMode.ON_ENTRY
+                    ),
+                    Boolean.parseBoolean(properties.getProperty(triggerPrefix + "oneShot", "true")),
+                    actions
+            ));
+        }
+
+        return triggers;
     }
 
     private static void saveTileInteractionMap(Properties properties, String prefix, Map<String, String> interactions) {
@@ -462,6 +548,11 @@ public final class SaveSystem {
             return limbKey(limb);
         }
 
+        String customItemKey = customItemKey(item);
+        if (!customItemKey.isBlank()) {
+            return customItemKey;
+        }
+
         if (item.isStackable()) {
             ItemLibrary libraryItem = ItemLibrary.fromDisplayName(item.getName());
             if (libraryItem != null) {
@@ -477,6 +568,24 @@ public final class SaveSystem {
         return RecipeLibrary.isSmithingResult(item) ? "RECIPE|" + item.getName() : "";
     }
 
+    private static String customItemKey(InventorySystem.Item item) {
+        if (item == null) {
+            return "";
+        }
+
+        try {
+            for (MapDesignLibrary.CustomItem customItem : MapDesignLibrary.loadSharedContent().customItems()) {
+                if (customItem.displayName().equalsIgnoreCase(item.getName())) {
+                    return "CUSTOM_ITEM|" + customItem.itemId();
+                }
+            }
+        } catch (IOException ignored) {
+            return "";
+        }
+
+        return "";
+    }
+
     private static InventorySystem.Item readInventoryItem(String itemName) {
         if (itemName == null || itemName.isBlank()) {
             return null;
@@ -484,6 +593,10 @@ public final class SaveSystem {
 
         if (itemName.startsWith("CUSTOM_LIMB|")) {
             return readCustomLimb(itemName);
+        }
+
+        if (itemName.startsWith("CUSTOM_ITEM|")) {
+            return readCustomItem(itemName.substring("CUSTOM_ITEM|".length()));
         }
 
         if (itemName.startsWith("RECIPE|")) {
@@ -531,6 +644,24 @@ public final class SaveSystem {
         }
     }
 
+    private static InventorySystem.Item readCustomItem(String itemId) {
+        if (itemId == null || itemId.isBlank()) {
+            return null;
+        }
+
+        try {
+            for (MapDesignLibrary.CustomItem customItem : MapDesignLibrary.loadSharedContent().customItems()) {
+                if (itemId.equals(customItem.itemId())) {
+                    return customItem.createItem();
+                }
+            }
+        } catch (IOException ignored) {
+            return null;
+        }
+
+        return null;
+    }
+
     private static String limbKey(LimbItem limb) {
         if (limb == null) {
             return "";
@@ -563,7 +694,9 @@ public final class SaveSystem {
                 + "|"
                 + encode(limb.getPaperDollSourcePath())
                 + "|"
-                + encode(limb.getSourceCreatureName());
+                + encode(limb.getSourceCreatureName())
+                + "|"
+                + encode(limb.getSourceCreatureId());
     }
 
     private static LimbItem readCustomLimb(String value) {
@@ -591,7 +724,8 @@ public final class SaveSystem {
             String examineText = parts.length >= 7 ? decode(parts[6]) : "";
             String paperDollSourcePath = parts.length >= 8 ? decode(parts[7]) : "";
             String sourceCreatureName = parts.length >= 9 ? decode(parts[8]) : "";
-            return new LimbItem(name, sourceCreatureName, slot, stats, List.of(), condition, iconPath, examineText, paperDollSourcePath);
+            String sourceCreatureId = parts.length >= 10 ? decode(parts[9]) : "";
+            return new LimbItem(name, sourceCreatureId, sourceCreatureName, slot, stats, List.of(), condition, iconPath, examineText, paperDollSourcePath);
         } catch (IllegalArgumentException ignored) {
             return null;
         }

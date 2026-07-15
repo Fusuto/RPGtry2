@@ -9,12 +9,15 @@ import org.main.core.LimbItem;
 import org.main.core.LimbSlot;
 import org.main.core.PaperDollAssetLibrary;
 import org.main.core.PlayerStat;
+import org.main.core.WeaponType;
 import org.main.core.GeneratedDungeon;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 import org.main.engine.AssetLoader;
+import org.main.engine.SpriteAnimation;
 import org.main.monsters.Monster;
 
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -69,6 +72,24 @@ public final class MapDesignLibrary {
 
     public static Monster createDefaultEnemy(String enemyId) {
         return defaultEnemy(enemyId).createMonster();
+    }
+
+    public static Monster createEnemyById(String enemyId) {
+        if (enemyId == null || enemyId.isBlank()) {
+            return null;
+        }
+
+        try {
+            CustomMob customMob = findCustomMob(enemyId, loadSharedContent().customMobs());
+            if (customMob != null) {
+                return customMob.createMonster();
+            }
+        } catch (IOException ignored) {
+            // Fall through to built-in defaults below.
+        }
+
+        CustomMob defaultEnemy = findDefaultEnemy(enemyId);
+        return defaultEnemy == null ? null : defaultEnemy.createMonster();
     }
 
     private static CustomMob defaultSlime() {
@@ -182,6 +203,9 @@ public final class MapDesignLibrary {
                 new ArrayList<>(),
                 new ArrayList<>(),
                 new ArrayList<>(),
+                new ArrayList<>(),
+                new ArrayList<>(),
+                new ArrayList<>(),
                 1,
                 1
         );
@@ -216,6 +240,25 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "id", placement.id());
             properties.setProperty(prefix + "x", String.valueOf(placement.x()));
             properties.setProperty(prefix + "y", String.valueOf(placement.y()));
+        }
+
+        properties.setProperty("trigger.count", String.valueOf(design.triggers().size()));
+        for (int i = 0; i < design.triggers().size(); i++) {
+            MapTrigger trigger = design.triggers().get(i);
+            String prefix = "trigger." + i + ".";
+            properties.setProperty(prefix + "id", trigger.id());
+            properties.setProperty(prefix + "x", String.valueOf(trigger.x()));
+            properties.setProperty(prefix + "y", String.valueOf(trigger.y()));
+            properties.setProperty(prefix + "fireMode", trigger.fireMode().name());
+            properties.setProperty(prefix + "oneShot", String.valueOf(trigger.oneShot()));
+            properties.setProperty(prefix + "action.count", String.valueOf(trigger.actions().size()));
+            for (int actionIndex = 0; actionIndex < trigger.actions().size(); actionIndex++) {
+                TriggerAction action = trigger.actions().get(actionIndex);
+                String actionPrefix = prefix + "action." + actionIndex + ".";
+                properties.setProperty(actionPrefix + "type", action.type().name());
+                properties.setProperty(actionPrefix + "targetX", String.valueOf(action.targetX()));
+                properties.setProperty(actionPrefix + "targetY", String.valueOf(action.targetY()));
+            }
         }
 
         properties.setProperty("authoredDialogue.count", String.valueOf(design.authoredDialogues().size()));
@@ -270,6 +313,8 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "displayName", customItem.displayName());
             properties.setProperty(prefix + "itemType", customItem.itemType().name());
             properties.setProperty(prefix + "iconPath", customItem.iconPath());
+            properties.setProperty(prefix + "paperDollOverlayPath", customItem.paperDollOverlayPath());
+            properties.setProperty(prefix + "weaponType", customItem.weaponType().name());
             properties.setProperty(prefix + "material", customItem.material().name());
             properties.setProperty(prefix + "healAmount", String.valueOf(customItem.healAmount()));
             properties.setProperty(prefix + "baseGoldValue", String.valueOf(customItem.baseGoldValue()));
@@ -317,6 +362,7 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "iconPath", customLimb.iconPath());
             properties.setProperty(prefix + "condition", customLimb.condition().name());
             properties.setProperty(prefix + "description", customLimb.description());
+            properties.setProperty(prefix + "sourceCreatureId", customLimb.sourceCreatureId());
             properties.setProperty(prefix + "paperDollSourcePath", customLimb.paperDollSourcePath());
             properties.setProperty(prefix + "skillIds", joinSkills(customLimb.skillIds()));
             for (PlayerStat stat : PlayerStat.values()) {
@@ -333,6 +379,55 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "imagePath", customNpc.imagePath());
             properties.setProperty(prefix + "talkSoundPath", customNpc.talkSoundPath());
             properties.setProperty(prefix + "interactionId", customNpc.interactionId());
+        }
+
+        properties.setProperty("customGatheringNode.count", String.valueOf(design.customGatheringNodes().size()));
+        for (int i = 0; i < design.customGatheringNodes().size(); i++) {
+            CustomGatheringNode node = design.customGatheringNodes().get(i);
+            String prefix = "customGatheringNode." + i + ".";
+            properties.setProperty(prefix + "nodeId", node.nodeId());
+            properties.setProperty(prefix + "displayName", node.displayName());
+            properties.setProperty(prefix + "nodeType", node.nodeType().name());
+            properties.setProperty(prefix + "gatheringSkill", node.gatheringSkill().name());
+            properties.setProperty(prefix + "requiredLevel", String.valueOf(node.requiredLevel()));
+            properties.setProperty(prefix + "outputItemId", node.outputItemId());
+            properties.setProperty(prefix + "gatherXpReward", String.valueOf(node.gatherXpReward()));
+            properties.setProperty(prefix + "smeltOutputItemId", node.smeltOutputItemId());
+            properties.setProperty(prefix + "smeltRequiredLevel", String.valueOf(node.smeltRequiredLevel()));
+            properties.setProperty(prefix + "smeltXpReward", String.valueOf(node.smeltXpReward()));
+            properties.setProperty(prefix + "visualScale", String.valueOf(node.visualScale()));
+            properties.setProperty(prefix + "frameDurationMs", String.valueOf(node.frameDurationMs()));
+            properties.setProperty(prefix + "loot.count", String.valueOf(node.lootEntries().size()));
+            for (int lootIndex = 0; lootIndex < node.lootEntries().size(); lootIndex++) {
+                CustomDropEntry loot = node.lootEntries().get(lootIndex);
+                String lootPrefix = prefix + "loot." + lootIndex + ".";
+                properties.setProperty(lootPrefix + "itemId", loot.itemId());
+                properties.setProperty(lootPrefix + "chance", String.valueOf(loot.chance()));
+            }
+            properties.setProperty(prefix + "frame.count", String.valueOf(node.framePaths().size()));
+            for (int frameIndex = 0; frameIndex < node.framePaths().size(); frameIndex++) {
+                properties.setProperty(prefix + "frame." + frameIndex, node.framePaths().get(frameIndex));
+            }
+        }
+
+        properties.setProperty("customCompositeRecipe.count", String.valueOf(design.customCompositeRecipes().size()));
+        for (int i = 0; i < design.customCompositeRecipes().size(); i++) {
+            CustomCompositeRecipe recipe = design.customCompositeRecipes().get(i);
+            String prefix = "customCompositeRecipe." + i + ".";
+            properties.setProperty(prefix + "recipeId", recipe.recipeId());
+            properties.setProperty(prefix + "displayName", recipe.displayName());
+            properties.setProperty(prefix + "category", recipe.category().name());
+            properties.setProperty(prefix + "primaryItemId", recipe.primaryItemId());
+            properties.setProperty(prefix + "secondaryItemId", recipe.secondaryItemId());
+            properties.setProperty(prefix + "outputItemId", recipe.outputItemId());
+            properties.setProperty(prefix + "requiredSkill", recipe.requiredSkill().name());
+            properties.setProperty(prefix + "requiredLevel", String.valueOf(recipe.requiredLevel()));
+            properties.setProperty(prefix + "xpReward", String.valueOf(recipe.xpReward()));
+            properties.setProperty(prefix + "consumePrimary", String.valueOf(recipe.consumePrimary()));
+            properties.setProperty(prefix + "consumeSecondary", String.valueOf(recipe.consumeSecondary()));
+            properties.setProperty(prefix + "smeltOutputItemId", recipe.smeltOutputItemId());
+            properties.setProperty(prefix + "smeltRequiredLevel", String.valueOf(recipe.smeltRequiredLevel()));
+            properties.setProperty(prefix + "smeltXpReward", String.valueOf(recipe.smeltXpReward()));
         }
 
         try (OutputStream outputStream = Files.newOutputStream(path)) {
@@ -378,6 +473,32 @@ public final class MapDesignLibrary {
 
             if (kind != null && !id.isBlank()) {
                 placements.add(new MapPlacement(kind, id, x, y));
+            }
+        }
+
+        int triggerCount = readInt(properties, "trigger.count", 0);
+        List<MapTrigger> triggers = new ArrayList<>();
+        for (int i = 0; i < triggerCount; i++) {
+            String prefix = "trigger." + i + ".";
+            String triggerId = properties.getProperty(prefix + "id", "");
+            int x = readInt(properties, prefix + "x", 0);
+            int y = readInt(properties, prefix + "y", 0);
+            TriggerFireMode fireMode = readTriggerFireMode(properties.getProperty(prefix + "fireMode", ""));
+            boolean oneShot = Boolean.parseBoolean(properties.getProperty(prefix + "oneShot", "true"));
+            int actionCount = readInt(properties, prefix + "action.count", 0);
+            List<TriggerAction> actions = new ArrayList<>();
+            for (int actionIndex = 0; actionIndex < actionCount; actionIndex++) {
+                String actionPrefix = prefix + "action." + actionIndex + ".";
+                TriggerActionType type = readTriggerActionType(properties.getProperty(actionPrefix + "type", ""));
+                int targetX = readInt(properties, actionPrefix + "targetX", 0);
+                int targetY = readInt(properties, actionPrefix + "targetY", 0);
+                if (type != null) {
+                    actions.add(new TriggerAction(type, targetX, targetY));
+                }
+            }
+
+            if (!triggerId.isBlank()) {
+                triggers.add(new MapTrigger(triggerId, x, y, fireMode, oneShot, actions));
             }
         }
 
@@ -470,6 +591,8 @@ public final class MapDesignLibrary {
             String itemName = properties.getProperty(prefix + "displayName", "");
             InventorySystem.ItemType itemType = readItemType(properties.getProperty(prefix + "itemType", ""), InventorySystem.ItemType.MISC);
             String iconPath = properties.getProperty(prefix + "iconPath", "");
+            String paperDollOverlayPath = properties.getProperty(prefix + "paperDollOverlayPath", "");
+            WeaponType weaponType = readWeaponType(properties.getProperty(prefix + "weaponType", ""), itemType);
             GearMaterial material = readMaterial(properties.getProperty(prefix + "material", ""), GearMaterial.NONE);
             int healAmount = readInt(properties, prefix + "healAmount", 0);
             int baseGoldValue = readInt(properties, prefix + "baseGoldValue", 10);
@@ -485,6 +608,8 @@ public final class MapDesignLibrary {
                         itemName,
                         itemType,
                         iconPath,
+                        paperDollOverlayPath,
+                        weaponType,
                         material,
                         healAmount,
                         baseGoldValue,
@@ -494,6 +619,102 @@ public final class MapDesignLibrary {
                         smithingRequiredBars,
                         smithingRequiredLevel,
                         smithingXpReward
+                ));
+            }
+        }
+
+        int customGatheringNodeCount = readInt(properties, "customGatheringNode.count", 0);
+        List<CustomGatheringNode> customGatheringNodes = new ArrayList<>();
+        for (int i = 0; i < customGatheringNodeCount; i++) {
+            String prefix = "customGatheringNode." + i + ".";
+            String nodeId = properties.getProperty(prefix + "nodeId", "");
+            String nodeName = properties.getProperty(prefix + "displayName", "");
+            GatheringNodeType nodeType = readGatheringNodeType(properties.getProperty(prefix + "nodeType", ""));
+            CharacterSkill gatheringSkill = readCharacterSkill(
+                    properties.getProperty(prefix + "gatheringSkill", ""),
+                    defaultGatheringSkill(nodeType)
+            );
+            int requiredLevel = readInt(properties, prefix + "requiredLevel", 1);
+            String outputItemId = properties.getProperty(prefix + "outputItemId", "");
+            int gatherXpReward = readInt(properties, prefix + "gatherXpReward", 18);
+            String smeltOutputItemId = properties.getProperty(prefix + "smeltOutputItemId", "");
+            int smeltRequiredLevel = readInt(properties, prefix + "smeltRequiredLevel", 1);
+            int smeltXpReward = readInt(properties, prefix + "smeltXpReward", 7);
+            double visualScale = readDouble(properties, prefix + "visualScale", nodeType == GatheringNodeType.MINING_ROCK ? 1.35 : 1.0);
+            int frameDurationMs = readInt(properties, prefix + "frameDurationMs", nodeType == GatheringNodeType.FISHING_SPOT ? 260 : 1000);
+            int lootCount = readInt(properties, prefix + "loot.count", 0);
+            List<CustomDropEntry> lootEntries = new ArrayList<>();
+            for (int lootIndex = 0; lootIndex < lootCount; lootIndex++) {
+                String lootPrefix = prefix + "loot." + lootIndex + ".";
+                String itemId = properties.getProperty(lootPrefix + "itemId", "");
+                double chance = readDouble(properties, lootPrefix + "chance", 1.0);
+                if (!itemId.isBlank()) {
+                    lootEntries.add(new CustomDropEntry(itemId, chance));
+                }
+            }
+            int frameCount = readInt(properties, prefix + "frame.count", 0);
+            List<String> framePaths = new ArrayList<>();
+            for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+                String framePath = properties.getProperty(prefix + "frame." + frameIndex, "");
+                if (!framePath.isBlank()) {
+                    framePaths.add(framePath);
+                }
+            }
+
+            if (!nodeId.isBlank() && !nodeName.isBlank()) {
+                customGatheringNodes.add(new CustomGatheringNode(
+                        nodeId,
+                        nodeName,
+                        nodeType,
+                        requiredLevel,
+                        outputItemId,
+                        gatherXpReward,
+                        smeltOutputItemId,
+                        smeltXpReward,
+                        framePaths,
+                        frameDurationMs,
+                        visualScale,
+                        gatheringSkill,
+                        lootEntries,
+                        smeltRequiredLevel
+                ));
+            }
+        }
+
+        int customCompositeRecipeCount = readInt(properties, "customCompositeRecipe.count", 0);
+        List<CustomCompositeRecipe> customCompositeRecipes = new ArrayList<>();
+        for (int i = 0; i < customCompositeRecipeCount; i++) {
+            String prefix = "customCompositeRecipe." + i + ".";
+            String recipeId = properties.getProperty(prefix + "recipeId", "");
+            String recipeName = properties.getProperty(prefix + "displayName", "");
+            CompositeRecipeCategory category = readCompositeRecipeCategory(properties.getProperty(prefix + "category", ""));
+            String primaryItemId = properties.getProperty(prefix + "primaryItemId", "");
+            String secondaryItemId = properties.getProperty(prefix + "secondaryItemId", "");
+            String outputItemId = properties.getProperty(prefix + "outputItemId", "");
+            CharacterSkill requiredSkill = readCharacterSkill(properties.getProperty(prefix + "requiredSkill", ""), CharacterSkill.SMITHING);
+            int requiredLevel = readInt(properties, prefix + "requiredLevel", 1);
+            int xpReward = readInt(properties, prefix + "xpReward", 0);
+            boolean consumePrimary = Boolean.parseBoolean(properties.getProperty(prefix + "consumePrimary", "true"));
+            boolean consumeSecondary = Boolean.parseBoolean(properties.getProperty(prefix + "consumeSecondary", "true"));
+            String smeltOutputItemId = properties.getProperty(prefix + "smeltOutputItemId", "");
+            int smeltRequiredLevel = readInt(properties, prefix + "smeltRequiredLevel", 1);
+            int smeltXpReward = readInt(properties, prefix + "smeltXpReward", 0);
+            if (!recipeId.isBlank() && !recipeName.isBlank()) {
+                customCompositeRecipes.add(new CustomCompositeRecipe(
+                        recipeId,
+                        recipeName,
+                        category,
+                        primaryItemId,
+                        secondaryItemId,
+                        outputItemId,
+                        requiredSkill,
+                        requiredLevel,
+                        xpReward,
+                        consumePrimary,
+                        consumeSecondary,
+                        smeltOutputItemId,
+                        smeltRequiredLevel,
+                        smeltXpReward
                 ));
             }
         }
@@ -541,6 +762,7 @@ public final class MapDesignLibrary {
             String iconPath = properties.getProperty(prefix + "iconPath", "");
             GearDurability condition = readDurability(properties.getProperty(prefix + "condition", ""), GearDurability.PERFECT);
             String limbDescription = properties.getProperty(prefix + "description", "");
+            String sourceCreatureId = properties.getProperty(prefix + "sourceCreatureId", "");
             String paperDollSourcePath = properties.getProperty(prefix + "paperDollSourcePath", "");
             List<SkillLibrary> skillIds = readSkillList(properties.getProperty(prefix + "skillIds", ""));
             EnumMap<PlayerStat, Integer> statBonuses = new EnumMap<>(PlayerStat.class);
@@ -548,7 +770,7 @@ public final class MapDesignLibrary {
                 statBonuses.put(stat, readInt(properties, prefix + "stat." + stat.name(), 0));
             }
             if (!limbId.isBlank() && !limbName.isBlank()) {
-                customLimbs.add(new CustomLimb(limbId, limbName, limbSlot, iconPath, condition, limbDescription, paperDollSourcePath, statBonuses, skillIds));
+                customLimbs.add(new CustomLimb(limbId, limbName, limbSlot, iconPath, condition, limbDescription, sourceCreatureId, paperDollSourcePath, statBonuses, skillIds));
             }
         }
 
@@ -566,7 +788,7 @@ public final class MapDesignLibrary {
             }
         }
 
-        return new MapDesign(width, height, displayName, description, primaryTheme, alternateTheme, tiles, themeIndexes, placements, authoredDialogues, authoredQuests, customItems, customMobs, customLimbs, customNpcs, spawnX, spawnY);
+        return new MapDesign(width, height, displayName, description, primaryTheme, alternateTheme, tiles, themeIndexes, placements, authoredDialogues, authoredQuests, customItems, customMobs, customLimbs, customNpcs, customGatheringNodes, customCompositeRecipes, triggers, spawnX, spawnY);
     }
 
     private static InputStream openMapDesignStream(Path path) throws IOException {
@@ -601,12 +823,12 @@ public final class MapDesignLibrary {
         AuthoredContent bundledContent = loadSharedContentFrom(Path.of(CONTENT_RESOURCE_FOLDER, "authored_content.properties"));
         AuthoredContent dataContent = Files.isRegularFile(DATA_SHARED_CONTENT_PATH)
                 ? loadSharedContentFrom(DATA_SHARED_CONTENT_PATH)
-                : new AuthoredContent(List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                : new AuthoredContent(List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
         return mergeContent(mergeContent(defaultContent, bundledContent), dataContent);
     }
 
     private static AuthoredContent defaultAuthoredContent() {
-        return new AuthoredContent(List.of(), List.of(), List.of(), defaultEnemies(), List.of(), List.of());
+        return new AuthoredContent(List.of(), List.of(), List.of(), defaultEnemies(), List.of(), List.of(), List.of(), List.of());
     }
 
     private static AuthoredContent loadSharedContentFrom(Path path) throws IOException {
@@ -618,13 +840,15 @@ public final class MapDesignLibrary {
                     contentDesign.customItems(),
                     contentDesign.customMobs(),
                     contentDesign.customLimbs(),
-                    contentDesign.customNpcs()
+                    contentDesign.customNpcs(),
+                    contentDesign.customGatheringNodes(),
+                    contentDesign.customCompositeRecipes()
             );
         } catch (IOException exception) {
             if (Files.isRegularFile(path)) {
                 throw exception;
             }
-            return new AuthoredContent(List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+            return new AuthoredContent(List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
         }
     }
 
@@ -635,6 +859,8 @@ public final class MapDesignLibrary {
         List<CustomMob> mobs = new ArrayList<>(base.customMobs());
         List<CustomLimb> limbs = new ArrayList<>(base.customLimbs());
         List<CustomNpc> npcs = new ArrayList<>(base.customNpcs());
+        List<CustomGatheringNode> gatheringNodes = new ArrayList<>(base.customGatheringNodes());
+        List<CustomCompositeRecipe> compositeRecipes = new ArrayList<>(base.customCompositeRecipes());
 
         mergeById(dialogues, override.authoredDialogues(), AuthoredDialogue::interactionId);
         mergeById(quests, override.authoredQuests(), AuthoredQuest::questId);
@@ -642,7 +868,9 @@ public final class MapDesignLibrary {
         mergeById(mobs, override.customMobs(), CustomMob::mobId);
         mergeById(limbs, override.customLimbs(), CustomLimb::limbId);
         mergeById(npcs, override.customNpcs(), CustomNpc::npcId);
-        return new AuthoredContent(dialogues, quests, items, mobs, limbs, npcs);
+        mergeById(gatheringNodes, override.customGatheringNodes(), CustomGatheringNode::nodeId);
+        mergeById(compositeRecipes, override.customCompositeRecipes(), CustomCompositeRecipe::recipeId);
+        return new AuthoredContent(dialogues, quests, items, mobs, limbs, npcs, gatheringNodes, compositeRecipes);
     }
 
     private static <T> void mergeById(List<T> target, List<T> source, java.util.function.Function<T, String> idFunction) {
@@ -675,6 +903,9 @@ public final class MapDesignLibrary {
                 new ArrayList<>(content.customMobs()),
                 new ArrayList<>(content.customLimbs()),
                 new ArrayList<>(content.customNpcs()),
+                new ArrayList<>(content.customGatheringNodes()),
+                new ArrayList<>(content.customCompositeRecipes()),
+                new ArrayList<>(),
                 contentDesign.spawnX(),
                 contentDesign.spawnY()
         );
@@ -774,6 +1005,7 @@ public final class MapDesignLibrary {
         for (MapPlacement placement : placements) {
             validatePlacement(design, issues, authoredIds, placement);
         }
+        validateTriggers(design, issues);
         validateAuthoredDialogueActions(issues, authoredDialogues, design.authoredQuests(), design.customItems(), design.customLimbs());
 
         return issues;
@@ -793,7 +1025,7 @@ public final class MapDesignLibrary {
         List<GeneratedDungeon.TileInteraction> tileInteractions = new ArrayList<>();
 
         for (MapPlacement placement : design.placements()) {
-            hydratePlacement(dungeonMap, entities, tileInteractions, design.authoredDialogues(), design.customItems(), design.customMobs(), design.customLimbs(), design.customNpcs(), placement);
+            hydratePlacement(dungeonMap, entities, tileInteractions, design.authoredDialogues(), design.customItems(), design.customMobs(), design.customLimbs(), design.customNpcs(), design.customGatheringNodes(), placement);
         }
 
         GridPoint spawn = resolveSpawn(dungeonMap, playerX, playerY);
@@ -806,7 +1038,10 @@ public final class MapDesignLibrary {
                 design.authoredDialogues(),
                 design.authoredQuests(),
                 design.customItems(),
-                design.customLimbs()
+                design.customLimbs(),
+                design.customGatheringNodes(),
+                design.customCompositeRecipes(),
+                design.triggers()
         );
     }
 
@@ -835,6 +1070,7 @@ public final class MapDesignLibrary {
             List<CustomMob> customMobs,
             List<CustomLimb> customLimbs,
             List<CustomNpc> customNpcs,
+            List<CustomGatheringNode> customGatheringNodes,
             MapPlacement placement
     ) {
         if (placement == null || !isInside(dungeonMap, placement.x(), placement.y())) {
@@ -847,7 +1083,7 @@ public final class MapDesignLibrary {
                     dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
                     entities.add(CraftingNodeLibrary.valueOf(placement.id()).createEntity(placement.x(), placement.y()));
                 }
-                case GATHERING_NODE -> hydrateGatheringNode(dungeonMap, entities, tileInteractions, placement);
+                case GATHERING_NODE -> hydrateGatheringNode(dungeonMap, entities, tileInteractions, customGatheringNodes, placement);
                 case GENERIC_NPC -> {
                     dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
                     entities.add(GenericNpcLibrary.valueOf(placement.id()).createEntity(placement.x(), placement.y()));
@@ -987,14 +1223,45 @@ public final class MapDesignLibrary {
         return null;
     }
 
+    public static CustomGatheringNode findCustomGatheringNode(String nodeId, List<CustomGatheringNode> customGatheringNodes) {
+        if (nodeId == null || customGatheringNodes == null) {
+            return null;
+        }
+
+        for (CustomGatheringNode node : customGatheringNodes) {
+            if (nodeId.equals(node.nodeId()) || nodeId.equals(node.interactionId())) {
+                return node;
+            }
+        }
+
+        return null;
+    }
+
     private static void hydrateGatheringNode(
             DungeonMap dungeonMap,
             List<MapEntity> entities,
             List<GeneratedDungeon.TileInteraction> tileInteractions,
+            List<CustomGatheringNode> customGatheringNodes,
             MapPlacement placement
     ) {
-        GatheringNodeLibrary node = GatheringNodeLibrary.valueOf(placement.id());
+        CustomGatheringNode customNode = findCustomGatheringNode(placement.id(), customGatheringNodes);
+        if (customNode != null) {
+            if (customNode.nodeType() == GatheringNodeType.FISHING_SPOT) {
+                dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FISHING_WATER);
+                tileInteractions.add(new GeneratedDungeon.TileInteraction(
+                        placement.x(),
+                        placement.y(),
+                        customNode.interactionId()
+                ));
+                return;
+            }
 
+            dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
+            entities.add(customNode.createEntity(placement.x(), placement.y()));
+            return;
+        }
+
+        GatheringNodeLibrary node = GatheringNodeLibrary.valueOf(placement.id());
         if (node == GatheringNodeLibrary.FISHING_SHOAL) {
             dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FISHING_WATER);
             tileInteractions.add(new GeneratedDungeon.TileInteraction(
@@ -1072,7 +1339,11 @@ public final class MapDesignLibrary {
         try {
             switch (placement.kind()) {
                 case CRAFTING_NODE -> CraftingNodeLibrary.valueOf(placement.id());
-                case GATHERING_NODE -> GatheringNodeLibrary.valueOf(placement.id());
+                case GATHERING_NODE -> {
+                    if (findCustomGatheringNode(placement.id(), design.customGatheringNodes()) == null) {
+                        GatheringNodeLibrary.valueOf(placement.id());
+                    }
+                }
                 case GENERIC_NPC -> GenericNpcLibrary.valueOf(placement.id());
                 case MAIN_NPC -> MainNpcLibrary.valueOf(placement.id());
                 case CUSTOM_NPC -> {
@@ -1119,6 +1390,52 @@ public final class MapDesignLibrary {
                     "Placement " + placement.id() + " is not a valid " + placement.kind() + "."
             ));
         }
+    }
+
+    private static void validateTriggers(MapDesign design, List<ValidationIssue> issues) {
+        List<MapTrigger> triggers = design.triggers() == null ? List.of() : design.triggers();
+        List<String> ids = new ArrayList<>();
+
+        for (MapTrigger trigger : triggers) {
+            if (trigger == null || trigger.id().isBlank()) {
+                issues.add(new ValidationIssue(ValidationSeverity.ERROR, "A trigger is missing an id."));
+                continue;
+            }
+
+            if (ids.contains(trigger.id())) {
+                issues.add(new ValidationIssue(ValidationSeverity.ERROR, "Trigger id " + trigger.id() + " is duplicated."));
+            }
+            ids.add(trigger.id());
+
+            if (!isInside(design, trigger.x(), trigger.y())) {
+                issues.add(new ValidationIssue(ValidationSeverity.ERROR, "Trigger " + trigger.id() + " is outside the map."));
+            }
+
+            for (TriggerAction action : trigger.actions()) {
+                if (action == null) {
+                    continue;
+                }
+                if (!isInside(design, action.targetX(), action.targetY())) {
+                    issues.add(new ValidationIssue(ValidationSeverity.ERROR, "Trigger " + trigger.id() + " targets outside the map."));
+                    continue;
+                }
+
+                if (action.type() == TriggerActionType.CLOSE_DOOR
+                        && !isDoorTile(design.tiles()[action.targetY()][action.targetX()])) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.WARNING,
+                            "Trigger " + trigger.id() + " targets " + action.targetX() + "," + action.targetY() + ", which is not a door tile."
+                    ));
+                }
+            }
+        }
+    }
+
+    private static boolean isDoorTile(Library.TileType tile) {
+        return tile == Library.TileType.DOOR_OPEN
+                || tile == Library.TileType.DOOR_CLOSED
+                || tile == Library.TileType.QUEST_DOOR_OPEN
+                || tile == Library.TileType.QUEST_DOOR_CLOSED;
     }
 
     private static void validateAuthoredDialogueActions(
@@ -1381,6 +1698,18 @@ public final class MapDesignLibrary {
         }
     }
 
+    private static WeaponType readWeaponType(String value, InventorySystem.ItemType itemType) {
+        if (itemType != InventorySystem.ItemType.WEAPON) {
+            return WeaponType.NONE;
+        }
+        try {
+            WeaponType weaponType = WeaponType.valueOf(value);
+            return weaponType == WeaponType.NONE ? WeaponType.SWORD : weaponType;
+        } catch (IllegalArgumentException ignored) {
+            return WeaponType.SWORD;
+        }
+    }
+
     private static GearDurability readDurability(String value, GearDurability fallback) {
         try {
             return GearDurability.valueOf(value);
@@ -1455,6 +1784,70 @@ public final class MapDesignLibrary {
         }
     }
 
+    private static TriggerFireMode readTriggerFireMode(String value) {
+        try {
+            return TriggerFireMode.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException ignored) {
+            return TriggerFireMode.ON_ENTRY;
+        }
+    }
+
+    private static TriggerActionType readTriggerActionType(String value) {
+        try {
+            return TriggerActionType.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private static GatheringNodeType readGatheringNodeType(String value) {
+        try {
+            return GatheringNodeType.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (RuntimeException ignored) {
+            return GatheringNodeType.MINING_ROCK;
+        }
+    }
+
+    private static CharacterSkill readCharacterSkill(String value, CharacterSkill fallback) {
+        try {
+            return CharacterSkill.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (RuntimeException ignored) {
+            return fallback == null ? CharacterSkill.MINING : fallback;
+        }
+    }
+
+    private static CompositeRecipeCategory readCompositeRecipeCategory(String value) {
+        try {
+            return CompositeRecipeCategory.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (RuntimeException ignored) {
+            return CompositeRecipeCategory.MATERIAL;
+        }
+    }
+
+    public static CharacterSkill defaultGatheringSkill(GatheringNodeType nodeType) {
+        if (nodeType == GatheringNodeType.FISHING_SPOT) {
+            return CharacterSkill.FISHING;
+        }
+        return CharacterSkill.MINING;
+    }
+
+    private static List<CustomDropEntry> normalizeGatheringLoot(List<CustomDropEntry> lootEntries, String fallbackOutputItemId) {
+        List<CustomDropEntry> normalized = new ArrayList<>();
+        if (lootEntries != null) {
+            for (CustomDropEntry entry : lootEntries) {
+                if (entry != null && !entry.itemId().isBlank() && entry.chance() > 0.0) {
+                    normalized.add(entry);
+                }
+            }
+        }
+
+        if (normalized.isEmpty() && fallbackOutputItemId != null && !fallbackOutputItemId.isBlank()) {
+            normalized.add(new CustomDropEntry(fallbackOutputItemId, 1.0));
+        }
+
+        return List.copyOf(normalized);
+    }
+
     private static int readInt(Properties properties, String key, int fallback) {
         try {
             return Integer.parseInt(properties.getProperty(key, String.valueOf(fallback)));
@@ -1515,6 +1908,9 @@ public final class MapDesignLibrary {
             List<CustomMob> customMobs,
             List<CustomLimb> customLimbs,
             List<CustomNpc> customNpcs,
+            List<CustomGatheringNode> customGatheringNodes,
+            List<CustomCompositeRecipe> customCompositeRecipes,
+            List<MapTrigger> triggers,
             int spawnX,
             int spawnY
     ) {
@@ -1526,10 +1922,77 @@ public final class MapDesignLibrary {
             customMobs = customMobs == null ? new ArrayList<>() : customMobs;
             customLimbs = customLimbs == null ? new ArrayList<>() : customLimbs;
             customNpcs = customNpcs == null ? new ArrayList<>() : customNpcs;
+            customGatheringNodes = customGatheringNodes == null ? new ArrayList<>() : customGatheringNodes;
+            customCompositeRecipes = customCompositeRecipes == null ? new ArrayList<>() : customCompositeRecipes;
+            triggers = triggers == null ? new ArrayList<>() : triggers;
+        }
+
+        public MapDesign(
+                int width,
+                int height,
+                String displayName,
+                String description,
+                ThemeLibrary primaryTheme,
+                ThemeLibrary alternateTheme,
+                Library.TileType[][] tiles,
+                int[][] themeIndexes,
+                List<MapPlacement> placements,
+                List<AuthoredDialogue> authoredDialogues,
+                List<AuthoredQuest> authoredQuests,
+                List<CustomItem> customItems,
+                List<CustomMob> customMobs,
+                List<CustomLimb> customLimbs,
+                List<CustomNpc> customNpcs,
+                int spawnX,
+                int spawnY
+        ) {
+            this(
+                    width,
+                    height,
+                    displayName,
+                    description,
+                    primaryTheme,
+                    alternateTheme,
+                    tiles,
+                    themeIndexes,
+                    placements,
+                    authoredDialogues,
+                    authoredQuests,
+                    customItems,
+                    customMobs,
+                    customLimbs,
+                    customNpcs,
+                    new ArrayList<>(),
+                    new ArrayList<>(),
+                    new ArrayList<>(),
+                    spawnX,
+                    spawnY
+            );
         }
     }
 
     public record MapPlacement(PlacementKind kind, String id, int x, int y) {
+    }
+
+    public record MapTrigger(
+            String id,
+            int x,
+            int y,
+            TriggerFireMode fireMode,
+            boolean oneShot,
+            List<TriggerAction> actions
+    ) {
+        public MapTrigger {
+            id = id == null ? "" : id;
+            fireMode = fireMode == null ? TriggerFireMode.ON_ENTRY : fireMode;
+            actions = actions == null ? List.of() : List.copyOf(actions);
+        }
+    }
+
+    public record TriggerAction(TriggerActionType type, int targetX, int targetY) {
+        public TriggerAction {
+            type = type == null ? TriggerActionType.CLOSE_DOOR : type;
+        }
     }
 
     public record AuthoredContent(
@@ -1538,7 +2001,9 @@ public final class MapDesignLibrary {
             List<CustomItem> customItems,
             List<CustomMob> customMobs,
             List<CustomLimb> customLimbs,
-            List<CustomNpc> customNpcs
+            List<CustomNpc> customNpcs,
+            List<CustomGatheringNode> customGatheringNodes,
+            List<CustomCompositeRecipe> customCompositeRecipes
     ) {
         public AuthoredContent {
             authoredDialogues = authoredDialogues == null ? List.of() : List.copyOf(authoredDialogues);
@@ -1547,6 +2012,8 @@ public final class MapDesignLibrary {
             customMobs = customMobs == null ? List.of() : List.copyOf(customMobs);
             customLimbs = customLimbs == null ? List.of() : List.copyOf(customLimbs);
             customNpcs = customNpcs == null ? List.of() : List.copyOf(customNpcs);
+            customGatheringNodes = customGatheringNodes == null ? List.of() : List.copyOf(customGatheringNodes);
+            customCompositeRecipes = customCompositeRecipes == null ? List.of() : List.copyOf(customCompositeRecipes);
         }
     }
 
@@ -1656,6 +2123,8 @@ public final class MapDesignLibrary {
             String displayName,
             InventorySystem.ItemType itemType,
             String iconPath,
+            String paperDollOverlayPath,
+            WeaponType weaponType,
             GearMaterial material,
             int healAmount,
             int baseGoldValue,
@@ -1671,6 +2140,10 @@ public final class MapDesignLibrary {
             displayName = displayName == null || displayName.isBlank() ? "Custom Item" : displayName;
             itemType = itemType == null ? InventorySystem.ItemType.MISC : itemType;
             iconPath = iconPath == null ? "" : iconPath;
+            paperDollOverlayPath = paperDollOverlayPath == null ? "" : paperDollOverlayPath;
+            weaponType = itemType == InventorySystem.ItemType.WEAPON
+                    ? (weaponType == null || weaponType == WeaponType.NONE ? WeaponType.SWORD : weaponType)
+                    : WeaponType.NONE;
             material = material == null ? GearMaterial.NONE : material;
             healAmount = Math.max(0, healAmount);
             baseGoldValue = Math.max(1, baseGoldValue);
@@ -1692,7 +2165,9 @@ public final class MapDesignLibrary {
                     GearDurability.PERFECT,
                     baseGoldValue,
                     examineText,
-                    statBonusTarget
+                    statBonusTarget,
+                    paperDollOverlayPath,
+                    weaponType
             );
         }
     }
@@ -1764,6 +2239,86 @@ public final class MapDesignLibrary {
         }
     }
 
+    public record CustomCompositeRecipe(
+            String recipeId,
+            String displayName,
+            CompositeRecipeCategory category,
+            String primaryItemId,
+            String secondaryItemId,
+            String outputItemId,
+            CharacterSkill requiredSkill,
+            int requiredLevel,
+            int xpReward,
+            boolean consumePrimary,
+            boolean consumeSecondary,
+            String smeltOutputItemId,
+            int smeltRequiredLevel,
+            int smeltXpReward
+    ) {
+        public CustomCompositeRecipe {
+            recipeId = recipeId == null ? "" : recipeId;
+            displayName = displayName == null || displayName.isBlank() ? "Composite Recipe" : displayName;
+            category = category == null ? CompositeRecipeCategory.MATERIAL : category;
+            primaryItemId = primaryItemId == null ? "" : primaryItemId;
+            secondaryItemId = secondaryItemId == null ? "" : secondaryItemId;
+            outputItemId = outputItemId == null ? "" : outputItemId;
+            requiredSkill = requiredSkill == null ? CharacterSkill.SMITHING : requiredSkill;
+            requiredLevel = Math.max(1, requiredLevel);
+            xpReward = Math.max(0, xpReward);
+            smeltOutputItemId = smeltOutputItemId == null ? "" : smeltOutputItemId;
+            smeltRequiredLevel = Math.max(1, smeltRequiredLevel);
+            smeltXpReward = Math.max(0, smeltXpReward);
+        }
+
+        public CustomCompositeRecipe(
+                String recipeId,
+                String displayName,
+                CompositeRecipeCategory category,
+                String primaryItemId,
+                String secondaryItemId,
+                String outputItemId,
+                CharacterSkill requiredSkill,
+                int requiredLevel,
+                int xpReward,
+                boolean consumePrimary,
+                boolean consumeSecondary
+        ) {
+            this(
+                    recipeId,
+                    displayName,
+                    category,
+                    primaryItemId,
+                    secondaryItemId,
+                    outputItemId,
+                    requiredSkill,
+                    requiredLevel,
+                    xpReward,
+                    consumePrimary,
+                    consumeSecondary,
+                    "",
+                    1,
+                    0
+            );
+        }
+
+        public boolean matches(String firstItemIdOrName, String secondItemIdOrName) {
+            return matchesOrdered(firstItemIdOrName, secondItemIdOrName)
+                    || matchesOrdered(secondItemIdOrName, firstItemIdOrName);
+        }
+
+        private boolean matchesOrdered(String firstItemIdOrName, String secondItemIdOrName) {
+            return itemMatches(primaryItemId, firstItemIdOrName)
+                    && itemMatches(secondaryItemId, secondItemIdOrName);
+        }
+
+        private boolean itemMatches(String configuredId, String itemIdOrName) {
+            return configuredId != null
+                    && itemIdOrName != null
+                    && !configuredId.isBlank()
+                    && configuredId.equalsIgnoreCase(itemIdOrName);
+        }
+    }
+
     public record CustomLimb(
             String limbId,
             String displayName,
@@ -1771,6 +2326,7 @@ public final class MapDesignLibrary {
             String iconPath,
             GearDurability condition,
             String description,
+            String sourceCreatureId,
             String paperDollSourcePath,
             Map<PlayerStat, Integer> statBonuses,
             List<SkillLibrary> skillIds
@@ -1782,6 +2338,7 @@ public final class MapDesignLibrary {
             iconPath = iconPath == null ? "" : iconPath;
             condition = condition == null ? GearDurability.PERFECT : condition;
             description = description == null ? "" : description;
+            sourceCreatureId = sourceCreatureId == null ? "" : sourceCreatureId;
             paperDollSourcePath = paperDollSourcePath == null ? "" : paperDollSourcePath;
             EnumMap<PlayerStat, Integer> safeStats = new EnumMap<>(PlayerStat.class);
             if (statBonuses != null) {
@@ -1796,7 +2353,8 @@ public final class MapDesignLibrary {
         public LimbItem createLimb() {
             return new LimbItem(
                     displayName,
-                    null,
+                    sourceCreatureId,
+                    sourceCreatureId,
                     limbSlot,
                     statBonuses,
                     skillIds.stream().map(SkillLibrary::createSkill).toList(),
@@ -1836,6 +2394,126 @@ public final class MapDesignLibrary {
         }
     }
 
+    public record CustomGatheringNode(
+            String nodeId,
+            String displayName,
+            GatheringNodeType nodeType,
+            int requiredLevel,
+            String outputItemId,
+            int gatherXpReward,
+            String smeltOutputItemId,
+            int smeltXpReward,
+            List<String> framePaths,
+            int frameDurationMs,
+            double visualScale,
+            CharacterSkill gatheringSkill,
+            List<CustomDropEntry> lootEntries,
+            int smeltRequiredLevel
+    ) {
+        public CustomGatheringNode {
+            nodeId = nodeId == null ? "" : nodeId;
+            displayName = displayName == null || displayName.isBlank() ? "Resource Node" : displayName;
+            nodeType = nodeType == null ? GatheringNodeType.MINING_ROCK : nodeType;
+            gatheringSkill = gatheringSkill == null ? defaultGatheringSkill(nodeType) : gatheringSkill;
+            requiredLevel = Math.max(1, requiredLevel);
+            outputItemId = outputItemId == null ? "" : outputItemId;
+            gatherXpReward = Math.max(0, gatherXpReward);
+            smeltOutputItemId = smeltOutputItemId == null ? "" : smeltOutputItemId;
+            smeltRequiredLevel = Math.max(1, smeltRequiredLevel);
+            smeltXpReward = Math.max(0, smeltXpReward);
+            lootEntries = normalizeGatheringLoot(lootEntries, outputItemId);
+            if (outputItemId.isBlank() && !lootEntries.isEmpty()) {
+                outputItemId = lootEntries.get(0).itemId();
+            }
+            framePaths = framePaths == null ? List.of() : framePaths.stream()
+                    .filter(path -> path != null && !path.isBlank())
+                    .map(path -> path.replace('\\', '/'))
+                    .toList();
+            frameDurationMs = Math.max(1, frameDurationMs);
+            visualScale = Math.max(0.1, visualScale);
+        }
+
+        public CustomGatheringNode(
+                String nodeId,
+                String displayName,
+                GatheringNodeType nodeType,
+                int requiredLevel,
+                String outputItemId,
+                int gatherXpReward,
+                String smeltOutputItemId,
+                int smeltXpReward,
+                List<String> framePaths,
+                int frameDurationMs,
+                double visualScale
+        ) {
+            this(
+                    nodeId,
+                    displayName,
+                    nodeType,
+                    requiredLevel,
+                    outputItemId,
+                    gatherXpReward,
+                    smeltOutputItemId,
+                    smeltXpReward,
+                    framePaths,
+                    frameDurationMs,
+                    visualScale,
+                    defaultGatheringSkill(nodeType),
+                    outputItemId == null || outputItemId.isBlank()
+                            ? List.of()
+                            : List.of(new CustomDropEntry(outputItemId, 1.0)),
+                    1
+            );
+        }
+
+        public String interactionId() {
+            return (nodeType == GatheringNodeType.FISHING_SPOT ? "custom_fishing_" : "custom_mining_") + nodeId;
+        }
+
+        public MapEntity createEntity(int x, int y) {
+            MapEntity entity;
+            if (framePaths.size() > 1 && nodeType == GatheringNodeType.FISHING_SPOT) {
+                entity = new MapEntity(
+                        displayName,
+                        Library.EntityType.TRAP,
+                        x,
+                        y,
+                        new SpriteAnimation(loadFrames(), frameDurationMs)
+                );
+            } else {
+                entity = new MapEntity(
+                        displayName,
+                        Library.EntityType.TRAP,
+                        x,
+                        y,
+                        getImageForExhaustion(0)
+                );
+            }
+
+            entity.withInteractionId(interactionId()).withVisualScale(visualScale);
+            if (nodeType == GatheringNodeType.MINING_ROCK || nodeType == GatheringNodeType.TREE) {
+                entity.blocksMovement(true);
+            }
+            return entity;
+        }
+
+        public BufferedImage getImageForExhaustion(int exhaustionLevel) {
+            if (framePaths.isEmpty()) {
+                return null;
+            }
+            int safeIndex = Math.max(0, Math.min(framePaths.size() - 1, exhaustionLevel));
+            return AssetLoader.loadImage(framePaths.get(safeIndex));
+        }
+
+        private BufferedImage[] loadFrames() {
+            BufferedImage[] frames = new BufferedImage[framePaths.size()];
+            for (int i = 0; i < framePaths.size(); i++) {
+                frames[i] = AssetLoader.loadImage(framePaths.get(i));
+            }
+            return frames;
+        }
+    }
+
     private record GridPoint(int x, int y) {
     }
 
@@ -1861,5 +2539,27 @@ public final class MapDesignLibrary {
         ENEMY,
         AUTHORED_DIALOGUE_NPC,
         INTERACTION
+    }
+
+    public enum GatheringNodeType {
+        MINING_ROCK,
+        FISHING_SPOT,
+        TREE,
+        FORAGING
+    }
+
+    public enum CompositeRecipeCategory {
+        METAL,
+        CONSUMABLE,
+        MATERIAL,
+        ARMOR
+    }
+
+    public enum TriggerFireMode {
+        ON_ENTRY
+    }
+
+    public enum TriggerActionType {
+        CLOSE_DOOR
     }
 }

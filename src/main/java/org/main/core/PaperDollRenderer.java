@@ -127,6 +127,7 @@ public final class PaperDollRenderer {
             case IRONWOOD -> new Color(92, 92, 82);
             case LEATHER -> new Color(120, 72, 44);
             case NONE -> null;
+            default -> new Color(180, 180, 180);
         };
     }
 
@@ -135,6 +136,7 @@ public final class PaperDollRenderer {
             case IRON, STEEL, SILVER -> 0.35f;
             case COPPER, BRONZE, OAK, YEW, IRONWOOD, LEATHER -> 0.45f;
             case NONE -> 0.0f;
+            default -> 0.35f;
         };
     }
 

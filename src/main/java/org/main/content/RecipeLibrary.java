@@ -2,6 +2,7 @@ package org.main.content;
 
 import org.main.core.GearMaterial;
 import org.main.core.InventorySystem;
+import org.main.core.WeaponType;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -13,7 +14,9 @@ public final class RecipeLibrary {
     private static final int COPPER_SMELTING_XP_REWARD = 7;
     private static final int COPPER_DAGGER_SMITHING_XP_REWARD = 25;
     private static final String DAGGER_ICON_PATH = "assets/images/monster/Nov-2015/item/weapon/dagger.png";
+    private static final String SWORD_ICON_PATH = "assets/images/monster/Nov-2015/item/weapon/short_sword1.png";
     private static final String MACE_ICON_PATH = "assets/images/monster/Nov-2015/item/weapon/mace1.png";
+    private static final String GREATSWORD_ICON_PATH = "assets/images/monster/Nov-2015/item/weapon/greatsword1.png";
     private static final String MED_HELM_ICON_PATH = "assets/images/monster/Nov-2015/item/armour/headgear/helmet1.png";
     private static final String PLATE_ICON_PATH = "assets/images/monster/Nov-2015/item/armour/plate1.png";
     private static final String CHAIN_PLATE_ICON_PATH = "assets/images/monster/Nov-2015/item/armour/ring_mail1.png";
@@ -39,7 +42,7 @@ public final class RecipeLibrary {
             );
         }
 
-        return null;
+        return customSmeltingRecipeFor(item);
     }
 
     public static boolean isSmithingMaterial(InventorySystem.Item item) {
@@ -50,7 +53,9 @@ public final class RecipeLibrary {
         List<SmithingRecipe> recipes = new ArrayList<>();
         if (ItemLibrary.COPPER_BAR.getDisplayName().equalsIgnoreCase(materialName)) {
             recipes.add(copperDaggerRecipe());
+            recipes.add(copperSwordRecipe());
             recipes.add(copperMaceRecipe());
+            recipes.add(copperGreatswordRecipe());
             recipes.add(copperShieldRecipe());
         }
 
@@ -79,7 +84,9 @@ public final class RecipeLibrary {
     private static List<SmithingRecipe> allSmithingRecipes() {
         List<SmithingRecipe> recipes = new ArrayList<>();
         recipes.add(copperDaggerRecipe());
+        recipes.add(copperSwordRecipe());
         recipes.add(copperMaceRecipe());
+        recipes.add(copperGreatswordRecipe());
         recipes.add(copperShieldRecipe());
         recipes.addAll(customSmithingRecipes());
         return dedupeRecipes(recipes);
@@ -108,6 +115,73 @@ public final class RecipeLibrary {
         return customSmithingRecipes().stream()
                 .filter(recipe -> recipe.materialName().equalsIgnoreCase(materialName.trim()))
                 .toList();
+    }
+
+    private static SmeltingRecipe customSmeltingRecipeFor(InventorySystem.Item item) {
+        if (item == null) {
+            return null;
+        }
+
+        try {
+            MapDesignLibrary.AuthoredContent content = MapDesignLibrary.loadSharedContent();
+            for (MapDesignLibrary.CustomGatheringNode node : content.customGatheringNodes()) {
+                if (node == null
+                        || node.outputItemId().isBlank()
+                        || node.smeltOutputItemId().isBlank()) {
+                    continue;
+                }
+
+                InventorySystem.Item ore = createCustomContentItem(content, node.outputItemId());
+                InventorySystem.Item bar = createCustomContentItem(content, node.smeltOutputItemId());
+                if (ore != null && bar != null && ore.getName().equalsIgnoreCase(item.getName())) {
+                    return new SmeltingRecipe(ore.getName(), bar.getName(), bar, node.smeltRequiredLevel(), node.smeltXpReward());
+                }
+            }
+
+            for (MapDesignLibrary.CustomCompositeRecipe recipe : content.customCompositeRecipes()) {
+                if (recipe == null || recipe.outputItemId().isBlank() || recipe.smeltOutputItemId().isBlank()) {
+                    continue;
+                }
+
+                InventorySystem.Item smeltInput = createCustomContentItem(content, recipe.outputItemId());
+                InventorySystem.Item smeltOutput = createCustomContentItem(content, recipe.smeltOutputItemId());
+                if (smeltInput != null && smeltOutput != null && smeltInput.getName().equalsIgnoreCase(item.getName())) {
+                    return new SmeltingRecipe(
+                            smeltInput.getName(),
+                            smeltOutput.getName(),
+                            smeltOutput,
+                            recipe.smeltRequiredLevel(),
+                            recipe.smeltXpReward()
+                    );
+                }
+            }
+        } catch (IOException ignored) {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static InventorySystem.Item createCustomContentItem(MapDesignLibrary.AuthoredContent content, String itemIdOrName) {
+        if (content == null || itemIdOrName == null || itemIdOrName.isBlank()) {
+            return null;
+        }
+
+        for (ItemLibrary libraryItem : ItemLibrary.values()) {
+            if (itemIdOrName.equalsIgnoreCase(libraryItem.name())
+                    || itemIdOrName.equalsIgnoreCase(libraryItem.getDisplayName())) {
+                return libraryItem.createItem();
+            }
+        }
+
+        for (MapDesignLibrary.CustomItem customItem : content.customItems()) {
+            if (itemIdOrName.equalsIgnoreCase(customItem.itemId())
+                    || itemIdOrName.equalsIgnoreCase(customItem.displayName())) {
+                return customItem.createItem();
+            }
+        }
+
+        return null;
     }
 
     private static List<SmithingRecipe> customSmithingRecipes() {
@@ -163,7 +237,10 @@ public final class RecipeLibrary {
                 GearMaterial.COPPER,
                 org.main.core.GearDurability.PERFECT,
                 28,
-                "A small copper dagger. It is easy to shape, but too soft to trust for long."
+                "A small copper dagger. It is easy to shape, quick to swing, but too soft to trust for long.",
+                null,
+                "",
+                WeaponType.DAGGER
         );
 
         return new SmithingRecipe(
@@ -172,6 +249,32 @@ public final class RecipeLibrary {
                 1,
                 1,
                 COPPER_DAGGER_SMITHING_XP_REWARD,
+                previewItem
+        );
+    }
+
+    private static SmithingRecipe copperSwordRecipe() {
+        InventorySystem.Item previewItem = new InventorySystem.Item(
+                "Copper Sword",
+                InventorySystem.ItemType.WEAPON,
+                SWORD_ICON_PATH,
+                null,
+                0,
+                GearMaterial.COPPER,
+                org.main.core.GearDurability.PERFECT,
+                36,
+                "A simple copper sword. It is steadier than a dagger, but still soft by real weapon standards.",
+                null,
+                "",
+                WeaponType.SWORD
+        );
+
+        return new SmithingRecipe(
+                "Copper Sword",
+                ItemLibrary.COPPER_BAR.getDisplayName(),
+                2,
+                3,
+                40,
                 previewItem
         );
     }
@@ -186,7 +289,10 @@ public final class RecipeLibrary {
                 GearMaterial.COPPER,
                 org.main.core.GearDurability.PERFECT,
                 32,
-                "A small copper mace. It is easy to shape, but too soft to trust for long."
+                "A small copper mace. It swings slower than a sword, but lands with more force.",
+                null,
+                "",
+                WeaponType.MACE
         );
 
         return new SmithingRecipe(
@@ -194,7 +300,33 @@ public final class RecipeLibrary {
                 ItemLibrary.COPPER_BAR.getDisplayName(),
                 2,
                 5,
-                COPPER_DAGGER_SMITHING_XP_REWARD,
+                45,
+                previewItem
+        );
+    }
+
+    private static SmithingRecipe copperGreatswordRecipe() {
+        InventorySystem.Item previewItem = new InventorySystem.Item(
+                "Copper Greatsword",
+                InventorySystem.ItemType.WEAPON,
+                GREATSWORD_ICON_PATH,
+                null,
+                0,
+                GearMaterial.COPPER,
+                org.main.core.GearDurability.PERFECT,
+                54,
+                "A heavy copper greatsword. Slow to recover, but built to hit hard.",
+                null,
+                "",
+                WeaponType.GREATSWORD
+        );
+
+        return new SmithingRecipe(
+                "Copper Greatsword",
+                ItemLibrary.COPPER_BAR.getDisplayName(),
+                3,
+                8,
+                70,
                 previewItem
         );
     }
@@ -271,13 +403,13 @@ public final class RecipeLibrary {
         );
     }
 
-    public record SmeltingRecipe(String inputName, ItemLibrary output, int xpReward) {
-        public InventorySystem.Item createOutput() {
-            return output.createItem();
+    public record SmeltingRecipe(String inputName, String outputName, InventorySystem.Item outputItem, int requiredLevel, int xpReward) {
+        public SmeltingRecipe(String inputName, ItemLibrary output, int xpReward) {
+            this(inputName, output.getDisplayName(), output.createItem(), 1, xpReward);
         }
 
-        public String outputName() {
-            return output.getDisplayName();
+        public InventorySystem.Item createOutput() {
+            return outputItem.copy();
         }
     }
 

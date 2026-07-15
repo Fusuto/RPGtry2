@@ -1,6 +1,7 @@
 package org.main.engine;
 
 import org.main.battle.DifficultyResolver;
+import org.main.core.GameConfiguration;
 import org.main.core.Library;
 import org.main.core.PlayerCharacter;
 
@@ -12,8 +13,8 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
-public class DungeonRenderer {
-    private static final int MAX_DEPTH = 5;
+public class DungeonRenderer implements DungeonRenderBackend {
+    private static final int DEFAULT_MAX_DEPTH = 5;
     private static final int SIDE_MARGIN = 1;
     private static final double HORIZONTAL_FOCAL_RATIO = 0.55;
     private static final double WALL_HALF_HEIGHT_RATIO = 0.48;
@@ -61,6 +62,7 @@ public class DungeonRenderer {
     private DifficultyResolver.DifficultyRating framePlayerRating;
     private final Map<MapEntity, DifficultyResolver.DifficultyRating> frameMonsterRatingCache = new IdentityHashMap<>();
     private DifficultyResolver.DifficultyComparison frameMostDangerousComparison;
+    private final int maxDepth = loadConfiguredMaxDepth();
 
     private enum FaceType {FRONT, LEFT, RIGHT, FLOOR, SPRITE}
 
@@ -110,10 +112,12 @@ public class DungeonRenderer {
         }
     }
 
+    @Override
     public void setTextureManager(TextureManager textureManager) {
         this.textureManager = textureManager;
     }
 
+    @Override
     public void setPlayerCharacter(PlayerCharacter playerCharacter) {
         this.playerCharacter = playerCharacter;
     }
@@ -130,6 +134,7 @@ public class DungeonRenderer {
         );
     }
 
+    @Override
     public void setEnvironmentThemes(List<EnvironmentTheme> environmentThemes) {
         if (environmentThemes == null || environmentThemes.isEmpty()) {
             this.environmentThemes = new ArrayList<>(List.of(EnvironmentTheme.defaultTheme()));
@@ -166,6 +171,32 @@ public class DungeonRenderer {
         }
 
         environmentThemes.set(0, environmentTheme);
+    }
+
+    @Override
+    public void renderDungeon(Graphics2D graphics, DungeonRenderContext context) {
+        draw(
+                graphics,
+                context.map(),
+                context.entities(),
+                context.playerX(),
+                context.playerY(),
+                context.direction(),
+                context.viewportWidth(),
+                context.viewportHeight(),
+                context.cameraOffsetForward(),
+                context.cameraOffsetSide(),
+                context.cameraRotationRadians()
+        );
+    }
+
+    @Override
+    public DungeonRenderDebugInfo getDebugInfo() {
+        return new DungeonRenderDebugInfo(
+                getLastVisibleEnemyDifficultyDebugLine(),
+                maxDepth,
+                "java2d"
+        );
     }
 
     public void draw(Graphics2D g, DungeonMap map, List<MapEntity> entities, int playerX, int playerY, int dir, int viewWidth, int viewHeight) {
@@ -224,7 +255,7 @@ public class DungeonRenderer {
 
     private List<RenderCommand> buildFloorRenderCommands() {
         List<RenderCommand> commands = new ArrayList<>();
-        for (int depth = getMinimumRenderDepth(); depth <= MAX_DEPTH; depth++) {
+        for (int depth = getMinimumRenderDepth(); depth <= maxDepth; depth++) {
             int sideLimit = getSideRenderLimit(depth);
             for (int side = -sideLimit; side <= sideLimit; side++) {
                 Library.TileType tileType = getTileAtRelative(depth, side);
@@ -256,7 +287,7 @@ public class DungeonRenderer {
 
     private List<RenderCommand> buildWallRenderCommands() {
         List<RenderCommand> commands = new ArrayList<>();
-        for (int depth = getMinimumRenderDepth(); depth <= MAX_DEPTH; depth++) {
+        for (int depth = getMinimumRenderDepth(); depth <= maxDepth; depth++) {
             int sideLimit = getSideRenderLimit(depth);
             for (int side = -sideLimit; side <= sideLimit; side++) {
                 Point worldPoint = worldPointAtRelative(depth, side);
@@ -293,7 +324,7 @@ public class DungeonRenderer {
 
     private int getSideRenderLimit(int depth) {
         if (isCameraRotationActive()) {
-            return MAX_DEPTH + SIDE_MARGIN;
+            return maxDepth + SIDE_MARGIN;
         }
 
         return depth + SIDE_MARGIN;
@@ -361,7 +392,7 @@ public class DungeonRenderer {
             }
 
             RelativePosition relative = getRelativePosition(entity.getX(), entity.getY());
-            if (relative.forward <= 0 || relative.forward > MAX_DEPTH) {
+            if (relative.forward <= 0 || relative.forward > maxDepth) {
                 continue;
             }
             int sideLimit = relative.forward + SIDE_MARGIN;
@@ -823,6 +854,11 @@ public class DungeonRenderer {
         int majorAxis = Math.max(bounds.width, bounds.height);
         int widthBasedStrips = Math.max(MIN_TEXTURE_STRIPS, majorAxis / 14);
         return Math.min(MAX_TEXTURE_STRIPS, widthBasedStrips);
+    }
+
+    private static int loadConfiguredMaxDepth() {
+        int configuredDepth = GameConfiguration.intValue("renderer.maxDepth", DEFAULT_MAX_DEPTH);
+        return configuredDepth <= 0 ? DEFAULT_MAX_DEPTH : configuredDepth;
     }
 
     private TextureManager.SelectedTexture getTextureForCommand(RenderCommand command) {

@@ -30,7 +30,9 @@ import javax.swing.SwingUtilities;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -157,6 +159,29 @@ public final class InteractionSystem {
             Runnable loadAction
     ) {
         return new Interaction(new DebugInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction));
+    }
+
+    private static Interaction debugItemCategoryMenu(
+            SoundSystem soundSystem,
+            GameState gameState,
+            Runnable exitAction,
+            Runnable controlsAction,
+            Runnable saveAction,
+            Runnable loadAction
+    ) {
+        return new Interaction(new DebugItemCategoryInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction));
+    }
+
+    private static Interaction debugItemMenu(
+            SoundSystem soundSystem,
+            GameState gameState,
+            Runnable exitAction,
+            Runnable controlsAction,
+            Runnable saveAction,
+            Runnable loadAction,
+            DebugItemCategory category
+    ) {
+        return new Interaction(new DebugItemInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction, category));
     }
 
     public static Interaction controlsMenu(InputBindings inputBindings) {
@@ -1492,6 +1517,18 @@ public final class InteractionSystem {
                     return createMapLinkInteraction(interactionId, gameState);
                 }
 
+                if (interactionId != null && interactionId.startsWith("custom_fishing_")) {
+                    int interactionX = tileX >= 0 ? tileX : entity == null ? tileX : entity.getX();
+                    int interactionY = tileY >= 0 ? tileY : entity == null ? tileY : entity.getY();
+                    return createFishingInteraction(gameState, interactionX, interactionY);
+                }
+
+                if (interactionId != null && interactionId.startsWith("custom_mining_")) {
+                    int interactionX = tileX >= 0 ? tileX : entity == null ? tileX : entity.getX();
+                    int interactionY = tileY >= 0 ? tileY : entity == null ? tileY : entity.getY();
+                    return createMiningInteraction(gameState, interactionX, interactionY);
+                }
+
                 Interaction authoredInteraction = createAuthoredInteraction(interactionId, gameState, entity, tileX, tileY);
                 if (authoredInteraction != null) {
                     return authoredInteraction;
@@ -1897,27 +1934,11 @@ public final class InteractionSystem {
             ));
 
             registry.register("fishing_shoal", context -> {
-                if (!context.getGameState().startFishing(context.getTileX(), context.getTileY())) {
-                    return prompt(
-                            "Fishing Shoal",
-                            context.getGameState().getFishingMessage(),
-                            closeOption("Close")
-                    );
-                }
-
-                return fishingMenu(context.getGameState());
+                return createFishingInteraction(context.getGameState(), context.getTileX(), context.getTileY());
             });
 
             registry.register("mineral_rock_basic", context -> {
-                if (!context.getGameState().startMining(context.getTileX(), context.getTileY())) {
-                    return prompt(
-                            "Mineral Rock",
-                            context.getGameState().getMiningMessage(),
-                            closeOption("Close")
-                    );
-                }
-
-                return miningMenu(context.getGameState());
+                return createMiningInteraction(context.getGameState(), context.getTileX(), context.getTileY());
             });
 
             registry.register("campfire_basic", context -> {
@@ -1957,6 +1978,30 @@ public final class InteractionSystem {
             });
 
             return registry;
+        }
+
+        private static Interaction createFishingInteraction(GameState gameState, int tileX, int tileY) {
+            if (!gameState.startFishing(tileX, tileY)) {
+                return prompt(
+                        "Fishing",
+                        gameState.getFishingMessage(),
+                        closeOption("Close")
+                );
+            }
+
+            return fishingMenu(gameState);
+        }
+
+        private static Interaction createMiningInteraction(GameState gameState, int tileX, int tileY) {
+            if (!gameState.startMining(tileX, tileY)) {
+                return prompt(
+                        "Mining",
+                        gameState.getMiningMessage(),
+                        closeOption("Close")
+                );
+            }
+
+            return miningMenu(gameState);
         }
     }
 
@@ -2506,6 +2551,7 @@ public final class InteractionSystem {
                     List.of(
                             stayOpenOption(debugInfoLabel(), this::toggleDebugInfo),
                             stayOpenOption(debugSkillsLabel(), this::loadDebugSkills),
+                            option("Add Item", this::openDebugItemMenu),
                             backToSettingsOption(),
                             closeOption("Close")
                     )
@@ -2551,6 +2597,252 @@ public final class InteractionSystem {
             if (gameState() != null && gameState().getPlayerCharacter() != null) {
                 gameState().getPlayerCharacter().loadDebugSkills();
             }
+        }
+
+        private void openDebugItemMenu() {
+            openInteraction(debugItemCategoryMenu(
+                    soundSystem(),
+                    gameState(),
+                    exitAction(),
+                    controlsAction(),
+                    saveAction(),
+                    loadAction()
+            ));
+        }
+    }
+
+    private enum DebugItemCategory {
+        BUILT_IN("Built-in Items"),
+        CUSTOM_ITEMS("Custom Items"),
+        CUSTOM_LIMBS("Custom Limbs");
+
+        private final String displayName;
+
+        DebugItemCategory(String displayName) {
+            this.displayName = displayName;
+        }
+
+        private String displayName() {
+            return displayName;
+        }
+    }
+
+    private record DebugItemEntry(String label, Supplier<InventorySystem.Item> itemSupplier) {
+    }
+
+    private static class DebugItemCategoryInteractionContent extends SettingsMenuContent {
+        private DebugItemCategoryInteractionContent(
+                SoundSystem soundSystem,
+                GameState gameState,
+                Runnable exitAction,
+                Runnable controlsAction,
+                Runnable saveAction,
+                Runnable loadAction
+        ) {
+            super(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction);
+        }
+
+        @Override
+        public InteractionModel getModel() {
+            return new InteractionModel(
+                    "Debug Items",
+                    "Choose an item source.",
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    true,
+                    List.of(
+                            option(DebugItemCategory.BUILT_IN.displayName(), () -> openDebugItemMenu(DebugItemCategory.BUILT_IN)),
+                            option(DebugItemCategory.CUSTOM_ITEMS.displayName(), () -> openDebugItemMenu(DebugItemCategory.CUSTOM_ITEMS)),
+                            option(DebugItemCategory.CUSTOM_LIMBS.displayName(), () -> openDebugItemMenu(DebugItemCategory.CUSTOM_LIMBS)),
+                            backToDebugOption(),
+                            closeOption("Close")
+                    )
+            );
+        }
+
+        private void openDebugItemMenu(DebugItemCategory category) {
+            openInteraction(debugItemMenu(
+                    soundSystem(),
+                    gameState(),
+                    exitAction(),
+                    controlsAction(),
+                    saveAction(),
+                    loadAction(),
+                    category
+            ));
+        }
+
+        private InteractionOption backToDebugOption() {
+            return option("Back", () -> openInteraction(debugMenu(
+                    soundSystem(),
+                    gameState(),
+                    exitAction(),
+                    controlsAction(),
+                    saveAction(),
+                    loadAction()
+            )));
+        }
+    }
+
+    private static class DebugItemInteractionContent extends SettingsMenuContent {
+        private final DebugItemCategory category;
+        private List<DebugItemEntry> cachedEntries;
+        private String lastMessage = "Click an item to add one copy to your inventory.";
+
+        private DebugItemInteractionContent(
+                SoundSystem soundSystem,
+                GameState gameState,
+                Runnable exitAction,
+                Runnable controlsAction,
+                Runnable saveAction,
+                Runnable loadAction,
+                DebugItemCategory category
+        ) {
+            super(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction);
+            this.category = category == null ? DebugItemCategory.BUILT_IN : category;
+        }
+
+        @Override
+        public InteractionModel getModel() {
+            List<DebugItemEntry> entries = itemEntries();
+            List<InteractionOption> options = new ArrayList<>();
+
+            for (DebugItemEntry entry : entries) {
+                options.add(stayOpenOption(entry.label(), () -> addItem(entry)));
+            }
+
+            options.add(backToCategoriesOption());
+            options.add(closeOption("Close"));
+
+            String body = lastMessage
+                    + "\n\n"
+                    + entries.size()
+                    + " available "
+                    + category.displayName().toLowerCase()
+                    + ".";
+
+            if (entries.isEmpty()) {
+                body += "\n\nNo entries were found for this category.";
+            }
+
+            return new InteractionModel(
+                    category.displayName(),
+                    body,
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    true,
+                    options
+            );
+        }
+
+        private void addItem(DebugItemEntry entry) {
+            if (gameState() == null || gameState().getInventory() == null || entry == null) {
+                lastMessage = "No inventory is available.";
+                return;
+            }
+
+            InventorySystem.Item item = entry.itemSupplier().get();
+            if (item == null) {
+                lastMessage = "That item could not be created.";
+                return;
+            }
+
+            if (!gameState().getInventory().addItem(item)) {
+                lastMessage = "Inventory is full. Could not add " + item.getName() + ".";
+                return;
+            }
+
+            lastMessage = "Added " + item.getName() + ".";
+        }
+
+        private List<DebugItemEntry> itemEntries() {
+            if (cachedEntries == null) {
+                cachedEntries = switch (category) {
+                    case BUILT_IN -> builtInItemEntries();
+                    case CUSTOM_ITEMS -> customItemEntries();
+                    case CUSTOM_LIMBS -> customLimbEntries();
+                };
+            }
+            return cachedEntries;
+        }
+
+        private List<DebugItemEntry> builtInItemEntries() {
+            List<DebugItemEntry> entries = new ArrayList<>();
+            for (ItemLibrary item : ItemLibrary.values()) {
+                entries.add(new DebugItemEntry(item.getDisplayName(), item::createItem));
+            }
+            return entries;
+        }
+
+        private List<DebugItemEntry> customItemEntries() {
+            Map<String, MapDesignLibrary.CustomItem> customItems = new LinkedHashMap<>();
+            loadSharedContentItems(customItems);
+            if (gameState() != null) {
+                for (MapDesignLibrary.CustomItem item : gameState().getCustomItems()) {
+                    customItems.put(item.itemId(), item);
+                }
+            }
+
+            List<DebugItemEntry> entries = new ArrayList<>();
+            for (MapDesignLibrary.CustomItem item : customItems.values()) {
+                entries.add(new DebugItemEntry(item.displayName(), item::createItem));
+            }
+            entries.sort(Comparator.comparing(DebugItemEntry::label, String.CASE_INSENSITIVE_ORDER));
+            return entries;
+        }
+
+        private List<DebugItemEntry> customLimbEntries() {
+            Map<String, MapDesignLibrary.CustomLimb> customLimbs = new LinkedHashMap<>();
+            loadSharedContentLimbs(customLimbs);
+            if (gameState() != null) {
+                for (MapDesignLibrary.CustomLimb limb : gameState().getCustomLimbs()) {
+                    customLimbs.put(limb.limbId(), limb);
+                }
+            }
+
+            List<DebugItemEntry> entries = new ArrayList<>();
+            for (MapDesignLibrary.CustomLimb limb : customLimbs.values()) {
+                entries.add(new DebugItemEntry(limb.displayName(), limb::createLimb));
+            }
+            entries.sort(Comparator.comparing(DebugItemEntry::label, String.CASE_INSENSITIVE_ORDER));
+            return entries;
+        }
+
+        private void loadSharedContentItems(Map<String, MapDesignLibrary.CustomItem> customItems) {
+            try {
+                for (MapDesignLibrary.CustomItem item : MapDesignLibrary.loadSharedContent().customItems()) {
+                    customItems.put(item.itemId(), item);
+                }
+            } catch (Exception ignored) {
+                // Debug menu should remain usable even if authored content is temporarily invalid.
+            }
+        }
+
+        private void loadSharedContentLimbs(Map<String, MapDesignLibrary.CustomLimb> customLimbs) {
+            try {
+                for (MapDesignLibrary.CustomLimb limb : MapDesignLibrary.loadSharedContent().customLimbs()) {
+                    customLimbs.put(limb.limbId(), limb);
+                }
+            } catch (Exception ignored) {
+                // Debug menu should remain usable even if authored content is temporarily invalid.
+            }
+        }
+
+        private InteractionOption backToCategoriesOption() {
+            return option("Back", () -> openInteraction(debugItemCategoryMenu(
+                    soundSystem(),
+                    gameState(),
+                    exitAction(),
+                    controlsAction(),
+                    saveAction(),
+                    loadAction()
+            )));
         }
     }
 
