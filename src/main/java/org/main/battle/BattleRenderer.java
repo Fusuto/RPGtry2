@@ -592,9 +592,36 @@ public class BattleRenderer {
 
             drawHpBar(g, drawX, drawY - 18, spriteSize, 10, actor);
             drawAttackChargeBar(g, drawX, drawY - 5, spriteSize, 5, actor);
-            drawStatusIcons(g, actor, drawX, drawY - 34);
             drawActorSprite(g, actor, drawX, drawY, spriteSize, spriteSize);
+            drawActorStatusIcons(g, actor, side, drawX, drawY, spriteSize, x, width);
         }
+    }
+
+    private void drawActorStatusIcons(
+            Graphics2D g,
+            BattleActor actor,
+            Library.EntityType side,
+            int spriteX,
+            int spriteY,
+            int spriteSize,
+            int areaX,
+            int areaWidth
+    ) {
+        List<BattleStatus> statuses = actor.getStatuses();
+        if (statuses.isEmpty()) {
+            return;
+        }
+
+        int iconSize = 18;
+        int gap = 4;
+        int totalWidth = statuses.size() * iconSize + (statuses.size() - 1) * gap;
+        int preferredX = side == Library.EntityType.ENEMY
+                ? spriteX + spriteSize + 8
+                : spriteX - totalWidth - 8;
+        int iconX = Math.max(areaX + 4, Math.min(areaX + areaWidth - totalWidth - 4, preferredX));
+        int iconY = spriteY + Math.max(0, (spriteSize - iconSize) / 2);
+
+        drawStatusIcons(g, statuses, iconX, iconY, iconSize, gap);
     }
 
     private void drawAttackChargeBar(Graphics2D g, int x, int y, int width, int height, BattleActor actor) {
@@ -979,14 +1006,19 @@ public class BattleRenderer {
     }
 
     private void drawStatusIcons(Graphics2D g, BattleActor actor, int x, int y) {
-        int iconSize = 14;
-        int gap = 3;
+        drawStatusIcons(g, actor.getStatuses(), x, y, 14, 3);
+    }
+
+    private void drawStatusIcons(Graphics2D g, List<BattleStatus> statuses, int x, int y, int iconSize, int gap) {
         int index = 0;
 
-        for (BattleStatus status : actor.getStatuses()) {
+        for (BattleStatus status : statuses) {
             BattleStatusType type = status.getType();
             int iconX = x + index * (iconSize + gap);
             BufferedImage icon = type.getIcon();
+
+            g.setColor(new Color(0, 0, 0, 165));
+            g.fillRoundRect(iconX - 2, y - 2, iconSize + 4, iconSize + 4, 5, 5);
 
             if (icon != null) {
                 g.drawImage(icon, iconX, y, iconSize, iconSize, null);
