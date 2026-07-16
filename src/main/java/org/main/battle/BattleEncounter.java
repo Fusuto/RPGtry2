@@ -307,7 +307,7 @@ public class BattleEncounter {
         int totalDamage = 0;
 
         for (BattleActor target : targets) {
-            if (skill.getEffectType().equals(Library.EffectType.DAMAGE)) {
+            if (isDamageSkill(skill)) {
                 CombatResolver.CombatResult combatResult = skill.getTargetingMode() == Library.BattleTargetingMode.MAGIC
                         ? CombatResolver.resolveSpell(caster, target, skill)
                         : CombatResolver.resolvePhysicalSkill(caster, target, skill);
@@ -324,8 +324,11 @@ public class BattleEncounter {
                     playSound(target.getHitSoundPath());
                 }
 
-                if (combatResult.hit() && skill.getStunTurns() > 0 && Math.random() < skill.getStunChance()) {
-                    target.applyStun(skill.getStunTurns());
+                if (combatResult.hit()) {
+                    String statusMessage = applyOnHitStatus(target, skill);
+                    if (!statusMessage.isBlank()) {
+                        appendBattleMessage(statusMessage);
+                    }
                 }
             } else if (skill.getEffectType().equals(Library.EffectType.HEAL)) {
                 int healAmount = CombatResolver.resolveHealingAmount(caster, skill);
@@ -558,13 +561,21 @@ public class BattleEncounter {
         battleMessage = battleMessage + " " + message;
     }
 
+    private boolean isDamageSkill(BattleSkill skill) {
+        if (skill == null) {
+            return false;
+        }
+        return skill.getEffectType() == Library.EffectType.DAMAGE
+                || skill.getEffectType() == Library.EffectType.DAMAGE_HEAL;
+    }
+
     private void awardOffensiveSkillExperience(
             BattleActor caster,
             BattleSkill skill,
             CombatResolver.CombatResult combatResult,
             int actualDamage
     ) {
-        if (caster == null || skill == null || combatResult == null || skill.getEffectType() != Library.EffectType.DAMAGE) {
+        if (caster == null || skill == null || combatResult == null || !isDamageSkill(skill)) {
             return;
         }
 
@@ -646,6 +657,10 @@ public class BattleEncounter {
 
     private int smartEnemyDamageSkillIntelligence() {
         return GameConfiguration.intValue("battle.enemySkill.smartDamageIntelligence", 7);
+    }
+
+    private int smartEnemyDebuffIntelligence() {
+        return GameConfiguration.intValue("battle.enemySkill.smartDebuffIntelligence", 7);
     }
 
     public Library.BattleResult handleDebugDropHp(BattleActor target) {
@@ -804,6 +819,7 @@ public class BattleEncounter {
                 .filter(attacker::isSkillReady)
                 .filter(skill -> !getSelectableActorsForSkill(attacker, skill).isEmpty())
                 .filter(skill -> !skill.isSummonSkill() || canSummon(attacker))
+                .filter(skill -> !shouldSmartAvoidDebuffRefresh(attacker, skill))
                 .toList();
 
         if (usableSkills.isEmpty()) {
@@ -829,7 +845,7 @@ public class BattleEncounter {
         }
 
         BattleSkill damageSkill = usableSkills.stream()
-                .filter(skill -> skill.getEffectType() == Library.EffectType.DAMAGE)
+                .filter(this::isDamageSkill)
                 .findFirst()
                 .orElse(null);
 
@@ -868,9 +884,10 @@ public class BattleEncounter {
 
         attacker.startSkillCooldown(skill);
         int totalDamage = 0;
+        StringBuilder effectSummary = new StringBuilder();
 
         for (BattleActor resolvedTarget : resolvedTargets) {
-            if (skill.getEffectType().equals(Library.EffectType.DAMAGE)) {
+            if (isDamageSkill(skill)) {
                 CombatResolver.CombatResult combatResult = skill.getTargetingMode() == Library.BattleTargetingMode.MAGIC
                         ? CombatResolver.resolveSpell(attacker, resolvedTarget, skill)
                         : CombatResolver.resolvePhysicalSkill(attacker, resolvedTarget, skill);
@@ -882,6 +899,11 @@ public class BattleEncounter {
                 );
                 if (combatResult.hit()) {
                     playSound(resolvedTarget.getHitSoundPath());
+                    appendSummary(effectSummary, applyOnHitStatus(
+                            resolvedTarget,
+                            skill,
+                            attacker.getCombatAiIntelligence() >= smartEnemyDebuffIntelligence()
+                    ));
                 }
             } else if (skill.getEffectType().equals(Library.EffectType.HEAL)) {
                 resolvedTarget.healDamage(CombatResolver.resolveHealingAmount(attacker, skill));
@@ -904,18 +926,59 @@ public class BattleEncounter {
                 + joinActorNames(resolvedTargets)
                 + " for "
                 + totalDamage
-                + " total damage!";
+                + " total damage!"
+                + (effectSummary.isEmpty() ? "" : " " + effectSummary);
+    }
+
+    private String applyOnHitStatus(BattleActor target, BattleSkill skill) {
+        return applyOnHitStatus(target, skill, false);
+    }
+
+    private String applyOnHitStatus(BattleActor target, BattleSkill skill, boolean avoidRefresh) {
+        if (target == null || skill == null || !skill.hasOnHitStatus()) {
+            return "";
+        }
+        if (avoidRefresh && target.hasStatus(skill.getOnHitStatusType())) {
+            return "";
+        }
+        if (Math.random() >= skill.getOnHitStatusChance()) {
+            return "";
+        }
+
+        target.applyStatus(skill.getOnHitStatusType(), skill.getOnHitStatusTurns());
+        return target.getName() + " is affected by " + skill.getOnHitStatusType().getDisplayName() + ".";
     }
 
     private BattleActor selectEnemySkillTarget(BattleActor attacker, BattleSkill skill, List<BattleActor> targets) {
+        if (attacker.getCombatAiIntelligence() >= smartEnemyDebuffIntelligence() && skill.hasOnHitStatus()) {
+            List<BattleActor> nonDebuffedTargets = targets.stream()
+                    .filter(target -> !target.hasStatus(skill.getOnHitStatusType()))
+                    .toList();
+            if (!nonDebuffedTargets.isEmpty()) {
+                targets = nonDebuffedTargets;
+            }
+        }
+
         if (attacker.getCombatAiIntelligence() >= smartEnemyDamageSkillIntelligence()
-                && skill.getEffectType() == Library.EffectType.DAMAGE) {
+                && isDamageSkill(skill)) {
             return targets.stream()
                     .min(Comparator.comparingInt(BattleActor::getCurrentHp))
                     .orElse(targets.getFirst());
         }
 
         return targets.getFirst();
+    }
+
+    private boolean shouldSmartAvoidDebuffRefresh(BattleActor attacker, BattleSkill skill) {
+        if (attacker == null || skill == null || !skill.hasOnHitStatus()) {
+            return false;
+        }
+        if (attacker.getCombatAiIntelligence() < smartEnemyDebuffIntelligence()) {
+            return false;
+        }
+
+        return getSelectableActorsForSkill(attacker, skill).stream()
+                .allMatch(target -> target.hasStatus(skill.getOnHitStatusType()));
     }
 
     private String resolveSummon(BattleActor caster, BattleSkill skill) {

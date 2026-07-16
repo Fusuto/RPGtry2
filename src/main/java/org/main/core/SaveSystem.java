@@ -148,6 +148,7 @@ public final class SaveSystem {
                     List.of(),
                     List.of(),
                     List.of(),
+                    List.of(),
                     List.of()
             ));
         }
@@ -338,6 +339,7 @@ public final class SaveSystem {
                     readSet(properties.getProperty(prefix + "discovered", "")),
                     loadMapTriggers(properties, prefix + "trigger."),
                     readSet(properties.getProperty(prefix + "firedTriggers", "")),
+                    List.of(),
                     List.of(),
                     List.of(),
                     List.of(),
@@ -548,16 +550,16 @@ public final class SaveSystem {
             return limbKey(limb);
         }
 
-        String customItemKey = customItemKey(item);
-        if (!customItemKey.isBlank()) {
-            return customItemKey;
-        }
-
         if (item.isStackable()) {
             ItemLibrary libraryItem = ItemLibrary.fromDisplayName(item.getName());
             if (libraryItem != null) {
                 return "STACK|" + libraryItem.name() + "|" + item.getQuantity();
             }
+        }
+
+        String customItemKey = customItemKey(item);
+        if (!customItemKey.isBlank()) {
+            return customItemKey;
         }
 
         ItemLibrary libraryItem = ItemLibrary.fromDisplayName(item.getName());

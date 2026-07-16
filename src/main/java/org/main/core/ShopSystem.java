@@ -241,6 +241,11 @@ public final class ShopSystem {
                 return false;
             }
 
+            InventorySystem.Item item = gameState.getInventory().getItem(inventoryIndex);
+            if (!canSellItem(item)) {
+                return false;
+            }
+
             InventorySystem.Item soldItem = gameState.getInventory().removeItem(inventoryIndex);
 
             if (soldItem == null) {
@@ -255,8 +260,16 @@ public final class ShopSystem {
             return true;
         }
 
-        public int getSellPriceForItem(InventorySystem.Item item) {
+        public boolean canSellItem(InventorySystem.Item item) {
             if (item == null) {
+                return false;
+            }
+
+            return ItemLibrary.fromDisplayName(item.getName()) != ItemLibrary.GOLD;
+        }
+
+        public int getSellPriceForItem(InventorySystem.Item item) {
+            if (!canSellItem(item)) {
                 return 0;
             }
 
@@ -667,9 +680,14 @@ public final class ShopSystem {
                     continue;
                 }
 
-                sellInventoryBounds.put(i, slotBounds);
-
                 drawItemIcon(g, item, slotBounds);
+
+                if (!shop.canSellItem(item)) {
+                    drawSmallPriceTag(g, "N/A", slotBounds);
+                    continue;
+                }
+
+                sellInventoryBounds.put(i, slotBounds);
 
                 int sellPrice = shop.getSellPriceForItem(item);
                 drawSmallPriceTag(g, sellPrice + "g", slotBounds);

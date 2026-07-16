@@ -83,6 +83,7 @@ public final class Library {
 
     public enum EffectType{
         DAMAGE,
+        DAMAGE_HEAL,
         HEAL,
         DEFEND,
         SUMMON

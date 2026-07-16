@@ -147,6 +147,7 @@ public final class GameConfiguration {
         put("battle.xp.magicHealing.perHp", "4");
         put("battle.enemySkill.intelligenceDivisor", "10.0");
         put("battle.enemySkill.smartDamageIntelligence", "7");
+        put("battle.enemySkill.smartDebuffIntelligence", "7");
         put("battle.lowHpWarning.threshold", "0.10");
         put("battle.lowHpWarning.soundPath", "assets/sounds/generated/kurt_sample_2.wav");
         put("battle.debug.criticalHpPercent", "0.10");
@@ -162,6 +163,7 @@ public final class GameConfiguration {
         put("battle.skillCooldown.CRUSH_COLUMN.seconds", "7");
         put("battle.skillCooldown.FIREBALL.seconds", "8");
         put("battle.skillCooldown.ABSORB.seconds", "8");
+        put("battle.skillCooldown.ROTTING_GRASP.seconds", "8");
         put("battle.skillCooldown.HEAL.seconds", "10");
         put("battle.skillCooldown.WAR_CRY.seconds", "20");
         put("battle.skillCooldown.RAISE_SKELETON.seconds", "20");
@@ -171,6 +173,17 @@ public final class GameConfiguration {
         put("difficulty.minimumLevel", "1");
         put("difficulty.speedMultiplierCap", "4.0");
         put("battle.summon.maxActorsPerSide", "6");
+
+        put("levelGate.equipmentDefense.NONE", "0");
+        put("levelGate.equipmentDefense.COPPER", "1");
+        put("levelGate.equipmentDefense.BRONZE", "3");
+        put("levelGate.equipmentDefense.IRON", "5");
+        put("levelGate.equipmentDefense.STEEL", "10");
+        put("levelGate.equipmentDefense.SILVER", "5");
+        put("levelGate.equipmentDefense.OAK", "1");
+        put("levelGate.equipmentDefense.YEW", "5");
+        put("levelGate.equipmentDefense.IRONWOOD", "10");
+        put("levelGate.equipmentDefense.LEATHER", "1");
 
         put("renderer.backend", "java2d");
         put("renderer.maxDepth", "5");
@@ -190,7 +203,7 @@ public final class GameConfiguration {
         put("renderer.prototype.mouseLook.maxYawDegrees", "90");
         put("renderer.prototype.mouseLook.maxPitchDegrees", "35");
         put("renderer.prototype.mouseLook.recenterOnRelease", "true");
-        put("renderer.prototype.mouseLook.invertX", "false");
+        put("renderer.prototype.mouseLook.invertX", "true");
         put("renderer.prototype.mouseLook.invertY", "false");
 
         put("movement.animationDurationMs", "160");

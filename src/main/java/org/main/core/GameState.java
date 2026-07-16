@@ -11,6 +11,7 @@ import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 
 import java.awt.Point;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -29,6 +30,7 @@ public class GameState {
     private final Map<String, MapDesignLibrary.CustomItem> customItems = new HashMap<>();
     private final Map<String, MapDesignLibrary.CustomLimb> customLimbs = new HashMap<>();
     private final Map<String, MapDesignLibrary.CustomGatheringNode> customGatheringNodes = new HashMap<>();
+    private final Map<String, MapDesignLibrary.CustomCookingRecipe> customCookingRecipes = new HashMap<>();
     private final Map<String, MapDesignLibrary.CustomCompositeRecipe> customCompositeRecipes = new HashMap<>();
     private final Map<String, MapRuntimeState> mapRuntimeStates = new HashMap<>();
     private final Set<String> spokenAuthoredDialogues = new HashSet<>();
@@ -397,6 +399,7 @@ public class GameState {
         setCustomItems(generatedDungeon.customItems());
         setCustomLimbs(generatedDungeon.customLimbs());
         setCustomGatheringNodes(generatedDungeon.customGatheringNodes());
+        setCustomCookingRecipes(generatedDungeon.customCookingRecipes());
         setCustomCompositeRecipes(generatedDungeon.customCompositeRecipes());
         setMapTriggers(generatedDungeon.mapTriggers());
         currentMapDesignPath = null;
@@ -463,6 +466,7 @@ public class GameState {
                 new ArrayList<>(customItems.values()),
                 new ArrayList<>(customLimbs.values()),
                 new ArrayList<>(getCustomGatheringNodes()),
+                new ArrayList<>(customCookingRecipes.values()),
                 new ArrayList<>(customCompositeRecipes.values())
         ));
     }
@@ -531,6 +535,7 @@ public class GameState {
         customItems.clear();
         customLimbs.clear();
         customGatheringNodes.clear();
+        customCookingRecipes.clear();
         customCompositeRecipes.clear();
         currentMapDesignPath = null;
         resourceNodeStates.clear();
@@ -571,6 +576,7 @@ public class GameState {
         setCustomItems(state.customItems());
         setCustomLimbs(state.customLimbs());
         setCustomGatheringNodes(state.customGatheringNodes());
+        setCustomCookingRecipes(state.customCookingRecipes());
         setCustomCompositeRecipes(state.customCompositeRecipes());
         resetMiniMapDiscovery();
         Point target = resolveTarget(targetX, targetY);
@@ -815,6 +821,23 @@ public class GameState {
         return customGatheringNodes.values().stream().distinct().toList();
     }
 
+    public void setCustomCookingRecipes(List<MapDesignLibrary.CustomCookingRecipe> recipes) {
+        customCookingRecipes.clear();
+        if (recipes == null) {
+            return;
+        }
+
+        for (MapDesignLibrary.CustomCookingRecipe recipe : recipes) {
+            if (recipe != null && !recipe.recipeId().isBlank()) {
+                customCookingRecipes.put(recipe.recipeId(), recipe);
+            }
+        }
+    }
+
+    public List<MapDesignLibrary.CustomCookingRecipe> getCustomCookingRecipes() {
+        return List.copyOf(customCookingRecipes.values());
+    }
+
     public void setCustomCompositeRecipes(List<MapDesignLibrary.CustomCompositeRecipe> recipes) {
         customCompositeRecipes.clear();
         if (recipes == null) {
@@ -837,12 +860,6 @@ public class GameState {
         if (itemNameOrId == null || itemNameOrId.isBlank()) {
             return null;
         }
-        for (ItemLibrary libraryItem : ItemLibrary.values()) {
-            if (itemNameOrId.equalsIgnoreCase(libraryItem.name())
-                    || itemNameOrId.equalsIgnoreCase(libraryItem.getDisplayName())) {
-                return libraryItem.createItem();
-            }
-        }
         InventorySystem.Item customItem = createCustomItemByNameOrId(itemNameOrId);
         if (customItem != null) {
             return customItem;
@@ -863,7 +880,14 @@ public class GameState {
                 }
             }
         } catch (java.io.IOException ignored) {
-            return null;
+            // Fall back to enum-backed items below.
+        }
+
+        for (ItemLibrary libraryItem : ItemLibrary.values()) {
+            if (itemNameOrId.equalsIgnoreCase(libraryItem.name())
+                    || itemNameOrId.equalsIgnoreCase(libraryItem.getDisplayName())) {
+                return libraryItem.createItem();
+            }
         }
 
         return null;
@@ -2048,6 +2072,13 @@ public class GameState {
             return false;
         }
 
+        MapDesignLibrary.CustomCookingRecipe recipe = findCookingRecipe(selectedItem);
+        int cookingLevel = playerCharacter == null ? 1 : Math.max(1, playerCharacter.getSkillLevel(CharacterSkill.COOKING));
+        if (recipe != null && cookingLevel < recipe.requiredLevel()) {
+            cookingMessage = "You need Cooking level " + recipe.requiredLevel() + " to cook " + selectedItem.getName() + ".";
+            return false;
+        }
+
         cookingActive = true;
         cookingX = x;
         cookingY = y;
@@ -2109,8 +2140,18 @@ public class GameState {
             selectedItem = getSelectedWorldUseItem();
         }
 
+        MapDesignLibrary.CustomCookingRecipe recipe = findCookingRecipe(selectedItem);
         if (!isCookableItem(selectedItem) || !cookingItemName.equalsIgnoreCase(selectedItem.getName())) {
             cookingMessage = "That item cannot be cooked here.";
+            cookingItemName = null;
+            cookingActive = false;
+            clearSelectedWorldUseItem();
+            return;
+        }
+
+        int cookingLevel = Math.max(1, playerCharacter.getSkillLevel(CharacterSkill.COOKING));
+        if (recipe != null && cookingLevel < recipe.requiredLevel()) {
+            cookingMessage = "You need Cooking level " + recipe.requiredLevel() + " to cook " + cookingItemName + ".";
             cookingItemName = null;
             cookingActive = false;
             clearSelectedWorldUseItem();
@@ -2120,7 +2161,6 @@ public class GameState {
         getInventory().removeItem(selectedWorldItemIndex);
         clearSelectedWorldUseItem();
 
-        int cookingLevel = Math.max(1, playerCharacter.getSkillLevel(CharacterSkill.COOKING));
         double successChance = Math.min(
                 maxCookingSuccessChance(),
                 baseCookingSuccessChance() + cookingLevel * cookingSuccessChancePerLevel()
@@ -2138,10 +2178,11 @@ public class GameState {
         advanceQuestIfAt(QuestLibrary.GATHERING_BASICS, 1, 2);
 
         if (cooked) {
-            int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.COOKING, cookingXpReward());
+            int xpReward = recipe == null ? cookingXpReward() : recipe.xpReward();
+            int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.COOKING, xpReward);
             cookingMessage = levelsGained > 0
-                    ? "You cook the fish. Cooking level " + playerCharacter.getSkillLevel(CharacterSkill.COOKING) + "!"
-                    : "You cook the fish. Cooking XP "
+                    ? "You cook the " + cookingItemName + ". Cooking level " + playerCharacter.getSkillLevel(CharacterSkill.COOKING) + "!"
+                    : "You cook the " + cookingItemName + ". Cooking XP "
                     + playerCharacter.getSkillExperience(CharacterSkill.COOKING)
                     + "/"
                     + playerCharacter.getSkillExperienceRequired(CharacterSkill.COOKING)
@@ -2165,15 +2206,60 @@ public class GameState {
     }
 
     private boolean isCookableItem(InventorySystem.Item item) {
-        return item != null && ItemLibrary.RAW_FISH.getDisplayName().equalsIgnoreCase(item.getName());
+        return item != null
+                && (findCookingRecipe(item) != null || ItemLibrary.RAW_FISH.getDisplayName().equalsIgnoreCase(item.getName()));
     }
 
     private InventorySystem.Item createCookedItem(String rawItemName) {
+        MapDesignLibrary.CustomCookingRecipe recipe = findCookingRecipe(rawItemName);
+        if (recipe != null) {
+            InventorySystem.Item item = createItemByNameOrId(recipe.cookedItemId());
+            if (item != null) {
+                return item;
+            }
+        }
         return ItemLibrary.COOKED_FISH.createItem();
     }
 
     private InventorySystem.Item createBurntItem(String rawItemName) {
+        MapDesignLibrary.CustomCookingRecipe recipe = findCookingRecipe(rawItemName);
+        if (recipe != null) {
+            InventorySystem.Item item = createItemByNameOrId(recipe.burntItemId());
+            if (item != null) {
+                return item;
+            }
+        }
         return ItemLibrary.BURNT_FISH.createItem();
+    }
+
+    private MapDesignLibrary.CustomCookingRecipe findCookingRecipe(InventorySystem.Item item) {
+        return item == null ? null : findCookingRecipe(item.getName());
+    }
+
+    private MapDesignLibrary.CustomCookingRecipe findCookingRecipe(String itemNameOrId) {
+        if (itemNameOrId == null || itemNameOrId.isBlank()) {
+            return null;
+        }
+
+        List<MapDesignLibrary.CustomItem> itemDefinitions = new ArrayList<>(customItems.values());
+        for (MapDesignLibrary.CustomCookingRecipe recipe : customCookingRecipes.values()) {
+            if (recipe.matches(itemNameOrId, itemDefinitions)) {
+                return recipe;
+            }
+        }
+
+        try {
+            MapDesignLibrary.AuthoredContent content = MapDesignLibrary.loadSharedContent();
+            for (MapDesignLibrary.CustomCookingRecipe recipe : content.customCookingRecipes()) {
+                if (recipe.matches(itemNameOrId, content.customItems())) {
+                    return recipe;
+                }
+            }
+        } catch (IOException ignored) {
+            // Built-in raw fish fallback remains available below.
+        }
+
+        return null;
     }
 
     public boolean startSmelting(int x, int y) {
@@ -2669,6 +2755,7 @@ public class GameState {
             List<MapDesignLibrary.CustomItem> customItems,
             List<MapDesignLibrary.CustomLimb> customLimbs,
             List<MapDesignLibrary.CustomGatheringNode> customGatheringNodes,
+            List<MapDesignLibrary.CustomCookingRecipe> customCookingRecipes,
             List<MapDesignLibrary.CustomCompositeRecipe> customCompositeRecipes
     ) {
         public MapRuntimeState {
@@ -2684,6 +2771,7 @@ public class GameState {
             customItems = customItems == null ? List.of() : List.copyOf(customItems);
             customLimbs = customLimbs == null ? List.of() : List.copyOf(customLimbs);
             customGatheringNodes = customGatheringNodes == null ? List.of() : List.copyOf(customGatheringNodes);
+            customCookingRecipes = customCookingRecipes == null ? List.of() : List.copyOf(customCookingRecipes);
             customCompositeRecipes = customCompositeRecipes == null ? List.of() : List.copyOf(customCompositeRecipes);
         }
     }

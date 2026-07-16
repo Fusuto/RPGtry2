@@ -384,15 +384,46 @@ public class PlayerCharacter {
     }
 
     public boolean canUseEquipment(InventorySystem.Item item, InventorySystem.EquipmentSlot slot) {
-        if (item == null || slot == null || !canUseEquipmentSlot(slot)) {
-            return false;
+        return equipmentRestrictionMessage(item, slot).isBlank();
+    }
+
+    public String equipmentRestrictionMessage(InventorySystem.Item item, InventorySystem.EquipmentSlot slot) {
+        if (item == null || slot == null) {
+            return "No equipment selected.";
+        }
+
+        if (!canUseEquipmentSlot(slot)) {
+            return switch (slot) {
+                case HEAD -> "You need a functional head to wear this.";
+                case CHEST -> "You need a functional body to wear this.";
+                case LEGS -> "You need functional legs to wear this.";
+                case WEAPON -> "You need two functional arms to wield this.";
+                case SHIELD -> "You need a functional arm to hold this.";
+                case RING_LEFT, RING_RIGHT -> "You need a functional arm to wear this.";
+            };
+        }
+
+        if (slot == InventorySystem.EquipmentSlot.SHIELD) {
+            InventorySystem.Item weapon = inventory == null
+                    ? null
+                    : inventory.getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
+            if (weapon != null && weapon.isTwoHanded()) {
+                return "Your off hand is occupied by a two-handed weapon.";
+            }
         }
 
         if (item.getItemType() == InventorySystem.ItemType.WEAPON || item.getItemType() == InventorySystem.ItemType.RING) {
-            return true;
+            return "";
         }
 
-        return getSkillLevel(CharacterSkill.DEFENSE) >= defenseRequirementFor(item.getMaterial());
+        int requiredDefense = defenseRequirementFor(item.getMaterial());
+        int currentDefense = getSkillLevel(CharacterSkill.DEFENSE);
+        if (currentDefense < requiredDefense) {
+            return "You need Defense level " + requiredDefense + " to wear "
+                    + item.getMaterial().getDisplayName() + " equipment.";
+        }
+
+        return "";
     }
 
     public static int defenseRequirementFor(GearMaterial material) {
@@ -400,7 +431,7 @@ public class PlayerCharacter {
             return 0;
         }
 
-        return switch (material) {
+        int fallback = switch (material) {
             case NONE -> 0;
             case COPPER, OAK, LEATHER -> 1;
             case BRONZE -> 3;
@@ -408,6 +439,12 @@ public class PlayerCharacter {
             case STEEL, IRONWOOD -> 10;
             default -> 1;
         };
+        return Math.max(0, GameConfiguration.intValue(equipmentDefenseRequirementKey(material), fallback));
+    }
+
+    public static String equipmentDefenseRequirementKey(GearMaterial material) {
+        GearMaterial safeMaterial = material == null ? GearMaterial.NONE : material;
+        return "levelGate.equipmentDefense." + safeMaterial.name();
     }
 
     public int getUsableWeaponStatBonus() {

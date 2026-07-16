@@ -161,6 +161,7 @@ public enum ItemLibrary {
     private final int baseGoldValue;
     private final String examineText;
     private final WeaponType weaponType;
+    private final boolean twoHanded;
 
     ItemLibrary(
             String displayName,
@@ -188,6 +189,22 @@ public enum ItemLibrary {
             String examineText,
             WeaponType weaponType
     ) {
+        this(displayName, itemType, iconPath, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, weaponType, false);
+    }
+
+    ItemLibrary(
+            String displayName,
+            InventorySystem.ItemType itemType,
+            String iconPath,
+            String useSoundPath,
+            int healAmount,
+            GearMaterial material,
+            GearDurability durability,
+            int baseGoldValue,
+            String examineText,
+            WeaponType weaponType,
+            boolean twoHanded
+    ) {
         this.displayName = displayName;
         this.itemType = itemType;
         this.iconPath = iconPath;
@@ -200,6 +217,7 @@ public enum ItemLibrary {
         this.weaponType = itemType == InventorySystem.ItemType.WEAPON
                 ? (weaponType == null || weaponType == WeaponType.NONE ? WeaponType.SWORD : weaponType)
                 : WeaponType.NONE;
+        this.twoHanded = itemType == InventorySystem.ItemType.WEAPON && twoHanded;
     }
 
     public InventorySystem.Item createItem() {
@@ -211,7 +229,7 @@ public enum ItemLibrary {
             return createBurntFish();
         }
 
-        return new InventorySystem.Item(displayName, itemType, iconPath, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, null, "", weaponType);
+        return new InventorySystem.Item(displayName, itemType, iconPath, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, null, false, 1, "", weaponType, twoHanded);
     }
 
     private InventorySystem.Item createBurntFish() {
@@ -261,6 +279,10 @@ public enum ItemLibrary {
         return useSoundPath;
     }
 
+    public boolean isStackable() {
+        return this == GOLD;
+    }
+
     public int getHealAmount() {
         return healAmount;
     }
@@ -283,6 +305,10 @@ public enum ItemLibrary {
 
     public WeaponType getWeaponType() {
         return weaponType;
+    }
+
+    public boolean isTwoHanded() {
+        return twoHanded;
     }
 
     public static ItemLibrary fromDisplayName(String displayName) {

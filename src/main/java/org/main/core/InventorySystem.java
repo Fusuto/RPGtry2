@@ -64,6 +64,7 @@ public final class InventorySystem {
         private final PlayerStat statBonusTarget;
         private final String paperDollOverlayPath;
         private final WeaponType weaponType;
+        private final boolean twoHanded;
         private final boolean stackable;
         private final boolean materialTintApplied;
         private int quantity;
@@ -152,7 +153,46 @@ public final class InventorySystem {
                 String paperDollOverlayPath,
                 WeaponType weaponType
         ) {
-            this(name, itemType, icon, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, false, 1, false, paperDollOverlayPath, weaponType);
+            this(name, itemType, icon, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, false, 1, false, paperDollOverlayPath, weaponType, false);
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                BufferedImage icon,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                boolean stackable,
+                int quantity,
+                String paperDollOverlayPath,
+                WeaponType weaponType
+        ) {
+            this(name, itemType, icon, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, stackable, quantity, false, paperDollOverlayPath, weaponType, false);
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                BufferedImage icon,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                boolean stackable,
+                int quantity,
+                String paperDollOverlayPath,
+                WeaponType weaponType,
+                boolean twoHanded
+        ) {
+            this(name, itemType, icon, useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, stackable, quantity, false, paperDollOverlayPath, weaponType, twoHanded);
         }
 
         public Item(
@@ -184,7 +224,8 @@ public final class InventorySystem {
                     quantity,
                     false,
                     "",
-                    defaultWeaponType(itemType)
+                    defaultWeaponType(itemType),
+                    false
             );
         }
 
@@ -203,7 +244,8 @@ public final class InventorySystem {
                 int quantity,
                 boolean materialTintApplied,
                 String paperDollOverlayPath,
-                WeaponType weaponType
+                WeaponType weaponType,
+                boolean twoHanded
         ) {
             this.name = name;
             this.itemType = itemType;
@@ -222,6 +264,7 @@ public final class InventorySystem {
             this.weaponType = itemType == ItemType.WEAPON
                     ? (weaponType == null || weaponType == WeaponType.NONE ? WeaponType.SWORD : weaponType)
                     : WeaponType.NONE;
+            this.twoHanded = itemType == ItemType.WEAPON && twoHanded;
             this.stackable = stackable;
             this.quantity = Math.max(1, quantity);
         }
@@ -315,6 +358,45 @@ public final class InventorySystem {
                 WeaponType weaponType
         ) {
             this(name, itemType, loadIcon(iconPath), useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, paperDollOverlayPath, weaponType);
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                String iconPath,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                boolean stackable,
+                int quantity,
+                String paperDollOverlayPath,
+                WeaponType weaponType
+        ) {
+            this(name, itemType, loadIcon(iconPath), useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, stackable, quantity, false, paperDollOverlayPath, weaponType, false);
+        }
+
+        public Item(
+                String name,
+                ItemType itemType,
+                String iconPath,
+                String useSoundPath,
+                int healAmount,
+                GearMaterial material,
+                GearDurability durability,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                boolean stackable,
+                int quantity,
+                String paperDollOverlayPath,
+                WeaponType weaponType,
+                boolean twoHanded
+        ) {
+            this(name, itemType, loadIcon(iconPath), useSoundPath, healAmount, material, durability, baseGoldValue, examineText, statBonusTarget, stackable, quantity, false, paperDollOverlayPath, weaponType, twoHanded);
         }
 
         private static BufferedImage loadIcon(String iconPath) {
@@ -470,6 +552,10 @@ public final class InventorySystem {
             return weaponType;
         }
 
+        public boolean isTwoHanded() {
+            return twoHanded;
+        }
+
         public int getEffectiveStatBonus() {
             if (!isEquippable()) {
                 return 0;
@@ -533,7 +619,8 @@ public final class InventorySystem {
                     quantity,
                     materialTintApplied,
                     paperDollOverlayPath,
-                    weaponType
+                    weaponType,
+                    twoHanded
             );
         }
     }
@@ -786,6 +873,9 @@ public final class InventorySystem {
             }
 
             if (canEquipToSlot(item, slot)) {
+                if (slot == EquipmentSlot.WEAPON && item.isTwoHanded()) {
+                    equippedItems.remove(EquipmentSlot.SHIELD);
+                }
                 equippedItems.put(slot, item);
             }
         }
@@ -869,9 +959,25 @@ public final class InventorySystem {
             }
 
             Item previouslyEquipped = equippedItems.get(targetSlot);
+            Item displacedShield = targetSlot == EquipmentSlot.WEAPON && item.isTwoHanded()
+                    ? equippedItems.get(EquipmentSlot.SHIELD)
+                    : null;
+
+            if (displacedShield != null && previouslyEquipped != null && !hasFreeSlot()) {
+                return false;
+            }
 
             equippedItems.put(targetSlot, item);
-            items[inventoryIndex] = previouslyEquipped;
+            if (displacedShield != null) {
+                equippedItems.remove(EquipmentSlot.SHIELD);
+            }
+            items[inventoryIndex] = previouslyEquipped == null ? displacedShield : previouslyEquipped;
+            if (previouslyEquipped != null && displacedShield != null && !addItem(displacedShield)) {
+                equippedItems.put(targetSlot, previouslyEquipped);
+                equippedItems.put(EquipmentSlot.SHIELD, displacedShield);
+                items[inventoryIndex] = item;
+                return false;
+            }
 
             return true;
         }
@@ -921,6 +1027,11 @@ public final class InventorySystem {
                 return false;
             }
 
+            if (slot == EquipmentSlot.WEAPON && inventoryItem.isTwoHanded()
+                    && equippedItems.get(EquipmentSlot.SHIELD) != null) {
+                return false;
+            }
+
             items[targetInventoryIndex] = equipped;
             equippedItems.put(slot, inventoryItem);
 
@@ -943,6 +1054,11 @@ public final class InventorySystem {
             }
 
             Item targetItem = equippedItems.get(toSlot);
+            if (toSlot == EquipmentSlot.WEAPON && movingItem.isTwoHanded()
+                    && equippedItems.get(EquipmentSlot.SHIELD) != null
+                    && fromSlot != EquipmentSlot.SHIELD) {
+                return false;
+            }
 
             /*
              * If the target equipment slot has an item, only swap if that item
@@ -974,9 +1090,15 @@ public final class InventorySystem {
                 case LEG_ARMOR -> slot == EquipmentSlot.LEGS;
                 case RING -> slot == EquipmentSlot.RING_LEFT || slot == EquipmentSlot.RING_RIGHT;
                 case WEAPON -> slot == EquipmentSlot.WEAPON;
-                case SHIELD -> slot == EquipmentSlot.SHIELD;
+                case SHIELD -> slot == EquipmentSlot.SHIELD
+                        && !isTwoHandedWeaponEquipped();
                 case LIMB, MISC, CONSUMABLE -> false;
             };
+        }
+
+        private boolean isTwoHandedWeaponEquipped() {
+            Item weapon = equippedItems.get(EquipmentSlot.WEAPON);
+            return weapon != null && weapon.isTwoHanded();
         }
 
         private EquipmentSlot getPreferredEquipmentSlot(Item item) {
@@ -1050,6 +1172,7 @@ public final class InventorySystem {
         private final Map<EquipmentSlot, Rectangle> equipmentSlotBounds = new EnumMap<>(EquipmentSlot.class);
         private final List<ContextMenuOption> contextMenuOptions = new ArrayList<>();
         private final Rectangle contextMenuBounds = new Rectangle();
+        private final Rectangle paperDollBounds = new Rectangle();
         private String examineTooltipTitle;
         private String examineTooltipText;
         private Point examineTooltipPoint;
@@ -1121,6 +1244,11 @@ public final class InventorySystem {
                 }
 
                 if (e.getClickCount() >= 2) {
+                    if (item.isEquippable()) {
+                        equipInventoryItem(inventoryIndex);
+                        clearDrag();
+                        return true;
+                    }
                     if (!useItem(inventoryIndex)) {
                         EquipmentSlot slot = inventory().getPreferredEquipmentSlot(item);
                         if (canWearItem(item, slot)) {
@@ -1173,10 +1301,7 @@ public final class InventorySystem {
 
             if (item.isEquippable()) {
                 contextMenuOptions.add(new ContextMenuOption("Wear", () -> {
-                    EquipmentSlot slot = inventory().getPreferredEquipmentSlot(item);
-                    if (canWearItem(item, slot)) {
-                        inventory().equipFromInventory(contextInventoryIndex);
-                    }
+                    equipInventoryItem(contextInventoryIndex);
                     closeContextMenu();
                 }));
             }
@@ -1242,6 +1367,38 @@ public final class InventorySystem {
             contextInventoryIndex = -1;
             contextMenuOptions.clear();
             contextMenuBounds.setBounds(0, 0, 0, 0);
+        }
+
+        private boolean equipInventoryItem(int inventoryIndex) {
+            Item item = inventory().getItem(inventoryIndex);
+            if (item == null || !item.isEquippable()) {
+                return false;
+            }
+
+            EquipmentSlot slot = inventory().getPreferredEquipmentSlot(item);
+            if (!canWearItem(item, slot)) {
+                showEquipFailureTooltip(item, slot);
+                return false;
+            }
+
+            return gameState == null
+                    ? inventory().equipFromInventory(inventoryIndex)
+                    : gameState.equipInventoryItem(inventoryIndex);
+        }
+
+        private void showEquipFailureTooltip(Item item, EquipmentSlot slot) {
+            examineTooltipTitle = "Cannot equip";
+            if (gameState == null || gameState.getPlayerCharacter() == null) {
+                examineTooltipText = item == null
+                        ? "That cannot be equipped."
+                        : item.getName() + " cannot be equipped there.";
+            } else {
+                String reason = gameState.getPlayerCharacter().equipmentRestrictionMessage(item, slot);
+                examineTooltipText = reason == null || reason.isBlank()
+                        ? item.getName() + " cannot be equipped there."
+                        : reason;
+            }
+            examineTooltipPoint = mousePoint == null ? new Point(24, 24) : new Point(mousePoint);
         }
 
         private boolean useItem(int inventoryIndex) {
@@ -1381,7 +1538,17 @@ public final class InventorySystem {
             if (targetEquipmentSlot != null) {
                 if (canWearItem(draggedItem, targetEquipmentSlot)) {
                     inventory().equipFromInventory(draggedInventoryIndex, targetEquipmentSlot);
+                } else {
+                    showEquipFailureTooltip(draggedItem, targetEquipmentSlot);
                 }
+                clearDrag();
+                return true;
+            }
+
+            if (paperDollBounds.contains(mousePoint)
+                    && draggedItem != null
+                    && draggedItem.isEquippable()) {
+                equipInventoryItem(draggedInventoryIndex);
                 clearDrag();
                 return true;
             }
@@ -1441,6 +1608,9 @@ public final class InventorySystem {
             }
 
             calculateEquipmentBounds(panelWidth, gridY);
+            int paperDollX = 24;
+            int paperDollY = 24 + STAT_PREVIEW_HEIGHT + 12;
+            paperDollBounds.setBounds(paperDollX, paperDollY, PAPER_DOLL_PANEL_SIZE, PAPER_DOLL_PANEL_SIZE);
         }
 
         private void calculateEquipmentBounds(int panelWidth, int gridY) {
@@ -1594,6 +1764,7 @@ public final class InventorySystem {
             }
             return item.getExamineText()
                     + "\n\nType: " + item.getWeaponType().getDisplayName()
+                    + "\nHands: " + (item.isTwoHanded() ? "Two-handed" : "One-handed")
                     + "\nAccuracy: " + item.getWeaponAccuracyBonus()
                     + "\nPower: " + item.getWeaponPowerBonus()
                     + "\nSpeed: " + Math.round(item.getWeaponSpeedMultiplier() * 100.0) + "% interval";
@@ -1689,8 +1860,8 @@ public final class InventorySystem {
                 return;
             }
 
-            int x = 24;
-            int y = 24 + STAT_PREVIEW_HEIGHT + 12;
+            int x = paperDollBounds.x;
+            int y = paperDollBounds.y;
 
             Composite oldComposite = g.getComposite();
             g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.82f));

@@ -98,6 +98,14 @@ public enum GatheringNodeLibrary {
         return interactionId;
     }
 
+    public String[] getFramePaths() {
+        return framePaths.clone();
+    }
+
+    public int getFrameDurationMs() {
+        return frameDurationMs;
+    }
+
     private BufferedImage[] loadFrames() {
         BufferedImage[] frames = new BufferedImage[framePaths.length];
 

@@ -1,6 +1,7 @@
 package org.main.content;
 
 import org.main.battle.BattleSkill;
+import org.main.battle.BattleStatusType;
 import org.main.core.GameConfiguration;
 import org.main.core.Library;
 
@@ -14,8 +15,8 @@ public enum SkillLibrary {
             Library.EntityType.ALLY,
             Library.BattleTargetingMode.MAGIC,
             null,
-            0,
-            Library.EffectType.DEFEND
+            Library.EffectType.DEFEND,
+            0
     ),
 
     DEBUG_DROP_HP(
@@ -25,8 +26,8 @@ public enum SkillLibrary {
             Library.EntityType.ALLY,
             Library.BattleTargetingMode.MAGIC,
             null,
-            0,
-            Library.EffectType.DEFEND
+            Library.EffectType.DEFEND,
+            0
     ),
 
     FIREBALL(
@@ -36,8 +37,8 @@ public enum SkillLibrary {
             Library.EntityType.ENEMY,
             Library.BattleTargetingMode.MAGIC,
             "assets/sounds/generated/thrown_fireball.wav",
-            5,
-            Library.EffectType.DAMAGE
+            Library.EffectType.DAMAGE,
+            5
     ),
 
     PIERCING_LINE(
@@ -47,8 +48,8 @@ public enum SkillLibrary {
             Library.EntityType.ENEMY,
             Library.BattleTargetingMode.RANGED,
             null,
-            5,
-            Library.EffectType.DAMAGE
+            Library.EffectType.DAMAGE,
+            5
     ),
 
     CRUSH_COLUMN(
@@ -58,8 +59,8 @@ public enum SkillLibrary {
             Library.EntityType.ENEMY,
             Library.BattleTargetingMode.MAGIC,
             null,
-            5,
-            Library.EffectType.DAMAGE
+            Library.EffectType.DAMAGE,
+            5
     ),
 
     HEAL(
@@ -69,8 +70,8 @@ public enum SkillLibrary {
             Library.EntityType.ALLY,
             Library.BattleTargetingMode.MAGIC,
             "assets/sounds/generated/fire_wave.wav",
-            5,
-            Library.EffectType.HEAL
+            Library.EffectType.HEAL,
+            5
     ),
 
     DEFEND(
@@ -80,13 +81,8 @@ public enum SkillLibrary {
             Library.EntityType.ALLY,
             Library.BattleTargetingMode.MAGIC,
             null,
-            0,
             Library.EffectType.DEFEND,
-            0.0,
-            0,
-            2,
-            0.5,
-            0.0
+            50
     ),
 
     BASH(
@@ -96,13 +92,10 @@ public enum SkillLibrary {
             Library.EntityType.ENEMY,
             Library.BattleTargetingMode.NORMAL_MELEE,
             null,
-            4,
             Library.EffectType.DAMAGE,
-            0.45,
-            1,
-            0,
-            0.0,
-            0.0
+            4,
+            BattleStatusType.STUN,
+            1
     ),
 
     ABSORB(
@@ -112,13 +105,21 @@ public enum SkillLibrary {
             Library.EntityType.ENEMY,
             Library.BattleTargetingMode.MAGIC,
             null,
-            2,
+            Library.EffectType.DAMAGE_HEAL,
+            2
+    ),
+
+    ROTTING_GRASP(
+            "Rotting Grasp",
+            "Deals damage and slows the target with rotting flesh.",
+            Library.SkillTargetShape.SINGLE_TARGET,
+            Library.EntityType.ENEMY,
+            Library.BattleTargetingMode.NORMAL_MELEE,
+            null,
             Library.EffectType.DAMAGE,
-            0.0,
-            0,
-            0,
-            0.0,
-            0.5
+            3,
+            BattleStatusType.ROTTING_GRASP,
+            2
     ),
 
     WAR_CRY(
@@ -128,15 +129,9 @@ public enum SkillLibrary {
             Library.EntityType.ALLY,
             Library.BattleTargetingMode.MAGIC,
             null,
-            0,
             Library.EffectType.SUMMON,
-            0.0,
-            0,
-            0,
-            0.0,
-            0.0,
-            BattleSkill.SummonMode.SAME_SPECIES,
-            0.65
+            65,
+            BattleSkill.SummonMode.SAME_SPECIES
     ),
 
     RAISE_SKELETON(
@@ -146,15 +141,9 @@ public enum SkillLibrary {
             Library.EntityType.ALLY,
             Library.BattleTargetingMode.MAGIC,
             null,
-            0,
             Library.EffectType.SUMMON,
-            0.0,
-            0,
-            0,
-            0.0,
-            0.0,
-            BattleSkill.SummonMode.SKELETON,
-            0.75
+            75,
+            BattleSkill.SummonMode.SKELETON
     );
 
     private static final List<SkillLibrary> DEFAULT_PLAYER_SKILLS = List.of(
@@ -179,15 +168,11 @@ public enum SkillLibrary {
     private final Library.EntityType targetTeam;
     private final Library.BattleTargetingMode targetingMode;
     private final String useSoundPath;
-    private final int damage;
     private final Library.EffectType effectType;
-    private final double stunChance;
-    private final int stunTurns;
-    private final int defendTurns;
-    private final double damageReduction;
-    private final double selfHealPercent;
+    private final int potency;
+    private final BattleStatusType onHitStatusType;
+    private final int onHitStatusTurns;
     private final BattleSkill.SummonMode summonMode;
-    private final double summonChance;
 
     SkillLibrary(
             String displayName,
@@ -195,7 +180,9 @@ public enum SkillLibrary {
             Library.SkillTargetShape targetShape,
             Library.EntityType targetTeam,
             Library.BattleTargetingMode targetingMode,
-            String useSoundPath, int damage, Library.EffectType effectType
+            String useSoundPath,
+            Library.EffectType effectType,
+            int potency
     ) {
         this(
                 displayName,
@@ -204,15 +191,11 @@ public enum SkillLibrary {
                 targetTeam,
                 targetingMode,
                 useSoundPath,
-                damage,
                 effectType,
-                0.0,
+                potency,
+                null,
                 0,
-                0,
-                0.0,
-                0.0,
-                BattleSkill.SummonMode.NONE,
-                0.0
+                BattleSkill.SummonMode.NONE
         );
     }
 
@@ -223,17 +206,24 @@ public enum SkillLibrary {
             Library.EntityType targetTeam,
             Library.BattleTargetingMode targetingMode,
             String useSoundPath,
-            int damage,
             Library.EffectType effectType,
-            double stunChance,
-            int stunTurns,
-            int defendTurns,
-            double damageReduction,
-            double selfHealPercent
+            int potency,
+            BattleStatusType onHitStatusType,
+            int onHitStatusTurns
     ) {
-        this(displayName, description, targetShape, targetTeam, targetingMode, useSoundPath, damage, effectType,
-                stunChance, stunTurns, defendTurns, damageReduction, selfHealPercent,
-                BattleSkill.SummonMode.NONE, 0.0);
+        this(
+                displayName,
+                description,
+                targetShape,
+                targetTeam,
+                targetingMode,
+                useSoundPath,
+                effectType,
+                potency,
+                onHitStatusType,
+                onHitStatusTurns,
+                BattleSkill.SummonMode.NONE
+        );
     }
 
     SkillLibrary(
@@ -243,35 +233,11 @@ public enum SkillLibrary {
             Library.EntityType targetTeam,
             Library.BattleTargetingMode targetingMode,
             String useSoundPath,
-            int damage,
             Library.EffectType effectType,
-            double stunChance,
-            int stunTurns,
-            int defendTurns,
-            double damageReduction,
-            double selfHealPercent,
-            BattleSkill.SummonMode summonMode,
-            double summonChance
+            int potency,
+            BattleSkill.SummonMode summonMode
     ) {
-        this.displayName = displayName;
-        this.description = description;
-        this.targetShape = targetShape;
-        this.targetTeam = targetTeam;
-        this.targetingMode = targetingMode;
-        this.useSoundPath = useSoundPath;
-        this.damage = damage;
-        this.effectType = effectType;
-        this.stunChance = stunChance;
-        this.stunTurns = stunTurns;
-        this.defendTurns = defendTurns;
-        this.damageReduction = damageReduction;
-        this.selfHealPercent = selfHealPercent;
-        this.summonMode = summonMode == null ? BattleSkill.SummonMode.NONE : summonMode;
-        this.summonChance = Math.max(0.0, Math.min(1.0, summonChance));
-    }
-
-    public BattleSkill createSkill() {
-        return new BattleSkill(
+        this(
                 displayName,
                 description,
                 targetShape,
@@ -279,15 +245,69 @@ public enum SkillLibrary {
                 targetingMode,
                 useSoundPath,
                 effectType,
-                damage,
-                stunChance,
-                stunTurns,
-                defendTurns,
-                damageReduction,
-                selfHealPercent,
-                summonMode,
-                summonChance
-        ).withCooldown(name(), configuredCooldownSeconds(), true);
+                potency,
+                null,
+                0,
+                summonMode
+        );
+    }
+
+    SkillLibrary(
+            String displayName,
+            String description,
+            Library.SkillTargetShape targetShape,
+            Library.EntityType targetTeam,
+            Library.BattleTargetingMode targetingMode,
+            String useSoundPath,
+            Library.EffectType effectType,
+            int potency,
+            BattleStatusType onHitStatusType,
+            int onHitStatusTurns,
+            BattleSkill.SummonMode summonMode
+    ) {
+        this.displayName = displayName;
+        this.description = description;
+        this.targetShape = targetShape;
+        this.targetTeam = targetTeam;
+        this.targetingMode = targetingMode;
+        this.useSoundPath = useSoundPath;
+        this.effectType = effectType;
+        this.potency = Math.max(0, potency);
+        this.onHitStatusType = onHitStatusType;
+        this.onHitStatusTurns = Math.max(0, onHitStatusTurns);
+        this.summonMode = summonMode == null ? BattleSkill.SummonMode.NONE : summonMode;
+    }
+
+    public BattleSkill createSkill() {
+        BattleSkill skill = onHitStatusType == null
+                ? new BattleSkill(
+                displayName,
+                description,
+                targetShape,
+                targetTeam,
+                targetingMode,
+                useSoundPath,
+                effectType,
+                potency
+        )
+                : new BattleSkill(
+                displayName,
+                description,
+                targetShape,
+                targetTeam,
+                targetingMode,
+                useSoundPath,
+                effectType,
+                potency,
+                onHitStatusType,
+                onHitStatusTurns
+        );
+
+        if (summonMode != BattleSkill.SummonMode.NONE) {
+            skill = skill.withSummonMode(summonMode);
+        }
+
+        return skill.withCooldown(name(), configuredCooldownSeconds(), true);
     }
 
     private double configuredCooldownSeconds() {
@@ -302,7 +322,7 @@ public enum SkillLibrary {
             case WAIT, DEBUG_DROP_HP -> 0.0;
             case BASH, DEFEND -> 6.0;
             case PIERCING_LINE, CRUSH_COLUMN -> 7.0;
-            case FIREBALL, ABSORB -> 8.0;
+            case FIREBALL, ABSORB, ROTTING_GRASP -> 8.0;
             case HEAL -> 10.0;
             case WAR_CRY, RAISE_SKELETON -> 20.0;
         };
@@ -354,8 +374,12 @@ public enum SkillLibrary {
         return useSoundPath;
     }
 
+    public int getPotency() {
+        return potency;
+    }
+
     public int getDamage() {
-        return damage;
+        return potency;
     }
 
     public Library.EffectType getEffectType() {
@@ -363,23 +387,23 @@ public enum SkillLibrary {
     }
 
     public double getStunChance() {
-        return stunChance;
+        return onHitStatusType == BattleStatusType.STUN ? onHitStatusType.getDefaultApplyChance() : 0.0;
     }
 
     public int getStunTurns() {
-        return stunTurns;
+        return onHitStatusType == BattleStatusType.STUN ? onHitStatusTurns : 0;
     }
 
     public int getDefendTurns() {
-        return defendTurns;
+        return effectType == Library.EffectType.DEFEND && potency > 0 ? 2 : 0;
     }
 
     public double getDamageReduction() {
-        return damageReduction;
+        return effectType == Library.EffectType.DEFEND ? Math.max(0.0, Math.min(0.95, potency / 100.0)) : 0.0;
     }
 
     public double getSelfHealPercent() {
-        return selfHealPercent;
+        return effectType == Library.EffectType.DAMAGE_HEAL ? 0.50 : 0.0;
     }
 
     public BattleSkill.SummonMode getSummonMode() {
@@ -387,6 +411,6 @@ public enum SkillLibrary {
     }
 
     public double getSummonChance() {
-        return summonChance;
+        return effectType == Library.EffectType.SUMMON ? Math.max(0.0, Math.min(1.0, potency / 100.0)) : 0.0;
     }
 }

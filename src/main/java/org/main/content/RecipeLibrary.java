@@ -317,8 +317,11 @@ public final class RecipeLibrary {
                 54,
                 "A heavy copper greatsword. Slow to recover, but built to hit hard.",
                 null,
+                false,
+                1,
                 "",
-                WeaponType.GREATSWORD
+                WeaponType.GREATSWORD,
+                true
         );
 
         return new SmithingRecipe(

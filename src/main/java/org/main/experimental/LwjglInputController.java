@@ -62,7 +62,7 @@ public final class LwjglInputController {
         ));
         this.invertMouseLookX = Boolean.parseBoolean(GameConfiguration.stringValue(
                 "renderer.prototype.mouseLook.invertX",
-                "false"
+                "true"
         ));
         this.invertMouseLookY = Boolean.parseBoolean(GameConfiguration.stringValue(
                 "renderer.prototype.mouseLook.invertY",

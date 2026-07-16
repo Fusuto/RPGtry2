@@ -285,18 +285,23 @@ public class BattleActor {
     }
 
     public void applyStatus(BattleStatusType type, int turns) {
+        applyStatus(type, turns, 0);
+    }
+
+    public void applyStatus(BattleStatusType type, int turns, int potency) {
         if (type == null || turns <= 0) {
             return;
         }
 
+        int effectivePotency = potency > 0 ? potency : type.getDefaultPotency();
         BattleStatus status = statuses.get(type);
 
         if (status == null) {
-            statuses.put(type, new BattleStatus(type, turns));
+            statuses.put(type, new BattleStatus(type, turns, effectivePotency));
             return;
         }
 
-        status.refresh(turns);
+        status.refresh(turns, effectivePotency);
     }
 
     public boolean hasStatus(BattleStatusType type) {
@@ -335,7 +340,7 @@ public class BattleActor {
     }
 
     public int getIntelligence() {
-        return intelligence;
+        return adjustedStat(intelligence, PlayerStat.INTELLIGENCE);
     }
 
     public void setIntelligence(int intelligence) {
@@ -352,7 +357,7 @@ public class BattleActor {
     }
 
     public int getAttackStat() {
-        return attackStat;
+        return adjustedStat(attackStat, PlayerStat.ATTACK);
     }
 
     public void setAttackStat(int attackStat) {
@@ -360,7 +365,7 @@ public class BattleActor {
     }
 
     public int getStrengthStat() {
-        return strengthStat;
+        return adjustedStat(strengthStat, PlayerStat.STRENGTH);
     }
 
     public void setStrengthStat(int strengthStat) {
@@ -368,7 +373,7 @@ public class BattleActor {
     }
 
     public int getDefenseStat() {
-        return defenseStat;
+        return adjustedStat(defenseStat, PlayerStat.DEFENSE);
     }
 
     public void setDefenseStat(int defenseStat) {
@@ -376,7 +381,17 @@ public class BattleActor {
     }
 
     public int getAgilityStat() {
-        return agilityStat;
+        return adjustedStat(agilityStat, PlayerStat.AGILITY);
+    }
+
+    private int adjustedStat(int baseValue, PlayerStat stat) {
+        int adjustedValue = baseValue;
+        for (BattleStatus status : statuses.values()) {
+            if (!status.isExpired() && status.getType().getAffectedStat() == stat) {
+                adjustedValue -= status.getPotency();
+            }
+        }
+        return Math.max(0, adjustedValue);
     }
 
     public void setAgilityStat(int agilityStat) {
@@ -384,7 +399,7 @@ public class BattleActor {
     }
 
     public int getWillpowerStat() {
-        return willpowerStat;
+        return adjustedStat(willpowerStat, PlayerStat.WILLPOWER);
     }
 
     public void setWillpowerStat(int willpowerStat) {

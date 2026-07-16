@@ -3,22 +3,20 @@ package org.main.battle;
 import org.main.core.Library;
 
 public class BattleSkill {
+    private static final int DEFEND_DEFAULT_TURNS = 2;
+    private static final double DAMAGE_HEAL_PERCENT = 0.50;
+
     private final String name;
     private final String description;
-
     private final Library.SkillTargetShape targetShape;
     private final Library.EntityType targetTeam;
     private final Library.BattleTargetingMode targetingMode;
-    private final Library.EffectType effectType;
     private final String useSoundPath;
-    private final int damage;
-    private final double stunChance;
-    private final int stunTurns;
-    private final int defendTurns;
-    private final double damageReduction;
-    private final double selfHealPercent;
+    private final Library.EffectType effectType;
+    private final int potency;
+    private final BattleStatusType onHitStatusType;
+    private final int onHitStatusTurns;
     private final SummonMode summonMode;
-    private final double summonChance;
     private final String summonSpeciesId;
     private final String summonDisplayName;
     private final String skillId;
@@ -31,82 +29,9 @@ public class BattleSkill {
             Library.SkillTargetShape targetShape,
             Library.EntityType targetTeam,
             Library.BattleTargetingMode targetingMode,
-            Library.EffectType effectType, int damage
-    ) {
-        this(name, description, targetShape, targetTeam, targetingMode, null, effectType, damage);
-    }
-
-    public BattleSkill(
-            String name,
-            String description,
-            Library.SkillTargetShape targetShape,
-            Library.EntityType targetTeam,
-            Library.BattleTargetingMode targetingMode,
             String useSoundPath,
             Library.EffectType effectType,
-            int damage
-    ) {
-        this(name, description, targetShape, targetTeam, targetingMode, useSoundPath, effectType, damage, 0.0, 0, 0, 0.0, 0.0);
-    }
-
-    public BattleSkill(
-            String name,
-            String description,
-            Library.SkillTargetShape targetShape,
-            Library.EntityType targetTeam,
-            Library.BattleTargetingMode targetingMode,
-            String useSoundPath,
-            Library.EffectType effectType,
-            int damage,
-            double stunChance,
-            int stunTurns,
-            int defendTurns,
-            double damageReduction,
-            double selfHealPercent
-    ) {
-        this(name, description, targetShape, targetTeam, targetingMode, useSoundPath, effectType, damage,
-                stunChance, stunTurns, defendTurns, damageReduction, selfHealPercent, SummonMode.NONE, 0.0);
-    }
-
-    public BattleSkill(
-            String name,
-            String description,
-            Library.SkillTargetShape targetShape,
-            Library.EntityType targetTeam,
-            Library.BattleTargetingMode targetingMode,
-            String useSoundPath,
-            Library.EffectType effectType,
-            int damage,
-            double stunChance,
-            int stunTurns,
-            int defendTurns,
-            double damageReduction,
-            double selfHealPercent,
-            SummonMode summonMode,
-            double summonChance
-    ) {
-        this(name, description, targetShape, targetTeam, targetingMode, useSoundPath, effectType, damage,
-                stunChance, stunTurns, defendTurns, damageReduction, selfHealPercent, summonMode, summonChance, "", "");
-    }
-
-    private BattleSkill(
-            String name,
-            String description,
-            Library.SkillTargetShape targetShape,
-            Library.EntityType targetTeam,
-            Library.BattleTargetingMode targetingMode,
-            String useSoundPath,
-            Library.EffectType effectType,
-            int damage,
-            double stunChance,
-            int stunTurns,
-            int defendTurns,
-            double damageReduction,
-            double selfHealPercent,
-            SummonMode summonMode,
-            double summonChance,
-            String summonSpeciesId,
-            String summonDisplayName
+            int potency
     ) {
         this(
                 name,
@@ -116,20 +41,53 @@ public class BattleSkill {
                 targetingMode,
                 useSoundPath,
                 effectType,
-                damage,
-                stunChance,
-                stunTurns,
-                defendTurns,
-                damageReduction,
-                selfHealPercent,
-                summonMode,
-                summonChance,
-                summonSpeciesId,
-                summonDisplayName,
+                potency,
+                null,
+                0
+        );
+    }
+
+    public BattleSkill(
+            String name,
+            String description,
+            Library.SkillTargetShape targetShape,
+            Library.EntityType targetTeam,
+            Library.BattleTargetingMode targetingMode,
+            String useSoundPath,
+            Library.EffectType effectType,
+            int potency,
+            BattleStatusType onHitStatusType,
+            int onHitStatusTurns
+    ) {
+        this(
+                name,
+                description,
+                targetShape,
+                targetTeam,
+                targetingMode,
+                useSoundPath,
+                effectType,
+                potency,
+                onHitStatusType,
+                onHitStatusTurns,
+                SummonMode.NONE,
+                "",
+                "",
                 "",
                 0.0,
                 true
         );
+    }
+
+    public BattleSkill(
+            String name,
+            Library.SkillTargetShape targetShape,
+            Library.EntityType targetTeam,
+            Library.BattleTargetingMode targetingMode,
+            Library.EffectType effectType,
+            int potency
+    ) {
+        this(name, "", targetShape, targetTeam, targetingMode, null, effectType, potency);
     }
 
     private BattleSkill(
@@ -140,14 +98,10 @@ public class BattleSkill {
             Library.BattleTargetingMode targetingMode,
             String useSoundPath,
             Library.EffectType effectType,
-            int damage,
-            double stunChance,
-            int stunTurns,
-            int defendTurns,
-            double damageReduction,
-            double selfHealPercent,
+            int potency,
+            BattleStatusType onHitStatusType,
+            int onHitStatusTurns,
             SummonMode summonMode,
-            double summonChance,
             String summonSpeciesId,
             String summonDisplayName,
             String skillId,
@@ -155,34 +109,21 @@ public class BattleSkill {
             boolean consumesAutoAction
     ) {
         this.name = name;
-        this.description = description;
+        this.description = description == null ? "" : description;
         this.targetShape = targetShape;
         this.targetTeam = targetTeam;
         this.targetingMode = targetingMode;
-        this.effectType = effectType;
         this.useSoundPath = useSoundPath;
-        this.damage = damage;
-        this.stunChance = Math.max(0.0, Math.min(1.0, stunChance));
-        this.stunTurns = Math.max(0, stunTurns);
-        this.defendTurns = Math.max(0, defendTurns);
-        this.damageReduction = Math.max(0.0, Math.min(0.95, damageReduction));
-        this.selfHealPercent = Math.max(0.0, selfHealPercent);
+        this.effectType = effectType;
+        this.potency = Math.max(0, potency);
+        this.onHitStatusType = onHitStatusType;
+        this.onHitStatusTurns = Math.max(0, onHitStatusTurns);
         this.summonMode = summonMode == null ? SummonMode.NONE : summonMode;
-        this.summonChance = Math.max(0.0, Math.min(1.0, summonChance));
         this.summonSpeciesId = summonSpeciesId == null ? "" : summonSpeciesId;
         this.summonDisplayName = summonDisplayName == null ? "" : summonDisplayName;
         this.skillId = skillId == null || skillId.isBlank() ? fallbackSkillId(name) : skillId;
         this.baseCooldownSeconds = Math.max(0.0, baseCooldownSeconds);
         this.consumesAutoAction = consumesAutoAction;
-    }
-
-    public BattleSkill(
-            String name,
-            Library.SkillTargetShape targetShape,
-            Library.EntityType targetTeam,
-            Library.BattleTargetingMode targetingMode, Library.EffectType effectType, int damage
-    ) {
-        this(name, "", targetShape, targetTeam, targetingMode, effectType, damage);
     }
 
     public String getName() {
@@ -213,32 +154,52 @@ public class BattleSkill {
         return effectType;
     }
 
+    public int getPotency() {
+        return potency;
+    }
+
     public int getDamage() {
-        return damage;
+        return potency;
     }
 
     public double getStunChance() {
-        return stunChance;
+        return onHitStatusType == BattleStatusType.STUN ? onHitStatusType.getDefaultApplyChance() : 0.0;
     }
 
     public int getStunTurns() {
-        return stunTurns;
+        return onHitStatusType == BattleStatusType.STUN ? onHitStatusTurns : 0;
     }
 
     public int getDefendTurns() {
-        return defendTurns;
+        return effectType == Library.EffectType.DEFEND && potency > 0 ? DEFEND_DEFAULT_TURNS : 0;
     }
 
     public double getDamageReduction() {
-        return damageReduction;
+        return effectType == Library.EffectType.DEFEND ? Math.max(0.0, Math.min(0.95, potency / 100.0)) : 0.0;
     }
 
     public double getSelfHealPercent() {
-        return selfHealPercent;
+        return healsCasterFromDamage() ? DAMAGE_HEAL_PERCENT : 0.0;
     }
 
     public boolean healsCasterFromDamage() {
-        return selfHealPercent > 0.0;
+        return effectType == Library.EffectType.DAMAGE_HEAL;
+    }
+
+    public BattleStatusType getOnHitStatusType() {
+        return onHitStatusType;
+    }
+
+    public double getOnHitStatusChance() {
+        return onHitStatusType == null ? 0.0 : onHitStatusType.getDefaultApplyChance();
+    }
+
+    public int getOnHitStatusTurns() {
+        return onHitStatusTurns;
+    }
+
+    public boolean hasOnHitStatus() {
+        return onHitStatusType != null && onHitStatusTurns > 0 && getOnHitStatusChance() > 0.0;
     }
 
     public SummonMode getSummonMode() {
@@ -246,7 +207,7 @@ public class BattleSkill {
     }
 
     public double getSummonChance() {
-        return summonChance;
+        return effectType == Library.EffectType.SUMMON ? Math.max(0.0, Math.min(1.0, potency / 100.0)) : 0.0;
     }
 
     public String getSummonSpeciesId() {
@@ -273,6 +234,27 @@ public class BattleSkill {
         return consumesAutoAction;
     }
 
+    public BattleSkill withSummonMode(SummonMode summonMode) {
+        return new BattleSkill(
+                name,
+                description,
+                targetShape,
+                targetTeam,
+                targetingMode,
+                useSoundPath,
+                effectType,
+                potency,
+                onHitStatusType,
+                onHitStatusTurns,
+                summonMode,
+                summonSpeciesId,
+                summonDisplayName,
+                skillId,
+                baseCooldownSeconds,
+                consumesAutoAction
+        );
+    }
+
     public BattleSkill withSummonSource(String speciesId, String displayName) {
         return new BattleSkill(
                 name,
@@ -282,14 +264,10 @@ public class BattleSkill {
                 targetingMode,
                 useSoundPath,
                 effectType,
-                damage,
-                stunChance,
-                stunTurns,
-                defendTurns,
-                damageReduction,
-                selfHealPercent,
+                potency,
+                onHitStatusType,
+                onHitStatusTurns,
                 summonMode,
-                summonChance,
                 speciesId,
                 displayName,
                 skillId,
@@ -307,14 +285,10 @@ public class BattleSkill {
                 targetingMode,
                 useSoundPath,
                 effectType,
-                damage,
-                stunChance,
-                stunTurns,
-                defendTurns,
-                damageReduction,
-                selfHealPercent,
+                potency,
+                onHitStatusType,
+                onHitStatusTurns,
                 summonMode,
-                summonChance,
                 summonSpeciesId,
                 summonDisplayName,
                 skillId,
