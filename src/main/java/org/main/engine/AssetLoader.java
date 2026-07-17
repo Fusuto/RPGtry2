@@ -24,6 +24,8 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public final class AssetLoader {
     public record ImageAsset(String fileName, BufferedImage image) {
@@ -34,6 +36,7 @@ public final class AssetLoader {
     private static final String GENERATED_SOUND_PREFIX = "generated/";
     private static final Path DATA_FOLDER = Path.of("data");
     private static final ClassLoader CLASS_LOADER = AssetLoader.class.getClassLoader();
+    private static final Logger LOGGER = Logger.getLogger(AssetLoader.class.getName());
 
     private AssetLoader() {
     }
@@ -48,22 +51,20 @@ public final class AssetLoader {
             try {
                 return ImageIO.read(externalPath.toFile());
             } catch (IOException e) {
-                System.out.println("Failed to load image file: " + assetPath);
-                e.printStackTrace();
+                LOGGER.log(Level.WARNING, "Failed to load image file: " + assetPath, e);
                 return null;
             }
         }
 
         try (InputStream stream = openResourceStream(normalizeResourcePath(assetPath))) {
             if (stream == null) {
-                System.out.println("Image resource not found: " + assetPath);
+                LOGGER.warning(() -> "Image resource not found: " + assetPath);
                 return null;
             }
 
             return ImageIO.read(stream);
         } catch (IOException e) {
-            System.out.println("Failed to load image resource: " + assetPath);
-            e.printStackTrace();
+            LOGGER.log(Level.WARNING, "Failed to load image resource: " + assetPath, e);
             return null;
         }
     }
@@ -113,13 +114,11 @@ public final class AssetLoader {
                                 assets.add(new ImageAsset(fileName, image));
                                 loadedFileNames.add(fileName);
                             } catch (IOException e) {
-                                System.out.println("Failed to load image file: " + path);
-                                e.printStackTrace();
+                                LOGGER.log(Level.WARNING, "Failed to load image file: " + path, e);
                             }
                         });
             } catch (IOException e) {
-                System.out.println("Failed to list image folder: " + folderPath);
-                e.printStackTrace();
+                LOGGER.log(Level.WARNING, "Failed to list image folder: " + folderPath, e);
             }
         }
 
@@ -135,8 +134,7 @@ public final class AssetLoader {
                     loadedFileNames.add(fileName);
                 }
             } catch (IOException e) {
-                System.out.println("Failed to load image resource: " + resourcePath);
-                e.printStackTrace();
+                LOGGER.log(Level.WARNING, "Failed to load image resource: " + resourcePath, e);
             }
         }
 
@@ -246,8 +244,7 @@ public final class AssetLoader {
                 }
             }
         } catch (IOException | URISyntaxException e) {
-            System.out.println("Failed to list resource folder: " + folderPath);
-            e.printStackTrace();
+            LOGGER.log(Level.WARNING, "Failed to list resource folder: " + folderPath, e);
         }
 
         return new ArrayList<>(resourcePaths);
@@ -286,8 +283,7 @@ public final class AssetLoader {
                     .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jar"))
                     .toList();
         } catch (IOException e) {
-            System.out.println("Failed to list asset packs: " + assetPacksFolder());
-            e.printStackTrace();
+            LOGGER.log(Level.WARNING, "Failed to list asset packs: " + assetPacksFolder(), e);
             return List.of();
         }
     }

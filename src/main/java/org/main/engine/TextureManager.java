@@ -2,8 +2,11 @@ package org.main.engine;
 
 import java.awt.image.BufferedImage;
 import java.util.*;
+import java.util.logging.Logger;
 
 public class TextureManager {
+    private static final Logger LOGGER = Logger.getLogger(TextureManager.class.getName());
+
     public record SelectedTexture(
             BufferedImage image,
             boolean defaultTexture
@@ -34,7 +37,7 @@ public class TextureManager {
         List<AssetLoader.ImageAsset> imageAssets = AssetLoader.loadImagesFromFolder(folderPath);
 
         if (imageAssets.isEmpty()) {
-            System.out.println("Texture folder not found or empty: " + folderPath);
+            LOGGER.warning(() -> "Texture folder not found or empty: " + folderPath);
             return;
         }
 
@@ -61,7 +64,7 @@ public class TextureManager {
         // Example:
         // wall_brick_stone_center_banner
         if (parts.length < 4) {
-            System.out.println("Skipping texture with invalid name: " + fileName);
+            LOGGER.warning(() -> "Skipping texture with invalid name: " + fileName);
             return;
         }
 
@@ -74,7 +77,7 @@ public class TextureManager {
         boolean isDefault = parts.length == 4;
 
         if (image == null) {
-            System.out.println("Skipping unreadable texture: " + fileName);
+            LOGGER.warning(() -> "Skipping unreadable texture: " + fileName);
             return;
         }
 
@@ -82,7 +85,7 @@ public class TextureManager {
                 .computeIfAbsent(key, ignored -> new ArrayList<>())
                 .add(new TextureEntry(image, isDefault));
 
-        System.out.println("Loaded texture: " + fileName);
+        LOGGER.fine(() -> "Loaded texture: " + fileName);
     }
 
     public BufferedImage getTexture(

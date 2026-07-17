@@ -3,6 +3,8 @@ package org.main.content;
 import org.main.core.*;
 import org.main.engine.MapEntity;
 
+import java.util.logging.Logger;
+
 public enum DialogueLibrary {
     OLD_GUARD_INTRO("old_guard_intro") {
         @Override
@@ -175,7 +177,7 @@ public enum DialogueLibrary {
                     chestName,
                     "Open the chest?",
                     InteractionSystem.option("Open", () -> {
-                        System.out.println("Opened " + chestName + ".");
+                        LOGGER.fine(() -> "Opened " + chestName + ".");
                         // Later: add loot here, then maybe remove or mark chest opened.
                     }),
                     InteractionSystem.closeOption("Leave")
@@ -190,13 +192,15 @@ public enum DialogueLibrary {
                     "Dungeon Exit",
                     "Leave the dungeon?",
                     InteractionSystem.option("Yes", () -> {
-                        System.out.println("Leaving dungeon...");
+                        LOGGER.fine("Leaving dungeon...");
                         // Later: change area / load town / return to menu.
                     }),
                     InteractionSystem.closeOption("No")
             );
         }
     };
+
+    private static final Logger LOGGER = Logger.getLogger(DialogueLibrary.class.getName());
 
     private final String interactionId;
 

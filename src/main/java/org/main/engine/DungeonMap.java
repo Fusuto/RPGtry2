@@ -14,14 +14,35 @@ public class DungeonMap {
 
     private final Library.TileType[][] tiles;
     private final int[][] environmentThemeIndexes;
+    private final MapPaintData paintData;
+    private final MapGeometryData geometryData;
 
     public DungeonMap(Library.TileType[][] tiles) {
         this(tiles, new int[tiles.length][tiles[0].length]);
     }
 
     public DungeonMap(Library.TileType[][] tiles, int[][] environmentThemeIndexes) {
+        this(tiles, environmentThemeIndexes, MapPaintData.blank(tiles[0].length, tiles.length));
+    }
+
+    public DungeonMap(Library.TileType[][] tiles, int[][] environmentThemeIndexes, MapPaintData paintData) {
+        this(tiles, environmentThemeIndexes, paintData, MapGeometryData.blank(tiles[0].length, tiles.length));
+    }
+
+    public DungeonMap(
+            Library.TileType[][] tiles,
+            int[][] environmentThemeIndexes,
+            MapPaintData paintData,
+            MapGeometryData geometryData
+    ) {
         this.tiles = tiles;
         this.environmentThemeIndexes = environmentThemeIndexes;
+        this.paintData = paintData == null
+                ? MapPaintData.blank(tiles[0].length, tiles.length)
+                : paintData;
+        this.geometryData = geometryData == null
+                ? MapGeometryData.blank(tiles[0].length, tiles.length)
+                : geometryData;
     }
 
     public int getWidth() {
@@ -46,6 +67,38 @@ public class DungeonMap {
         }
 
         return environmentThemeIndexes[y][x];
+    }
+
+    public MapPaintData getPaintData() {
+        return paintData;
+    }
+
+    public MapGeometryData getGeometryData() {
+        return geometryData;
+    }
+
+    public String getPaintBrushId(MapPaintData.Layer layer, int x, int y) {
+        if (isOutOfBounds(x, y) || paintData == null) {
+            return "";
+        }
+
+        return paintData.get(layer, x, y);
+    }
+
+    public int getHeightLevel(int x, int y) {
+        if (isOutOfBounds(x, y) || geometryData == null) {
+            return MapGeometryData.DEFAULT_HEIGHT_LEVEL;
+        }
+
+        return geometryData.getHeightLevel(x, y);
+    }
+
+    public double getHeightMultiplier(int x, int y) {
+        if (isOutOfBounds(x, y) || geometryData == null) {
+            return MapGeometryData.DEFAULT_HEIGHT_LEVEL;
+        }
+
+        return geometryData.getHeightMultiplier(x, y);
     }
 
     public boolean isWalkable(int x, int y) {
@@ -102,7 +155,12 @@ public class DungeonMap {
             }
         }
 
-        return new DungeonMap(tiles, environmentThemeIndexes);
+        return new DungeonMap(
+                tiles,
+                environmentThemeIndexes,
+                MapPaintData.blank(raw[0].length, raw.length),
+                MapGeometryData.blank(raw[0].length, raw.length)
+        );
     }
 
     public void setTile(int x, int y, Library.TileType tileType) {

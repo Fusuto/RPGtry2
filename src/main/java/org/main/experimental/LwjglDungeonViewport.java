@@ -3,6 +3,7 @@ package org.main.experimental;
 import org.main.battle.DifficultyResolver;
 import org.main.core.GameConfiguration;
 import org.main.core.Library;
+import org.main.engine.AssetLoader;
 import org.main.engine.DungeonRenderContext;
 import org.main.engine.DungeonRenderDebugInfo;
 import org.main.engine.EnvironmentTheme;
@@ -12,6 +13,7 @@ import org.main.engine.TextureManager;
 
 import java.awt.Dimension;
 import java.awt.Point;
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -28,6 +30,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     private final int windowWidth;
     private final int windowHeight;
     private final double wallHeight;
+    private final double roofPitchHeight;
     private final double eyeHeight;
     private final double fovDegrees;
     private final double nearPlane;
@@ -39,11 +42,14 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     private int visibleTiles;
     private int floorQuads;
     private int wallQuads;
+    private int roofQuads;
     private int spriteQuads;
     private double lastFrameMs;
     private double smoothedFrameMs = 16.0;
     private CameraLookState lastLookState = CameraLookState.centered();
     private List<EnemyLabel> enemyLabels = List.of();
+    private String skyboxPath = "";
+    private BufferedImage skyboxImage;
 
     public LwjglDungeonViewport(TextureManager textureManager, List<EnvironmentTheme> environmentThemes) {
         List<EnvironmentTheme> safeThemes = environmentThemes == null || environmentThemes.isEmpty()
@@ -54,6 +60,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         this.windowHeight = Math.max(240, GameConfiguration.intValue("renderer.prototype.windowHeight", 720));
         this.maxDepth = Math.max(1, GameConfiguration.intValue("renderer.prototype.maxDepth", 12));
         this.wallHeight = Math.max(0.1, GameConfiguration.doubleValue("renderer.prototype.wallHeight", 1.0));
+        this.roofPitchHeight = Math.max(0.0, GameConfiguration.doubleValue("renderer.prototype.roofPitchHeight", 0.45));
         this.eyeHeight = Math.max(0.05, GameConfiguration.doubleValue("renderer.prototype.eyeHeight", 0.55));
         this.fovDegrees = Math.max(20.0, Math.min(120.0, GameConfiguration.doubleValue("renderer.prototype.fovDegrees", 70.0)));
         this.nearPlane = Math.max(0.01, GameConfiguration.doubleValue("renderer.prototype.nearPlane", 0.05));
@@ -121,16 +128,24 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         lastLookState = safeLookState;
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        drawSkybox(framebufferWidth, framebufferHeight);
 
         if (shouldRenderDungeon(runtime)) {
             configureProjection(framebufferWidth, framebufferHeight);
             configureCamera(context, safeLookState);
 
             double cameraYawDegrees = animatedYawDegrees(context) + safeLookState.yawOffsetDegrees();
-            LwjglDungeonSceneBuilder.Scene scene = sceneBuilder.build(context, maxDepth, wallHeight, cameraYawDegrees);
+            LwjglDungeonSceneBuilder.Scene scene = sceneBuilder.build(
+                    context,
+                    maxDepth,
+                    wallHeight,
+                    roofPitchHeight,
+                    cameraYawDegrees
+            );
             visibleTiles = scene.visibleTiles();
             floorQuads = scene.floorQuads();
             wallQuads = scene.wallQuads();
+            roofQuads = scene.roofQuads();
             spriteQuads = scene.spriteQuads();
             enemyLabels = projectEnemyLabels(
                     context,
@@ -146,6 +161,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             visibleTiles = 0;
             floorQuads = 0;
             wallQuads = 0;
+            roofQuads = 0;
             spriteQuads = 0;
             enemyLabels = List.of();
         }
@@ -192,6 +208,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                 + ", tiles=" + visibleTiles
                 + ", floors=" + floorQuads
                 + ", walls=" + wallQuads
+                + ", roofs=" + roofQuads
                 + ", sprites=" + spriteQuads
                 + ", textures=" + textureCache.textureCount();
     }
@@ -263,8 +280,54 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         sceneBuilder.setEnvironmentThemes(environmentThemes);
     }
 
+    public void setSkyboxPath(String skyboxPath) {
+        String safePath = skyboxPath == null ? "" : skyboxPath.trim();
+        if (safePath.equals(this.skyboxPath)) {
+            return;
+        }
+
+        this.skyboxPath = safePath;
+        this.skyboxImage = safePath.isBlank() ? null : AssetLoader.loadImage(safePath);
+    }
+
     public List<EnemyLabel> getEnemyLabelsView() {
         return List.copyOf(enemyLabels);
+    }
+
+    private void drawSkybox(int framebufferWidth, int framebufferHeight) {
+        if (skyboxImage == null) {
+            return;
+        }
+
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(false);
+        glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
+        glLoadIdentity();
+        glOrtho(0.0, framebufferWidth, framebufferHeight, 0.0, -1.0, 1.0);
+        glMatrixMode(GL_MODELVIEW);
+        glPushMatrix();
+        glLoadIdentity();
+
+        textureCache.bind(skyboxImage);
+        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        glBegin(GL_QUADS);
+        glTexCoord2d(0.0, 1.0);
+        glVertex2d(0.0, 0.0);
+        glTexCoord2d(1.0, 1.0);
+        glVertex2d(framebufferWidth, 0.0);
+        glTexCoord2d(1.0, 0.0);
+        glVertex2d(framebufferWidth, framebufferHeight);
+        glTexCoord2d(0.0, 0.0);
+        glVertex2d(0.0, framebufferHeight);
+        glEnd();
+
+        glPopMatrix();
+        glMatrixMode(GL_PROJECTION);
+        glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
+        glDepthMask(true);
+        glEnable(GL_DEPTH_TEST);
     }
 
     private void configureProjection(int framebufferWidth, int framebufferHeight) {
@@ -506,7 +569,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     }
 
     private int totalQuads() {
-        return floorQuads + wallQuads + spriteQuads;
+        return floorQuads + wallQuads + roofQuads + spriteQuads;
     }
 
     private void updateWindowTitle() {
@@ -519,6 +582,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                         + " | Tiles " + visibleTiles
                         + " | Floors " + floorQuads
                         + " | Walls " + wallQuads
+                        + " | Roofs " + roofQuads
                         + " | Sprites " + spriteQuads
                         + " | Textures " + textureCache.textureCount()
         );
@@ -532,7 +596,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         lines.add("Frame " + String.format("%.2f", smoothedFrameMs) + " ms");
         lines.add("Depth " + maxDepth);
         lines.add("Tiles " + visibleTiles);
-        lines.add("Quads F" + floorQuads + " W" + wallQuads + " S" + spriteQuads);
+        lines.add("Quads F" + floorQuads + " W" + wallQuads + " R" + roofQuads + " S" + spriteQuads);
         lines.add("Textures " + textureCache.textureCount());
         if (lastLookState.active()
                 || Math.abs(lastLookState.yawOffsetDegrees()) > 0.001

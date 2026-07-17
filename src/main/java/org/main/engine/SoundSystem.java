@@ -8,8 +8,12 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
 import javax.sound.sampled.FloatControl;
 import javax.sound.sampled.LineEvent;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class SoundSystem {
+    private static final Logger LOGGER = Logger.getLogger(SoundSystem.class.getName());
+
     private Clip ambienceClip;
     private String ambiencePath;
 
@@ -194,8 +198,7 @@ public class SoundSystem {
             clip.open(audioInputStream);
             return clip;
         } catch (Exception e) {
-            System.out.println("Failed to load sound: " + soundPath);
-            e.printStackTrace();
+            LOGGER.log(Level.WARNING, "Failed to load sound: " + soundPath, e);
             return null;
         }
     }
@@ -219,7 +222,7 @@ public class SoundSystem {
         );
 
         if (!AudioSystem.isConversionSupported(targetFormat, sourceFormat)) {
-            System.out.println("Sound conversion not supported from "
+            LOGGER.warning(() -> "Sound conversion not supported from "
                     + sourceFormat
                     + " to "
                     + targetFormat);

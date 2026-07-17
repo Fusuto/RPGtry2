@@ -12,8 +12,10 @@ import java.awt.Point;
 import java.awt.event.KeyEvent;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.logging.Logger;
 
 public class DungeonController {
+    private static final Logger LOGGER = Logger.getLogger(DungeonController.class.getName());
     private static final String DEFAULT_PICKUP_SOUND_PATH = "assets/sounds/generated/pickup_sound.wav";
 
     private final GameState gameState;
@@ -116,7 +118,7 @@ public class DungeonController {
          */
         if (targetEntity != null) {
             if (targetEntity.getType() == Library.EntityType.ENEMY) {
-                System.out.println("Move into " + targetEntity.getName() + " to engage.");
+                LOGGER.fine(() -> "Move into " + targetEntity.getName() + " to engage.");
                 return;
             }
 
@@ -139,7 +141,7 @@ public class DungeonController {
 
         if (targetTile == Library.TileType.DOOR_OPEN) {
             if (isOccupied(targetX, targetY)) {
-                System.out.println("Something is blocking the door.");
+                LOGGER.fine("Something is blocking the door.");
                 return;
             }
 
@@ -193,7 +195,7 @@ public class DungeonController {
         }
 
         if (enemyEntity.getMonster() == null) {
-            System.out.println("Enemy entity has no monster data.");
+            LOGGER.warning("Enemy entity has no monster data.");
             return;
         }
 
@@ -224,26 +226,26 @@ public class DungeonController {
         switch (entity.getType()) {
             case ITEM -> {
                 if (entity.getItem() == null) {
-                    System.out.println("There is no item here.");
+                    LOGGER.fine("There is no item here.");
                     return;
                 }
 
                 boolean added = gameState.getInventory().addItem(entity.getItem());
 
                 if (!added) {
-                    System.out.println("Inventory full.");
+                    LOGGER.fine("Inventory full.");
                     return;
                 }
 
                 gameState.removeEntity(entity);
                 playPickupSound();
-                System.out.println("Picked up " + entity.getName() + ".");
+                LOGGER.fine(() -> "Picked up " + entity.getName() + ".");
             }
-            case NPC -> System.out.println("You talk to " + entity.getName() + ".");
-            case ALLY -> System.out.println("You speak with " + entity.getName() + ".");
-            case CHEST -> System.out.println("You inspect " + entity.getName() + ".");
-            case TRAP -> System.out.println("You examine " + entity.getName() + ".");
-            default -> System.out.println("You interact with " + entity.getName() + ".");
+            case NPC -> LOGGER.fine(() -> "You talk to " + entity.getName() + ".");
+            case ALLY -> LOGGER.fine(() -> "You speak with " + entity.getName() + ".");
+            case CHEST -> LOGGER.fine(() -> "You inspect " + entity.getName() + ".");
+            case TRAP -> LOGGER.fine(() -> "You examine " + entity.getName() + ".");
+            default -> LOGGER.fine(() -> "You interact with " + entity.getName() + ".");
         }
     }
 

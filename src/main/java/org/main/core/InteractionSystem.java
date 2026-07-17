@@ -36,8 +36,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
+import java.util.logging.Logger;
 
 public final class InteractionSystem {
+    private static final Logger LOGGER = Logger.getLogger(InteractionSystem.class.getName());
 
     private InteractionSystem() {
     }
@@ -744,7 +746,7 @@ public final class InteractionSystem {
             }
 
             if (!nodes.containsKey(nextNodeId)) {
-                System.out.println("Conversation node not found: " + nextNodeId);
+                LOGGER.warning(() -> "Conversation node not found: " + nextNodeId);
                 interaction.close();
                 return;
             }
@@ -1534,7 +1536,7 @@ public final class InteractionSystem {
                     return authoredInteraction;
                 }
 
-                System.out.println("No interaction registered for id: " + interactionId);
+                LOGGER.warning(() -> "No interaction registered for id: " + interactionId);
                 return null;
             }
 

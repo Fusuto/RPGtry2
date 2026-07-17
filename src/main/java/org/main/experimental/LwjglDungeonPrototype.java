@@ -60,8 +60,8 @@ public final class LwjglDungeonPrototype {
     private void run() {
         viewport.initialize();
         overlayRenderer.setQuitAction(viewport::requestClose);
-        overlayRenderer.setMapChangedAction(() -> viewport.setEnvironmentThemes(runtime.activeEnvironmentThemes()));
-        inputController.setMapChangedAction(() -> viewport.setEnvironmentThemes(runtime.activeEnvironmentThemes()));
+        overlayRenderer.setMapChangedAction(this::refreshViewportChunkSettings);
+        inputController.setMapChangedAction(this::refreshViewportChunkSettings);
         inputController.install(viewport.windowHandle(), viewport, overlayRenderer, runtime);
         boolean startedCharacter = false;
         if (launchLoadGame) {
@@ -69,7 +69,7 @@ public final class LwjglDungeonPrototype {
         }
         if (!startedCharacter && (smokeStartNewGame || launchNewGame)) {
             runtime.startNewGame(characterName.isBlank() ? "Smoke" : characterName, resolveRegion(regionName));
-            viewport.setEnvironmentThemes(runtime.activeEnvironmentThemes());
+            refreshViewportChunkSettings();
             startedCharacter = true;
         }
         if (!startMapName.isBlank()) {
@@ -89,7 +89,7 @@ public final class LwjglDungeonPrototype {
 
                 inputController.update(deltaMs, runtime, viewport);
                 runtime.update(deltaMs);
-                refreshEnvironmentThemesIfMapChanged();
+                refreshViewportChunkSettingsIfMapChanged();
                 viewport.renderFrame(createContext(), inputController.cameraLook(), overlayRenderer, runtime);
                 viewport.pollEvents();
                 renderedFrames++;
@@ -132,7 +132,7 @@ public final class LwjglDungeonPrototype {
         return runtime.renderContext(framebufferSize.width, framebufferSize.height);
     }
 
-    private void refreshEnvironmentThemesIfMapChanged() {
+    private void refreshViewportChunkSettingsIfMapChanged() {
         Path path = runtime.gameState().getCurrentMapDesignPath();
         String key = path == null ? "" : path.toAbsolutePath().normalize().toString();
         if (key.equals(lastMapThemeKey)) {
@@ -140,7 +140,12 @@ public final class LwjglDungeonPrototype {
         }
 
         lastMapThemeKey = key;
+        refreshViewportChunkSettings();
+    }
+
+    private void refreshViewportChunkSettings() {
         viewport.setEnvironmentThemes(runtime.activeEnvironmentThemes());
+        viewport.setSkyboxPath(runtime.activeSkyboxPath());
     }
 
     private boolean isSmokeRun() {
@@ -156,7 +161,7 @@ public final class LwjglDungeonPrototype {
     private boolean loadGameAtStartup() {
         try {
             runtime.loadGame();
-            viewport.setEnvironmentThemes(runtime.activeEnvironmentThemes());
+            refreshViewportChunkSettings();
             return true;
         } catch (IOException exception) {
             System.out.println("LWJGL prototype failed to load saved game: " + exception.getMessage());
@@ -177,7 +182,7 @@ public final class LwjglDungeonPrototype {
             } else {
                 runtime.startCustomMap(mapPath.get());
             }
-            viewport.setEnvironmentThemes(runtime.activeEnvironmentThemes());
+            refreshViewportChunkSettings();
         } catch (IOException exception) {
             System.out.println("LWJGL prototype failed to load map " + mapName + ": " + exception.getMessage());
         }
@@ -320,7 +325,7 @@ public final class LwjglDungeonPrototype {
     private void loadGame() {
         try {
             runtime.loadGame();
-            viewport.setEnvironmentThemes(runtime.activeEnvironmentThemes());
+            refreshViewportChunkSettings();
         } catch (Exception exception) {
             System.out.println("LWJGL smoke load failed: " + exception.getMessage());
         }
@@ -395,7 +400,7 @@ public final class LwjglDungeonPrototype {
             int x = Integer.parseInt(parts[1]);
             int y = Integer.parseInt(parts[2]);
             runtime.gameState().travelToMapLink(mapPath.get(), x, y);
-            viewport.setEnvironmentThemes(runtime.activeEnvironmentThemes());
+            refreshViewportChunkSettings();
         } catch (IOException | NumberFormatException exception) {
             System.out.println("Ignoring failed travel-map smoke action: " + exception.getMessage());
         }
@@ -527,7 +532,7 @@ public final class LwjglDungeonPrototype {
         runtime.dungeonController().interact();
         if (travel && runtime.gameState().hasActiveInteraction()) {
             runtime.gameState().getActiveInteraction().selectOption(0);
-            viewport.setEnvironmentThemes(runtime.activeEnvironmentThemes());
+            refreshViewportChunkSettings();
         }
     }
 

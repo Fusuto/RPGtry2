@@ -21,8 +21,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.logging.Logger;
 
 public final class ShopSystem {
+    private static final Logger LOGGER = Logger.getLogger(ShopSystem.class.getName());
+
     private ShopSystem() {
     }
 
@@ -212,7 +215,7 @@ public final class ShopSystem {
             }
 
             if (!gameState.canSpendGold(stockItem.getBuyPrice())) {
-                System.out.println("Not enough gold.");
+                LOGGER.fine("Not enough gold.");
                 return false;
             }
 
@@ -225,14 +228,14 @@ public final class ShopSystem {
             boolean added = gameState.getInventory().addItem(purchasedItem);
 
             if (!added) {
-                System.out.println("Inventory full.");
+                LOGGER.fine("Inventory full.");
                 return false;
             }
 
             gameState.spendGold(stockItem.getBuyPrice());
             stockItem.decreaseQuantity();
 
-            System.out.println("Bought " + purchasedItem.getName() + ".");
+            LOGGER.fine(() -> "Bought " + purchasedItem.getName() + ".");
             return true;
         }
 
@@ -256,7 +259,7 @@ public final class ShopSystem {
 
             gameState.addGold(sellPrice);
 
-            System.out.println("Sold " + soldItem.getName() + " for " + sellPrice + " gold.");
+            LOGGER.fine(() -> "Sold " + soldItem.getName() + " for " + sellPrice + " gold.");
             return true;
         }
 

@@ -46,8 +46,12 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class SongDesignerTool extends JFrame {
+    private static final Logger LOGGER = Logger.getLogger(SongDesignerTool.class.getName());
+
     private static final int SAMPLE_RATE = 44_100;
     private static final int TRACK_COUNT = 4;
     private static final int MIN_NOTE = 36;
@@ -305,7 +309,7 @@ public class SongDesignerTool extends JFrame {
             status("Preview finished.");
         } catch (Exception e) {
             status("Preview failed: " + e.getMessage());
-            e.printStackTrace();
+            LOGGER.log(Level.WARNING, "Preview failed.", e);
         } finally {
             previewPlaying = false;
         }
@@ -326,7 +330,7 @@ public class SongDesignerTool extends JFrame {
             status("Saved project " + path);
         } catch (Exception e) {
             status("Save failed: " + e.getMessage());
-            e.printStackTrace();
+            LOGGER.log(Level.WARNING, "Save failed.", e);
         }
     }
 
@@ -352,7 +356,7 @@ public class SongDesignerTool extends JFrame {
             status("Loaded project " + path);
         } catch (Exception e) {
             status("Load failed: " + e.getMessage());
-            e.printStackTrace();
+            LOGGER.log(Level.WARNING, "Load failed.", e);
         }
     }
 
@@ -375,7 +379,7 @@ public class SongDesignerTool extends JFrame {
             status("Exported WAV " + outputPath);
         } catch (Exception e) {
             status("Export failed: " + e.getMessage());
-            e.printStackTrace();
+            LOGGER.log(Level.WARNING, "Export failed.", e);
         }
     }
 

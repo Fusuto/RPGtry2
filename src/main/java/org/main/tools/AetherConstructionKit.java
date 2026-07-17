@@ -8,6 +8,7 @@ import org.main.content.InteractionLibrary;
 import org.main.content.ItemLibrary;
 import org.main.content.MainNpcLibrary;
 import org.main.content.MapDesignLibrary;
+import org.main.content.PaintBrushLibrary;
 import org.main.content.RecipeLibrary;
 import org.main.content.SkillLibrary;
 import org.main.content.ThemeLibrary;
@@ -22,6 +23,8 @@ import org.main.core.PlayerCharacter;
 import org.main.core.PlayerStat;
 import org.main.core.WeaponType;
 import org.main.engine.AssetLoader;
+import org.main.engine.MapGeometryData;
+import org.main.engine.MapPaintData;
 
 import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
@@ -100,8 +103,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
-import java.util.function.Consumer;
-import java.util.function.Function;
 
 public class AetherConstructionKit extends JFrame {
     private static final int DEFAULT_WIDTH = 14;
@@ -122,10 +123,18 @@ public class AetherConstructionKit extends JFrame {
     private final JSpinner widthSpinner = new JSpinner(new SpinnerNumberModel(DEFAULT_WIDTH, MIN_DIMENSION, MAX_DIMENSION, 1));
     private final JSpinner heightSpinner = new JSpinner(new SpinnerNumberModel(DEFAULT_HEIGHT, MIN_DIMENSION, MAX_DIMENSION, 1));
     private final JComboBox<ThemeLibrary> primaryThemeBox = new JComboBox<>(ThemeLibrary.values());
-    private final JComboBox<ThemeLibrary> alternateThemeBox = new JComboBox<>(ThemeLibrary.values());
+    private final JComboBox<PaintBrushLibrary.Palette> paletteBox =
+            new JComboBox<>(PaintBrushLibrary.palettes().toArray(new PaintBrushLibrary.Palette[0]));
+    private final JComboBox<PaintBrushLibrary.PaintBrush> brushBox = new JComboBox<>();
     private final JComboBox<PaintMode> paintModeBox = new JComboBox<>(PaintMode.values());
     private final JComboBox<Library.TileType> tileTypeBox = new JComboBox<>(Library.TileType.values());
     private final JSpinner brushSizeSpinner = new JSpinner(new SpinnerNumberModel(1, 1, 9, 1));
+    private final JSpinner heightLevelSpinner = new JSpinner(new SpinnerNumberModel(
+            MapGeometryData.DEFAULT_HEIGHT_LEVEL,
+            MapGeometryData.MIN_HEIGHT_LEVEL,
+            MapGeometryData.MAX_HEIGHT_LEVEL,
+            1
+    ));
     private final JSpinner zoomSpinner = new JSpinner(new SpinnerNumberModel(100, 25, 300, 25));
     private final JComboBox<MapPrefab> prefabBox = new JComboBox<>();
     private final JComboBox<PlaceableCategory> placeableCategoryBox = new JComboBox<>(PlaceableCategory.values());
@@ -168,7 +177,7 @@ public class AetherConstructionKit extends JFrame {
         loadSharedContentIntoDesign();
         loadPrefabs();
         populatePlaceables();
-        alternateThemeBox.setSelectedItem(ThemeLibrary.SANDSTONE_GATE);
+        populateBrushes();
 
         add(createToolbar(), BorderLayout.NORTH);
         add(createEditorBody(), BorderLayout.CENTER);
@@ -195,39 +204,30 @@ public class AetherConstructionKit extends JFrame {
         JToolBar toolbar = new JToolBar();
         toolbar.setFloatable(false);
 
-        JButton newButton = new JButton("New");
-        newButton.addActionListener(event -> createNewMap());
-        JButton resizeButton = new JButton("Resize");
-        resizeButton.addActionListener(event -> resizeCurrentMap());
-        toolbar.add(new JLabel("Name"));
-        toolbar.add(mapNameField);
-        JButton metadataButton = new JButton("Metadata");
-        metadataButton.addActionListener(event -> editMetadata());
-        toolbar.add(metadataButton);
-        toolbar.add(new JLabel("W"));
-        toolbar.add(widthSpinner);
-        toolbar.add(new JLabel("H"));
-        toolbar.add(heightSpinner);
-        toolbar.add(newButton);
-        toolbar.add(resizeButton);
+        toolbar.add(createFileMenuButton());
+        toolbar.addSeparator();
+        toolbar.add(createMapConfigMenuButton());
 
         toolbar.addSeparator();
         toolbar.add(new JLabel("Primary"));
         toolbar.add(primaryThemeBox);
-        toolbar.add(new JLabel("Alt"));
-        toolbar.add(alternateThemeBox);
+        toolbar.add(new JLabel("Palette"));
+        paletteBox.addActionListener(event -> populateBrushes());
+        toolbar.add(paletteBox);
+        toolbar.add(new JLabel("Paint"));
+        toolbar.add(brushBox);
 
         toolbar.addSeparator();
         toolbar.add(new JLabel("Mode"));
+        paintModeBox.addActionListener(event -> populateBrushes());
         toolbar.add(paintModeBox);
         toolbar.add(new JLabel("Brush"));
         toolbar.add(brushSizeSpinner);
+        toolbar.add(new JLabel("Height"));
+        toolbar.add(heightLevelSpinner);
         toolbar.add(new JLabel("Zoom"));
         zoomSpinner.addChangeListener(event -> updateMapZoom());
         toolbar.add(zoomSpinner);
-        toolbar.add(new JLabel("Prefab"));
-        prefabBox.setPrototypeDisplayValue(new MapPrefab("Long Prefab Name", 1, 1, new Library.TileType[][]{{Library.TileType.FLOOR}}, new int[][]{{0}}, List.of(), List.of()));
-        toolbar.add(prefabBox);
         toolbar.add(new JLabel("Tile"));
         toolbar.add(tileTypeBox);
         toolbar.add(new JLabel("Object Type"));
@@ -238,22 +238,10 @@ public class AetherConstructionKit extends JFrame {
 
         toolbar.addSeparator();
         toolbar.add(createCreateMenuButton());
-        toolbar.add(createManageMenuButton());
         toolbar.add(createToolsMenuButton());
         JButton helpButton = new JButton("Help");
         helpButton.addActionListener(event -> showAuthoringHelp());
         toolbar.add(helpButton);
-
-        toolbar.addSeparator();
-        JButton validateButton = new JButton("Validate");
-        validateButton.addActionListener(event -> validateMap());
-        JButton saveButton = new JButton("Save");
-        saveButton.addActionListener(event -> saveMap());
-        JButton loadButton = new JButton("Load");
-        loadButton.addActionListener(event -> loadMap());
-        toolbar.add(validateButton);
-        toolbar.add(saveButton);
-        toolbar.add(loadButton);
 
         toolbar.addSeparator();
         undoButton.addActionListener(event -> undoMapEdit());
@@ -263,6 +251,14 @@ public class AetherConstructionKit extends JFrame {
         updateHistoryButtons();
 
         return toolbar;
+    }
+
+    private JButton createMapConfigMenuButton() {
+        JPopupMenu menu = new JPopupMenu();
+        addMenuItem(menu, "New", this::createNewMap);
+        addMenuItem(menu, "Resize", this::resizeCurrentMap);
+        addMenuItem(menu, "Metadata", this::editMetadata);
+        return menuButton("Map Config", menu);
     }
 
     private JSplitPane createEditorBody() {
@@ -345,7 +341,10 @@ public class AetherConstructionKit extends JFrame {
         buttons.add(dependenciesButton);
         buttons.add(graphButton);
         buttons.add(refreshButton);
-        panel.add(buttons, BorderLayout.SOUTH);
+        JPanel browserFooter = new JPanel(new BorderLayout(4, 4));
+        browserFooter.add(buttons, BorderLayout.NORTH);
+        browserFooter.add(createPrefabBrowserPanel(), BorderLayout.SOUTH);
+        panel.add(browserFooter, BorderLayout.SOUTH);
 
         contentCategoryBox.addActionListener(event -> refreshContentBrowser());
         contentSearchField.getDocument().addDocumentListener(new DocumentListener() {
@@ -368,6 +367,43 @@ public class AetherConstructionKit extends JFrame {
         return panel;
     }
 
+    private JPanel createPrefabBrowserPanel() {
+        JPanel panel = new JPanel(new BorderLayout(4, 4));
+        panel.setBorder(BorderFactory.createTitledBorder("Prefabs"));
+        prefabBox.setPrototypeDisplayValue(new MapPrefab(
+                "Long Prefab Name",
+                1,
+                1,
+                new Library.TileType[][]{{Library.TileType.FLOOR}},
+                new int[][]{{0}},
+                MapPaintData.blank(1, 1),
+                MapGeometryData.blank(1, 1),
+                List.of(),
+                List.of()
+        ));
+        panel.add(prefabBox, BorderLayout.CENTER);
+
+        JPanel buttons = new JPanel(new java.awt.GridLayout(1, 0, 4, 0));
+        JButton placeButton = new JButton("Place");
+        JButton createButton = new JButton("Create");
+        JButton manageButton = new JButton("Manage");
+        placeButton.addActionListener(event -> {
+            if (prefabBox.getSelectedItem() == null) {
+                setStatus("No prefab selected.");
+                return;
+            }
+            paintModeBox.setSelectedItem(PaintMode.PLACE_PREFAB);
+            setStatus("Selected prefab placement mode.");
+        });
+        createButton.addActionListener(event -> createPrefabFromRegion());
+        manageButton.addActionListener(event -> managePrefabs());
+        buttons.add(placeButton);
+        buttons.add(createButton);
+        buttons.add(manageButton);
+        panel.add(buttons, BorderLayout.SOUTH);
+        return panel;
+    }
+
     private JButton createCreateMenuButton() {
         JPopupMenu menu = new JPopupMenu();
         addMenuItem(menu, "Dialogue NPC", this::createAuthoredDialogueNpc);
@@ -381,36 +417,28 @@ public class AetherConstructionKit extends JFrame {
         addMenuItem(menu, "Composite Recipe", this::createCompositeRecipe);
         addMenuItem(menu, "Map Link", this::createMapLink);
         addMenuItem(menu, "Trigger", this::createTrigger);
-        addMenuItem(menu, "Prefab From Region", this::createPrefabFromRegion);
         return menuButton("Create", menu);
-    }
-
-    private JButton createManageMenuButton() {
-        JPopupMenu menu = new JPopupMenu();
-        addMenuItem(menu, "Dialogue NPCs", this::manageAuthoredDialogues);
-        addMenuItem(menu, "Quests", this::manageAuthoredQuests);
-        addMenuItem(menu, "Items", this::manageCustomItems);
-        addMenuItem(menu, "Enemies", this::manageCustomMobs);
-        addMenuItem(menu, "NPCs", this::manageCustomNpcs);
-        addMenuItem(menu, "Limbs", this::manageCustomLimbs);
-        addMenuItem(menu, "Gathering Nodes", this::manageCustomGatheringNodes);
-        addMenuItem(menu, "Cooking Recipes", this::manageCookingRecipes);
-        addMenuItem(menu, "Composite Recipes", this::manageCompositeRecipes);
-        addMenuItem(menu, "Abilities", this::manageAbilityConfiguration);
-        addMenuItem(menu, "Level Gates", this::manageLevelGates);
-        addMenuItem(menu, "Triggers", this::manageTriggers);
-        addMenuItem(menu, "Prefabs", this::managePrefabs);
-        return menuButton("Manage", menu);
     }
 
     private JButton createToolsMenuButton() {
         JPopupMenu menu = new JPopupMenu();
         addMenuItem(menu, "Asset Browser", () -> showAssetBrowser(null));
+        addMenuItem(menu, "Ability Cooldowns", this::manageAbilityConfiguration);
+        addMenuItem(menu, "Level Gates", this::manageLevelGates);
+        addMenuItem(menu, "Trigger Manager", this::manageTriggers);
         addMenuItem(menu, "Content Backups", this::showContentBackupManager);
         addMenuItem(menu, "Sound Designer", () -> openToolWindow(new SoundDesignerTool()));
         addMenuItem(menu, "Song Designer", () -> openToolWindow(new SongDesignerTool()));
         addMenuItem(menu, "Sprite Sheet Splitter", () -> openToolWindow(new SpriteSheetSplitterTool()));
         return menuButton("Tools", menu);
+    }
+
+    private JButton createFileMenuButton() {
+        JPopupMenu menu = new JPopupMenu();
+        addMenuItem(menu, "Validate", this::validateMap);
+        addMenuItem(menu, "Save", this::saveMap);
+        addMenuItem(menu, "Load", this::loadMap);
+        return menuButton("File", menu);
     }
 
     private void openToolWindow(JFrame toolWindow) {
@@ -884,7 +912,7 @@ public class AetherConstructionKit extends JFrame {
         int result = JOptionPane.showConfirmDialog(
                 this,
                 panel,
-                "Modify Abilities",
+                "Ability Cooldowns",
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.PLAIN_MESSAGE
         );
@@ -1150,16 +1178,32 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void syncEditorFromDesign() {
+        normalizeThemeIndexesToPrimary();
         mapNameField.setText(design.displayName());
         widthSpinner.setValue(design.width());
         heightSpinner.setValue(design.height());
         primaryThemeBox.setSelectedItem(design.primaryTheme());
-        alternateThemeBox.setSelectedItem(design.alternateTheme());
         populatePlaceables();
+        populateBrushes();
         refreshContentBrowser();
         mapCanvas.revalidate();
         mapCanvas.repaint();
         updateHistoryButtons();
+    }
+
+    private void normalizeThemeIndexesToPrimary() {
+        if (design == null || design.themeIndexes() == null) {
+            return;
+        }
+
+        for (int y = 0; y < design.themeIndexes().length; y++) {
+            if (design.themeIndexes()[y] == null) {
+                continue;
+            }
+            for (int x = 0; x < design.themeIndexes()[y].length; x++) {
+                design.themeIndexes()[y][x] = 0;
+            }
+        }
     }
 
     private void markDirty(boolean dirty) {
@@ -1247,10 +1291,18 @@ public class AetherConstructionKit extends JFrame {
                 source.height(),
                 source.displayName(),
                 source.description(),
+                source.musicPath(),
+                source.skyboxPath(),
                 source.primaryTheme(),
-                source.alternateTheme(),
+                source.primaryTheme(),
                 tiles,
                 themeIndexes,
+                source.mapPaint() == null
+                        ? MapPaintData.blank(source.width(), source.height())
+                        : source.mapPaint().copy(),
+                source.mapGeometry() == null
+                        ? MapGeometryData.blank(source.width(), source.height())
+                        : source.mapGeometry().copy(),
                 new ArrayList<>(source.placements()),
                 new ArrayList<>(source.authoredDialogues()),
                 new ArrayList<>(source.authoredQuests()),
@@ -1276,6 +1328,40 @@ public class AetherConstructionKit extends JFrame {
         for (PlaceableOption option : sortedPlaceableOptions(placeableOptionsFor(selectedCategory, true))) {
             placeableBox.addItem(option);
         }
+    }
+
+    private void populateBrushes() {
+        PaintBrushLibrary.PaintBrush previous = (PaintBrushLibrary.PaintBrush) brushBox.getSelectedItem();
+        PaintBrushLibrary.Palette palette = (PaintBrushLibrary.Palette) paletteBox.getSelectedItem();
+        MapPaintData.Layer layer = layerForPaintMode((PaintMode) paintModeBox.getSelectedItem());
+        String paletteId = palette == null ? "" : palette.id();
+        List<PaintBrushLibrary.PaintBrush> brushes = layer == null
+                ? PaintBrushLibrary.brushesForPalette(paletteId)
+                : PaintBrushLibrary.brushesForPaletteAndLayer(paletteId, layer);
+
+        brushBox.setModel(new DefaultComboBoxModel<>(brushes.toArray(new PaintBrushLibrary.PaintBrush[0])));
+        if (previous != null) {
+            for (PaintBrushLibrary.PaintBrush brush : brushes) {
+                if (brush.id().equals(previous.id())) {
+                    brushBox.setSelectedItem(brush);
+                    return;
+                }
+            }
+        }
+    }
+
+    private MapPaintData.Layer layerForPaintMode(PaintMode mode) {
+        if (mode == null) {
+            return null;
+        }
+
+        return switch (mode) {
+            case FLOOR_BRUSH -> MapPaintData.Layer.FLOOR;
+            case WALL_BRUSH -> MapPaintData.Layer.WALL;
+            case DOOR_BRUSH -> MapPaintData.Layer.DOOR;
+            case ROOF_BRUSH -> MapPaintData.Layer.ROOF;
+            default -> null;
+        };
     }
 
     private List<PlaceableOption> sortedPlaceableOptions(List<PlaceableOption> options) {
@@ -2886,59 +2972,6 @@ public class AetherConstructionKit extends JFrame {
         setStatus("Created authored quest " + authoredQuest.displayName() + ".");
     }
 
-    private void manageAuthoredQuests() {
-        if (design.authoredQuests().isEmpty()) {
-            setStatus("No authored quests to manage.");
-            return;
-        }
-
-        List<MapDesignLibrary.AuthoredQuest> sortedQuests = new ArrayList<>(design.authoredQuests());
-        sortedQuests.sort(Comparator.comparing(MapDesignLibrary.AuthoredQuest::displayName, String.CASE_INSENSITIVE_ORDER)
-                .thenComparing(MapDesignLibrary.AuthoredQuest::questId, String.CASE_INSENSITIVE_ORDER));
-        JList<MapDesignLibrary.AuthoredQuest> questList = new JList<>(
-                sortedQuests.toArray(new MapDesignLibrary.AuthoredQuest[0])
-        );
-        questList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        questList.setCellRenderer((list, value, index, isSelected, cellHasFocus) -> {
-            JLabel label = new JLabel(value.displayName() + " [" + value.questId() + "]");
-            label.setOpaque(true);
-            label.setBackground(isSelected ? list.getSelectionBackground() : list.getBackground());
-            label.setForeground(isSelected ? list.getSelectionForeground() : list.getForeground());
-            return label;
-        });
-        questList.setSelectedIndex(0);
-
-        JButton editButton = new JButton("Edit");
-        JButton deleteButton = new JButton("Delete");
-        JButton closeButton = new JButton("Close");
-        JOptionPane pane = new JOptionPane(
-                new JScrollPane(questList),
-                JOptionPane.PLAIN_MESSAGE,
-                JOptionPane.DEFAULT_OPTION,
-                null,
-                new Object[]{editButton, deleteButton, closeButton},
-                closeButton
-        );
-        var dialog = pane.createDialog(this, "Manage Quests");
-
-        editButton.addActionListener(event -> {
-            MapDesignLibrary.AuthoredQuest selected = questList.getSelectedValue();
-            if (selected != null) {
-                editAuthoredQuest(selected);
-                dialog.dispose();
-            }
-        });
-        deleteButton.addActionListener(event -> {
-            MapDesignLibrary.AuthoredQuest selected = questList.getSelectedValue();
-            if (selected != null) {
-                deleteAuthoredQuest(selected);
-                dialog.dispose();
-            }
-        });
-        closeButton.addActionListener(event -> dialog.dispose());
-        dialog.setVisible(true);
-    }
-
     private void editAuthoredQuest(MapDesignLibrary.AuthoredQuest selected) {
         AuthoredQuestDraft draft = showAuthoredQuestDialog(
                 "Edit Quest",
@@ -4280,163 +4313,6 @@ public class AetherConstructionKit extends JFrame {
         }
     }
 
-    private void manageCustomItems() {
-        manageCustomContent(
-                "Items",
-                design.customItems(),
-                item -> item.displayName() + " [" + item.itemId() + "]",
-                Comparator.comparing(MapDesignLibrary.CustomItem::displayName, String.CASE_INSENSITIVE_ORDER)
-                        .thenComparing(MapDesignLibrary.CustomItem::itemId, String.CASE_INSENSITIVE_ORDER),
-                this::editCustomItem,
-                this::deleteCustomItem
-        );
-    }
-
-    private void manageCustomMobs() {
-        manageCustomContent(
-                "Enemies",
-                design.customMobs(),
-                mob -> mob.displayName() + " [" + mob.mobId() + "]",
-                Comparator.comparing(MapDesignLibrary.CustomMob::displayName, String.CASE_INSENSITIVE_ORDER)
-                        .thenComparing(MapDesignLibrary.CustomMob::mobId, String.CASE_INSENSITIVE_ORDER),
-                this::editCustomMob,
-                this::deleteCustomMob
-        );
-    }
-
-    private void manageCustomNpcs() {
-        manageCustomContent(
-                "NPCs",
-                design.customNpcs(),
-                npc -> npc.displayName() + " [" + npc.npcId() + "]",
-                Comparator.comparing(MapDesignLibrary.CustomNpc::displayName, String.CASE_INSENSITIVE_ORDER)
-                        .thenComparing(MapDesignLibrary.CustomNpc::npcId, String.CASE_INSENSITIVE_ORDER),
-                this::editCustomNpc,
-                this::deleteCustomNpc
-        );
-    }
-
-    private void manageCustomLimbs() {
-        manageCustomContent(
-                "Limbs",
-                design.customLimbs(),
-                limb -> limb.displayName() + " [" + limb.limbId() + "]",
-                Comparator.comparing(MapDesignLibrary.CustomLimb::displayName, String.CASE_INSENSITIVE_ORDER)
-                        .thenComparing(MapDesignLibrary.CustomLimb::limbId, String.CASE_INSENSITIVE_ORDER),
-                this::editCustomLimb,
-                this::deleteCustomLimb
-        );
-    }
-
-    private void manageCustomGatheringNodes() {
-        manageCustomContent(
-                "Gathering Nodes",
-                design.customGatheringNodes(),
-                node -> node.displayName() + " [" + node.nodeId() + ", " + node.nodeType() + "]",
-                Comparator.comparing(MapDesignLibrary.CustomGatheringNode::displayName, String.CASE_INSENSITIVE_ORDER)
-                        .thenComparing(MapDesignLibrary.CustomGatheringNode::nodeId, String.CASE_INSENSITIVE_ORDER),
-                this::editCustomGatheringNode,
-                this::deleteCustomGatheringNode
-        );
-    }
-
-    private void manageCompositeRecipes() {
-        manageCustomContent(
-                "Composite Recipes",
-                design.customCompositeRecipes(),
-                recipe -> recipe.displayName() + " [" + recipe.recipeId() + ", " + recipe.category() + "]",
-                Comparator.comparing(MapDesignLibrary.CustomCompositeRecipe::displayName, String.CASE_INSENSITIVE_ORDER)
-                        .thenComparing(MapDesignLibrary.CustomCompositeRecipe::recipeId, String.CASE_INSENSITIVE_ORDER),
-                this::editCompositeRecipe,
-                this::deleteCompositeRecipe
-        );
-    }
-
-    private void manageCookingRecipes() {
-        manageCustomContent(
-                "Cooking Recipes",
-                design.customCookingRecipes(),
-                recipe -> recipe.displayName() + " [" + recipe.recipeId() + "]",
-                Comparator.comparing(MapDesignLibrary.CustomCookingRecipe::displayName, String.CASE_INSENSITIVE_ORDER)
-                        .thenComparing(MapDesignLibrary.CustomCookingRecipe::recipeId, String.CASE_INSENSITIVE_ORDER),
-                this::editCookingRecipe,
-                this::deleteCookingRecipe
-        );
-    }
-
-    private <T> void manageCustomContent(
-            String title,
-            List<T> entries,
-            Function<T, String> labeler,
-            Consumer<T> editAction,
-            Consumer<T> deleteAction
-    ) {
-        manageCustomContent(title, entries, labeler, null, editAction, deleteAction);
-    }
-
-    private <T> void manageCustomContent(
-            String title,
-            List<T> entries,
-            Function<T, String> labeler,
-            Comparator<T> displayComparator,
-            Consumer<T> editAction,
-            Consumer<T> deleteAction
-    ) {
-        if (entries.isEmpty()) {
-            setStatus("No " + title.toLowerCase() + " to manage.");
-            return;
-        }
-
-        DefaultListModel<T> model = new DefaultListModel<>();
-        List<T> displayEntries = new ArrayList<>(entries);
-        if (displayComparator != null) {
-            displayEntries.sort(displayComparator);
-        }
-        for (T entry : displayEntries) {
-            model.addElement(entry);
-        }
-        JList<T> entryList = new JList<>(model);
-        entryList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        entryList.setCellRenderer((list, value, index, isSelected, cellHasFocus) -> {
-            JLabel label = new JLabel(labeler.apply(value));
-            label.setOpaque(true);
-            label.setBackground(isSelected ? list.getSelectionBackground() : list.getBackground());
-            label.setForeground(isSelected ? list.getSelectionForeground() : list.getForeground());
-            return label;
-        });
-        entryList.setSelectedIndex(0);
-
-        JButton editButton = new JButton("Edit");
-        JButton deleteButton = new JButton("Delete");
-        JButton closeButton = new JButton("Close");
-        JOptionPane pane = new JOptionPane(
-                new JScrollPane(entryList),
-                JOptionPane.PLAIN_MESSAGE,
-                JOptionPane.DEFAULT_OPTION,
-                null,
-                new Object[]{editButton, deleteButton, closeButton},
-                closeButton
-        );
-        var dialog = pane.createDialog(this, "Manage " + title);
-
-        editButton.addActionListener(event -> {
-            T selected = entryList.getSelectedValue();
-            if (selected != null) {
-                editAction.accept(selected);
-                dialog.dispose();
-            }
-        });
-        deleteButton.addActionListener(event -> {
-            T selected = entryList.getSelectedValue();
-            if (selected != null) {
-                deleteAction.accept(selected);
-                dialog.dispose();
-            }
-        });
-        closeButton.addActionListener(event -> dialog.dispose());
-        dialog.setVisible(true);
-    }
-
     private void editCustomItem(MapDesignLibrary.CustomItem selected) {
         MapDesignLibrary.CustomItem edited = showCustomItemDialog("Edit Item", selected);
         if (edited == null) {
@@ -5663,7 +5539,17 @@ public class AetherConstructionKit extends JFrame {
         }
 
         String name = properties.getProperty("name", path.getFileName().toString().replaceFirst("[.][^.]+$", ""));
-        return new MapPrefab(name, width, height, tiles, themes, placements, triggers);
+        return new MapPrefab(
+                name,
+                width,
+                height,
+                tiles,
+                themes,
+                readPrefabPaintData(properties, width, height),
+                readPrefabGeometryData(properties, width, height),
+                placements,
+                triggers
+        );
     }
 
     private void createPrefabFromRegion() {
@@ -5719,9 +5605,25 @@ public class AetherConstructionKit extends JFrame {
     private MapPrefab capturePrefab(String name, int startX, int startY, int width, int height) {
         Library.TileType[][] tiles = new Library.TileType[height][width];
         int[][] themes = new int[height][width];
+        int[][] heightLevels = new int[height][width];
+        String[][] floorBrushes = new String[height][width];
+        String[][] wallBrushes = new String[height][width];
+        String[][] doorBrushes = new String[height][width];
+        String[][] roofBrushes = new String[height][width];
         for (int y = 0; y < height; y++) {
             System.arraycopy(design.tiles()[startY + y], startX, tiles[y], 0, width);
             System.arraycopy(design.themeIndexes()[startY + y], startX, themes[y], 0, width);
+            for (int x = 0; x < width; x++) {
+                int worldX = startX + x;
+                int worldY = startY + y;
+                heightLevels[y][x] = design.mapGeometry() == null
+                        ? MapGeometryData.DEFAULT_HEIGHT_LEVEL
+                        : design.mapGeometry().getHeightLevel(worldX, worldY);
+                floorBrushes[y][x] = design.mapPaint() == null ? "" : design.mapPaint().get(MapPaintData.Layer.FLOOR, worldX, worldY);
+                wallBrushes[y][x] = design.mapPaint() == null ? "" : design.mapPaint().get(MapPaintData.Layer.WALL, worldX, worldY);
+                doorBrushes[y][x] = design.mapPaint() == null ? "" : design.mapPaint().get(MapPaintData.Layer.DOOR, worldX, worldY);
+                roofBrushes[y][x] = design.mapPaint() == null ? "" : design.mapPaint().get(MapPaintData.Layer.ROOF, worldX, worldY);
+            }
         }
 
         List<MapDesignLibrary.MapPlacement> placements = new ArrayList<>();
@@ -5764,7 +5666,17 @@ public class AetherConstructionKit extends JFrame {
             ));
         }
 
-        return new MapPrefab(name, width, height, tiles, themes, placements, triggers);
+        return new MapPrefab(
+                name,
+                width,
+                height,
+                tiles,
+                themes,
+                MapPaintData.of(width, height, floorBrushes, wallBrushes, doorBrushes, roofBrushes),
+                MapGeometryData.of(width, height, heightLevels),
+                placements,
+                triggers
+        );
     }
 
     private void savePrefab(MapPrefab prefab) throws IOException {
@@ -5776,12 +5688,19 @@ public class AetherConstructionKit extends JFrame {
         for (int y = 0; y < prefab.height(); y++) {
             List<String> tileValues = new ArrayList<>();
             List<String> themeValues = new ArrayList<>();
+            List<String> heightValues = new ArrayList<>();
             for (int x = 0; x < prefab.width(); x++) {
                 tileValues.add(prefab.tiles()[y][x].name());
                 themeValues.add(String.valueOf(prefab.themes()[y][x]));
+                heightValues.add(String.valueOf(prefab.geometryData().getHeightLevel(x, y)));
             }
             properties.setProperty("tile." + y, String.join(",", tileValues));
             properties.setProperty("theme." + y, String.join(",", themeValues));
+            properties.setProperty("geometry.height." + y, String.join(",", heightValues));
+            for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
+                properties.setProperty("paint." + layer.name().toLowerCase(Locale.ROOT) + "." + y,
+                        joinPrefabPaintRow(prefab.paintData().copyLayer(layer)[y]));
+            }
         }
         properties.setProperty("placement.count", String.valueOf(prefab.placements().size()));
         for (int i = 0; i < prefab.placements().size(); i++) {
@@ -5882,6 +5801,53 @@ public class AetherConstructionKit extends JFrame {
                 return;
             }
         }
+    }
+
+    private MapPaintData readPrefabPaintData(Properties properties, int width, int height) {
+        return MapPaintData.of(
+                width,
+                height,
+                readPrefabPaintLayer(properties, "paint.floor.", width, height),
+                readPrefabPaintLayer(properties, "paint.wall.", width, height),
+                readPrefabPaintLayer(properties, "paint.door.", width, height),
+                readPrefabPaintLayer(properties, "paint.roof.", width, height)
+        );
+    }
+
+    private String[][] readPrefabPaintLayer(Properties properties, String prefix, int width, int height) {
+        String[][] layer = new String[Math.max(1, height)][Math.max(1, width)];
+        for (int y = 0; y < height; y++) {
+            String[] values = properties.getProperty(prefix + y, "").split(",", -1);
+            for (int x = 0; x < width; x++) {
+                layer[y][x] = x < values.length ? values[x].trim() : "";
+            }
+        }
+        return layer;
+    }
+
+    private MapGeometryData readPrefabGeometryData(Properties properties, int width, int height) {
+        int[][] heightLevels = new int[Math.max(1, height)][Math.max(1, width)];
+        for (int y = 0; y < height; y++) {
+            String[] values = properties.getProperty("geometry.height." + y, "").split(",", -1);
+            for (int x = 0; x < width; x++) {
+                heightLevels[y][x] = MapGeometryData.clampHeightLevel(
+                        readPrefabListInt(values, x, MapGeometryData.DEFAULT_HEIGHT_LEVEL)
+                );
+            }
+        }
+        return MapGeometryData.of(width, height, heightLevels);
+    }
+
+    private String joinPrefabPaintRow(String[] row) {
+        if (row == null || row.length == 0) {
+            return "";
+        }
+
+        List<String> values = new ArrayList<>();
+        for (String value : row) {
+            values.add(value == null ? "" : value.trim());
+        }
+        return String.join(",", values);
     }
 
     private int readPrefabInt(Properties properties, String key, int fallback) {
@@ -6378,63 +6344,6 @@ public class AetherConstructionKit extends JFrame {
     private String getFileExtension(String fileName) {
         int index = fileName == null ? -1 : fileName.lastIndexOf('.');
         return index < 0 ? ".png" : fileName.substring(index);
-    }
-
-    private void manageAuthoredDialogues() {
-        if (design.authoredDialogues().isEmpty()) {
-            setStatus("No authored dialogue NPCs to manage.");
-            return;
-        }
-
-        List<MapDesignLibrary.AuthoredDialogue> sortedDialogues = new ArrayList<>(design.authoredDialogues());
-        sortedDialogues.sort(Comparator.comparing(MapDesignLibrary.AuthoredDialogue::speakerName, String.CASE_INSENSITIVE_ORDER)
-                .thenComparing(MapDesignLibrary.AuthoredDialogue::interactionId, String.CASE_INSENSITIVE_ORDER));
-        JList<MapDesignLibrary.AuthoredDialogue> dialogueList = new JList<>(
-                sortedDialogues.toArray(new MapDesignLibrary.AuthoredDialogue[0])
-        );
-        dialogueList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        dialogueList.setCellRenderer((list, value, index, isSelected, cellHasFocus) -> {
-            JLabel label = new JLabel(value.speakerName() + " [" + value.visualPath() + ", " + value.interactionId() + "]");
-            label.setOpaque(true);
-            label.setBackground(isSelected ? list.getSelectionBackground() : list.getBackground());
-            label.setForeground(isSelected ? list.getSelectionForeground() : list.getForeground());
-            return label;
-        });
-        dialogueList.setSelectedIndex(0);
-
-        JButton editButton = new JButton("Edit");
-        JButton deleteButton = new JButton("Delete");
-        JButton closeButton = new JButton("Close");
-        JOptionPane pane = new JOptionPane(
-                new JScrollPane(dialogueList),
-                JOptionPane.PLAIN_MESSAGE,
-                JOptionPane.DEFAULT_OPTION,
-                null,
-                new Object[]{editButton, deleteButton, closeButton},
-                closeButton
-        );
-        var dialog = pane.createDialog(this, "Manage Dialogue NPCs");
-
-        editButton.addActionListener(event -> {
-            MapDesignLibrary.AuthoredDialogue selected = dialogueList.getSelectedValue();
-            if (selected == null) {
-                return;
-            }
-
-            editAuthoredDialogue(selected);
-            dialog.dispose();
-        });
-        deleteButton.addActionListener(event -> {
-            MapDesignLibrary.AuthoredDialogue selected = dialogueList.getSelectedValue();
-            if (selected == null) {
-                return;
-            }
-
-            deleteAuthoredDialogue(selected);
-            dialog.dispose();
-        });
-        closeButton.addActionListener(event -> dialog.dispose());
-        dialog.setVisible(true);
     }
 
     private void editAuthoredDialogue(MapDesignLibrary.AuthoredDialogue selected) {
@@ -7293,13 +7202,44 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void createNewMap() {
+        if (!promptNewMapSettings()) {
+            return;
+        }
+
         undoStack.clear();
         redoStack.clear();
-        design = MapDesignLibrary.createBlank(
+        MapDesignLibrary.MapDesign blank = MapDesignLibrary.createBlank(
                 ((Number) widthSpinner.getValue()).intValue(),
                 ((Number) heightSpinner.getValue()).intValue(),
                 (ThemeLibrary) primaryThemeBox.getSelectedItem(),
-                (ThemeLibrary) alternateThemeBox.getSelectedItem()
+                (ThemeLibrary) primaryThemeBox.getSelectedItem()
+        );
+        design = new MapDesignLibrary.MapDesign(
+                blank.width(),
+                blank.height(),
+                mapTitle(),
+                blank.description(),
+                blank.musicPath(),
+                blank.skyboxPath(),
+                blank.primaryTheme(),
+                blank.primaryTheme(),
+                blank.tiles(),
+                blank.themeIndexes(),
+                blank.mapPaint(),
+                blank.mapGeometry(),
+                blank.placements(),
+                blank.authoredDialogues(),
+                blank.authoredQuests(),
+                blank.customItems(),
+                blank.customMobs(),
+                blank.customLimbs(),
+                blank.customNpcs(),
+                blank.customGatheringNodes(),
+                blank.customCookingRecipes(),
+                blank.customCompositeRecipes(),
+                blank.triggers(),
+                blank.spawnX(),
+                blank.spawnY()
         );
         loadSharedContentIntoDesign();
         syncEditorFromDesign();
@@ -7308,6 +7248,10 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void resizeCurrentMap() {
+        if (!promptResizeSettings()) {
+            return;
+        }
+
         int newWidth = ((Number) widthSpinner.getValue()).intValue();
         int newHeight = ((Number) heightSpinner.getValue()).intValue();
         if (newWidth == design.width() && newHeight == design.height()) {
@@ -7357,7 +7301,7 @@ public class AetherConstructionKit extends JFrame {
                 newWidth,
                 newHeight,
                 design.primaryTheme(),
-                design.alternateTheme()
+                design.primaryTheme()
         );
         int copyWidth = Math.min(design.width(), blank.width());
         int copyHeight = Math.min(design.height(), blank.height());
@@ -7400,10 +7344,18 @@ public class AetherConstructionKit extends JFrame {
                 blank.height(),
                 design.displayName(),
                 design.description(),
+                design.musicPath(),
+                design.skyboxPath(),
                 design.primaryTheme(),
-                design.alternateTheme(),
+                design.primaryTheme(),
                 blank.tiles(),
                 blank.themeIndexes(),
+                design.mapPaint() == null
+                        ? MapPaintData.blank(blank.width(), blank.height())
+                        : design.mapPaint().resized(blank.width(), blank.height()),
+                design.mapGeometry() == null
+                        ? MapGeometryData.blank(blank.width(), blank.height())
+                        : design.mapGeometry().resized(blank.width(), blank.height()),
                 placements,
                 design.authoredDialogues(),
                 design.authoredQuests(),
@@ -7421,6 +7373,82 @@ public class AetherConstructionKit extends JFrame {
         syncEditorFromDesign();
         markDirty(true);
         setStatus("Resized map to " + design.width() + "x" + design.height() + ".");
+    }
+
+    private boolean promptNewMapSettings() {
+        JTextField nameField = new JTextField(mapTitle(), 22);
+        JSpinner widthField = new JSpinner(new SpinnerNumberModel(
+                ((Number) widthSpinner.getValue()).intValue(),
+                MIN_DIMENSION,
+                MAX_DIMENSION,
+                1
+        ));
+        JSpinner heightField = new JSpinner(new SpinnerNumberModel(
+                ((Number) heightSpinner.getValue()).intValue(),
+                MIN_DIMENSION,
+                MAX_DIMENSION,
+                1
+        ));
+        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        fields.add(new JLabel("Name"));
+        fields.add(nameField);
+        fields.add(new JLabel("Width"));
+        fields.add(widthField);
+        fields.add(new JLabel("Height"));
+        fields.add(heightField);
+
+        int result = JOptionPane.showConfirmDialog(
+                this,
+                fields,
+                "New Map",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+        );
+        if (result != JOptionPane.OK_OPTION) {
+            return false;
+        }
+
+        mapNameField.setText(nameField.getText() == null || nameField.getText().isBlank()
+                ? "New Map"
+                : nameField.getText().trim());
+        widthSpinner.setValue(((Number) widthField.getValue()).intValue());
+        heightSpinner.setValue(((Number) heightField.getValue()).intValue());
+        return true;
+    }
+
+    private boolean promptResizeSettings() {
+        JSpinner widthField = new JSpinner(new SpinnerNumberModel(
+                design.width(),
+                MIN_DIMENSION,
+                MAX_DIMENSION,
+                1
+        ));
+        JSpinner heightField = new JSpinner(new SpinnerNumberModel(
+                design.height(),
+                MIN_DIMENSION,
+                MAX_DIMENSION,
+                1
+        ));
+        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        fields.add(new JLabel("Width"));
+        fields.add(widthField);
+        fields.add(new JLabel("Height"));
+        fields.add(heightField);
+
+        int result = JOptionPane.showConfirmDialog(
+                this,
+                fields,
+                "Resize Map",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+        );
+        if (result != JOptionPane.OK_OPTION) {
+            return false;
+        }
+
+        widthSpinner.setValue(((Number) widthField.getValue()).intValue());
+        heightSpinner.setValue(((Number) heightField.getValue()).intValue());
+        return true;
     }
 
     private boolean isInsideDimensions(int x, int y, int width, int height) {
@@ -7497,10 +7525,14 @@ public class AetherConstructionKit extends JFrame {
                 design.height(),
                 mapTitle(),
                 design.description(),
+                design.musicPath(),
+                design.skyboxPath(),
                 (ThemeLibrary) primaryThemeBox.getSelectedItem(),
-                (ThemeLibrary) alternateThemeBox.getSelectedItem(),
+                (ThemeLibrary) primaryThemeBox.getSelectedItem(),
                 design.tiles(),
                 design.themeIndexes(),
+                design.mapPaint(),
+                design.mapGeometry(),
                 design.placements(),
                 design.authoredDialogues(),
                 design.authoredQuests(),
@@ -7519,15 +7551,23 @@ public class AetherConstructionKit extends JFrame {
 
     private void editMetadata() {
         JTextField titleField = new JTextField(mapTitle(), 24);
+        JTextField musicField = new JTextField(design.musicPath(), 28);
+        JTextField skyboxField = new JTextField(design.skyboxPath(), 28);
+        JButton musicBrowseButton = new JButton("Browse");
+        JButton skyboxBrowseButton = new JButton("Browse");
         JTextArea descriptionArea = new JTextArea(design.description(), 6, 30);
         descriptionArea.setLineWrap(true);
         descriptionArea.setWrapStyleWord(true);
+        musicBrowseButton.addActionListener(event -> browsePathInto(musicField));
+        skyboxBrowseButton.addActionListener(event -> browsePathInto(skyboxField));
 
         JPanel panel = new JPanel(new BorderLayout(6, 6));
-        JPanel titlePanel = new JPanel(new BorderLayout(6, 6));
-        titlePanel.add(new JLabel("Title"), BorderLayout.WEST);
-        titlePanel.add(titleField, BorderLayout.CENTER);
-        panel.add(titlePanel, BorderLayout.NORTH);
+        JPanel fields = new JPanel();
+        fields.setLayout(new BoxLayout(fields, BoxLayout.Y_AXIS));
+        fields.add(formRow("Title", titleField));
+        fields.add(formRow("Chunk Ambience", pathFieldPanel(musicField, musicBrowseButton)));
+        fields.add(formRow("Skybox", pathFieldPanel(skyboxField, skyboxBrowseButton)));
+        panel.add(fields, BorderLayout.NORTH);
         panel.add(new JScrollPane(descriptionArea), BorderLayout.CENTER);
 
         int result = JOptionPane.showConfirmDialog(
@@ -7554,10 +7594,14 @@ public class AetherConstructionKit extends JFrame {
                 design.height(),
                 title,
                 descriptionArea.getText() == null ? "" : descriptionArea.getText().trim(),
+                musicField.getText() == null ? "" : musicField.getText().trim(),
+                skyboxField.getText() == null ? "" : skyboxField.getText().trim(),
                 design.primaryTheme(),
-                design.alternateTheme(),
+                design.primaryTheme(),
                 design.tiles(),
                 design.themeIndexes(),
+                design.mapPaint(),
+                design.mapGeometry(),
                 design.placements(),
                 design.authoredDialogues(),
                 design.authoredQuests(),
@@ -7866,7 +7910,7 @@ public class AetherConstructionKit extends JFrame {
             Graphics2D g = (Graphics2D) graphics.create();
             for (int y = 0; y < targetDesign.height(); y++) {
                 for (int x = 0; x < targetDesign.width(); x++) {
-                    int adjustment = targetDesign.themeIndexes()[y][x] == 1 ? 24 : 0;
+                    int adjustment = 0;
                     int drawX = PADDING + x * CELL_SIZE;
                     int drawY = PADDING + y * CELL_SIZE;
                     g.setColor(editorTileColor(targetDesign.tiles()[y][x], adjustment));
@@ -7975,16 +8019,82 @@ public class AetherConstructionKit extends JFrame {
             int cellSize = cellSize();
             Rectangle bounds = new Rectangle(x * cellSize, y * cellSize, cellSize, cellSize);
             Library.TileType tile = design.tiles()[y][x];
-            int themeIndex = design.themeIndexes()[y][x];
-            g.setColor(tileColor(tile, themeIndex));
+            g.setColor(tileColor(tile));
             g.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
             g.setColor(new Color(10, 10, 12, 120));
             g.drawRect(bounds.x, bounds.y, bounds.width, bounds.height);
 
-            if (themeIndex == 1) {
-                g.setColor(new Color(255, 238, 128, 160));
-                g.drawLine(bounds.x + 4, bounds.y + 4, bounds.x + bounds.width - 5, bounds.y + bounds.height - 5);
+            if (design.mapPaint() != null && design.mapPaint().hasBrush(x, y)) {
+                drawBrushIndicators(g, bounds, x, y);
             }
+            drawHeightIndicator(g, bounds, x, y);
+        }
+
+        private void drawHeightIndicator(Graphics2D g, Rectangle bounds, int x, int y) {
+            int heightLevel = design.mapGeometry() == null
+                    ? MapGeometryData.DEFAULT_HEIGHT_LEVEL
+                    : design.mapGeometry().getHeightLevel(x, y);
+            if (heightLevel == MapGeometryData.DEFAULT_HEIGHT_LEVEL) {
+                return;
+            }
+
+            String label = "H" + heightLevel;
+            FontMetrics metrics = g.getFontMetrics();
+            int padding = 3;
+            int labelWidth = metrics.stringWidth(label) + padding * 2;
+            int labelHeight = metrics.getHeight();
+            int labelX = bounds.x + bounds.width - labelWidth - 2;
+            int labelY = bounds.y + bounds.height - labelHeight - 2;
+            g.setColor(new Color(20, 24, 30, 205));
+            g.fillRect(labelX, labelY, labelWidth, labelHeight);
+            g.setColor(new Color(120, 215, 255));
+            g.drawRect(labelX, labelY, labelWidth, labelHeight);
+            g.drawString(label, labelX + padding, labelY + metrics.getAscent());
+        }
+
+        private void drawBrushIndicators(Graphics2D g, Rectangle bounds, int x, int y) {
+            int cellSize = bounds.width;
+            int badgeSize = Math.max(9, Math.min(16, cellSize / 3));
+            int offset = 2;
+            int index = 0;
+            for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
+                String brushId = design.mapPaint().get(layer, x, y);
+                if (brushId.isBlank()) {
+                    continue;
+                }
+
+                Color color = brushIndicatorColor(brushId, layer);
+                int badgeX = bounds.x + offset + index * (badgeSize + 2);
+                int badgeY = bounds.y + offset;
+                g.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 210));
+                g.fillRect(badgeX, badgeY, badgeSize, badgeSize);
+                g.setColor(new Color(10, 12, 14, 210));
+                g.drawRect(badgeX, badgeY, badgeSize, badgeSize);
+                g.setColor(Color.WHITE);
+                g.drawString(layer.name().substring(0, 1), badgeX + 3, badgeY + badgeSize - 3);
+                index++;
+
+                g.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 160));
+                switch (layer) {
+                    case FLOOR -> g.fillRect(bounds.x + 2, bounds.y + bounds.height - 5, bounds.width - 4, 3);
+                    case WALL -> g.fillRect(bounds.x + 2, bounds.y + 2, bounds.width - 4, 3);
+                    case DOOR -> g.fillRect(bounds.x + 2, bounds.y + 2, 3, bounds.height - 4);
+                    case ROOF -> g.fillRect(bounds.x + bounds.width - 5, bounds.y + 2, 3, bounds.height - 4);
+                }
+            }
+        }
+
+        private Color brushIndicatorColor(String brushId, MapPaintData.Layer layer) {
+            PaintBrushLibrary.PaintBrush brush = PaintBrushLibrary.find(brushId);
+            int seed = brush == null ? brushId.hashCode() : brush.paletteId().hashCode();
+            float hue = Math.floorMod(seed, 360) / 360.0f;
+            float saturation = switch (layer) {
+                case FLOOR -> 0.55f;
+                case WALL -> 0.70f;
+                case DOOR -> 0.85f;
+                case ROOF -> 0.45f;
+            };
+            return Color.getHSBColor(hue, saturation, 0.88f);
         }
 
         private void drawPlacements(Graphics2D g) {
@@ -8148,6 +8258,12 @@ public class AetherConstructionKit extends JFrame {
                 markDirty(true);
                 repaint();
             });
+            addMenuItem(menu, "Set Height Here", () -> {
+                captureHistory("set height");
+                setHeightLevel(x, y);
+                markDirty(true);
+                repaint();
+            });
             addMenuItem(menu, "Copy Coordinates", () -> {
                 Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(x + "," + y), null);
                 setStatus("Copied coordinates " + x + "," + y + ".");
@@ -8207,17 +8323,30 @@ public class AetherConstructionKit extends JFrame {
 
         private String tileInspectionText(int x, int y) {
             Library.TileType tile = design.tiles()[y][x];
-            int themeIndex = design.themeIndexes()[y][x];
-            String themeName = themeIndex == 1
-                    ? design.alternateTheme().getDisplayName()
-                    : design.primaryTheme().getDisplayName();
             StringBuilder builder = new StringBuilder();
             builder.append("Tile\n");
             builder.append(x).append(',').append(y).append("\n\n");
             builder.append("Type: ").append(tile).append('\n');
             builder.append("Blocks Movement: ").append(tile.blocksMovement()).append('\n');
-            builder.append("Theme Slot: ").append(themeIndex == 1 ? "Alternate" : "Primary").append('\n');
-            builder.append("Theme: ").append(themeName).append('\n');
+            builder.append("Height Level: ")
+                    .append(design.mapGeometry() == null
+                            ? MapGeometryData.DEFAULT_HEIGHT_LEVEL
+                            : design.mapGeometry().getHeightLevel(x, y))
+                    .append('\n');
+            builder.append("Default Theme: ").append(design.primaryTheme().getDisplayName()).append('\n');
+            if (design.mapPaint() != null && design.mapPaint().hasBrush(x, y)) {
+                builder.append('\n').append("Brush Overrides").append('\n');
+                for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
+                    String brushId = design.mapPaint().get(layer, x, y);
+                    if (brushId.isBlank()) {
+                        continue;
+                    }
+                    PaintBrushLibrary.PaintBrush brush = PaintBrushLibrary.find(brushId);
+                    builder.append(layer).append(": ")
+                            .append(brush == null ? brushId : brush.displayName())
+                            .append('\n');
+                }
+            }
             builder.append("Spawn: ").append(x == design.spawnX() && y == design.spawnY()).append('\n');
             return builder.toString();
         }
@@ -8257,8 +8386,12 @@ public class AetherConstructionKit extends JFrame {
 
         private boolean usesBrush(PaintMode mode) {
             return mode == PaintMode.TILE
-                    || mode == PaintMode.PRIMARY_THEME
-                    || mode == PaintMode.ALTERNATE_THEME
+                    || mode == PaintMode.FLOOR_BRUSH
+                    || mode == PaintMode.WALL_BRUSH
+                    || mode == PaintMode.DOOR_BRUSH
+                    || mode == PaintMode.ROOF_BRUSH
+                    || mode == PaintMode.CLEAR_BRUSH
+                    || mode == PaintMode.SET_HEIGHT
                     || mode == PaintMode.ERASE_OBJECT;
         }
 
@@ -8266,12 +8399,17 @@ public class AetherConstructionKit extends JFrame {
             switch (mode) {
                 case TILE -> {
                     design.tiles()[y][x] = (Library.TileType) tileTypeBox.getSelectedItem();
+                    design.themeIndexes()[y][x] = 0;
                     if (x == design.spawnX() && y == design.spawnY() && design.tiles()[y][x].blocksMovement()) {
                         setStatus("Spawn is now blocked; set a new spawn on a walkable tile.");
                     }
                 }
-                case PRIMARY_THEME -> design.themeIndexes()[y][x] = 0;
-                case ALTERNATE_THEME -> design.themeIndexes()[y][x] = 1;
+                case FLOOR_BRUSH -> applyBrush(MapPaintData.Layer.FLOOR, x, y);
+                case WALL_BRUSH -> applyBrush(MapPaintData.Layer.WALL, x, y);
+                case DOOR_BRUSH -> applyBrush(MapPaintData.Layer.DOOR, x, y);
+                case ROOF_BRUSH -> applyBrush(MapPaintData.Layer.ROOF, x, y);
+                case CLEAR_BRUSH -> clearBrushes(x, y);
+                case SET_HEIGHT -> setHeightLevel(x, y);
                 case PLACE_OBJECT -> placeObject(x, y);
                 case ERASE_OBJECT -> eraseObject(x, y);
                 case SET_SPAWN -> setSpawn(x, y);
@@ -8279,6 +8417,40 @@ public class AetherConstructionKit extends JFrame {
                 case WIRE_TRIGGER -> wireTriggerTarget(x, y);
                 case PLACE_PREFAB -> placePrefab(x, y);
             }
+        }
+
+        private void applyBrush(MapPaintData.Layer layer, int x, int y) {
+            PaintBrushLibrary.PaintBrush brush = (PaintBrushLibrary.PaintBrush) brushBox.getSelectedItem();
+            if (brush == null) {
+                setStatus("No brush selected.");
+                return;
+            }
+            if (brush.layer() != layer) {
+                populateBrushes();
+                brush = (PaintBrushLibrary.PaintBrush) brushBox.getSelectedItem();
+                if (brush == null || brush.layer() != layer) {
+                    setStatus("No " + layer.name().toLowerCase(Locale.ROOT) + " brush selected.");
+                    return;
+                }
+            }
+
+            design.mapPaint().set(layer, x, y, brush.id());
+            setStatus("Painted " + brush.displayName() + " at " + x + "," + y + ".");
+        }
+
+        private void clearBrushes(int x, int y) {
+            for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
+                design.mapPaint().set(layer, x, y, "");
+            }
+            setStatus("Cleared brush overrides at " + x + "," + y + ".");
+        }
+
+        private void setHeightLevel(int x, int y) {
+            int heightLevel = ((Number) heightLevelSpinner.getValue()).intValue();
+            if (design.mapGeometry() != null) {
+                design.mapGeometry().setHeightLevel(x, y, heightLevel);
+            }
+            setStatus("Set height level " + heightLevel + " at " + x + "," + y + ".");
         }
 
         private void setSpawn(int x, int y) {
@@ -8292,10 +8464,14 @@ public class AetherConstructionKit extends JFrame {
                     design.height(),
                     design.displayName(),
                     design.description(),
+                    design.musicPath(),
+                    design.skyboxPath(),
                     design.primaryTheme(),
-                    design.alternateTheme(),
+                    design.primaryTheme(),
                     design.tiles(),
                     design.themeIndexes(),
+                    design.mapPaint(),
+                    design.mapGeometry(),
                     design.placements(),
                     design.authoredDialogues(),
                     design.authoredQuests(),
@@ -8338,9 +8514,19 @@ public class AetherConstructionKit extends JFrame {
 
             for (int prefabY = 0; prefabY < prefab.height(); prefabY++) {
                 for (int prefabX = 0; prefabX < prefab.width(); prefabX++) {
-                    design.tiles()[y + prefabY][x + prefabX] = prefab.tiles()[prefabY][prefabX];
-                    design.themeIndexes()[y + prefabY][x + prefabX] = prefab.themes()[prefabY][prefabX];
-                    eraseObject(x + prefabX, y + prefabY);
+                    int worldX = x + prefabX;
+                    int worldY = y + prefabY;
+                    design.tiles()[worldY][worldX] = prefab.tiles()[prefabY][prefabX];
+                    design.themeIndexes()[worldY][worldX] = 0;
+                    if (design.mapGeometry() != null) {
+                        design.mapGeometry().setHeightLevel(worldX, worldY, prefab.geometryData().getHeightLevel(prefabX, prefabY));
+                    }
+                    if (design.mapPaint() != null) {
+                        for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
+                            design.mapPaint().set(layer, worldX, worldY, prefab.paintData().get(layer, prefabX, prefabY));
+                        }
+                    }
+                    eraseObject(worldX, worldY);
                 }
             }
             for (MapDesignLibrary.MapPlacement placement : prefab.placements()) {
@@ -8504,8 +8690,8 @@ public class AetherConstructionKit extends JFrame {
             setStatus("Wired " + trigger.id() + " to close door at " + x + "," + y + ".");
         }
 
-        private Color tileColor(Library.TileType tile, int themeIndex) {
-            int adjustment = themeIndex == 1 ? 24 : 0;
+        private Color tileColor(Library.TileType tile) {
+            int adjustment = 0;
             return switch (tile) {
                 case FLOOR -> editorTileColor(tile, adjustment);
                 case WALL -> editorTileColor(tile, adjustment);
@@ -8534,602 +8720,4 @@ public class AetherConstructionKit extends JFrame {
         }
     }
 
-    private enum PlaceableCategory {
-        ITEMS("Items"),
-        ENEMIES("Enemies"),
-        NPCS("NPCs"),
-        DIALOGUE_NPCS("Dialogue NPCs"),
-        GATHERING_NODES("Gathering Nodes"),
-        CRAFTING_NODES("Crafting Nodes"),
-        INTERACTIONS("Interactions"),
-        MAP_LINKS("Map Links");
-
-        private final String label;
-
-        PlaceableCategory(String label) {
-            this.label = label;
-        }
-
-        private boolean includes(PlaceableOption option) {
-            if (option == null || option.kind() == null) {
-                return false;
-            }
-
-            return switch (this) {
-                case ITEMS -> option.kind() == MapDesignLibrary.PlacementKind.ITEM;
-                case ENEMIES -> option.kind() == MapDesignLibrary.PlacementKind.ENEMY;
-                case NPCS -> option.kind() == MapDesignLibrary.PlacementKind.GENERIC_NPC
-                        || option.kind() == MapDesignLibrary.PlacementKind.MAIN_NPC
-                        || option.kind() == MapDesignLibrary.PlacementKind.CUSTOM_NPC;
-                case DIALOGUE_NPCS -> option.kind() == MapDesignLibrary.PlacementKind.AUTHORED_DIALOGUE_NPC;
-                case GATHERING_NODES -> option.kind() == MapDesignLibrary.PlacementKind.GATHERING_NODE;
-                case CRAFTING_NODES -> option.kind() == MapDesignLibrary.PlacementKind.CRAFTING_NODE;
-                case INTERACTIONS -> option.kind() == MapDesignLibrary.PlacementKind.INTERACTION
-                        && !option.id().startsWith("map_link|");
-                case MAP_LINKS -> option.kind() == MapDesignLibrary.PlacementKind.INTERACTION
-                        && option.id().startsWith("map_link|");
-            };
-        }
-
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
-
-    private record PlaceableOption(String label, MapDesignLibrary.PlacementKind kind, String id) {
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
-
-    private enum ContentCategory {
-        ALL("All"),
-        ITEMS("Items"),
-        ENEMIES("Enemies"),
-        NPCS("NPCs"),
-        LIMBS("Limbs"),
-        GATHERING("Gathering"),
-        COOKING("Cooking"),
-        COMPOSITES("Composite Recipes"),
-        QUESTS("Quests"),
-        DIALOGUES("Dialogues"),
-        TRIGGERS("Triggers"),
-        PLACEMENTS("Placements"),
-        DIAGNOSTICS("Diagnostics");
-
-        private final String label;
-
-        ContentCategory(String label) {
-            this.label = label;
-        }
-
-        private String label() {
-            return label;
-        }
-
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
-
-    private record ContentEntry(ContentCategory category, String label, String id, String type, Object value) {
-        private ContentEntry {
-            label = label == null || label.isBlank() ? id : label;
-            id = id == null ? "" : id;
-            type = type == null ? "" : type;
-        }
-
-        private String key() {
-            return category.name() + "|" + type + "|" + id + "|" + System.identityHashCode(value);
-        }
-
-        private String searchText() {
-            return (category.label() + " " + label + " " + id + " " + type)
-                    .toLowerCase(java.util.Locale.ROOT);
-        }
-
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
-
-    private enum AssetBrowserType {
-        ALL("All"),
-        IMAGES("Images"),
-        SOUNDS("Sounds"),
-        DATA("Data"),
-        OTHER("Other");
-
-        private final String label;
-
-        AssetBrowserType(String label) {
-            this.label = label;
-        }
-
-        private String label() {
-            return label;
-        }
-
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
-
-    private record AssetBrowserEntry(String assetPath, AssetBrowserType type, Path sourcePath) {
-        private String searchText() {
-            return (assetPath + " " + type.label()).toLowerCase(Locale.ROOT);
-        }
-
-        @Override
-        public String toString() {
-            return type.label() + ": " + assetPath;
-        }
-    }
-
-    private record FollowUpInteractionOption(String label, String interactionId) {
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
-
-    private record StatTargetOption(String label, PlayerStat stat) {
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
-
-    private record QuestActionOption(String label, String questId) {
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
-
-    private record DialogueOption(String label, String interactionId) {
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
-
-    private record AuthoredDialogueDraft(
-            String speakerName,
-            String bodyText,
-            String followUpInteractionId,
-            String visualPath,
-            String questId,
-            int questStage,
-            List<MapDesignLibrary.AuthoredDialogueChoice> choices,
-            List<MapDesignLibrary.AuthoredDialogueNode> nodes
-    ) {
-    }
-
-    private record DialogueTreeDraft(
-            List<MapDesignLibrary.AuthoredDialogueChoice> choices,
-            List<MapDesignLibrary.AuthoredDialogueNode> nodes
-    ) {
-    }
-
-    private record PendingChoice(
-            String label,
-            String destination,
-            String questId,
-            int questStage,
-            String requiredItemName,
-            String takeItemName,
-            String giveItemName,
-            int giveGold,
-            CharacterSkill giveSkill,
-            int giveSkillXp,
-            boolean firstTalkOnly
-    ) {
-    }
-
-    private record SkillXpTag(CharacterSkill skill, int amount) {
-    }
-
-    private record PendingNode(String nodeId, List<String> bodyLines, List<PendingChoice> choices) {
-        private PendingNode(String nodeId) {
-            this(nodeId, new ArrayList<>(), new ArrayList<>());
-        }
-    }
-
-    private record AuthoredQuestDraft(String displayName, List<String> stageDescriptions) {
-    }
-
-    private record MapPrefab(
-            String name,
-            int width,
-            int height,
-            Library.TileType[][] tiles,
-            int[][] themes,
-            List<MapDesignLibrary.MapPlacement> placements,
-            List<MapDesignLibrary.MapTrigger> triggers
-    ) {
-        private MapPrefab {
-            name = name == null || name.isBlank() ? "Prefab" : name;
-            width = Math.max(1, width);
-            height = Math.max(1, height);
-            placements = placements == null ? List.of() : List.copyOf(placements);
-            triggers = triggers == null ? List.of() : List.copyOf(triggers);
-        }
-
-        @Override
-        public String toString() {
-            return name + " (" + width + "x" + height + ")";
-        }
-    }
-
-    private record ContentGraph(String selectedLabel, List<String> dependencies, List<String> references) {
-        private ContentGraph {
-            selectedLabel = selectedLabel == null || selectedLabel.isBlank() ? "Selected Content" : selectedLabel;
-            dependencies = dependencies == null ? List.of() : List.copyOf(dependencies);
-            references = references == null ? List.of() : List.copyOf(references);
-        }
-    }
-
-    private record DialogueTerminal(String sourceId, int choiceIndex, String label) {
-    }
-
-    private static final class DialogueGraphPanel extends JPanel {
-        private static final int NODE_WIDTH = 210;
-        private static final int NODE_HEIGHT = 58;
-        private static final int TERMINAL_WIDTH = 230;
-        private static final int H_GAP = 96;
-        private static final int V_GAP = 26;
-        private static final int PADDING = 30;
-
-        private final MapDesignLibrary.AuthoredDialogue dialogue;
-        private final List<DialogueTerminal> terminals;
-
-        private DialogueGraphPanel(MapDesignLibrary.AuthoredDialogue dialogue) {
-            this.dialogue = dialogue;
-            this.terminals = collectTerminals(dialogue);
-            setBackground(new Color(24, 26, 32));
-            int rows = Math.max(2, Math.max(dialogue.nodes().size() + 1, terminals.size() + 1));
-            int width = PADDING * 2 + NODE_WIDTH * 2 + TERMINAL_WIDTH + H_GAP * 2;
-            int height = PADDING * 2 + rows * (NODE_HEIGHT + V_GAP) + 72;
-            setPreferredSize(new Dimension(width, Math.max(430, height)));
-        }
-
-        private static List<DialogueTerminal> collectTerminals(MapDesignLibrary.AuthoredDialogue dialogue) {
-            List<DialogueTerminal> result = new ArrayList<>();
-            collectTerminalsForSource(result, "start", dialogue.choices());
-            for (MapDesignLibrary.AuthoredDialogueNode node : dialogue.nodes()) {
-                collectTerminalsForSource(result, node.nodeId(), node.choices());
-            }
-            return result;
-        }
-
-        private static void collectTerminalsForSource(
-                List<DialogueTerminal> result,
-                String sourceId,
-                List<MapDesignLibrary.AuthoredDialogueChoice> choices
-        ) {
-            for (int i = 0; i < choices.size(); i++) {
-                MapDesignLibrary.AuthoredDialogueChoice choice = choices.get(i);
-                if (choice.targetNodeId().isBlank()) {
-                    String label = choice.bodyText().isBlank() ? "Terminal response" : choice.bodyText();
-                    result.add(new DialogueTerminal(sourceId, i, label));
-                }
-            }
-        }
-
-        @Override
-        protected void paintComponent(Graphics graphics) {
-            super.paintComponent(graphics);
-            Graphics2D g = (Graphics2D) graphics.create();
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-            Rectangle startRect = new Rectangle(PADDING, PADDING + 76, NODE_WIDTH, NODE_HEIGHT);
-            Map<String, Rectangle> nodeRects = layoutDialogueNodes();
-            Map<DialogueTerminal, Rectangle> terminalRects = layoutTerminals();
-
-            drawTitle(g);
-            drawEdges(g, "start", startRect, dialogue.choices(), nodeRects, terminalRects);
-            for (MapDesignLibrary.AuthoredDialogueNode node : dialogue.nodes()) {
-                Rectangle source = nodeRects.get(node.nodeId());
-                if (source != null) {
-                    drawEdges(g, node.nodeId(), source, node.choices(), nodeRects, terminalRects);
-                }
-            }
-
-            drawNode(g, startRect, "start: " + dialogue.speakerName(), dialogue.bodyText(), new Color(58, 110, 178));
-            for (MapDesignLibrary.AuthoredDialogueNode node : dialogue.nodes()) {
-                Rectangle bounds = nodeRects.get(node.nodeId());
-                if (bounds != null) {
-                    drawNode(g, bounds, "::" + node.nodeId(), node.bodyText(), new Color(60, 78, 96));
-                }
-            }
-            for (Map.Entry<DialogueTerminal, Rectangle> entry : terminalRects.entrySet()) {
-                drawNode(g, entry.getValue(), "response", entry.getKey().label(), new Color(72, 62, 76));
-            }
-
-            g.dispose();
-        }
-
-        private void drawTitle(Graphics2D g) {
-            g.setColor(new Color(230, 234, 242));
-            g.drawString("Dialogue Flow: " + dialogue.interactionId(), PADDING, PADDING);
-            g.setColor(new Color(166, 176, 192));
-            g.drawString("Choice arrows show quest/item tags. Edit button below opens the dialogue authoring form.", PADDING, PADDING + 20);
-        }
-
-        private Map<String, Rectangle> layoutDialogueNodes() {
-            Map<String, Rectangle> nodeRects = new java.util.LinkedHashMap<>();
-            int x = PADDING + NODE_WIDTH + H_GAP;
-            int y = PADDING + 50;
-            for (int i = 0; i < dialogue.nodes().size(); i++) {
-                MapDesignLibrary.AuthoredDialogueNode node = dialogue.nodes().get(i);
-                nodeRects.put(node.nodeId(), new Rectangle(x, y + i * (NODE_HEIGHT + V_GAP), NODE_WIDTH, NODE_HEIGHT));
-            }
-            return nodeRects;
-        }
-
-        private Map<DialogueTerminal, Rectangle> layoutTerminals() {
-            Map<DialogueTerminal, Rectangle> terminalRects = new java.util.LinkedHashMap<>();
-            int x = PADDING + NODE_WIDTH * 2 + H_GAP * 2;
-            int y = PADDING + 50;
-            for (int i = 0; i < terminals.size(); i++) {
-                DialogueTerminal terminal = terminals.get(i);
-                terminalRects.put(terminal, new Rectangle(x, y + i * (NODE_HEIGHT + V_GAP), TERMINAL_WIDTH, NODE_HEIGHT));
-            }
-            return terminalRects;
-        }
-
-        private void drawEdges(
-                Graphics2D g,
-                String sourceId,
-                Rectangle source,
-                List<MapDesignLibrary.AuthoredDialogueChoice> choices,
-                Map<String, Rectangle> nodeRects,
-                Map<DialogueTerminal, Rectangle> terminalRects
-        ) {
-            for (int i = 0; i < choices.size(); i++) {
-                MapDesignLibrary.AuthoredDialogueChoice choice = choices.get(i);
-                Rectangle target = choice.targetNodeId().isBlank()
-                        ? findTerminalRect(terminalRects, sourceId, i)
-                        : nodeRects.get(choice.targetNodeId());
-                if (target == null) {
-                    continue;
-                }
-                drawConnector(g, source, target, shortChoiceLabel(choice));
-            }
-        }
-
-        private Rectangle findTerminalRect(Map<DialogueTerminal, Rectangle> terminalRects, String sourceId, int choiceIndex) {
-            for (Map.Entry<DialogueTerminal, Rectangle> entry : terminalRects.entrySet()) {
-                DialogueTerminal terminal = entry.getKey();
-                if (terminal.sourceId().equals(sourceId) && terminal.choiceIndex() == choiceIndex) {
-                    return entry.getValue();
-                }
-            }
-            return null;
-        }
-
-        private void drawConnector(Graphics2D g, Rectangle source, Rectangle target, String label) {
-            int startX = source.x + source.width;
-            int startY = source.y + source.height / 2;
-            int endX = target.x;
-            int endY = target.y + target.height / 2;
-            int midX = (startX + endX) / 2;
-
-            g.setColor(new Color(124, 138, 160));
-            g.setStroke(new BasicStroke(1.4f));
-            g.drawLine(startX, startY, midX, startY);
-            g.drawLine(midX, startY, midX, endY);
-            g.drawLine(midX, endY, endX, endY);
-            g.drawLine(endX, endY, endX - 8, endY - 5);
-            g.drawLine(endX, endY, endX - 8, endY + 5);
-
-            g.setColor(new Color(220, 224, 232));
-            g.drawString(label, Math.min(startX + 8, midX - 4), Math.min(startY, endY) - 6);
-        }
-
-        private String shortChoiceLabel(MapDesignLibrary.AuthoredDialogueChoice choice) {
-            List<String> tags = new ArrayList<>();
-            if (!choice.requiredItemName().isBlank()) {
-                tags.add("has");
-            }
-            if (!choice.takeItemName().isBlank()) {
-                tags.add("take");
-            }
-            if (!choice.giveItemName().isBlank()) {
-                tags.add("give");
-            }
-            if (!choice.questId().isBlank()) {
-                tags.add("q" + choice.questStage());
-            }
-            String label = choice.label();
-            if (!tags.isEmpty()) {
-                label += " [" + String.join("/", tags) + "]";
-            }
-            return truncate(label, 34);
-        }
-
-        private void drawNode(Graphics2D g, Rectangle bounds, String title, String body, Color fill) {
-            g.setColor(fill);
-            g.fillRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 8, 8);
-            g.setColor(new Color(180, 188, 202));
-            g.drawRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 8, 8);
-            g.setColor(Color.WHITE);
-            g.drawString(truncate(title, 26), bounds.x + 8, bounds.y + 17);
-            g.setColor(new Color(226, 230, 238));
-            drawWrappedText(g, body, new Rectangle(bounds.x + 8, bounds.y + 24, bounds.width - 16, bounds.height - 28));
-        }
-
-        private void drawWrappedText(Graphics2D g, String text, Rectangle bounds) {
-            FontMetrics metrics = g.getFontMetrics();
-            List<String> lines = wrapText(text == null ? "" : text.replace('\n', ' '), metrics, bounds.width);
-            int y = bounds.y + metrics.getAscent();
-            for (String line : lines.stream().limit(2).toList()) {
-                g.drawString(line, bounds.x, y);
-                y += metrics.getHeight();
-            }
-        }
-
-        private List<String> wrapText(String text, FontMetrics metrics, int maxWidth) {
-            List<String> lines = new ArrayList<>();
-            StringBuilder line = new StringBuilder();
-            for (String word : text.split("\\s+")) {
-                String candidate = line.isEmpty() ? word : line + " " + word;
-                if (metrics.stringWidth(candidate) <= maxWidth || line.isEmpty()) {
-                    line = new StringBuilder(candidate);
-                } else {
-                    lines.add(line.toString());
-                    line = new StringBuilder(word);
-                }
-            }
-            if (!line.isEmpty()) {
-                lines.add(line.toString());
-            }
-            return lines.isEmpty() ? List.of("") : lines;
-        }
-
-        private String truncate(String value, int maxLength) {
-            String safe = value == null ? "" : value.replace('\n', ' ').trim();
-            if (safe.length() <= maxLength) {
-                return safe;
-            }
-            return safe.substring(0, Math.max(0, maxLength - 3)) + "...";
-        }
-    }
-
-    private static final class ContentGraphPanel extends JPanel {
-        private static final int NODE_WIDTH = 210;
-        private static final int NODE_HEIGHT = 42;
-        private static final int H_GAP = 90;
-        private static final int V_GAP = 18;
-        private static final int PADDING = 28;
-
-        private final ContentGraph graph;
-
-        private ContentGraphPanel(ContentGraph graph) {
-            this.graph = graph;
-            setBackground(new Color(24, 26, 32));
-            int rows = Math.max(1, Math.max(graph.dependencies().size(), graph.references().size()));
-            int width = PADDING * 2 + NODE_WIDTH * 3 + H_GAP * 2;
-            int height = PADDING * 2 + rows * (NODE_HEIGHT + V_GAP) + 80;
-            setPreferredSize(new Dimension(width, Math.max(360, height)));
-        }
-
-        @Override
-        protected void paintComponent(Graphics graphics) {
-            super.paintComponent(graphics);
-            Graphics2D g = (Graphics2D) graphics.create();
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-            int centerX = getWidth() / 2 - NODE_WIDTH / 2;
-            int centerY = Math.max(PADDING + 48, getHeight() / 2 - NODE_HEIGHT / 2);
-            Rectangle selected = new Rectangle(centerX, centerY, NODE_WIDTH, NODE_HEIGHT);
-
-            drawColumn(g, "Used By", graph.references(), PADDING, selected, true);
-            drawColumn(g, "Uses", graph.dependencies(), getWidth() - PADDING - NODE_WIDTH, selected, false);
-            drawNode(g, selected, graph.selectedLabel(), new Color(60, 112, 184), Color.WHITE);
-
-            g.dispose();
-        }
-
-        private void drawColumn(Graphics2D g, String title, List<String> values, int x, Rectangle selected, boolean incoming) {
-            g.setColor(new Color(220, 224, 232));
-            g.drawString(title, x, PADDING);
-            if (values.isEmpty()) {
-                Rectangle none = new Rectangle(x, PADDING + 20, NODE_WIDTH, NODE_HEIGHT);
-                drawNode(g, none, "None", new Color(58, 58, 66), new Color(220, 224, 232));
-                drawConnector(g, none, selected, incoming);
-                return;
-            }
-
-            int totalHeight = values.size() * NODE_HEIGHT + (values.size() - 1) * V_GAP;
-            int startY = Math.max(PADDING + 24, selected.y + selected.height / 2 - totalHeight / 2);
-            for (int i = 0; i < values.size(); i++) {
-                Rectangle node = new Rectangle(x, startY + i * (NODE_HEIGHT + V_GAP), NODE_WIDTH, NODE_HEIGHT);
-                drawNode(g, node, values.get(i), new Color(54, 62, 74), new Color(235, 238, 245));
-                drawConnector(g, node, selected, incoming);
-            }
-        }
-
-        private void drawConnector(Graphics2D g, Rectangle sideNode, Rectangle selected, boolean incoming) {
-            int sideX = incoming ? sideNode.x + sideNode.width : sideNode.x;
-            int selectedX = incoming ? selected.x : selected.x + selected.width;
-            int sideY = sideNode.y + sideNode.height / 2;
-            int selectedY = selected.y + selected.height / 2;
-            g.setColor(new Color(132, 146, 166));
-            g.drawLine(sideX, sideY, selectedX, selectedY);
-            int arrowX = incoming ? selectedX : sideX;
-            int arrowY = incoming ? selectedY : sideY;
-            int direction = incoming ? -1 : 1;
-            g.drawLine(arrowX, arrowY, arrowX + direction * 8, arrowY - 5);
-            g.drawLine(arrowX, arrowY, arrowX + direction * 8, arrowY + 5);
-        }
-
-        private void drawNode(Graphics2D g, Rectangle bounds, String label, Color fill, Color textColor) {
-            g.setColor(fill);
-            g.fillRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 8, 8);
-            g.setColor(new Color(180, 188, 202));
-            g.drawRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 8, 8);
-            g.setColor(textColor);
-            drawWrappedNodeText(g, label, bounds);
-        }
-
-        private void drawWrappedNodeText(Graphics2D g, String text, Rectangle bounds) {
-            FontMetrics metrics = g.getFontMetrics();
-            String safeText = text == null ? "" : text;
-            List<String> lines = wrapText(safeText, metrics, bounds.width - 12);
-            int lineHeight = metrics.getHeight();
-            int y = bounds.y + Math.max(metrics.getAscent() + 4, (bounds.height - lines.size() * lineHeight) / 2 + metrics.getAscent());
-            for (String line : lines.stream().limit(2).toList()) {
-                g.drawString(line, bounds.x + 6, y);
-                y += lineHeight;
-            }
-        }
-
-        private List<String> wrapText(String text, FontMetrics metrics, int maxWidth) {
-            List<String> lines = new ArrayList<>();
-            StringBuilder line = new StringBuilder();
-            for (String word : text.split("\\s+")) {
-                String candidate = line.isEmpty() ? word : line + " " + word;
-                if (metrics.stringWidth(candidate) <= maxWidth || line.isEmpty()) {
-                    line = new StringBuilder(candidate);
-                } else {
-                    lines.add(line.toString());
-                    line = new StringBuilder(word);
-                }
-            }
-            if (!line.isEmpty()) {
-                lines.add(line.toString());
-            }
-            return lines.isEmpty() ? List.of("") : lines;
-        }
-    }
-
-    private enum PaintMode {
-        TILE("Tile"),
-        PRIMARY_THEME("Primary Theme"),
-        ALTERNATE_THEME("Alt Theme"),
-        PLACE_OBJECT("Place Object"),
-        ERASE_OBJECT("Erase Object"),
-        SET_SPAWN("Set Spawn"),
-        PLACE_TRIGGER("Place Trigger"),
-        WIRE_TRIGGER("Wire Trigger"),
-        PLACE_PREFAB("Place Prefab");
-
-        private final String label;
-
-        PaintMode(String label) {
-            this.label = label;
-        }
-
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
 }

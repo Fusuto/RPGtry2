@@ -45,6 +45,7 @@ public final class AetherGameRuntime {
             environment
     );
     private boolean gameOverMusicStarted = false;
+    private String lastChunkAmbienceKey = "";
 
     public AetherGameRuntime() {
         battleRenderer.setAssets(BattleAssets.loadDefault());
@@ -101,7 +102,7 @@ public final class AetherGameRuntime {
         gameState.setGameMode(GameState.GameMode.DUNGEON);
         gameOverMusicStarted = false;
         soundSystem.stopAll();
-        soundSystem.playAmbience(environment.getAmbienceSoundPath());
+        playActiveChunkAmbience();
     }
 
     public void loadInitialTestMap() {
@@ -162,7 +163,7 @@ public final class AetherGameRuntime {
         gameState.setGameMode(GameState.GameMode.DUNGEON);
         gameOverMusicStarted = false;
         soundSystem.stopAll();
-        soundSystem.playAmbience(environment.getAmbienceSoundPath());
+        playActiveChunkAmbience();
         return mapDesign;
     }
 
@@ -170,9 +171,8 @@ public final class AetherGameRuntime {
         SaveSystem.load(gameState);
         gameOverMusicStarted = false;
         soundSystem.stopAll();
-        if (gameState.isDungeonMode()) {
-            soundSystem.playAmbience(environment.getAmbienceSoundPath());
-        }
+        lastChunkAmbienceKey = "";
+        refreshChunkAmbienceIfNeeded();
     }
 
     public void saveGame() throws IOException {
@@ -199,6 +199,7 @@ public final class AetherGameRuntime {
         gameState.updateCooking(deltaMs);
         gameState.updateSmelting(deltaMs);
         battleController.update(deltaMs);
+        refreshChunkAmbienceIfNeeded();
 
         for (MapEntity entity : gameState.getEntities()) {
             entity.update(deltaMs);
@@ -219,6 +220,51 @@ public final class AetherGameRuntime {
                 gameState.getCameraOffsetSide(),
                 gameState.getCameraRotationRadians()
         );
+    }
+
+    public String activeChunkAmbiencePath() {
+        MapDesignLibrary.MapDesign mapDesign = activeMapDesign();
+        if (mapDesign != null && !mapDesign.musicPath().isBlank()) {
+            return mapDesign.musicPath();
+        }
+        return environment.getAmbienceSoundPath();
+    }
+
+    public String activeSkyboxPath() {
+        MapDesignLibrary.MapDesign mapDesign = activeMapDesign();
+        return mapDesign == null ? "" : mapDesign.skyboxPath();
+    }
+
+    private MapDesignLibrary.MapDesign activeMapDesign() {
+        Path mapDesignPath = gameState.getCurrentMapDesignPath();
+        if (mapDesignPath == null) {
+            return null;
+        }
+
+        try {
+            return MapDesignLibrary.load(mapDesignPath);
+        } catch (IOException exception) {
+            return null;
+        }
+    }
+
+    private void refreshChunkAmbienceIfNeeded() {
+        if (!gameState.isDungeonMode()) {
+            return;
+        }
+
+        String ambiencePath = activeChunkAmbiencePath();
+        String key = gameState.getCurrentMapDesignPath() + "|" + ambiencePath;
+        if (key.equals(lastChunkAmbienceKey)) {
+            return;
+        }
+
+        lastChunkAmbienceKey = key;
+        playActiveChunkAmbience();
+    }
+
+    private void playActiveChunkAmbience() {
+        soundSystem.playAmbience(activeChunkAmbiencePath());
     }
 
     private Path findTutorialMapPath() throws IOException {

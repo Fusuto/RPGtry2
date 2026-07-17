@@ -9,6 +9,8 @@ import org.main.content.QuestLibrary;
 import org.main.content.RecipeLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
+import org.main.engine.MapGeometryData;
+import org.main.engine.MapPaintData;
 
 import java.awt.Point;
 import java.io.IOException;
@@ -2511,7 +2513,13 @@ public class GameState {
                 themes[y][x] = source.getEnvironmentThemeIndex(x, y);
             }
         }
-        return new DungeonMap(tiles, themes);
+        MapPaintData paintData = source.getPaintData() == null
+                ? MapPaintData.blank(source.getWidth(), source.getHeight())
+                : source.getPaintData().copy();
+        MapGeometryData geometryData = source.getGeometryData() == null
+                ? MapGeometryData.blank(source.getWidth(), source.getHeight())
+                : source.getGeometryData().copy();
+        return new DungeonMap(tiles, themes, paintData, geometryData);
     }
 
     private Map<String, ResourceNodeSnapshot> copyResourceNodeSnapshots() {

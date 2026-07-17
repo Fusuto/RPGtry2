@@ -11,6 +11,10 @@ target/
 /data/
 *.af~lock~
 
+# Generated editor/audio artifacts should not be packaged as source/resources.
+/src/main/resources/assets/editor/content/backups/
+/src/main/java/org/main/sounds/
+
 ### IntelliJ IDEA ###
 .idea/modules.xml
 .idea/jarRepositories.xml

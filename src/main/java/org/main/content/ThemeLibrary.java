@@ -19,6 +19,24 @@ public enum ThemeLibrary {
                     EnvironmentTheme.texture("door", "metal", "gate", "lock"),
                     EnvironmentTheme.texture("floor", "tiles", "sand", "small")
             )
+    ),
+
+    OUTDOOR_HOUSE_GRASS(
+            "Outdoor House Grass",
+            EnvironmentTheme.of(
+                    EnvironmentTheme.texture("wall", "timber", "structure", "horizontal"),
+                    EnvironmentTheme.texture("door", "wood", "handle", "center"),
+                    EnvironmentTheme.texture("floor", "ground", "nature", "grass")
+            )
+    ),
+
+    OUTDOOR_HOUSE_DIRT(
+            "Outdoor House Dirt",
+            EnvironmentTheme.of(
+                    EnvironmentTheme.texture("wall", "timber", "structure", "cross"),
+                    EnvironmentTheme.texture("door", "wood", "handle", "center"),
+                    EnvironmentTheme.texture("floor", "ground", "nature", "dirt")
+            )
     );
 
     private final String displayName;

@@ -5,6 +5,8 @@ import org.main.content.MapDesignLibrary;
 import org.main.content.PlayerRegionLibrary;
 import org.main.content.RecipeLibrary;
 import org.main.engine.DungeonMap;
+import org.main.engine.MapGeometryData;
+import org.main.engine.MapPaintData;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -228,6 +230,8 @@ public final class SaveSystem {
             properties.setProperty(prefix + "tiles." + y, tileRow.toString());
             properties.setProperty(prefix + "themes." + y, themeRow.toString());
         }
+        saveMapPaint(properties, prefix + "paint.", dungeonMap.getPaintData());
+        saveMapGeometry(properties, prefix + "geometry.", dungeonMap.getGeometryData());
     }
 
     private static DungeonMap loadDungeonMap(Properties properties) {
@@ -255,7 +259,88 @@ public final class SaveSystem {
             }
         }
 
-        return new DungeonMap(tiles, themes);
+        return new DungeonMap(
+                tiles,
+                themes,
+                loadMapPaint(properties, prefix + "paint.", width, height),
+                loadMapGeometry(properties, prefix + "geometry.", width, height)
+        );
+    }
+
+    private static void saveMapPaint(Properties properties, String prefix, MapPaintData paintData) {
+        if (paintData == null) {
+            paintData = MapPaintData.blank(1, 1);
+        }
+
+        for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
+            String layerPrefix = prefix + layer.name().toLowerCase(java.util.Locale.ROOT) + ".";
+            String[][] rows = paintData.copyLayer(layer);
+            for (int y = 0; y < rows.length; y++) {
+                properties.setProperty(layerPrefix + y, joinPaintRow(rows[y]));
+            }
+        }
+    }
+
+    private static MapPaintData loadMapPaint(Properties properties, String prefix, int width, int height) {
+        return MapPaintData.of(
+                width,
+                height,
+                loadPaintLayer(properties, prefix + "floor.", width, height),
+                loadPaintLayer(properties, prefix + "wall.", width, height),
+                loadPaintLayer(properties, prefix + "door.", width, height),
+                loadPaintLayer(properties, prefix + "roof.", width, height)
+        );
+    }
+
+    private static String[][] loadPaintLayer(Properties properties, String prefix, int width, int height) {
+        String[][] layer = new String[Math.max(1, height)][Math.max(1, width)];
+        for (int y = 0; y < height; y++) {
+            String[] values = properties.getProperty(prefix + y, "").split(",", -1);
+            for (int x = 0; x < width; x++) {
+                layer[y][x] = x < values.length ? values[x].trim() : "";
+            }
+        }
+        return layer;
+    }
+
+    private static void saveMapGeometry(Properties properties, String prefix, MapGeometryData geometryData) {
+        if (geometryData == null) {
+            geometryData = MapGeometryData.blank(1, 1);
+        }
+
+        int[][] rows = geometryData.copyHeightLevels();
+        for (int y = 0; y < rows.length; y++) {
+            List<String> values = new ArrayList<>();
+            for (int value : rows[y]) {
+                values.add(String.valueOf(MapGeometryData.clampHeightLevel(value)));
+            }
+            properties.setProperty(prefix + "height." + y, String.join(",", values));
+        }
+    }
+
+    private static MapGeometryData loadMapGeometry(Properties properties, String prefix, int width, int height) {
+        int[][] heightLevels = new int[Math.max(1, height)][Math.max(1, width)];
+        for (int y = 0; y < height; y++) {
+            List<String> values = splitCsv(properties.getProperty(prefix + "height." + y, ""));
+            for (int x = 0; x < width; x++) {
+                heightLevels[y][x] = MapGeometryData.clampHeightLevel(
+                        readListInt(values, x, MapGeometryData.DEFAULT_HEIGHT_LEVEL)
+                );
+            }
+        }
+        return MapGeometryData.of(width, height, heightLevels);
+    }
+
+    private static String joinPaintRow(String[] row) {
+        if (row == null || row.length == 0) {
+            return "";
+        }
+
+        List<String> values = new ArrayList<>();
+        for (String value : row) {
+            values.add(value == null ? "" : value.trim());
+        }
+        return String.join(",", values);
     }
 
     private static void saveTileInteractions(Properties properties, GameState gameState) {

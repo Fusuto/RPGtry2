@@ -185,13 +185,12 @@ public final class GameConfiguration {
         put("levelGate.equipmentDefense.IRONWOOD", "10");
         put("levelGate.equipmentDefense.LEATHER", "1");
 
-        put("renderer.backend", "java2d");
-        put("renderer.maxDepth", "5");
         put("renderer.prototype.maxDepth", "12");
         put("renderer.prototype.windowWidth", "1280");
         put("renderer.prototype.windowHeight", "720");
         put("renderer.prototype.resizable", "true");
         put("renderer.prototype.wallHeight", "1.0");
+        put("renderer.prototype.roofPitchHeight", "0.45");
         put("renderer.prototype.eyeHeight", "0.55");
         put("renderer.prototype.fovDegrees", "70");
         put("renderer.prototype.nearPlane", "0.05");

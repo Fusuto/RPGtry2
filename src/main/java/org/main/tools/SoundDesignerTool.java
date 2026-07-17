@@ -36,8 +36,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class SoundDesignerTool extends JFrame {
+    private static final Logger LOGGER = Logger.getLogger(SoundDesignerTool.class.getName());
+
     private static final int SAMPLE_RATE = 44_100;
     private static final int DEFAULT_STEP_COUNT = 32;
     private static final int MAX_STEP_COUNT = 64;
@@ -321,7 +325,7 @@ public class SoundDesignerTool extends JFrame {
             status("Preview finished.");
         } catch (Exception e) {
             status("Preview failed: " + e.getMessage());
-            e.printStackTrace();
+            LOGGER.log(Level.WARNING, "Preview failed.", e);
         } finally {
             previewPlaying = false;
         }
@@ -351,7 +355,7 @@ public class SoundDesignerTool extends JFrame {
             statusLabel.setText("Saved " + outputPath);
         } catch (Exception e) {
             statusLabel.setText("Save failed: " + e.getMessage());
-            e.printStackTrace();
+            LOGGER.log(Level.WARNING, "Save failed.", e);
         }
     }
 
