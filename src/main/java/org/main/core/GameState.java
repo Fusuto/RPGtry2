@@ -7,7 +7,9 @@ import org.main.content.ItemLibrary;
 import org.main.content.MapDesignLibrary;
 import org.main.content.QuestLibrary;
 import org.main.content.RecipeLibrary;
+import org.main.content.WorldManifestLibrary;
 import org.main.engine.DungeonMap;
+import org.main.engine.EnvironmentTheme;
 import org.main.engine.MapEntity;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapPaintData;
@@ -35,6 +37,7 @@ public class GameState {
     private final Map<String, MapDesignLibrary.CustomCookingRecipe> customCookingRecipes = new HashMap<>();
     private final Map<String, MapDesignLibrary.CustomCompositeRecipe> customCompositeRecipes = new HashMap<>();
     private final Map<String, MapRuntimeState> mapRuntimeStates = new HashMap<>();
+    private final Map<String, OpenWorldSession> openWorldSessions = new HashMap<>();
     private final Set<String> spokenAuthoredDialogues = new HashSet<>();
     private final Set<String> removedEntityKeys = new HashSet<>();
     private final Set<String> firedMapTriggerIds = new HashSet<>();
@@ -47,6 +50,7 @@ public class GameState {
     private int playerY = 1;
     private int currentFloor = 1;
     private Path currentMapDesignPath;
+    private OpenWorldSession currentOpenWorldSession;
     private double movementStartX = 1.0;
     private double movementStartY = 1.0;
     private double movementProgress = 1.0;
@@ -437,11 +441,44 @@ public class GameState {
         return currentMapDesignPath;
     }
 
+    public boolean isOpenWorldActive() {
+        return currentOpenWorldSession != null;
+    }
+
+    public Path getCurrentWorldManifestPath() {
+        return currentOpenWorldSession == null ? null : currentOpenWorldSession.manifestPath();
+    }
+
+    public WorldManifestLibrary.WorldManifest getCurrentWorldManifest() {
+        return currentOpenWorldSession == null ? null : currentOpenWorldSession.manifest();
+    }
+
+    public WorldManifestLibrary.ChunkCoordinate getCurrentChunkCoordinate() {
+        return currentOpenWorldSession == null ? null : currentOpenWorldSession.center();
+    }
+
+    public int getGlobalPlayerX() {
+        return currentOpenWorldSession == null ? playerX : currentOpenWorldSession.globalXForWindow(playerX);
+    }
+
+    public int getGlobalPlayerY() {
+        return currentOpenWorldSession == null ? playerY : currentOpenWorldSession.globalYForWindow(playerY);
+    }
+
+    public List<EnvironmentTheme> getOpenWorldEnvironmentThemes() {
+        return currentOpenWorldSession == null ? List.of() : currentOpenWorldSession.currentEnvironmentThemes();
+    }
+
     public void clearCurrentMapDesignPath() {
         currentMapDesignPath = null;
     }
 
     public void captureCurrentMapState() {
+        if (currentOpenWorldSession != null) {
+            currentOpenWorldSession.setResumePosition(getGlobalPlayerX(), getGlobalPlayerY());
+            currentOpenWorldSession.captureWindow(openWorldCapture());
+            return;
+        }
         if (currentMapDesignPath == null || dungeonMap == null) {
             return;
         }
@@ -475,14 +512,24 @@ public class GameState {
 
     public void travelToMapLink(Path targetPath, int targetX, int targetY) throws java.io.IOException {
         captureCurrentMapState();
-        restoreOrLoadMap(targetPath, targetX, targetY);
+        if (WorldManifestLibrary.isWorldManifest(targetPath)) {
+            openWorld(targetPath, targetX, targetY);
+        } else {
+            currentOpenWorldSession = null;
+            restoreOrLoadMap(targetPath, targetX, targetY);
+        }
     }
 
     public void restoreOrLoadMap(Path targetPath, int targetX, int targetY) throws java.io.IOException {
         if (targetPath == null) {
             throw new java.io.IOException("Target map path is missing.");
         }
+        if (WorldManifestLibrary.isWorldManifest(targetPath)) {
+            openWorld(targetPath, targetX, targetY);
+            return;
+        }
 
+        currentOpenWorldSession = null;
         String key = mapRuntimeKey(targetPath);
         MapRuntimeState state = mapRuntimeStates.get(key);
         if (state != null && state.hasEntitySnapshot()) {
@@ -499,9 +546,163 @@ public class GameState {
         }
     }
 
+    public void openWorld(Path manifestPath) throws IOException {
+        OpenWorldSession session = openWorldSession(manifestPath);
+        openWorld(manifestPath, session.manifest().startX(), session.manifest().startY());
+    }
+
+    public void openWorld(Path manifestPath, int globalX, int globalY) throws IOException {
+        if (manifestPath == null) {
+            throw new IOException("World manifest path is missing.");
+        }
+        if (currentOpenWorldSession != null) {
+            currentOpenWorldSession.captureWindow(openWorldCapture());
+        }
+
+        OpenWorldSession session = openWorldSession(manifestPath);
+        currentOpenWorldSession = session;
+        applyOpenWorldWindow(session.openAtGlobal(globalX, globalY), true);
+    }
+
+    public MovementCoordinates recenterOpenWorldIfNeeded(
+            int previousWindowX,
+            int previousWindowY,
+            int nextWindowX,
+            int nextWindowY
+    ) throws IOException {
+        if (currentOpenWorldSession == null) {
+            return new MovementCoordinates(previousWindowX, previousWindowY, nextWindowX, nextWindowY, false);
+        }
+        int previousGlobalX = currentOpenWorldSession.globalXForWindow(previousWindowX);
+        int previousGlobalY = currentOpenWorldSession.globalYForWindow(previousWindowY);
+        OpenWorldSession.RecenterResult result = currentOpenWorldSession.recenterIfNeeded(
+                nextWindowX,
+                nextWindowY,
+                openWorldCapture()
+        );
+        if (result == null) {
+            return new MovementCoordinates(previousWindowX, previousWindowY, nextWindowX, nextWindowY, false);
+        }
+
+        applyOpenWorldWindow(result.window(), false);
+        return new MovementCoordinates(
+                currentOpenWorldSession.windowXForGlobal(previousGlobalX),
+                currentOpenWorldSession.windowYForGlobal(previousGlobalY),
+                result.window().playerX(),
+                result.window().playerY(),
+                true
+        );
+    }
+
     public Map<String, MapRuntimeState> getMapRuntimeStatesView() {
-        captureCurrentMapState();
+        if (currentOpenWorldSession == null) {
+            captureCurrentMapState();
+        }
         return Map.copyOf(mapRuntimeStates);
+    }
+
+    public Map<String, OpenWorldRuntimeState> getOpenWorldRuntimeStatesView() {
+        if (currentOpenWorldSession != null && currentOpenWorldSession.isWindowMaterialized()) {
+            int globalX = getGlobalPlayerX();
+            int globalY = getGlobalPlayerY();
+            currentOpenWorldSession.setResumePosition(globalX, globalY);
+            currentOpenWorldSession.captureWindow(openWorldCapture());
+            try {
+                applyOpenWorldWindow(currentOpenWorldSession.openAtGlobal(globalX, globalY), false);
+            } catch (IOException exception) {
+                throw new IllegalStateException("Failed to restore open-world window after capture.", exception);
+            }
+        }
+
+        Map<String, OpenWorldRuntimeState> states = new HashMap<>();
+        for (Map.Entry<String, OpenWorldSession> entry : openWorldSessions.entrySet()) {
+            OpenWorldSession session = entry.getValue();
+            states.put(entry.getKey(), new OpenWorldRuntimeState(
+                    session.manifestPath(),
+                    session.resumeGlobalX(),
+                    session.resumeGlobalY(),
+                    session.snapshotChunkStates()
+            ));
+        }
+        return Map.copyOf(states);
+    }
+
+    public void setOpenWorldRuntimeStates(Map<String, OpenWorldRuntimeState> states) throws IOException {
+        openWorldSessions.clear();
+        currentOpenWorldSession = null;
+        if (states == null) {
+            return;
+        }
+        for (Map.Entry<String, OpenWorldRuntimeState> entry : states.entrySet()) {
+            OpenWorldRuntimeState saved = entry.getValue();
+            if (saved == null || saved.manifestPath() == null) {
+                continue;
+            }
+            OpenWorldSession session = OpenWorldSession.load(saved.manifestPath());
+            session.restoreChunkStates(saved.chunkStates());
+            session.setResumePosition(saved.resumeGlobalX(), saved.resumeGlobalY());
+            openWorldSessions.put(entry.getKey(), session);
+        }
+    }
+
+    private OpenWorldSession openWorldSession(Path manifestPath) throws IOException {
+        String key = mapRuntimeKey(manifestPath);
+        OpenWorldSession existing = openWorldSessions.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        OpenWorldSession loaded = OpenWorldSession.load(manifestPath);
+        openWorldSessions.put(key, loaded);
+        return loaded;
+    }
+
+    private OpenWorldSession.WindowCapture openWorldCapture() {
+        return new OpenWorldSession.WindowCapture(
+                dungeonMap,
+                new ArrayList<>(entities),
+                new HashMap<>(tileInteractionIds),
+                copyResourceNodeSnapshots(),
+                getDiscoveredMiniMapTileKeys(),
+                new HashSet<>(removedEntityKeys),
+                new ArrayList<>(mapTriggers),
+                new HashSet<>(firedMapTriggerIds)
+        );
+    }
+
+    private void applyOpenWorldWindow(OpenWorldSession.WindowState window, boolean resetPanels) {
+        dungeonMap = window.map();
+        entities.clear();
+        entities.addAll(window.entities());
+        tileInteractionIds.clear();
+        tileInteractionIds.putAll(window.tileInteractions());
+        mapTriggers.clear();
+        mapTriggers.addAll(window.triggers());
+        firedMapTriggerIds.clear();
+        firedMapTriggerIds.addAll(window.firedTriggerIds());
+        removedEntityKeys.clear();
+        removedEntityKeys.addAll(window.removedEntityKeys());
+        currentMapDesignPath = window.centerChunkPath();
+        setAuthoredDialogues(window.dialogues());
+        setAuthoredQuests(window.quests());
+        setCustomItems(window.items());
+        setCustomLimbs(window.limbs());
+        setCustomGatheringNodes(window.gatheringNodes());
+        setCustomCookingRecipes(window.cookingRecipes());
+        setCustomCompositeRecipes(window.compositeRecipes());
+        restoreResourceNodeSnapshots(window.resourceNodeStates());
+        resetMiniMapDiscovery();
+        setDiscoveredMiniMapTileKeys(window.discoveredTiles());
+
+        if (resetPanels) {
+            setPlayerPosition(window.playerX(), window.playerY());
+            closeInventory();
+            closeSkills();
+            closeQuests();
+            closeStats();
+            closeShop();
+            closeInteraction();
+            clearBattleState();
+        }
     }
 
     public void setMapRuntimeStates(Map<String, MapRuntimeState> states) {
@@ -528,6 +729,7 @@ public class GameState {
         }
 
         this.dungeonMap = dungeonMap;
+        currentOpenWorldSession = null;
         entities.clear();
         tileInteractionIds.clear();
         mapTriggers.clear();
@@ -687,11 +889,12 @@ public class GameState {
         }
     }
 
-    public void evaluateEntryTrigger(int x, int y) {
+    public boolean evaluateEntryTrigger(int x, int y) {
         if (dungeonMap == null || mapTriggers.isEmpty()) {
-            return;
+            return false;
         }
 
+        boolean doorClosed = false;
         for (MapDesignLibrary.MapTrigger trigger : mapTriggers) {
             if (trigger == null
                     || trigger.fireMode() != MapDesignLibrary.TriggerFireMode.ON_ENTRY
@@ -705,32 +908,36 @@ public class GameState {
             }
 
             for (MapDesignLibrary.TriggerAction action : trigger.actions()) {
-                runTriggerAction(action);
+                doorClosed |= runTriggerAction(action);
             }
 
             if (trigger.oneShot()) {
                 firedMapTriggerIds.add(trigger.id());
             }
         }
+        return doorClosed;
     }
 
-    private void runTriggerAction(MapDesignLibrary.TriggerAction action) {
+    private boolean runTriggerAction(MapDesignLibrary.TriggerAction action) {
         if (action == null || action.type() != MapDesignLibrary.TriggerActionType.CLOSE_DOOR || dungeonMap == null) {
-            return;
+            return false;
         }
 
         int targetX = action.targetX();
         int targetY = action.targetY();
         if (dungeonMap.isOutOfBounds(targetX, targetY)) {
-            return;
+            return false;
         }
 
         Library.TileType tile = dungeonMap.getTile(targetX, targetY);
         if (tile == Library.TileType.DOOR_OPEN) {
             dungeonMap.setTile(targetX, targetY, Library.TileType.DOOR_CLOSED);
+            return true;
         } else if (tile == Library.TileType.QUEST_DOOR_OPEN) {
             dungeonMap.setTile(targetX, targetY, Library.TileType.QUEST_DOOR_CLOSED);
+            return true;
         }
+        return false;
     }
 
     public void setAuthoredDialogues(List<MapDesignLibrary.AuthoredDialogue> dialogues) {
@@ -2535,6 +2742,10 @@ public class GameState {
         return snapshots;
     }
 
+    public Map<String, ResourceNodeSnapshot> getResourceNodeSnapshotsView() {
+        return Map.copyOf(copyResourceNodeSnapshots());
+    }
+
     private void restoreResourceNodeSnapshots(Map<String, ResourceNodeSnapshot> snapshots) {
         resourceNodeStates.clear();
         if (snapshots == null) {
@@ -2745,6 +2956,26 @@ public class GameState {
             int attemptsSinceLastExhaustionRoll,
             int respawnRemainingMs
     ) {
+    }
+
+    public record MovementCoordinates(
+            int previousX,
+            int previousY,
+            int nextX,
+            int nextY,
+            boolean recentered
+    ) {
+    }
+
+    public record OpenWorldRuntimeState(
+            Path manifestPath,
+            int resumeGlobalX,
+            int resumeGlobalY,
+            Map<WorldManifestLibrary.ChunkCoordinate, OpenWorldSession.PersistedChunkState> chunkStates
+    ) {
+        public OpenWorldRuntimeState {
+            chunkStates = chunkStates == null ? Map.of() : Map.copyOf(chunkStates);
+        }
     }
 
     public record MapRuntimeState(

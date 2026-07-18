@@ -76,7 +76,7 @@ public final class PaintBrushLibrary {
             brushes.add(fromTheme(theme, MapPaintData.Layer.FLOOR, "Floor", environmentTheme.floor()));
             brushes.add(fromTheme(theme, MapPaintData.Layer.WALL, "Wall", environmentTheme.wall()));
             brushes.add(fromTheme(theme, MapPaintData.Layer.DOOR, "Door", environmentTheme.door()));
-            brushes.add(fromTheme(theme, MapPaintData.Layer.ROOF, "Roof", environmentTheme.wall()));
+            brushes.add(fromTheme(theme, MapPaintData.Layer.ROOF, "Roof", environmentTheme.roof()));
         }
         return List.copyOf(brushes);
     }

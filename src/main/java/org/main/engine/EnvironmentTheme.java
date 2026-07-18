@@ -3,7 +3,8 @@ package org.main.engine;
 public record EnvironmentTheme(
         TextureTheme wall,
         TextureTheme door,
-        TextureTheme floor
+        TextureTheme floor,
+        TextureTheme roof
 ) {
     public record TextureTheme(
             String location,
@@ -16,9 +17,10 @@ public record EnvironmentTheme(
     public static EnvironmentTheme of(
             TextureTheme wall,
             TextureTheme door,
-            TextureTheme floor
+            TextureTheme floor,
+            TextureTheme roof
     ) {
-        return new EnvironmentTheme(wall, door, floor);
+        return new EnvironmentTheme(wall, door, floor, roof);
     }
 
     public static TextureTheme texture(
@@ -34,31 +36,8 @@ public record EnvironmentTheme(
         return of(
                 texture("wall", "brick", "stone", "center"),
                 texture("door", "wood", "handle", "center"),
-                texture("floor", "wood", "planks", "wide")
-        );
-    }
-
-    public EnvironmentTheme withWall(String location, String material1, String material2) {
-        return new EnvironmentTheme(
-                texture(location, material1, material2, "center"),
-                door,
-                floor
-        );
-    }
-
-    public EnvironmentTheme withDoor(String location, String material1, String material2, String side) {
-        return new EnvironmentTheme(
-                wall,
-                texture(location, material1, material2, side),
-                floor
-        );
-    }
-
-    public EnvironmentTheme withFloor(String location, String material1, String material2, String floorType) {
-        return new EnvironmentTheme(
-                wall,
-                door,
-                texture(location, material1, material2, floorType)
+                texture("floor", "wood", "planks", "wide"),
+                texture("roof", "clay", "red", "center")
         );
     }
 }

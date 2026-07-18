@@ -12,6 +12,9 @@ import org.main.content.PaintBrushLibrary;
 import org.main.content.RecipeLibrary;
 import org.main.content.SkillLibrary;
 import org.main.content.ThemeLibrary;
+import org.main.content.WorldManifestLibrary;
+import org.main.content.WorldManifestLibrary.ChunkCoordinate;
+import org.main.content.WorldManifestLibrary.WorldManifest;
 import org.main.core.CharacterSkill;
 import org.main.core.GameConfiguration;
 import org.main.core.GearMaterial;
@@ -72,7 +75,10 @@ import java.awt.Dimension;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
 import java.awt.Image;
+import java.awt.Insets;
 import java.awt.KeyboardFocusManager;
 import java.awt.Point;
 import java.awt.Rectangle;
@@ -98,6 +104,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -159,6 +166,11 @@ public class AetherConstructionKit extends JFrame {
     private MapDesignLibrary.MapPlacement inspectedPlacement;
     private MapDesignLibrary.MapTrigger inspectedTrigger;
     private Point inspectedTriggerTarget;
+    private Path currentMapPath;
+    private Path currentWorldManifestPath;
+    private WorldManifest activeWorld;
+    private ChunkCoordinate activeWorldChunk;
+    private final Map<ChunkCoordinate, MapDesignLibrary.MapDesign> worldNeighborDesigns = new HashMap<>();
 
     private MapDesignLibrary.MapDesign design = MapDesignLibrary.createBlank(
             DEFAULT_WIDTH,
@@ -207,6 +219,7 @@ public class AetherConstructionKit extends JFrame {
         toolbar.add(createFileMenuButton());
         toolbar.addSeparator();
         toolbar.add(createMapConfigMenuButton());
+        toolbar.add(createModifyMenuButton());
 
         toolbar.addSeparator();
         toolbar.add(new JLabel("Primary"));
@@ -230,14 +243,8 @@ public class AetherConstructionKit extends JFrame {
         toolbar.add(zoomSpinner);
         toolbar.add(new JLabel("Tile"));
         toolbar.add(tileTypeBox);
-        toolbar.add(new JLabel("Object Type"));
-        placeableCategoryBox.addActionListener(event -> populatePlaceables());
-        toolbar.add(placeableCategoryBox);
-        toolbar.add(new JLabel("Object"));
-        toolbar.add(placeableBox);
 
         toolbar.addSeparator();
-        toolbar.add(createCreateMenuButton());
         toolbar.add(createToolsMenuButton());
         JButton helpButton = new JButton("Help");
         helpButton.addActionListener(event -> showAuthoringHelp());
@@ -258,7 +265,20 @@ public class AetherConstructionKit extends JFrame {
         addMenuItem(menu, "New", this::createNewMap);
         addMenuItem(menu, "Resize", this::resizeCurrentMap);
         addMenuItem(menu, "Metadata", this::editMetadata);
+        menu.addSeparator();
+        addMenuItem(menu, "New World", this::createNewWorld);
+        addMenuItem(menu, "Open World", this::openWorld);
+        addMenuItem(menu, "World Settings", this::editWorldSettings);
+        addMenuItem(menu, "Add Chunk", this::addWorldChunk);
+        addMenuItem(menu, "Remove Chunk", this::removeWorldChunk);
+        addMenuItem(menu, "Validate World", this::validateWorld);
         return menuButton("Map Config", menu);
+    }
+
+    private JButton createModifyMenuButton() {
+        JPopupMenu menu = new JPopupMenu();
+        addMenuItem(menu, "Sound Effects", this::manageSoundEffectConfiguration);
+        return menuButton("Modify", menu);
     }
 
     private JSplitPane createEditorBody() {
@@ -276,10 +296,7 @@ public class AetherConstructionKit extends JFrame {
         panel.setBorder(BorderFactory.createTitledBorder("Content Browser"));
         panel.setPreferredSize(new Dimension(300, 640));
 
-        JPanel filters = new JPanel(new BorderLayout(4, 4));
-        filters.add(contentCategoryBox, BorderLayout.NORTH);
-        filters.add(contentSearchField, BorderLayout.SOUTH);
-        panel.add(filters, BorderLayout.NORTH);
+        panel.add(createContentBrowserControls(), BorderLayout.NORTH);
 
         contentList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         contentList.setCellRenderer((list, value, index, isSelected, cellHasFocus) -> {
@@ -367,6 +384,55 @@ public class AetherConstructionKit extends JFrame {
         return panel;
     }
 
+    private JPanel createContentBrowserControls() {
+        JPanel controls = new JPanel(new GridBagLayout());
+        GridBagConstraints sectionConstraints = new GridBagConstraints();
+        sectionConstraints.gridx = 0;
+        sectionConstraints.weightx = 1.0;
+        sectionConstraints.fill = GridBagConstraints.HORIZONTAL;
+        sectionConstraints.anchor = GridBagConstraints.NORTHWEST;
+
+        JButton createButton = createCreateMenuButton();
+        sectionConstraints.gridy = 0;
+        controls.add(createButton, sectionConstraints);
+
+        JPanel placement = new JPanel(new GridBagLayout());
+        placement.setBorder(BorderFactory.createTitledBorder("Object Placement"));
+
+        GridBagConstraints labelConstraints = new GridBagConstraints();
+        labelConstraints.gridx = 0;
+        labelConstraints.anchor = GridBagConstraints.WEST;
+        labelConstraints.insets = new Insets(2, 2, 2, 6);
+
+        GridBagConstraints fieldConstraints = new GridBagConstraints();
+        fieldConstraints.gridx = 1;
+        fieldConstraints.weightx = 1.0;
+        fieldConstraints.fill = GridBagConstraints.HORIZONTAL;
+        fieldConstraints.insets = new Insets(2, 0, 2, 2);
+
+        labelConstraints.gridy = 0;
+        fieldConstraints.gridy = 0;
+        placement.add(new JLabel("Object Type"), labelConstraints);
+        placement.add(placeableCategoryBox, fieldConstraints);
+
+        labelConstraints.gridy = 1;
+        fieldConstraints.gridy = 1;
+        placement.add(new JLabel("Object"), labelConstraints);
+        placement.add(placeableBox, fieldConstraints);
+        placeableCategoryBox.addActionListener(event -> populatePlaceables());
+        sectionConstraints.gridy = 1;
+        controls.add(placement, sectionConstraints);
+
+        JPanel filters = new JPanel(new BorderLayout(4, 4));
+        filters.setBorder(BorderFactory.createTitledBorder("Browse"));
+        filters.add(contentCategoryBox, BorderLayout.NORTH);
+        filters.add(contentSearchField, BorderLayout.SOUTH);
+        sectionConstraints.gridy = 2;
+        controls.add(filters, sectionConstraints);
+
+        return controls;
+    }
+
     private JPanel createPrefabBrowserPanel() {
         JPanel panel = new JPanel(new BorderLayout(4, 4));
         panel.setBorder(BorderFactory.createTitledBorder("Prefabs"));
@@ -448,11 +514,16 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void showAssetBrowser(JTextField targetField) {
+        showAssetBrowser(targetField, AssetBrowserType.ALL);
+    }
+
+    private void showAssetBrowser(JTextField targetField, AssetBrowserType initialType) {
         List<AssetBrowserEntry> assets = scanEditorAssets();
         DefaultListModel<AssetBrowserEntry> assetModel = new DefaultListModel<>();
         JList<AssetBrowserEntry> assetList = new JList<>(assetModel);
         JTextField searchField = new JTextField(24);
         JComboBox<AssetBrowserType> typeBox = new JComboBox<>(AssetBrowserType.values());
+        typeBox.setSelectedItem(initialType == null ? AssetBrowserType.ALL : initialType);
         JLabel previewLabel = new JLabel("No preview", JLabel.CENTER);
         JTextArea detailArea = new JTextArea(8, 32);
         detailArea.setEditable(false);
@@ -563,6 +634,73 @@ public class AetherConstructionKit extends JFrame {
         var dialog = pane.createDialog(this, "Asset Browser");
         closeButton.addActionListener(event -> dialog.dispose());
         dialog.setVisible(true);
+    }
+
+    private void manageSoundEffectConfiguration() {
+        JTextField doorOpenField = new JTextField(GameConfiguration.stringValue("sound.doorOpen.path", ""), 34);
+        JTextField doorCloseField = new JTextField(GameConfiguration.stringValue("sound.doorClose.path", ""), 34);
+        JTextField autoAttackField = new JTextField(
+                GameConfiguration.stringValue("battle.playerAutoAttack.soundPath", ""),
+                34
+        );
+
+        JPanel fields = new JPanel(new java.awt.GridLayout(0, 3, 8, 6));
+        addSoundPathRow(fields, "Door Open", doorOpenField);
+        addSoundPathRow(fields, "Door Close", doorCloseField);
+        addSoundPathRow(fields, "Player Auto Attack", autoAttackField);
+
+        JTextArea note = new JTextArea(
+                "Choose sound assets for doors and the player's default auto attack. "
+                        + "An equipped weapon's own use sound takes precedence over the default auto-attack sound."
+        );
+        note.setEditable(false);
+        note.setOpaque(false);
+        note.setLineWrap(true);
+        note.setWrapStyleWord(true);
+
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.add(fields, BorderLayout.CENTER);
+        panel.add(note, BorderLayout.SOUTH);
+
+        int result = JOptionPane.showConfirmDialog(
+                this,
+                panel,
+                "Sound Effects",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+        );
+        if (result != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("sound.doorOpen.path", doorOpenField.getText().trim());
+        values.put("sound.doorClose.path", doorCloseField.getText().trim());
+        values.put("battle.playerAutoAttack.soundPath", autoAttackField.getText().trim());
+
+        Properties properties = loadPackagedConfigurationProperties();
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            properties.setProperty(entry.getKey(), entry.getValue());
+            GameConfiguration.setValue(entry.getKey(), entry.getValue());
+        }
+
+        try {
+            Files.createDirectories(CONFIG_RESOURCE_PATH.getParent());
+            try (OutputStream outputStream = Files.newOutputStream(CONFIG_RESOURCE_PATH)) {
+                properties.store(outputStream, "Aether packaged gameplay configuration");
+            }
+            setStatus("Updated door and player auto-attack sound effects.");
+        } catch (IOException exception) {
+            setStatus("Sound effect configuration save failed: " + exception.getMessage());
+        }
+    }
+
+    private void addSoundPathRow(JPanel fields, String label, JTextField pathField) {
+        JButton browseButton = new JButton("Browse");
+        browseButton.addActionListener(event -> showAssetBrowser(pathField, AssetBrowserType.SOUNDS));
+        fields.add(new JLabel(label));
+        fields.add(pathField);
+        fields.add(browseButton);
     }
 
     private void showContentBackupManager() {
@@ -5904,17 +6042,44 @@ public class AetherConstructionKit extends JFrame {
             return;
         }
 
-        JFileChooser chooser = new JFileChooser(MapDesignLibrary.MAP_FOLDER.toFile());
-        chooser.setFileFilter(new FileNameExtensionFilter("Aether map design", "properties"));
+        JFileChooser chooser = new JFileChooser(MapDesignLibrary.EDITOR_RESOURCE_FOLDER.toFile());
+        chooser.setFileFilter(new FileNameExtensionFilter("Aether map or world", "properties"));
         if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
 
         MapDesignLibrary.MapDesign targetDesign;
+        WorldManifest targetWorld = null;
+        ChunkCoordinate targetChunk = null;
         try {
-            targetDesign = MapDesignLibrary.load(chooser.getSelectedFile().toPath());
+            Path selectedPath = chooser.getSelectedFile().toPath();
+            if (WorldManifestLibrary.isWorldManifest(selectedPath)) {
+                targetWorld = WorldManifestLibrary.load(selectedPath);
+                List<ChunkCoordinate> coordinates = targetWorld.chunks().keySet().stream().sorted().toList();
+                JComboBox<ChunkCoordinate> chunkBox = new JComboBox<>(coordinates.toArray(new ChunkCoordinate[0]));
+                if (JOptionPane.showConfirmDialog(
+                        this,
+                        chunkBox,
+                        "Choose World Chunk",
+                        JOptionPane.OK_CANCEL_OPTION,
+                        JOptionPane.PLAIN_MESSAGE
+                ) != JOptionPane.OK_OPTION) {
+                    return;
+                }
+                targetChunk = (ChunkCoordinate) chunkBox.getSelectedItem();
+                if (targetChunk == null) {
+                    setStatus("No world chunk selected.");
+                    return;
+                }
+                targetDesign = MapDesignLibrary.load(WorldManifestLibrary.resolveChunkPath(
+                        selectedPath,
+                        targetWorld.chunks().get(targetChunk)
+                ));
+            } else {
+                targetDesign = MapDesignLibrary.load(selectedPath);
+            }
         } catch (IOException exception) {
-            setStatus("Target map failed: " + exception.getMessage());
+            setStatus("Target map or world failed: " + exception.getMessage());
             return;
         }
 
@@ -5949,12 +6114,18 @@ public class AetherConstructionKit extends JFrame {
             }
         }
 
+        int targetX = selectedTarget.x;
+        int targetY = selectedTarget.y;
+        if (targetWorld != null && targetChunk != null) {
+            targetX = targetWorld.globalX(targetChunk, selectedTarget.x);
+            targetY = targetWorld.globalY(targetChunk, selectedTarget.y);
+        }
         String id = "map_link|"
                 + mapLinkPathForEditor(chooser.getSelectedFile().toPath())
                 + "|"
-                + selectedTarget.x
+                + targetX
                 + "|"
-                + selectedTarget.y;
+                + targetY;
         PlaceableOption option = new PlaceableOption(
                 "Map Link: " + mapLinkLabel(id),
                 MapDesignLibrary.PlacementKind.INTERACTION,
@@ -6300,6 +6471,14 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private String mapLinkPathForEditor(Path path) {
+        if (path == null) {
+            return "";
+        }
+        Path absolutePath = path.toAbsolutePath().normalize();
+        Path resourceRoot = Path.of("src", "main", "resources").toAbsolutePath().normalize();
+        if (absolutePath.startsWith(resourceRoot)) {
+            return resourceRoot.relativize(absolutePath).toString().replace('\\', '/');
+        }
         return MapDesignLibrary.resourcePathForMap(path);
     }
 
@@ -7201,6 +7380,407 @@ public class AetherConstructionKit extends JFrame {
         }
     }
 
+    private void createNewWorld() {
+        JTextField nameField = new JTextField("New World", 22);
+        JTextField idField = new JTextField("new_world", 22);
+        JSpinner chunkWidthField = new JSpinner(new SpinnerNumberModel(
+                WorldManifestLibrary.DEFAULT_CHUNK_SIZE,
+                MIN_DIMENSION,
+                MAX_DIMENSION,
+                1
+        ));
+        JSpinner chunkHeightField = new JSpinner(new SpinnerNumberModel(
+                WorldManifestLibrary.DEFAULT_CHUNK_SIZE,
+                MIN_DIMENSION,
+                MAX_DIMENSION,
+                1
+        ));
+        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        fields.add(new JLabel("World Name"));
+        fields.add(nameField);
+        fields.add(new JLabel("World ID"));
+        fields.add(idField);
+        fields.add(new JLabel("Chunk Width"));
+        fields.add(chunkWidthField);
+        fields.add(new JLabel("Chunk Height"));
+        fields.add(chunkHeightField);
+
+        if (JOptionPane.showConfirmDialog(
+                this,
+                fields,
+                "New Open World",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+        ) != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        String worldId = WorldManifestLibrary.safeId(idField.getText());
+        Path manifestPath = WorldManifestLibrary.defaultManifestPath(worldId);
+        if (Files.exists(manifestPath)) {
+            setStatus("World already exists: " + manifestPath + ".");
+            return;
+        }
+
+        try {
+            WorldManifest manifest = WorldManifestLibrary.create(
+                    worldId,
+                    nameField.getText(),
+                    ((Number) chunkWidthField.getValue()).intValue(),
+                    ((Number) chunkHeightField.getValue()).intValue()
+            );
+            ChunkCoordinate origin = new ChunkCoordinate(0, 0);
+            Path chunkPath = WorldManifestLibrary.defaultChunkPath(manifestPath, origin);
+            MapDesignLibrary.MapDesign chunk = createOpenWorldChunk(
+                    manifest.chunkWidth(),
+                    manifest.chunkHeight(),
+                    manifest.displayName() + " " + origin
+            );
+            MapDesignLibrary.save(chunk, chunkPath);
+            manifest = manifest.withChunk(origin, WorldManifestLibrary.relativeChunkPath(manifestPath, chunkPath));
+            WorldManifestLibrary.save(manifest, manifestPath);
+            activateWorld(manifestPath, manifest, origin);
+            setStatus("Created open world " + manifest.displayName() + " with chunk " + origin + ".");
+        } catch (IOException exception) {
+            setStatus("World creation failed: " + exception.getMessage());
+        }
+    }
+
+    private void openWorld() {
+        try {
+            Files.createDirectories(WorldManifestLibrary.WORLD_FOLDER);
+            JFileChooser chooser = new JFileChooser(WorldManifestLibrary.WORLD_FOLDER.toFile());
+            chooser.setFileFilter(new FileNameExtensionFilter("Aether world manifest", "properties"));
+            if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+                return;
+            }
+            Path path = chooser.getSelectedFile().toPath();
+            WorldManifest manifest = WorldManifestLibrary.load(path);
+            ChunkCoordinate start = manifest.chunkForGlobal(manifest.startX(), manifest.startY());
+            activateWorld(path, manifest, start);
+            setStatus("Opened world " + manifest.displayName() + " at chunk " + start + ".");
+        } catch (IOException exception) {
+            setStatus("Open world failed: " + exception.getMessage());
+        }
+    }
+
+    private void activateWorld(Path manifestPath, WorldManifest manifest, ChunkCoordinate coordinate) throws IOException {
+        currentWorldManifestPath = manifestPath;
+        activeWorld = manifest;
+        activeWorldChunk = coordinate;
+        loadWorldChunk(coordinate);
+    }
+
+    private void loadWorldChunk(ChunkCoordinate coordinate) throws IOException {
+        String relativePath = activeWorld == null ? null : activeWorld.chunks().get(coordinate);
+        if (relativePath == null) {
+            throw new IOException("World has no chunk at " + coordinate + ".");
+        }
+        Path chunkPath = WorldManifestLibrary.resolveChunkPath(currentWorldManifestPath, relativePath);
+        design = MapDesignLibrary.load(chunkPath);
+        currentMapPath = chunkPath;
+        activeWorldChunk = coordinate;
+        loadSharedContentIntoDesign();
+        undoStack.clear();
+        redoStack.clear();
+        refreshWorldNeighbors();
+        syncEditorFromDesign();
+        markDirty(false);
+        clearAutosaveRecovery();
+        mapCanvas.revalidate();
+        mapCanvas.repaint();
+    }
+
+    private void refreshWorldNeighbors() {
+        worldNeighborDesigns.clear();
+        if (activeWorld == null || activeWorldChunk == null) {
+            return;
+        }
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                ChunkCoordinate coordinate = new ChunkCoordinate(activeWorldChunk.x() + dx, activeWorldChunk.y() + dy);
+                String relativePath = activeWorld.chunks().get(coordinate);
+                if (relativePath == null) {
+                    continue;
+                }
+                try {
+                    MapDesignLibrary.MapDesign neighbor = coordinate.equals(activeWorldChunk)
+                            ? design
+                            : MapDesignLibrary.load(
+                                    WorldManifestLibrary.resolveChunkPath(currentWorldManifestPath, relativePath)
+                            );
+                    worldNeighborDesigns.put(coordinate, neighbor);
+                } catch (IOException exception) {
+                    setStatus("Chunk preview failed for " + coordinate + ": " + exception.getMessage());
+                }
+            }
+        }
+    }
+
+    private boolean switchWorldChunk(ChunkCoordinate coordinate) {
+        if (activeWorld == null || coordinate == null || coordinate.equals(activeWorldChunk)) {
+            return true;
+        }
+        if (dirty) {
+            int choice = JOptionPane.showConfirmDialog(
+                    this,
+                    "Save changes to chunk " + activeWorldChunk + " before switching?\n"
+                            + "Yes = Save, No = Discard, Cancel = Stay",
+                    "Unsaved Chunk",
+                    JOptionPane.YES_NO_CANCEL_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+            );
+            if (choice == JOptionPane.CANCEL_OPTION || choice == JOptionPane.CLOSED_OPTION) {
+                return false;
+            }
+            if (choice == JOptionPane.YES_OPTION && !saveCurrentWorldChunk()) {
+                return false;
+            }
+        }
+        if (!activeWorld.chunks().containsKey(coordinate)) {
+            int create = JOptionPane.showConfirmDialog(
+                    this,
+                    "Create missing chunk " + coordinate + "?",
+                    "Create World Chunk",
+                    JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.QUESTION_MESSAGE
+            );
+            if (create != JOptionPane.OK_OPTION || !createWorldChunk(coordinate)) {
+                return false;
+            }
+        }
+        try {
+            loadWorldChunk(coordinate);
+            setStatus("Editing world chunk " + coordinate + ".");
+            return true;
+        } catch (IOException exception) {
+            setStatus("Chunk switch failed: " + exception.getMessage());
+            return false;
+        }
+    }
+
+    private boolean saveCurrentWorldChunk() {
+        if (activeWorld == null || currentWorldManifestPath == null || activeWorldChunk == null) {
+            return false;
+        }
+        String relativePath = activeWorld.chunks().get(activeWorldChunk);
+        if (relativePath == null) {
+            setStatus("Active chunk is not registered in the world.");
+            return false;
+        }
+        try {
+            syncThemes();
+            if (!confirmSaveWithValidationIssues()) {
+                return false;
+            }
+            Path chunkPath = WorldManifestLibrary.resolveChunkPath(currentWorldManifestPath, relativePath);
+            MapDesignLibrary.save(design, chunkPath);
+            WorldManifestLibrary.save(activeWorld, currentWorldManifestPath);
+            currentMapPath = chunkPath;
+            markDirty(false);
+            clearAutosaveRecovery();
+            refreshWorldNeighbors();
+            saveSharedContentFromDesign();
+            setStatus("Saved world chunk " + activeWorldChunk + ".");
+            return true;
+        } catch (IOException exception) {
+            setStatus("World chunk save failed: " + exception.getMessage());
+            return false;
+        }
+    }
+
+    private void addWorldChunk() {
+        if (activeWorld == null || activeWorldChunk == null) {
+            setStatus("Open a world before adding chunks.");
+            return;
+        }
+        ChunkCoordinate coordinate = promptChunkCoordinate(
+                "Add World Chunk",
+                new ChunkCoordinate(activeWorldChunk.x() + 1, activeWorldChunk.y())
+        );
+        if (coordinate != null && createWorldChunk(coordinate)) {
+            refreshWorldNeighbors();
+            mapCanvas.revalidate();
+            mapCanvas.repaint();
+            setStatus("Added chunk " + coordinate + ".");
+        }
+    }
+
+    private boolean createWorldChunk(ChunkCoordinate coordinate) {
+        if (activeWorld.chunks().containsKey(coordinate)) {
+            setStatus("Chunk already exists at " + coordinate + ".");
+            return false;
+        }
+        try {
+            Path chunkPath = WorldManifestLibrary.defaultChunkPath(currentWorldManifestPath, coordinate);
+            MapDesignLibrary.save(
+                    createOpenWorldChunk(
+                            activeWorld.chunkWidth(),
+                            activeWorld.chunkHeight(),
+                            activeWorld.displayName() + " " + coordinate
+                    ),
+                    chunkPath
+            );
+            activeWorld = activeWorld.withChunk(
+                    coordinate,
+                    WorldManifestLibrary.relativeChunkPath(currentWorldManifestPath, chunkPath)
+            );
+            WorldManifestLibrary.save(activeWorld, currentWorldManifestPath);
+            return true;
+        } catch (IOException exception) {
+            setStatus("Chunk creation failed: " + exception.getMessage());
+            return false;
+        }
+    }
+
+    private void removeWorldChunk() {
+        if (activeWorld == null || activeWorldChunk == null) {
+            setStatus("Open a world before removing chunks.");
+            return;
+        }
+        ChunkCoordinate coordinate = promptChunkCoordinate("Remove World Chunk", activeWorldChunk);
+        if (coordinate == null) {
+            return;
+        }
+        if (coordinate.equals(activeWorldChunk)) {
+            setStatus("Switch away from a chunk before removing it.");
+            return;
+        }
+        if (!activeWorld.chunks().containsKey(coordinate)) {
+            setStatus("No chunk exists at " + coordinate + ".");
+            return;
+        }
+        ChunkCoordinate startChunk = activeWorld.chunkForGlobal(activeWorld.startX(), activeWorld.startY());
+        if (coordinate.equals(startChunk)) {
+            setStatus("Move the world start before removing its chunk.");
+            return;
+        }
+        activeWorld = activeWorld.withoutChunk(coordinate);
+        try {
+            WorldManifestLibrary.save(activeWorld, currentWorldManifestPath);
+            refreshWorldNeighbors();
+            mapCanvas.revalidate();
+            mapCanvas.repaint();
+            setStatus("Detached chunk " + coordinate + " from the world; its file was retained.");
+        } catch (IOException exception) {
+            setStatus("Chunk removal failed: " + exception.getMessage());
+        }
+    }
+
+    private void editWorldSettings() {
+        if (activeWorld == null) {
+            setStatus("Open a world before editing world settings.");
+            return;
+        }
+        JTextField nameField = new JTextField(activeWorld.displayName(), 24);
+        JSpinner startXField = new JSpinner(new SpinnerNumberModel(activeWorld.startX(), -1_000_000, 1_000_000, 1));
+        JSpinner startYField = new JSpinner(new SpinnerNumberModel(activeWorld.startY(), -1_000_000, 1_000_000, 1));
+        JTextArea descriptionArea = new JTextArea(activeWorld.description(), 5, 28);
+        descriptionArea.setLineWrap(true);
+        descriptionArea.setWrapStyleWord(true);
+        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        fields.add(new JLabel("World Name"));
+        fields.add(nameField);
+        fields.add(new JLabel("Global Start X"));
+        fields.add(startXField);
+        fields.add(new JLabel("Global Start Y"));
+        fields.add(startYField);
+        JPanel panel = new JPanel(new BorderLayout(6, 6));
+        panel.add(fields, BorderLayout.NORTH);
+        panel.add(new JScrollPane(descriptionArea), BorderLayout.CENTER);
+        if (JOptionPane.showConfirmDialog(
+                this,
+                panel,
+                "World Settings",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+        ) != JOptionPane.OK_OPTION) {
+            return;
+        }
+        int startX = ((Number) startXField.getValue()).intValue();
+        int startY = ((Number) startYField.getValue()).intValue();
+        ChunkCoordinate startChunk = activeWorld.chunkForGlobal(startX, startY);
+        if (!activeWorld.chunks().containsKey(startChunk)) {
+            setStatus("World start resolves to missing chunk " + startChunk + ".");
+            return;
+        }
+        activeWorld = activeWorld.withMetadata(
+                nameField.getText(),
+                descriptionArea.getText(),
+                startX,
+                startY
+        );
+        try {
+            WorldManifestLibrary.save(activeWorld, currentWorldManifestPath);
+            setStatus("Updated world settings.");
+        } catch (IOException exception) {
+            setStatus("World settings save failed: " + exception.getMessage());
+        }
+    }
+
+    private void validateWorld() {
+        if (activeWorld == null) {
+            setStatus("Open a world before validating it.");
+            return;
+        }
+        List<MapDesignLibrary.ValidationIssue> issues =
+                WorldManifestLibrary.validate(activeWorld, currentWorldManifestPath);
+        if (issues.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "World validation passed.", "Validate World", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        JTextArea area = new JTextArea(issues.stream()
+                .map(issue -> issue.severity() + ": " + issue.message())
+                .collect(java.util.stream.Collectors.joining("\n")), 18, 64);
+        area.setEditable(false);
+        JOptionPane.showMessageDialog(this, new JScrollPane(area), "World Validation", JOptionPane.WARNING_MESSAGE);
+    }
+
+    private ChunkCoordinate promptChunkCoordinate(String title, ChunkCoordinate initial) {
+        JSpinner xField = new JSpinner(new SpinnerNumberModel(initial.x(), -10_000, 10_000, 1));
+        JSpinner yField = new JSpinner(new SpinnerNumberModel(initial.y(), -10_000, 10_000, 1));
+        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        fields.add(new JLabel("Chunk X"));
+        fields.add(xField);
+        fields.add(new JLabel("Chunk Y"));
+        fields.add(yField);
+        if (JOptionPane.showConfirmDialog(
+                this,
+                fields,
+                title,
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+        ) != JOptionPane.OK_OPTION) {
+            return null;
+        }
+        return new ChunkCoordinate(
+                ((Number) xField.getValue()).intValue(),
+                ((Number) yField.getValue()).intValue()
+        );
+    }
+
+    private MapDesignLibrary.MapDesign createOpenWorldChunk(int width, int height, String title) {
+        MapDesignLibrary.MapDesign blank = MapDesignLibrary.createBlank(
+                width,
+                height,
+                (ThemeLibrary) primaryThemeBox.getSelectedItem(),
+                (ThemeLibrary) primaryThemeBox.getSelectedItem()
+        );
+        for (int y = 0; y < blank.height(); y++) {
+            for (int x = 0; x < blank.width(); x++) {
+                blank.tiles()[y][x] = Library.TileType.FLOOR;
+            }
+        }
+        return new MapDesignLibrary.MapDesign(
+                blank.width(), blank.height(), title, "", blank.musicPath(), blank.skyboxPath(),
+                blank.primaryTheme(), blank.alternateTheme(), blank.tiles(), blank.themeIndexes(),
+                blank.mapPaint(), blank.mapGeometry(), blank.placements(), blank.authoredDialogues(),
+                blank.authoredQuests(), blank.customItems(), blank.customMobs(), blank.customLimbs(),
+                blank.customNpcs(), blank.customGatheringNodes(), blank.customCookingRecipes(),
+                blank.customCompositeRecipes(), blank.triggers(), 1, 1
+        );
+    }
+
     private void createNewMap() {
         if (!promptNewMapSettings()) {
             return;
@@ -7208,6 +7788,11 @@ public class AetherConstructionKit extends JFrame {
 
         undoStack.clear();
         redoStack.clear();
+        currentWorldManifestPath = null;
+        activeWorld = null;
+        activeWorldChunk = null;
+        worldNeighborDesigns.clear();
+        currentMapPath = null;
         MapDesignLibrary.MapDesign blank = MapDesignLibrary.createBlank(
                 ((Number) widthSpinner.getValue()).intValue(),
                 ((Number) heightSpinner.getValue()).intValue(),
@@ -7468,6 +8053,10 @@ public class AetherConstructionKit extends JFrame {
 
     private void saveMap() {
         try {
+            if (activeWorld != null && currentWorldManifestPath != null && activeWorldChunk != null) {
+                saveCurrentWorldChunk();
+                return;
+            }
             Files.createDirectories(MapDesignLibrary.MAP_FOLDER);
             JFileChooser chooser = new JFileChooser(MapDesignLibrary.MAP_FOLDER.toFile());
             chooser.setSelectedFile(MapDesignLibrary.MAP_FOLDER.resolve(safeMapFileName()).toFile());
@@ -7484,6 +8073,7 @@ public class AetherConstructionKit extends JFrame {
 
             Path path = ensurePropertiesExtension(chooser.getSelectedFile().toPath());
             MapDesignLibrary.save(design, path);
+            currentMapPath = path;
             markDirty(false);
             clearAutosaveRecovery();
             if (saveSharedContentFromDesign()) {
@@ -7507,6 +8097,11 @@ public class AetherConstructionKit extends JFrame {
             }
 
             design = MapDesignLibrary.load(chooser.getSelectedFile().toPath());
+            currentMapPath = chooser.getSelectedFile().toPath();
+            currentWorldManifestPath = null;
+            activeWorld = null;
+            activeWorldChunk = null;
+            worldNeighborDesigns.clear();
             loadSharedContentIntoDesign();
             undoStack.clear();
             redoStack.clear();
@@ -7955,6 +8550,9 @@ public class AetherConstructionKit extends JFrame {
             MouseAdapter mouseAdapter = new MouseAdapter() {
                 @Override
                 public void mousePressed(MouseEvent event) {
+                    if (handleWorldChunkClick(event.getPoint())) {
+                        return;
+                    }
                     if (SwingUtilities.isRightMouseButton(event)) {
                         inspectAt(event.getPoint());
                         showMapContextMenu(event);
@@ -7978,14 +8576,20 @@ public class AetherConstructionKit extends JFrame {
         @Override
         public Dimension getPreferredSize() {
             int cellSize = cellSize();
-            return new Dimension(design.width() * cellSize + 1, design.height() * cellSize + 1);
+            int multiplier = activeWorld == null ? 1 : 3;
+            return new Dimension(
+                    design.width() * cellSize * multiplier + 1,
+                    design.height() * cellSize * multiplier + 1
+            );
         }
 
         private void scrollToTile(int x, int y) {
             int cellSize = cellSize();
+            int originX = activeWorld == null ? 0 : design.width() * cellSize;
+            int originY = activeWorld == null ? 0 : design.height() * cellSize;
             scrollRectToVisible(new Rectangle(
-                    Math.max(0, x * cellSize - cellSize),
-                    Math.max(0, y * cellSize - cellSize),
+                    Math.max(0, originX + x * cellSize - cellSize),
+                    Math.max(0, originY + y * cellSize - cellSize),
                     cellSize * 3,
                     cellSize * 3
             ));
@@ -8002,6 +8606,12 @@ public class AetherConstructionKit extends JFrame {
             Graphics2D g = (Graphics2D) graphics.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
 
+            int originX = activeWorld == null ? 0 : design.width() * cellSize();
+            int originY = activeWorld == null ? 0 : design.height() * cellSize();
+            if (activeWorld != null) {
+                drawWorldContext(g);
+                g.translate(originX, originY);
+            }
             for (int y = 0; y < design.height(); y++) {
                 for (int x = 0; x < design.width(); x++) {
                     drawCell(g, x, y);
@@ -8012,7 +8622,126 @@ public class AetherConstructionKit extends JFrame {
             drawTriggers(g);
             drawSpawn(g);
             drawInspectionSelection(g);
+            if (activeWorld != null) {
+                g.translate(-originX, -originY);
+                drawWorldSeams(g);
+            }
             g.dispose();
+        }
+
+        private void drawWorldContext(Graphics2D g) {
+            int cellSize = cellSize();
+            int chunkPixelWidth = design.width() * cellSize;
+            int chunkPixelHeight = design.height() * cellSize;
+            for (int slotY = 0; slotY < 3; slotY++) {
+                for (int slotX = 0; slotX < 3; slotX++) {
+                    if (slotX == 1 && slotY == 1) {
+                        continue;
+                    }
+                    ChunkCoordinate coordinate = new ChunkCoordinate(
+                            activeWorldChunk.x() + slotX - 1,
+                            activeWorldChunk.y() + slotY - 1
+                    );
+                    MapDesignLibrary.MapDesign neighbor = worldNeighborDesigns.get(coordinate);
+                    int offsetX = slotX * chunkPixelWidth;
+                    int offsetY = slotY * chunkPixelHeight;
+                    if (neighbor == null) {
+                        g.setColor(new Color(12, 14, 18));
+                        g.fillRect(offsetX, offsetY, chunkPixelWidth, chunkPixelHeight);
+                        g.setColor(new Color(95, 100, 112));
+                        g.drawString("Missing chunk " + coordinate, offsetX + 10, offsetY + 20);
+                        continue;
+                    }
+                    for (int y = 0; y < neighbor.height(); y++) {
+                        for (int x = 0; x < neighbor.width(); x++) {
+                            int px = offsetX + x * cellSize;
+                            int py = offsetY + y * cellSize;
+                            Color base = tileColor(neighbor.tiles()[y][x]);
+                            g.setColor(new Color(
+                                    Math.max(0, base.getRed() / 2),
+                                    Math.max(0, base.getGreen() / 2),
+                                    Math.max(0, base.getBlue() / 2)
+                            ));
+                            g.fillRect(px, py, cellSize, cellSize);
+                            g.setColor(new Color(8, 8, 10, 150));
+                            g.drawRect(px, py, cellSize, cellSize);
+                            if (neighbor.mapPaint() != null && neighbor.mapPaint().hasBrush(x, y)) {
+                                g.setColor(new Color(90, 160, 205, 150));
+                                g.fillRect(px + 2, py + 2, Math.max(2, cellSize / 6), Math.max(2, cellSize / 6));
+                            }
+                            if (neighbor.mapGeometry() != null
+                                    && neighbor.mapGeometry().getHeightLevel(x, y) != MapGeometryData.DEFAULT_HEIGHT_LEVEL) {
+                                g.setColor(new Color(80, 170, 205, 180));
+                                g.drawRect(px + 3, py + 3, Math.max(2, cellSize - 7), Math.max(2, cellSize - 7));
+                            }
+                        }
+                    }
+                    for (MapDesignLibrary.MapPlacement placement : neighbor.placements()) {
+                        g.setColor(new Color(170, 150, 95));
+                        g.drawOval(
+                                offsetX + placement.x() * cellSize + 4,
+                                offsetY + placement.y() * cellSize + 4,
+                                Math.max(2, cellSize - 8),
+                                Math.max(2, cellSize - 8)
+                        );
+                    }
+                    for (MapDesignLibrary.MapTrigger trigger : neighbor.triggers()) {
+                        g.setColor(new Color(180, 145, 40));
+                        g.drawRect(
+                                offsetX + trigger.x() * cellSize + 4,
+                                offsetY + trigger.y() * cellSize + 4,
+                                Math.max(2, cellSize - 8),
+                                Math.max(2, cellSize - 8)
+                        );
+                    }
+                    g.setColor(new Color(225, 225, 225));
+                    g.drawString("Chunk " + coordinate + " (read-only)", offsetX + 10, offsetY + 20);
+                }
+            }
+        }
+
+        private void drawWorldSeams(Graphics2D g) {
+            int chunkPixelWidth = design.width() * cellSize();
+            int chunkPixelHeight = design.height() * cellSize();
+            g.setColor(new Color(90, 205, 255));
+            g.setStroke(new BasicStroke(3f));
+            g.drawRect(chunkPixelWidth, chunkPixelHeight, chunkPixelWidth, chunkPixelHeight);
+            g.setColor(new Color(175, 185, 198));
+            for (int i = 1; i < 3; i++) {
+                g.drawLine(i * chunkPixelWidth, 0, i * chunkPixelWidth, chunkPixelHeight * 3);
+                g.drawLine(0, i * chunkPixelHeight, chunkPixelWidth * 3, i * chunkPixelHeight);
+            }
+            g.setColor(Color.WHITE);
+            g.drawString("Editing chunk " + activeWorldChunk, chunkPixelWidth + 10, chunkPixelHeight + 20);
+        }
+
+        private boolean handleWorldChunkClick(Point point) {
+            if (activeWorld == null || activeWorldChunk == null) {
+                return false;
+            }
+            int chunkPixelWidth = design.width() * cellSize();
+            int chunkPixelHeight = design.height() * cellSize();
+            int slotX = Math.floorDiv(point.x, chunkPixelWidth);
+            int slotY = Math.floorDiv(point.y, chunkPixelHeight);
+            if (slotX < 0 || slotX > 2 || slotY < 0 || slotY > 2 || (slotX == 1 && slotY == 1)) {
+                return false;
+            }
+            ChunkCoordinate coordinate = new ChunkCoordinate(
+                    activeWorldChunk.x() + slotX - 1,
+                    activeWorldChunk.y() + slotY - 1
+            );
+            switchWorldChunk(coordinate);
+            return true;
+        }
+
+        private Point activeTileAt(Point point) {
+            int cellSize = cellSize();
+            int originX = activeWorld == null ? 0 : design.width() * cellSize;
+            int originY = activeWorld == null ? 0 : design.height() * cellSize;
+            return new Point(
+                    Math.floorDiv(point.x - originX, cellSize),
+                    Math.floorDiv(point.y - originY, cellSize)
+            );
         }
 
         private void drawCell(Graphics2D g, int x, int y) {
@@ -8137,8 +8866,18 @@ public class AetherConstructionKit extends JFrame {
 
         private void drawSpawn(Graphics2D g) {
             int cellSize = cellSize();
-            int x = design.spawnX() * cellSize;
-            int y = design.spawnY() * cellSize;
+            int spawnTileX = design.spawnX();
+            int spawnTileY = design.spawnY();
+            if (activeWorld != null) {
+                ChunkCoordinate spawnChunk = activeWorld.chunkForGlobal(activeWorld.startX(), activeWorld.startY());
+                if (!spawnChunk.equals(activeWorldChunk)) {
+                    return;
+                }
+                spawnTileX = activeWorld.localX(activeWorld.startX());
+                spawnTileY = activeWorld.localY(activeWorld.startY());
+            }
+            int x = spawnTileX * cellSize;
+            int y = spawnTileY * cellSize;
             int inset = Math.max(2, Math.min(8, cellSize / 4));
             g.setColor(new Color(80, 220, 255));
             g.setStroke(new BasicStroke(3f));
@@ -8178,9 +8917,9 @@ public class AetherConstructionKit extends JFrame {
         }
 
         private void inspectAt(Point point) {
-            int cellSize = cellSize();
-            int x = point.x / cellSize;
-            int y = point.y / cellSize;
+            Point tile = activeTileAt(point);
+            int x = tile.x;
+            int y = tile.y;
 
             if (x < 0 || y < 0 || x >= design.width() || y >= design.height()) {
                 return;
@@ -8218,9 +8957,9 @@ public class AetherConstructionKit extends JFrame {
         }
 
         private void showMapContextMenu(MouseEvent event) {
-            int cellSize = cellSize();
-            int x = event.getX() / cellSize;
-            int y = event.getY() / cellSize;
+            Point tile = activeTileAt(event.getPoint());
+            int x = tile.x;
+            int y = tile.y;
             if (!isTileInBounds(x, y)) {
                 return;
             }
@@ -8352,9 +9091,9 @@ public class AetherConstructionKit extends JFrame {
         }
 
         private void paintAt(Point point) {
-            int cellSize = cellSize();
-            int x = point.x / cellSize;
-            int y = point.y / cellSize;
+            Point tile = activeTileAt(point);
+            int x = tile.x;
+            int y = tile.y;
 
             if (x < 0 || y < 0 || x >= design.width() || y >= design.height()) {
                 return;
@@ -8456,6 +9195,19 @@ public class AetherConstructionKit extends JFrame {
         private void setSpawn(int x, int y) {
             if (design.tiles()[y][x].blocksMovement()) {
                 setStatus("Spawn must be on a walkable tile.");
+                return;
+            }
+
+            if (activeWorld != null && activeWorldChunk != null) {
+                int globalX = activeWorld.globalX(activeWorldChunk, x);
+                int globalY = activeWorld.globalY(activeWorldChunk, y);
+                activeWorld = activeWorld.withMetadata(
+                        activeWorld.displayName(),
+                        activeWorld.description(),
+                        globalX,
+                        globalY
+                );
+                setStatus("Set world spawn to global " + globalX + "," + globalY + ".");
                 return;
             }
 

@@ -9,6 +9,7 @@ import org.main.engine.SoundSystem;
 import org.main.monsters.Monster;
 
 import java.awt.Point;
+import java.io.IOException;
 import java.awt.event.KeyEvent;
 import java.util.ArrayList;
 import java.util.List;
@@ -136,6 +137,7 @@ public class DungeonController {
 
         if (targetTile == Library.TileType.DOOR_CLOSED) {
             dungeonMap.setTile(targetX, targetY, Library.TileType.DOOR_OPEN);
+            playConfiguredSound("sound.doorOpen.path");
             return;
         }
 
@@ -146,6 +148,7 @@ public class DungeonController {
             }
 
             dungeonMap.setTile(targetX, targetY, Library.TileType.DOOR_CLOSED);
+            playConfiguredSound("sound.doorClose.path");
         }
     }
 
@@ -175,10 +178,42 @@ public class DungeonController {
             return;
         }
 
-        gameState.setPlayerPosition(nextPosition.x, nextPosition.y);
-        gameState.startMovementAnimation(previousX, previousY, nextPosition.x, nextPosition.y);
-        gameState.evaluateEntryTrigger(nextPosition.x, nextPosition.y);
+        GameState.MovementCoordinates movement = new GameState.MovementCoordinates(
+                previousX,
+                previousY,
+                nextPosition.x,
+                nextPosition.y,
+                false
+        );
+        try {
+            movement = gameState.recenterOpenWorldIfNeeded(
+                    previousX,
+                    previousY,
+                    nextPosition.x,
+                    nextPosition.y
+            );
+        } catch (IOException exception) {
+            LOGGER.warning("Failed to recenter open-world chunks: " + exception.getMessage());
+            return;
+        }
+
+        gameState.setPlayerPosition(movement.nextX(), movement.nextY());
+        gameState.startMovementAnimation(
+                movement.previousX(),
+                movement.previousY(),
+                movement.nextX(),
+                movement.nextY()
+        );
+        if (gameState.evaluateEntryTrigger(movement.nextX(), movement.nextY())) {
+            playConfiguredSound("sound.doorClose.path");
+        }
         playFootstepSound();
+    }
+
+    private void playConfiguredSound(String configurationKey) {
+        if (soundSystem != null) {
+            soundSystem.playSound(GameConfiguration.stringValue(configurationKey, ""));
+        }
     }
 
     private void playFootstepSound() {

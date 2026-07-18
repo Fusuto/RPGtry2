@@ -6,7 +6,7 @@
 
     <groupId>org.example</groupId>
     <artifactId>Gameproject2</artifactId>
-    <version>0.04</version>
+    <version>0.05</version>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
@@ -88,6 +88,27 @@
                 <configuration>
                     <mainClass>org.main.AetherBase</mainClass>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>org.main.AetherBase</mainClass>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

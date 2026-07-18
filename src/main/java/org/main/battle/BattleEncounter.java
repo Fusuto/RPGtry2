@@ -131,6 +131,7 @@ public class BattleEncounter {
         );
         playerActor.copyCombatProfileFrom(playerCharacter);
         playerActor.setHitSoundPath(environment == null ? null : environment.getPlayerHitSoundPath());
+        playerActor.setAttackSoundPath(GameConfiguration.stringValue("battle.playerAutoAttack.soundPath", ""));
 
         for (BattleSkill skill : playerCharacter.getBattleSkills()) {
             playerActor.addSkill(skill);
@@ -139,7 +140,7 @@ public class BattleEncounter {
         if (playerCharacter.getInventory() != null) {
             InventorySystem.Item weapon = playerCharacter.getInventory().getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
 
-            if (weapon != null) {
+            if (weapon != null && weapon.getUseSoundPath() != null && !weapon.getUseSoundPath().isBlank()) {
                 playerActor.setAttackSoundPath(weapon.getUseSoundPath());
             }
         }

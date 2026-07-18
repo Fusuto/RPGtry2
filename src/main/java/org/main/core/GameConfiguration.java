@@ -150,6 +150,7 @@ public final class GameConfiguration {
         put("battle.enemySkill.smartDebuffIntelligence", "7");
         put("battle.lowHpWarning.threshold", "0.10");
         put("battle.lowHpWarning.soundPath", "assets/sounds/generated/kurt_sample_2.wav");
+        put("battle.playerAutoAttack.soundPath", "");
         put("battle.debug.criticalHpPercent", "0.10");
         put("battle.debug.invulnerableTurns", "1");
         put("battle.debug.damageReduction", "1.0");
@@ -208,6 +209,8 @@ public final class GameConfiguration {
         put("movement.animationDurationMs", "160");
         put("rotation.animationDurationMs", "360");
         put("sound.defaultVolume", "0.20");
+        put("sound.doorOpen.path", "");
+        put("sound.doorClose.path", "");
 
         put("resource.respawnMs", "300000");
         put("resource.gatheringAttemptIntervalMs", "2500");

@@ -5,6 +5,7 @@ import org.main.battle.BattleAssets;
 import org.main.battle.BattleRenderer;
 import org.main.content.EnvironmentLibrary;
 import org.main.content.MapDesignLibrary;
+import org.main.content.WorldManifestLibrary;
 import org.main.content.PlayerRegionLibrary;
 import org.main.engine.DungeonRenderContext;
 import org.main.engine.DungeonMap;
@@ -15,6 +16,7 @@ import org.main.engine.SoundSystem;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 public final class AetherGameRuntime {
@@ -79,6 +81,10 @@ public final class AetherGameRuntime {
     }
 
     public List<EnvironmentTheme> activeEnvironmentThemes() {
+        if (gameState.isOpenWorldActive()) {
+            List<EnvironmentTheme> worldThemes = gameState.getOpenWorldEnvironmentThemes();
+            return worldThemes.isEmpty() ? environment.getThemes() : worldThemes;
+        }
         Path mapDesignPath = gameState.getCurrentMapDesignPath();
         if (mapDesignPath == null) {
             return environment.getThemes();
@@ -122,7 +128,9 @@ public final class AetherGameRuntime {
     }
 
     public List<Path> listAvailableMaps() throws IOException {
-        return MapDesignLibrary.listSavedMaps();
+        List<Path> available = new ArrayList<>(MapDesignLibrary.listSavedMaps());
+        available.addAll(WorldManifestLibrary.listSavedWorlds());
+        return List.copyOf(available);
     }
 
     public String describeMap(Path mapPath) {
@@ -131,6 +139,12 @@ public final class AetherGameRuntime {
         }
 
         try {
+            if (WorldManifestLibrary.isWorldManifest(mapPath)) {
+                WorldManifestLibrary.WorldManifest manifest = WorldManifestLibrary.load(mapPath);
+                return manifest.description().isBlank()
+                        ? manifest.displayName()
+                        : manifest.displayName() + " - " + manifest.description();
+            }
             MapDesignLibrary.MapDesign mapDesign = MapDesignLibrary.load(mapPath);
             if (mapDesign.description().isBlank()) {
                 return mapDesign.displayName();
@@ -158,8 +172,14 @@ public final class AetherGameRuntime {
             throw new IOException("No map selected.");
         }
 
-        MapDesignLibrary.MapDesign mapDesign = MapDesignLibrary.load(mapPath);
-        gameState.changeDungeon(mapDesign, mapPath);
+        MapDesignLibrary.MapDesign mapDesign;
+        if (WorldManifestLibrary.isWorldManifest(mapPath)) {
+            gameState.openWorld(mapPath);
+            mapDesign = MapDesignLibrary.load(gameState.getCurrentMapDesignPath());
+        } else {
+            mapDesign = MapDesignLibrary.load(mapPath);
+            gameState.changeDungeon(mapDesign, mapPath);
+        }
         gameState.setGameMode(GameState.GameMode.DUNGEON);
         gameOverMusicStarted = false;
         soundSystem.stopAll();

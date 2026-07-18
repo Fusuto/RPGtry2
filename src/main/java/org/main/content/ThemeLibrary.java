@@ -8,7 +8,8 @@ public enum ThemeLibrary {
             EnvironmentTheme.of(
                     EnvironmentTheme.texture("wall", "brick", "stone", "center"),
                     EnvironmentTheme.texture("door", "wood", "handle", "center"),
-                    EnvironmentTheme.texture("floor", "wood", "planks", "wide")
+                    EnvironmentTheme.texture("floor", "wood", "planks", "wide"),
+                    EnvironmentTheme.texture("roof", "clay", "grey", "center")
             )
     ),
 
@@ -17,7 +18,8 @@ public enum ThemeLibrary {
             EnvironmentTheme.of(
                     EnvironmentTheme.texture("wall", "brick", "sand", "center"),
                     EnvironmentTheme.texture("door", "metal", "gate", "lock"),
-                    EnvironmentTheme.texture("floor", "tiles", "sand", "small")
+                    EnvironmentTheme.texture("floor", "tiles", "sand", "small"),
+                    EnvironmentTheme.texture("roof", "clay", "red", "center")
             )
     ),
 
@@ -26,7 +28,8 @@ public enum ThemeLibrary {
             EnvironmentTheme.of(
                     EnvironmentTheme.texture("wall", "timber", "structure", "horizontal"),
                     EnvironmentTheme.texture("door", "wood", "handle", "center"),
-                    EnvironmentTheme.texture("floor", "ground", "nature", "grass")
+                    EnvironmentTheme.texture("floor", "ground", "nature", "grass"),
+                    EnvironmentTheme.texture("roof", "thatch", "center", "center")
             )
     ),
 
@@ -35,10 +38,10 @@ public enum ThemeLibrary {
             EnvironmentTheme.of(
                     EnvironmentTheme.texture("wall", "timber", "structure", "cross"),
                     EnvironmentTheme.texture("door", "wood", "handle", "center"),
-                    EnvironmentTheme.texture("floor", "ground", "nature", "dirt")
+                    EnvironmentTheme.texture("floor", "ground", "nature", "dirt"),
+                    EnvironmentTheme.texture("roof", "thatch", "center", "center")
             )
     );
-
     private final String displayName;
     private final EnvironmentTheme theme;
 

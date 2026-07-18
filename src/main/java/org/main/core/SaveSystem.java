@@ -4,6 +4,7 @@ import org.main.content.ItemLibrary;
 import org.main.content.MapDesignLibrary;
 import org.main.content.PlayerRegionLibrary;
 import org.main.content.RecipeLibrary;
+import org.main.content.WorldManifestLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapPaintData;
@@ -71,6 +72,13 @@ public final class SaveSystem {
 
         properties.setProperty("world.x", String.valueOf(gameState.getPlayerX()));
         properties.setProperty("world.y", String.valueOf(gameState.getPlayerY()));
+        properties.setProperty("world.mode", gameState.isOpenWorldActive() ? "OPEN_WORLD" : "STANDALONE");
+        properties.setProperty("world.globalX", String.valueOf(gameState.getGlobalPlayerX()));
+        properties.setProperty("world.globalY", String.valueOf(gameState.getGlobalPlayerY()));
+        properties.setProperty(
+                "world.manifestPath",
+                mapDesignPathForSave(gameState.getCurrentWorldManifestPath())
+        );
         properties.setProperty("world.direction", String.valueOf(gameState.getDirection()));
         properties.setProperty("world.floor", String.valueOf(gameState.getCurrentFloor()));
         properties.setProperty("world.gold", String.valueOf(gameState.getGold()));
@@ -83,6 +91,7 @@ public final class SaveSystem {
         saveDungeonMap(properties, gameState.getDungeonMap());
         saveTileInteractions(properties, gameState);
         saveMapRuntimeStates(properties, gameState.getMapRuntimeStatesView());
+        saveOpenWorldRuntimeStates(properties, gameState.getOpenWorldRuntimeStatesView());
 
         gameState.getQuestStagesView().forEach((id, stage) -> properties.setProperty("quest." + id, String.valueOf(stage)));
 
@@ -132,6 +141,9 @@ public final class SaveSystem {
         int playerX = readInt(properties, "world.x", 1);
         int playerY = readInt(properties, "world.y", 1);
         Path mapDesignPath = readMapDesignPath(properties.getProperty("world.mapDesignPath", ""));
+        Path worldManifestPath = readMapDesignPath(properties.getProperty("world.manifestPath", ""));
+        int globalX = readInt(properties, "world.globalX", playerX);
+        int globalY = readInt(properties, "world.globalY", playerY);
         Map<String, GameState.MapRuntimeState> runtimeStates = loadMapRuntimeStates(properties);
         if (runtimeStates.isEmpty() && mapDesignPath != null) {
             runtimeStates.put(mapDesignPathForSave(mapDesignPath), new GameState.MapRuntimeState(
@@ -155,6 +167,7 @@ public final class SaveSystem {
             ));
         }
         gameState.setMapRuntimeStates(runtimeStates);
+        gameState.setOpenWorldRuntimeStates(loadOpenWorldRuntimeStates(properties));
 
         if (dungeonMap.isOutOfBounds(playerX, playerY)) {
             playerX = 1;
@@ -164,7 +177,15 @@ public final class SaveSystem {
         gameState.setPlayerCharacter(player);
         gameState.setRemovedEntityKeys(readSet(properties.getProperty("world.removedEntities", "")));
         boolean loadedAuthoredMap = false;
-        if (mapDesignPath != null) {
+        if (worldManifestPath != null
+                && "OPEN_WORLD".equalsIgnoreCase(properties.getProperty("world.mode", ""))) {
+            try {
+                gameState.restoreOrLoadMap(worldManifestPath, globalX, globalY);
+                loadedAuthoredMap = true;
+            } catch (IOException ignored) {
+                loadedAuthoredMap = false;
+            }
+        } else if (mapDesignPath != null) {
             try {
                 gameState.restoreOrLoadMap(mapDesignPath, playerX, playerY);
                 loadedAuthoredMap = true;
@@ -435,6 +456,146 @@ public final class SaveSystem {
         }
 
         return states;
+    }
+
+    private static void saveOpenWorldRuntimeStates(
+            Properties properties,
+            Map<String, GameState.OpenWorldRuntimeState> states
+    ) {
+        properties.setProperty("openWorldState.count", String.valueOf(states == null ? 0 : states.size()));
+        if (states == null) {
+            return;
+        }
+
+        int stateIndex = 0;
+        for (Map.Entry<String, GameState.OpenWorldRuntimeState> entry : states.entrySet()) {
+            GameState.OpenWorldRuntimeState state = entry.getValue();
+            String prefix = "openWorldState." + stateIndex + ".";
+            properties.setProperty(prefix + "key", entry.getKey());
+            properties.setProperty(prefix + "manifestPath", mapDesignPathForSave(state.manifestPath()));
+            properties.setProperty(prefix + "resumeGlobalX", String.valueOf(state.resumeGlobalX()));
+            properties.setProperty(prefix + "resumeGlobalY", String.valueOf(state.resumeGlobalY()));
+            properties.setProperty(prefix + "chunk.count", String.valueOf(state.chunkStates().size()));
+
+            int chunkIndex = 0;
+            for (Map.Entry<WorldManifestLibrary.ChunkCoordinate, OpenWorldSession.PersistedChunkState> chunkEntry
+                    : state.chunkStates().entrySet()) {
+                String chunkPrefix = prefix + "chunk." + chunkIndex + ".";
+                WorldManifestLibrary.ChunkCoordinate coordinate = chunkEntry.getKey();
+                OpenWorldSession.PersistedChunkState chunk = chunkEntry.getValue();
+                properties.setProperty(chunkPrefix + "x", String.valueOf(coordinate.x()));
+                properties.setProperty(chunkPrefix + "y", String.valueOf(coordinate.y()));
+                properties.setProperty(chunkPrefix + "lastUpdatedEpochMs", String.valueOf(chunk.lastUpdatedEpochMs()));
+                properties.setProperty(chunkPrefix + "removed", join(chunk.removedEntityKeys()));
+                properties.setProperty(chunkPrefix + "discovered", join(chunk.discoveredTiles()));
+                properties.setProperty(chunkPrefix + "firedTriggers", join(chunk.firedTriggerIds()));
+                saveDungeonMap(properties, chunkPrefix + "map.", chunk.map());
+                saveOpenWorldEntities(properties, chunkPrefix + "entity.", chunk.entities());
+                saveTileInteractionMap(properties, chunkPrefix + "tileInteraction.", chunk.tileInteractions());
+                saveResourceNodeSnapshots(properties, chunkPrefix + "resource.", chunk.resourceNodeStates());
+                saveMapTriggers(properties, chunkPrefix + "trigger.", chunk.triggers());
+                chunkIndex++;
+            }
+            stateIndex++;
+        }
+    }
+
+    private static Map<String, GameState.OpenWorldRuntimeState> loadOpenWorldRuntimeStates(Properties properties) {
+        int count = Math.max(0, readInt(properties, "openWorldState.count", 0));
+        Map<String, GameState.OpenWorldRuntimeState> states = new HashMap<>();
+        for (int stateIndex = 0; stateIndex < count; stateIndex++) {
+            String prefix = "openWorldState." + stateIndex + ".";
+            Path manifestPath = readMapDesignPath(properties.getProperty(prefix + "manifestPath", ""));
+            if (manifestPath == null) {
+                continue;
+            }
+            String key = properties.getProperty(prefix + "key", mapDesignPathForSave(manifestPath));
+            int resumeGlobalX = readInt(properties, prefix + "resumeGlobalX", 1);
+            int resumeGlobalY = readInt(properties, prefix + "resumeGlobalY", 1);
+            int chunkCount = Math.max(0, readInt(properties, prefix + "chunk.count", 0));
+            Map<WorldManifestLibrary.ChunkCoordinate, OpenWorldSession.PersistedChunkState> chunks = new HashMap<>();
+            for (int chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++) {
+                String chunkPrefix = prefix + "chunk." + chunkIndex + ".";
+                WorldManifestLibrary.ChunkCoordinate coordinate = new WorldManifestLibrary.ChunkCoordinate(
+                        readInt(properties, chunkPrefix + "x", 0),
+                        readInt(properties, chunkPrefix + "y", 0)
+                );
+                chunks.put(coordinate, new OpenWorldSession.PersistedChunkState(
+                        loadDungeonMap(properties, chunkPrefix + "map."),
+                        loadOpenWorldEntities(properties, chunkPrefix + "entity."),
+                        loadTileInteractionMap(properties, chunkPrefix + "tileInteraction."),
+                        readSet(properties.getProperty(chunkPrefix + "removed", "")),
+                        loadResourceNodeSnapshots(properties, chunkPrefix + "resource."),
+                        readSet(properties.getProperty(chunkPrefix + "discovered", "")),
+                        loadMapTriggers(properties, chunkPrefix + "trigger."),
+                        readSet(properties.getProperty(chunkPrefix + "firedTriggers", "")),
+                        readLong(properties, chunkPrefix + "lastUpdatedEpochMs", System.currentTimeMillis())
+                ));
+            }
+            states.put(key, new GameState.OpenWorldRuntimeState(
+                    manifestPath,
+                    resumeGlobalX,
+                    resumeGlobalY,
+                    chunks
+            ));
+        }
+        return states;
+    }
+
+    private static void saveOpenWorldEntities(
+            Properties properties,
+            String prefix,
+            List<OpenWorldSession.PersistedEntityState> entities
+    ) {
+        properties.setProperty(prefix + "count", String.valueOf(entities == null ? 0 : entities.size()));
+        if (entities == null) {
+            return;
+        }
+        for (int i = 0; i < entities.size(); i++) {
+            OpenWorldSession.PersistedEntityState entity = entities.get(i);
+            String entityPrefix = prefix + i + ".";
+            properties.setProperty(entityPrefix + "name", encode(entity.name()));
+            properties.setProperty(entityPrefix + "type", entity.type().name());
+            properties.setProperty(entityPrefix + "x", String.valueOf(entity.x()));
+            properties.setProperty(entityPrefix + "y", String.valueOf(entity.y()));
+            properties.setProperty(entityPrefix + "interactionId", encode(entity.interactionId()));
+            properties.setProperty(entityPrefix + "talkSoundPath", encode(entity.talkSoundPath()));
+            properties.setProperty(entityPrefix + "blocksMovement", String.valueOf(entity.blocksMovement()));
+            properties.setProperty(entityPrefix + "renderOnWall", String.valueOf(entity.renderOnWall()));
+            properties.setProperty(entityPrefix + "visualScale", String.valueOf(entity.visualScale()));
+            properties.setProperty(entityPrefix + "item", itemKey(entity.item()));
+        }
+    }
+
+    private static List<OpenWorldSession.PersistedEntityState> loadOpenWorldEntities(
+            Properties properties,
+            String prefix
+    ) {
+        int count = Math.max(0, readInt(properties, prefix + "count", 0));
+        List<OpenWorldSession.PersistedEntityState> entities = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            String entityPrefix = prefix + i + ".";
+            Library.EntityType type;
+            try {
+                type = Library.EntityType.valueOf(
+                        properties.getProperty(entityPrefix + "type", Library.EntityType.ITEM.name()));
+            } catch (IllegalArgumentException ignored) {
+                type = Library.EntityType.ITEM;
+            }
+            entities.add(new OpenWorldSession.PersistedEntityState(
+                    decode(properties.getProperty(entityPrefix + "name", "")),
+                    type,
+                    readInt(properties, entityPrefix + "x", 0),
+                    readInt(properties, entityPrefix + "y", 0),
+                    decode(properties.getProperty(entityPrefix + "interactionId", "")),
+                    decode(properties.getProperty(entityPrefix + "talkSoundPath", "")),
+                    Boolean.parseBoolean(properties.getProperty(entityPrefix + "blocksMovement", "false")),
+                    Boolean.parseBoolean(properties.getProperty(entityPrefix + "renderOnWall", "false")),
+                    readDouble(properties, entityPrefix + "visualScale", 1.0),
+                    readInventoryItem(properties.getProperty(entityPrefix + "item", ""))
+            ));
+        }
+        return entities;
     }
 
     private static void saveMapTriggers(
@@ -848,7 +1009,11 @@ public final class SaveSystem {
         if (path == null) {
             return "";
         }
-
+        Path absolutePath = path.toAbsolutePath().normalize();
+        Path resourceRoot = Path.of("src", "main", "resources").toAbsolutePath().normalize();
+        if (absolutePath.startsWith(resourceRoot)) {
+            return resourceRoot.relativize(absolutePath).toString().replace('\\', '/');
+        }
         return MapDesignLibrary.resourcePathForMap(path);
     }
 
@@ -863,7 +1028,16 @@ public final class SaveSystem {
         }
 
         Path mapFolderPath = MapDesignLibrary.MAP_FOLDER.resolve(value).normalize();
-        return Files.isRegularFile(mapFolderPath) ? mapFolderPath : path;
+        if (Files.isRegularFile(mapFolderPath)) {
+            return mapFolderPath;
+        }
+        if (value.replace('\\', '/').startsWith("assets/")) {
+            Path resourcePath = Path.of("src", "main", "resources").resolve(value).normalize();
+            if (Files.isRegularFile(resourcePath)) {
+                return resourcePath;
+            }
+        }
+        return path;
     }
 
     private static Set<String> readSet(String value) {
@@ -923,6 +1097,22 @@ public final class SaveSystem {
         try {
             return Integer.parseInt(properties.getProperty(key, String.valueOf(fallback)));
         } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
+    private static long readLong(Properties properties, String key, long fallback) {
+        try {
+            return Long.parseLong(properties.getProperty(key, String.valueOf(fallback)).trim());
+        } catch (RuntimeException ignored) {
+            return fallback;
+        }
+    }
+
+    private static double readDouble(Properties properties, String key, double fallback) {
+        try {
+            return Double.parseDouble(properties.getProperty(key, String.valueOf(fallback)).trim());
+        } catch (RuntimeException ignored) {
             return fallback;
         }
     }
