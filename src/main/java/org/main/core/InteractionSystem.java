@@ -1,11 +1,6 @@
 package org.main.core;
 
-import org.main.content.DialogueLibrary;
-import org.main.content.InteractionLibrary;
-import org.main.content.ItemLibrary;
 import org.main.content.MapDesignLibrary;
-import org.main.content.QuestLibrary;
-import org.main.content.RecipeLibrary;
 import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
 import org.main.monsters.Monster;
@@ -39,6 +34,11 @@ import java.util.function.Supplier;
 import java.util.logging.Logger;
 
 public final class InteractionSystem {
+    public static final String GENERATED_DUNGEON_GATE_ID = "generated_dungeon_gate";
+    public static final List<EditorInteractionDefinition> EDITOR_INTERACTIONS = List.of(
+            new EditorInteractionDefinition("Chest Prompt", "chest_basic"),
+            new EditorInteractionDefinition("Dungeon Exit", "dungeon_exit")
+    );
     private static final Logger LOGGER = Logger.getLogger(InteractionSystem.class.getName());
 
     private InteractionSystem() {
@@ -109,7 +109,8 @@ public final class InteractionSystem {
             Runnable saveAction,
             Runnable loadAction
     ) {
-        return new Interaction(new ConfigInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction));
+        return new Interaction(new ConfigInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction))
+                .pauseGameplay();
     }
 
     public static Interaction settingsMenu(
@@ -129,7 +130,8 @@ public final class InteractionSystem {
             Runnable saveAction,
             Runnable loadAction
     ) {
-        return new Interaction(new SettingsInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction));
+        return new Interaction(new SettingsInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction))
+                .pauseGameplay();
     }
 
     public static Interaction volumeMenu(
@@ -149,7 +151,8 @@ public final class InteractionSystem {
             Runnable saveAction,
             Runnable loadAction
     ) {
-        return new Interaction(new VolumeInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction));
+        return new Interaction(new VolumeInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction))
+                .pauseGameplay();
     }
 
     private static Interaction debugMenu(
@@ -160,7 +163,8 @@ public final class InteractionSystem {
             Runnable saveAction,
             Runnable loadAction
     ) {
-        return new Interaction(new DebugInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction));
+        return new Interaction(new DebugInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction))
+                .pauseGameplay();
     }
 
     private static Interaction debugItemCategoryMenu(
@@ -171,7 +175,8 @@ public final class InteractionSystem {
             Runnable saveAction,
             Runnable loadAction
     ) {
-        return new Interaction(new DebugItemCategoryInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction));
+        return new Interaction(new DebugItemCategoryInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction))
+                .pauseGameplay();
     }
 
     private static Interaction debugItemMenu(
@@ -183,11 +188,12 @@ public final class InteractionSystem {
             Runnable loadAction,
             DebugItemCategory category
     ) {
-        return new Interaction(new DebugItemInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction, category));
+        return new Interaction(new DebugItemInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction, category))
+                .pauseGameplay();
     }
 
     public static Interaction controlsMenu(InputBindings inputBindings) {
-        return new Interaction(new ControlsInteractionContent(inputBindings));
+        return new Interaction(new ControlsInteractionContent(inputBindings)).pauseGameplay();
     }
 
     public static Interaction levelUpMenu(GameState gameState) {
@@ -207,7 +213,7 @@ public final class InteractionSystem {
                         gameState.stopFishing();
                     }
                 }
-        )).allowInventoryOverlay();
+        )).allowCharacterMenuOverlay();
     }
 
     public static Interaction miningMenu(GameState gameState) {
@@ -223,7 +229,7 @@ public final class InteractionSystem {
                         gameState.stopMining();
                     }
                 }
-        )).allowInventoryOverlay();
+        )).allowCharacterMenuOverlay();
     }
 
     public static Interaction cookingMenu(GameState gameState) {
@@ -239,7 +245,7 @@ public final class InteractionSystem {
                         gameState.stopCooking();
                     }
                 }
-        )).allowInventoryOverlay();
+        )).allowCharacterMenuOverlay();
     }
 
     public static Interaction smeltingMenu(GameState gameState) {
@@ -255,11 +261,11 @@ public final class InteractionSystem {
                         gameState.stopSmelting();
                     }
                 }
-        )).allowInventoryOverlay();
+        )).allowCharacterMenuOverlay();
     }
 
     public static Interaction anvilMenu(GameState gameState) {
-        return new Interaction(new AnvilInteractionContent(gameState)).allowInventoryOverlay();
+        return new Interaction(new AnvilInteractionContent(gameState)).allowCharacterMenuOverlay();
     }
 
     public static Interaction postBattleMenu(GameState gameState, Monster monster, int experienceReward, int hpLost) {
@@ -403,6 +409,8 @@ public final class InteractionSystem {
         private String selectionSoundPath;
         private boolean closed = false;
         private boolean inventoryOverlayAllowed = false;
+        private boolean characterMenuOverlayAllowed = false;
+        private boolean gameplayPaused = false;
 
         private Interaction(InteractionContent content) {
             this.content = content;
@@ -438,8 +446,27 @@ public final class InteractionSystem {
             return this;
         }
 
+        public Interaction allowCharacterMenuOverlay() {
+            characterMenuOverlayAllowed = true;
+            inventoryOverlayAllowed = true;
+            return this;
+        }
+
         public boolean isInventoryOverlayAllowed() {
             return inventoryOverlayAllowed;
+        }
+
+        public boolean isCharacterMenuOverlayAllowed() {
+            return characterMenuOverlayAllowed;
+        }
+
+        public Interaction pauseGameplay() {
+            gameplayPaused = true;
+            return this;
+        }
+
+        public boolean pausesGameplay() {
+            return gameplayPaused;
         }
 
         private boolean handleKeyPressed(KeyEvent e) {
@@ -1515,6 +1542,10 @@ public final class InteractionSystem {
             InteractionFactory factory = factories.get(interactionId);
 
             if (factory == null) {
+                if ("custom_shop".equals(interactionId) && entity != null && entity.getShopBlueprint() != null) {
+                    return createCustomShopInteraction(gameState, entity);
+                }
+
                 if (interactionId != null && interactionId.startsWith("map_link|")) {
                     return createMapLinkInteraction(interactionId, gameState);
                 }
@@ -1541,6 +1572,33 @@ public final class InteractionSystem {
             }
 
             return factory.create(new InteractionContext(gameState, entity, tileX, tileY));
+        }
+
+        private Interaction createCustomShopInteraction(GameState gameState, MapEntity entity) {
+            ShopSystem.ShopBlueprint blueprint = entity.getShopBlueprint();
+            if (gameState == null || blueprint == null) {
+                return null;
+            }
+            String merchantName = entity.getName() == null || entity.getName().isBlank()
+                    ? blueprint.shopName()
+                    : entity.getName();
+            return dialogue(
+                    merchantName,
+                    blueprint.greeting(),
+                    null,
+                    entity.getStaticImage(),
+                    option("Trade", () -> {
+                        ShopSystem.ShopSession shop = entity.getShopSession();
+                        if (shop == null) {
+                            shop = ShopSystem.createAuthoredShop(gameState, blueprint);
+                            entity.setShopSession(shop);
+                        }
+                        if (shop != null) {
+                            gameState.openShop(shop);
+                        }
+                    }),
+                    closeOption("Leave")
+            );
         }
 
         private Interaction createMapLinkInteraction(String interactionId, GameState gameState) {
@@ -1626,8 +1684,13 @@ public final class InteractionSystem {
                 GameState gameState,
                 boolean firstTalk
         ) {
-            if (firstTalk && findAuthoredDialogueNode(authoredDialogue, "firstTalk") != null) {
-                return "firstTalk";
+            String firstTalkNodeId = firstTalkNodeId(authoredDialogue);
+            if (firstTalk && !firstTalkNodeId.isBlank()) {
+                return firstTalkNodeId;
+            }
+            String repeatTalkNodeId = repeatTalkNodeId(authoredDialogue);
+            if (!repeatTalkNodeId.isBlank()) {
+                return repeatTalkNodeId;
             }
             if (!authoredDialogue.choices().isEmpty()) {
                 return "start";
@@ -1646,7 +1709,7 @@ public final class InteractionSystem {
             }
 
             for (MapDesignLibrary.AuthoredDialogueNode node : authoredDialogue.nodes()) {
-                if ("firstTalk".equals(node.nodeId())) {
+                if (isFirstTalkNode(node)) {
                     continue;
                 }
                 for (MapDesignLibrary.AuthoredDialogueChoice choice : node.choices()) {
@@ -1693,6 +1756,9 @@ public final class InteractionSystem {
                     ? authoredDialogue.choices()
                     : node == null ? List.of() : node.choices();
             List<MapDesignLibrary.AuthoredDialogueChoice> visibleChoices = visibleAuthoredChoices(gameState, choices, firstTalk);
+            String conversationHubNodeId = conversationHubNodeId(authoredDialogue);
+            boolean canReturnToTopics = !conversationHubNodeId.isBlank()
+                    && !conversationHubNodeId.equals(nodeId);
             if (!visibleChoices.isEmpty()) {
                 List<InteractionOption> options = new ArrayList<>();
                 for (MapDesignLibrary.AuthoredDialogueChoice choice : visibleChoices) {
@@ -1705,6 +1771,17 @@ public final class InteractionSystem {
                             tileY,
                             firstTalk
                     )));
+                }
+                if (canReturnToTopics) {
+                    options.add(authoredTopicsOption(
+                            authoredDialogue,
+                            gameState,
+                            entity,
+                            tileX,
+                            tileY,
+                            conversationHubNodeId,
+                            firstTalk
+                    ));
                 }
                 options.add(closeOption("Close"));
                 return dialogue(
@@ -1733,6 +1810,25 @@ public final class InteractionSystem {
                                 gameState.openInteraction(followUpFactory.create(new InteractionContext(gameState, entity, tileX, tileY)));
                             }
                         }),
+                        closeOption("Close")
+                );
+            }
+
+            if (canReturnToTopics) {
+                return dialogue(
+                        authoredDialogue.speakerName(),
+                        bodyText,
+                        null,
+                        entity == null ? null : entity.getStaticImage(),
+                        authoredTopicsOption(
+                                authoredDialogue,
+                                gameState,
+                                entity,
+                                tileX,
+                                tileY,
+                                conversationHubNodeId,
+                                firstTalk
+                        ),
                         closeOption("Close")
                 );
             }
@@ -1783,6 +1879,27 @@ public final class InteractionSystem {
                 return;
             }
 
+            String conversationHubNodeId = conversationHubNodeId(authoredDialogue);
+            if (!conversationHubNodeId.isBlank()) {
+                gameState.openInteraction(dialogue(
+                        authoredDialogue.speakerName(),
+                        choice.bodyText() + rewardText + questText,
+                        null,
+                        entity == null ? null : entity.getStaticImage(),
+                        authoredTopicsOption(
+                                authoredDialogue,
+                                gameState,
+                                entity,
+                                tileX,
+                                tileY,
+                                conversationHubNodeId,
+                                firstTalk
+                        ),
+                        closeOption("Close")
+                ));
+                return;
+            }
+
             gameState.openInteraction(dialogue(
                     authoredDialogue.speakerName(),
                     choice.bodyText() + rewardText + questText,
@@ -1790,6 +1907,66 @@ public final class InteractionSystem {
                     entity == null ? null : entity.getStaticImage(),
                     closeOption("Close")
             ));
+        }
+
+        private InteractionOption authoredTopicsOption(
+                MapDesignLibrary.AuthoredDialogue authoredDialogue,
+                GameState gameState,
+                MapEntity entity,
+                int tileX,
+                int tileY,
+                String conversationHubNodeId,
+                boolean firstTalk
+        ) {
+            return option("Other topics", () -> gameState.openInteraction(createAuthoredNodeInteraction(
+                    authoredDialogue,
+                    gameState,
+                    entity,
+                    tileX,
+                    tileY,
+                    conversationHubNodeId,
+                    "",
+                    firstTalk
+            )));
+        }
+
+        private String conversationHubNodeId(MapDesignLibrary.AuthoredDialogue authoredDialogue) {
+            String repeatNodeId = repeatTalkNodeId(authoredDialogue);
+            if (!repeatNodeId.isBlank()) {
+                return repeatNodeId;
+            }
+            return authoredDialogue != null && !authoredDialogue.choices().isEmpty() ? "start" : "";
+        }
+
+        private String firstTalkNodeId(MapDesignLibrary.AuthoredDialogue authoredDialogue) {
+            if (authoredDialogue == null) {
+                return "";
+            }
+            for (MapDesignLibrary.AuthoredDialogueNode node : authoredDialogue.nodes()) {
+                if (isFirstTalkNode(node)) {
+                    return node.nodeId();
+                }
+            }
+            return "";
+        }
+
+        private boolean isFirstTalkNode(MapDesignLibrary.AuthoredDialogueNode node) {
+            return node != null
+                    && ("firstTalk".equalsIgnoreCase(node.nodeId())
+                    || "firstTime".equalsIgnoreCase(node.nodeId()));
+        }
+
+        private String repeatTalkNodeId(MapDesignLibrary.AuthoredDialogue authoredDialogue) {
+            if (authoredDialogue == null) {
+                return "";
+            }
+            for (MapDesignLibrary.AuthoredDialogueNode node : authoredDialogue.nodes()) {
+                if ("repeatTalk".equalsIgnoreCase(node.nodeId())
+                        || "topics".equalsIgnoreCase(node.nodeId())) {
+                    return node.nodeId();
+                }
+            }
+            return "";
         }
 
         private List<MapDesignLibrary.AuthoredDialogueChoice> visibleAuthoredChoices(
@@ -1869,23 +2046,18 @@ public final class InteractionSystem {
             if (choice.giveSkill() != null && choice.giveSkillXp() > 0) {
                 gameState.getPlayerCharacter().addSkillExperience(choice.giveSkill(), choice.giveSkillXp());
                 rewardText.append("\n")
-                        .append(QuestLibrary.skillExperienceRewardText(choice.giveSkill(), choice.giveSkillXp()));
+                        .append("+")
+                        .append(Math.max(0, choice.giveSkillXp()))
+                        .append(" ")
+                        .append(choice.giveSkill() == null ? "Skill" : choice.giveSkill().getDisplayName())
+                        .append(" xp");
             }
 
             return rewardText.isEmpty() ? "" : "\n\n" + rewardText;
         }
 
         private InventorySystem.Item createAuthoredChoiceRewardItem(GameState gameState, String itemName) {
-            InventorySystem.Item customItem = gameState.createCustomItemByNameOrId(itemName);
-            if (customItem != null) {
-                return customItem;
-            }
-            for (ItemLibrary item : ItemLibrary.values()) {
-                if (itemName.equalsIgnoreCase(item.getDisplayName()) || itemName.equalsIgnoreCase(item.name())) {
-                    return item.createItem();
-                }
-            }
-            return null;
+            return gameState.createItemByNameOrId(itemName);
         }
 
         private MapDesignLibrary.AuthoredDialogueNode findAuthoredDialogueNode(
@@ -1920,11 +2092,7 @@ public final class InteractionSystem {
         public static InteractionRegistry createDefault() {
             InteractionRegistry registry = new InteractionRegistry();
 
-            for (DialogueLibrary dialogue : DialogueLibrary.values()) {
-                registry.register(dialogue.getInteractionId(), dialogue::create);
-            }
-
-            registry.register(InteractionLibrary.GENERATED_DUNGEON_GATE.getInteractionId(), context -> prompt(
+            registry.register(GENERATED_DUNGEON_GATE_ID, context -> prompt(
                     "Dungeon Gate",
                     "Go one floor deeper into a newly generated dungeon?",
                     option("Enter", () -> {
@@ -2005,6 +2173,9 @@ public final class InteractionSystem {
 
             return miningMenu(gameState);
         }
+    }
+
+    public record EditorInteractionDefinition(String displayName, String interactionId) {
     }
 
     private abstract static class SettingsMenuContent implements InteractionContent {
@@ -2293,12 +2464,12 @@ public final class InteractionSystem {
                 return;
             }
 
-            List<RecipeLibrary.SmithingRecipe> recipes = gameState.getAvailableSmithingRecipes();
+            List<CraftingSystem.SmithingRecipe> recipes = gameState.getAvailableSmithingRecipes();
             Rectangle grid = gridBounds(windowBounds);
             Font oldFont = g.getFont();
 
             for (int i = 0; i < recipes.size(); i++) {
-                RecipeLibrary.SmithingRecipe recipe = recipes.get(i);
+                CraftingSystem.SmithingRecipe recipe = recipes.get(i);
                 int column = i % GRID_COLUMNS;
                 int row = i / GRID_COLUMNS;
                 Rectangle slot = new Rectangle(
@@ -2342,7 +2513,7 @@ public final class InteractionSystem {
                 return false;
             }
 
-            List<RecipeLibrary.SmithingRecipe> recipes = gameState.getAvailableSmithingRecipes();
+            List<CraftingSystem.SmithingRecipe> recipes = gameState.getAvailableSmithingRecipes();
             Point point = e.getPoint();
             for (int i = 0; i < recipeBounds.size() && i < recipes.size(); i++) {
                 if (!recipeBounds.get(i).contains(point)) {
@@ -2387,13 +2558,13 @@ public final class InteractionSystem {
             );
         }
 
-        private boolean canCraft(RecipeLibrary.SmithingRecipe recipe) {
+        private boolean canCraft(CraftingSystem.SmithingRecipe recipe) {
             return gameState != null
                     && recipe != null
                     && gameState.getPlayerCharacter().getSkillLevel(CharacterSkill.SMITHING) >= recipe.requiredLevel();
         }
 
-        private void drawRecipeTooltip(Graphics2D g, RecipeLibrary.SmithingRecipe recipe, Rectangle slot, Rectangle windowBounds) {
+        private void drawRecipeTooltip(Graphics2D g, CraftingSystem.SmithingRecipe recipe, Rectangle slot, Rectangle windowBounds) {
             Font oldFont = g.getFont();
             g.setFont(oldFont.deriveFont(Font.PLAIN, 13f));
             FontMetrics metrics = g.getFontMetrics();
@@ -2614,8 +2785,7 @@ public final class InteractionSystem {
     }
 
     private enum DebugItemCategory {
-        BUILT_IN("Built-in Items"),
-        CUSTOM_ITEMS("Custom Items"),
+        ITEMS("Items"),
         CUSTOM_LIMBS("Custom Limbs");
 
         private final String displayName;
@@ -2656,8 +2826,7 @@ public final class InteractionSystem {
                     true,
                     true,
                     List.of(
-                            option(DebugItemCategory.BUILT_IN.displayName(), () -> openDebugItemMenu(DebugItemCategory.BUILT_IN)),
-                            option(DebugItemCategory.CUSTOM_ITEMS.displayName(), () -> openDebugItemMenu(DebugItemCategory.CUSTOM_ITEMS)),
+                            option(DebugItemCategory.ITEMS.displayName(), () -> openDebugItemMenu(DebugItemCategory.ITEMS)),
                             option(DebugItemCategory.CUSTOM_LIMBS.displayName(), () -> openDebugItemMenu(DebugItemCategory.CUSTOM_LIMBS)),
                             backToDebugOption(),
                             closeOption("Close")
@@ -2704,7 +2873,7 @@ public final class InteractionSystem {
                 DebugItemCategory category
         ) {
             super(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction);
-            this.category = category == null ? DebugItemCategory.BUILT_IN : category;
+            this.category = category == null ? DebugItemCategory.ITEMS : category;
         }
 
         @Override
@@ -2766,20 +2935,11 @@ public final class InteractionSystem {
         private List<DebugItemEntry> itemEntries() {
             if (cachedEntries == null) {
                 cachedEntries = switch (category) {
-                    case BUILT_IN -> builtInItemEntries();
-                    case CUSTOM_ITEMS -> customItemEntries();
+                    case ITEMS -> customItemEntries();
                     case CUSTOM_LIMBS -> customLimbEntries();
                 };
             }
             return cachedEntries;
-        }
-
-        private List<DebugItemEntry> builtInItemEntries() {
-            List<DebugItemEntry> entries = new ArrayList<>();
-            for (ItemLibrary item : ItemLibrary.values()) {
-                entries.add(new DebugItemEntry(item.getDisplayName(), item::createItem));
-            }
-            return entries;
         }
 
         private List<DebugItemEntry> customItemEntries() {

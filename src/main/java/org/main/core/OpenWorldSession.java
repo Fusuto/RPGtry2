@@ -30,6 +30,7 @@ public final class OpenWorldSession {
     private final WorldManifest manifest;
     private final Map<ChunkCoordinate, ChunkState> chunkStates = new HashMap<>();
     private final Set<ChunkCoordinate> loadedCoordinates = new HashSet<>();
+    private MapDesignLibrary.AuthoredContent worldContent;
     private ChunkCoordinate center;
     private List<EnvironmentTheme> currentEnvironmentThemes = List.of();
     private int resumeGlobalX;
@@ -217,6 +218,8 @@ public final class OpenWorldSession {
                     trigger.y() - offsetY,
                     trigger.fireMode(),
                     trigger.oneShot(),
+                    trigger.requiredQuestId(),
+                    trigger.requiredQuestStage(),
                     actions
             ));
         }
@@ -396,6 +399,8 @@ public final class OpenWorldSession {
                             trigger.y() + offsetY,
                             trigger.fireMode(),
                             trigger.oneShot(),
+                            trigger.requiredQuestId(),
+                            trigger.requiredQuestStage(),
                             actions
                     ));
                     if (chunk.firedTriggerIds.contains(trigger.id())) {
@@ -459,6 +464,7 @@ public final class OpenWorldSession {
         }
         Path path = WorldManifestLibrary.resolveChunkPath(manifestPath, relativePath);
         MapDesignLibrary.MapDesign design = MapDesignLibrary.load(path);
+        MapDesignLibrary.mergeAuthoredContent(design, worldContent());
         if (design.width() != manifest.chunkWidth() || design.height() != manifest.chunkHeight()) {
             throw new IOException("Chunk " + coordinate + " has incompatible dimensions.");
         }
@@ -482,6 +488,13 @@ public final class OpenWorldSession {
         );
         chunkStates.put(coordinate, state);
         return state;
+    }
+
+    private MapDesignLibrary.AuthoredContent worldContent() throws IOException {
+        if (worldContent == null) {
+            worldContent = WorldManifestLibrary.loadWorldContent(manifest, manifestPath);
+        }
+        return worldContent;
     }
 
     private int themeIndex(List<EnvironmentTheme> themes, ThemeLibrary theme) {

@@ -1,6 +1,6 @@
 package org.main.battle;
 
-import org.main.content.EnvironmentLibrary;
+import org.main.core.GameEnvironment;
 import org.main.content.MapDesignLibrary;
 import org.main.core.GameBootstrap;
 import org.main.core.CharacterSkill;
@@ -88,7 +88,7 @@ public class BattleEncounter {
             List<Monster> monster,
             InventorySystem.Inventory inventory,
             SoundSystem soundSystem,
-            EnvironmentLibrary environment
+            GameEnvironment environment
     ) {
         PlayerCharacter playerCharacter = GameBootstrap.createDefaultPlayerCharacter();
 
@@ -110,7 +110,7 @@ public class BattleEncounter {
             List<Monster> monster,
             PlayerCharacter playerCharacter,
             SoundSystem soundSystem,
-            EnvironmentLibrary environment
+            GameEnvironment environment
     ) {
         if (playerCharacter == null) {
             playerCharacter = GameBootstrap.createDefaultPlayerCharacter();
@@ -1014,7 +1014,7 @@ public class BattleEncounter {
     private BattleActor createSummonedActor(BattleActor caster, BattleSkill skill) {
         return switch (skill.getSummonMode()) {
             case SAME_SPECIES -> createSameSpeciesSummon(caster, skill);
-            case SKELETON -> createMonsterActor(MapDesignLibrary.createDefaultEnemy(MapDesignLibrary.ENEMY_SKELETON), caster.getEntityType());
+            case SKELETON -> createMonsterActor(MapDesignLibrary.createEnemyById("skeleton"), caster.getEntityType());
             case NONE -> null;
         };
     }

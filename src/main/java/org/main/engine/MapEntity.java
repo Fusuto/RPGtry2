@@ -3,6 +3,7 @@ package org.main.engine;
 import org.main.core.Library;
 import org.main.monsters.Monster;
 import org.main.core.InventorySystem;
+import org.main.core.ShopSystem;
 
 import java.awt.image.BufferedImage;
 
@@ -18,6 +19,8 @@ public class MapEntity {
     private InventorySystem.Item item;
     private String interactionId;
     private String talkSoundPath;
+    private ShopSystem.ShopBlueprint shopBlueprint;
+    private ShopSystem.ShopSession shopSession;
     private boolean blocksMovementOverride = false;
     private boolean renderOnWall = false;
     private double visualScale = 1.0;
@@ -99,6 +102,24 @@ public class MapEntity {
     public MapEntity withTalkSoundPath(String talkSoundPath) {
         this.talkSoundPath = talkSoundPath;
         return this;
+    }
+
+    public ShopSystem.ShopBlueprint getShopBlueprint() {
+        return shopBlueprint;
+    }
+
+    public MapEntity withShopBlueprint(ShopSystem.ShopBlueprint shopBlueprint) {
+        this.shopBlueprint = shopBlueprint;
+        this.shopSession = null;
+        return this;
+    }
+
+    public ShopSystem.ShopSession getShopSession() {
+        return shopSession;
+    }
+
+    public void setShopSession(ShopSystem.ShopSession shopSession) {
+        this.shopSession = shopSession;
     }
 
     public MapEntity blocksMovement(boolean blocksMovement) {

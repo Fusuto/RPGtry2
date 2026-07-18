@@ -271,10 +271,15 @@ public final class LwjglInputController {
 
         if (gameState.isDungeonMode()
                 && gameState.hasActiveInteraction()
-                && gameState.isInventoryOverlayAllowed()
-                && consumeBound(gameState, InputBindings.Action.INVENTORY)) {
-            gameState.toggleInventory();
-            return;
+                && gameState.isCharacterMenuOverlayAllowed()) {
+            if (consumeBound(gameState, InputBindings.Action.INVENTORY)) {
+                gameState.toggleInventory();
+                return;
+            }
+            if (consumeBound(gameState, InputBindings.Action.SKILLS)) {
+                gameState.toggleSkills();
+                return;
+            }
         }
 
         if (gameState.isDungeonMode() && handleInteractionInput(gameState, runtime)) {
@@ -540,6 +545,28 @@ public final class LwjglInputController {
 
         InteractionSystem.Interaction interaction = gameState.getActiveInteraction();
         if (interaction != null) {
+            if (interaction.isCharacterMenuOverlayAllowed()) {
+                if (gameState.isInventoryOpen()) {
+                    gameState.closeInventory();
+                    return;
+                }
+                if (gameState.isSkillsOpen()) {
+                    gameState.closeSkills();
+                    return;
+                }
+                if (gameState.isQuestsOpen()) {
+                    gameState.closeQuests();
+                    return;
+                }
+                if (gameState.isStatsOpen()) {
+                    gameState.closeStats();
+                    return;
+                }
+
+                openConfigMenu(runtime, gameState);
+                return;
+            }
+
             if (interaction.getModel().isEscapeCloses()) {
                 gameState.closeInteraction();
             }

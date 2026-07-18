@@ -1,7 +1,5 @@
 package org.main.core;
 
-import org.main.content.GenericNpcLibrary;
-import org.main.content.InteractionLibrary;
 import org.main.content.MapDesignLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
@@ -42,7 +40,7 @@ public class DungeonGenerator {
                 : List.of(new GeneratedDungeon.TileInteraction(
                         deeperDoor.x(),
                         deeperDoor.y(),
-                        InteractionLibrary.GENERATED_DUNGEON_GATE.getInteractionId()
+                        InteractionSystem.GENERATED_DUNGEON_GATE_ID
                 ));
 
         return new GeneratedDungeon(
@@ -202,6 +200,9 @@ public class DungeonGenerator {
             }
 
             MapDesignLibrary.CustomMob enemyDefinition = dungeonEnemyDefinition == null ? randomMonsterType() : dungeonEnemyDefinition;
+            if (enemyDefinition == null) {
+                return;
+            }
             entities.add(new MapEntity(enemyDefinition.createMonster(), candidate.x(), candidate.y()));
         }
     }
@@ -211,8 +212,12 @@ public class DungeonGenerator {
     }
 
     private MapDesignLibrary.CustomMob randomMonsterType() {
-        List<MapDesignLibrary.CustomMob> monsterTypes = MapDesignLibrary.defaultEnemies();
-        return monsterTypes.get(random.nextInt(monsterTypes.size()));
+        try {
+            List<MapDesignLibrary.CustomMob> monsterTypes = MapDesignLibrary.loadSharedContent().customMobs();
+            return monsterTypes.isEmpty() ? null : monsterTypes.get(random.nextInt(monsterTypes.size()));
+        } catch (java.io.IOException ignored) {
+            return null;
+        }
     }
 
     private void maybeAddMerchant(Library.TileType[][] tiles, List<MapEntity> entities) {
@@ -223,7 +228,6 @@ public class DungeonGenerator {
         Point candidate = findOpenTile(tiles, entities);
 
         if (candidate != null) {
-            entities.add(GenericNpcLibrary.GOBLIN_MERCHANT.createEntity(candidate.x(), candidate.y()));
         }
     }
 

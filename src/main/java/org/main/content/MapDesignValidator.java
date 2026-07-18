@@ -1,6 +1,7 @@
 package org.main.content;
 
 import org.main.core.Library;
+import org.main.core.CraftingStationType;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapPaintData;
 
@@ -155,14 +156,23 @@ final class MapDesignValidator {
 
         try {
             switch (placement.kind()) {
-                case CRAFTING_NODE -> CraftingNodeLibrary.valueOf(placement.id());
+                case CRAFTING_NODE -> CraftingStationType.valueOf(placement.id());
                 case GATHERING_NODE -> {
-                    if (MapDesignLibrary.findCustomGatheringNode(placement.id(), design.customGatheringNodes()) == null) {
-                        GatheringNodeLibrary.valueOf(placement.id());
+                    if (MapDesignLibrary.findCustomGatheringNode(placement.id(), design.customGatheringNodes()) == null
+                            && !List.of("FISHING_SHOAL", "DECORATIVE_SHOAL", "MINERAL_ROCK_A").contains(placement.id())) {
+                        throw new IllegalArgumentException("Unknown gathering node");
                     }
                 }
-                case GENERIC_NPC -> GenericNpcLibrary.valueOf(placement.id());
-                case MAIN_NPC -> MainNpcLibrary.valueOf(placement.id());
+                case GENERIC_NPC -> {
+                    if (!"GOBLIN_MERCHANT".equals(placement.id())) {
+                        throw new IllegalArgumentException("Unknown legacy generic NPC");
+                    }
+                }
+                case MAIN_NPC -> {
+                    if (!"TIPPING_THE_HAT_SKELETON".equals(placement.id())) {
+                        throw new IllegalArgumentException("Unknown legacy main NPC");
+                    }
+                }
                 case CUSTOM_NPC -> {
                     if (MapDesignLibrary.findCustomNpc(placement.id(), design.customNpcs()) == null) {
                         throw new IllegalArgumentException("Unknown custom NPC");
@@ -171,12 +181,11 @@ final class MapDesignValidator {
                 case ITEM -> {
                     if (MapDesignLibrary.findCustomItem(placement.id(), design.customItems()) == null
                             && MapDesignLibrary.findCustomLimb(placement.id(), design.customLimbs()) == null) {
-                        ItemLibrary.valueOf(placement.id());
+                        throw new IllegalArgumentException("Unknown item");
                     }
                 }
                 case ENEMY -> {
-                    if (MapDesignLibrary.findCustomMob(placement.id(), design.customMobs()) == null
-                            && MapDesignLibrary.findDefaultEnemy(placement.id()) == null) {
+                    if (MapDesignLibrary.findCustomMob(placement.id(), design.customMobs()) == null) {
                         throw new IllegalArgumentException("Unknown enemy");
                     }
                 }
@@ -194,15 +203,10 @@ final class MapDesignValidator {
                         break;
                     }
 
-                    boolean knownInteraction = false;
-                    for (InteractionLibrary interaction : InteractionLibrary.values()) {
-                        if (interaction.getInteractionId().equals(placement.id())) {
-                            knownInteraction = true;
-                            break;
-                        }
-                    }
+                    boolean knownInteraction = org.main.core.InteractionSystem.EDITOR_INTERACTIONS.stream()
+                            .anyMatch(interaction -> interaction.interactionId().equals(placement.id()));
                     if (!knownInteraction) {
-                        issues.add(new ValidationIssue(ValidationSeverity.WARNING, "Interaction " + placement.id() + " is not in InteractionLibrary."));
+                        issues.add(new ValidationIssue(ValidationSeverity.WARNING, "Interaction " + placement.id() + " is not a registered editor interaction."));
                     }
                 }
             }
@@ -262,6 +266,22 @@ final class MapDesignValidator {
                 issues.add(new ValidationIssue(ValidationSeverity.ERROR, "Trigger " + trigger.id() + " is outside the map."));
             }
 
+            if (trigger.fireMode() == MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE) {
+                int maxStage = maxQuestStage(trigger.requiredQuestId(), design.authoredQuests());
+                if (trigger.requiredQuestId().isBlank() || maxStage < 0) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.ERROR,
+                            "Trigger " + trigger.id() + " references missing quest " + trigger.requiredQuestId() + "."
+                    ));
+                } else if (trigger.requiredQuestStage() > maxStage) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.WARNING,
+                            "Trigger " + trigger.id() + " requires stage " + trigger.requiredQuestStage()
+                                    + " past quest max stage " + maxStage + "."
+                    ));
+                }
+            }
+
             for (TriggerAction action : trigger.actions()) {
                 if (action == null) {
                     continue;
@@ -271,8 +291,7 @@ final class MapDesignValidator {
                     continue;
                 }
 
-                if (action.type() == TriggerActionType.CLOSE_DOOR
-                        && !isDoorTile(design.tiles()[action.targetY()][action.targetX()])) {
+                if (!isDoorTile(design.tiles()[action.targetY()][action.targetX()])) {
                     issues.add(new ValidationIssue(
                             ValidationSeverity.WARNING,
                             "Trigger " + trigger.id() + " targets " + action.targetX() + "," + action.targetY() + ", which is not a door tile."
@@ -299,19 +318,12 @@ final class MapDesignValidator {
         List<String> authoredQuestIds = authoredQuests == null
                 ? List.of()
                 : authoredQuests.stream().map(AuthoredQuest::questId).toList();
-        List<String> builtInQuestIds = java.util.Arrays.stream(QuestLibrary.values())
-                .map(QuestLibrary::getId)
-                .toList();
         List<String> knownItemNames = knownItemDisplayNames(customItems, customLimbs);
 
         for (AuthoredDialogue dialogue : authoredDialogues) {
             if (!dialogue.rewardItemId().isBlank()) {
-                try {
-                    if (MapDesignLibrary.findCustomItem(dialogue.rewardItemId(), customItems) == null
-                            && MapDesignLibrary.findCustomLimb(dialogue.rewardItemId(), customLimbs) == null) {
-                        ItemLibrary.valueOf(dialogue.rewardItemId());
-                    }
-                } catch (IllegalArgumentException exception) {
+                if (MapDesignLibrary.findCustomItem(dialogue.rewardItemId(), customItems) == null
+                        && MapDesignLibrary.findCustomLimb(dialogue.rewardItemId(), customLimbs) == null) {
                     issues.add(new ValidationIssue(
                             ValidationSeverity.ERROR,
                             "Authored dialogue " + dialogue.interactionId() + " has unknown reward item " + dialogue.rewardItemId() + "."
@@ -320,26 +332,22 @@ final class MapDesignValidator {
             }
 
             if (!dialogue.questId().isBlank()
-                    && !authoredQuestIds.contains(dialogue.questId())
-                    && !builtInQuestIds.contains(dialogue.questId())) {
+                    && !authoredQuestIds.contains(dialogue.questId())) {
                 issues.add(new ValidationIssue(
                         ValidationSeverity.ERROR,
                         "Authored dialogue " + dialogue.interactionId() + " references missing quest " + dialogue.questId() + "."
                 ));
             }
             List<String> nodeIds = dialogue.nodes().stream().map(AuthoredDialogueNode::nodeId).toList();
-            validateAuthoredDialogueChoices(issues, dialogue, dialogue.choices(), authoredQuestIds, builtInQuestIds, nodeIds, knownItemNames, authoredQuests);
+            validateAuthoredDialogueChoices(issues, dialogue, dialogue.choices(), authoredQuestIds, nodeIds, knownItemNames, authoredQuests);
             for (AuthoredDialogueNode node : dialogue.nodes()) {
-                validateAuthoredDialogueChoices(issues, dialogue, node.choices(), authoredQuestIds, builtInQuestIds, nodeIds, knownItemNames, authoredQuests);
+                validateAuthoredDialogueChoices(issues, dialogue, node.choices(), authoredQuestIds, nodeIds, knownItemNames, authoredQuests);
             }
         }
     }
 
     private static List<String> knownItemDisplayNames(List<CustomItem> customItems, List<CustomLimb> customLimbs) {
         List<String> names = new ArrayList<>();
-        for (ItemLibrary item : ItemLibrary.values()) {
-            names.add(item.getDisplayName());
-        }
         if (customItems != null) {
             for (CustomItem item : customItems) {
                 names.add(item.displayName());
@@ -355,10 +363,6 @@ final class MapDesignValidator {
 
     private static List<String> knownItemIdsAndNames(List<CustomItem> customItems, List<CustomLimb> customLimbs) {
         List<String> values = new ArrayList<>();
-        for (ItemLibrary item : ItemLibrary.values()) {
-            values.add(item.name());
-            values.add(item.getDisplayName());
-        }
         if (customItems != null) {
             for (CustomItem item : customItems) {
                 values.add(item.itemId());
@@ -379,15 +383,13 @@ final class MapDesignValidator {
             AuthoredDialogue dialogue,
             List<AuthoredDialogueChoice> choices,
             List<String> authoredQuestIds,
-            List<String> builtInQuestIds,
             List<String> nodeIds,
             List<String> knownItemNames,
             List<AuthoredQuest> authoredQuests
     ) {
         for (AuthoredDialogueChoice choice : choices) {
             if (!choice.questId().isBlank()
-                    && !authoredQuestIds.contains(choice.questId())
-                    && !builtInQuestIds.contains(choice.questId())) {
+                    && !authoredQuestIds.contains(choice.questId())) {
                 issues.add(new ValidationIssue(
                         ValidationSeverity.ERROR,
                         "Authored dialogue " + dialogue.interactionId() + " choice " + choice.label() + " references missing quest " + choice.questId() + "."
@@ -432,11 +434,6 @@ final class MapDesignValidator {
     }
 
     private static int maxQuestStage(String questId, List<AuthoredQuest> authoredQuests) {
-        for (QuestLibrary quest : QuestLibrary.values()) {
-            if (quest.getId().equals(questId)) {
-                return quest.getMaxStage();
-            }
-        }
         if (authoredQuests != null) {
             for (AuthoredQuest quest : authoredQuests) {
                 if (quest.questId().equals(questId)) {
@@ -464,11 +461,39 @@ final class MapDesignValidator {
         for (CustomNpc npc : design.customNpcs()) {
             validateAssetPath(issues, "Custom NPC " + npc.npcId(), "sprite", npc.imagePath(), true);
             validateAssetPath(issues, "Custom NPC " + npc.npcId(), "talk sound", npc.talkSoundPath(), false);
-            if (!npc.interactionId().isBlank() && !dialogueIds.contains(npc.interactionId())) {
+            if (npc.shop() == null && !npc.interactionId().isBlank() && !dialogueIds.contains(npc.interactionId())) {
                 issues.add(new ValidationIssue(
                         ValidationSeverity.ERROR,
                         "Custom NPC " + npc.npcId() + " references missing dialogue " + npc.interactionId() + "."
                 ));
+            }
+            if (npc.shop() != null) {
+                if (npc.shop().stock().isEmpty()) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.WARNING,
+                            "Shop NPC " + npc.npcId() + " has no stock; it will only buy items from the player."
+                    ));
+                }
+                for (MapDesignLibrary.CustomShopStock stock : npc.shop().stock()) {
+                    if (!containsIgnoreCase(knownItems, stock.itemId())) {
+                        issues.add(new ValidationIssue(
+                                ValidationSeverity.ERROR,
+                                "Shop NPC " + npc.npcId() + " references unknown item " + stock.itemId() + "."
+                        ));
+                    }
+                    if (stock.quantity() == 0 || stock.quantity() < -1) {
+                        issues.add(new ValidationIssue(
+                                ValidationSeverity.ERROR,
+                                "Shop NPC " + npc.npcId() + " has invalid stock quantity for " + stock.itemId() + "."
+                        ));
+                    }
+                    if (stock.buyPrice() < -1 || stock.sellPrice() < -1) {
+                        issues.add(new ValidationIssue(
+                                ValidationSeverity.ERROR,
+                                "Shop NPC " + npc.npcId() + " has an invalid price for " + stock.itemId() + "."
+                        ));
+                    }
+                }
             }
         }
 

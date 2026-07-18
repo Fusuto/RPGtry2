@@ -1,7 +1,6 @@
 package org.main.core;
 
 import org.main.battle.BattleEncounter;
-import org.main.content.EnvironmentLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 import org.main.engine.MovementEngine;
@@ -23,7 +22,7 @@ public class DungeonController {
     private final MovementEngine movementEngine;
     private final InteractionSystem.InteractionRegistry interactionRegistry;
     private final SoundSystem soundSystem;
-    private final EnvironmentLibrary environment;
+    private final GameEnvironment environment;
 
     public DungeonController(
             GameState gameState,
@@ -38,7 +37,7 @@ public class DungeonController {
             MovementEngine movementEngine,
             InteractionSystem.InteractionRegistry interactionRegistry,
             SoundSystem soundSystem,
-            EnvironmentLibrary environment
+            GameEnvironment environment
     ) {
         this.gameState = gameState;
         this.movementEngine = movementEngine;

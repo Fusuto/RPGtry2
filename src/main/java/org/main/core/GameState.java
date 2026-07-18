@@ -2,17 +2,14 @@ package org.main.core;
 
 import org.main.battle.BattleEncounter;
 import org.main.battle.BattleSkill;
-import org.main.content.GatheringNodeLibrary;
-import org.main.content.ItemLibrary;
 import org.main.content.MapDesignLibrary;
-import org.main.content.QuestLibrary;
-import org.main.content.RecipeLibrary;
 import org.main.content.WorldManifestLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.EnvironmentTheme;
 import org.main.engine.MapEntity;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapPaintData;
+import org.main.engine.AssetLoader;
 
 import java.awt.Point;
 import java.io.IOException;
@@ -25,6 +22,12 @@ import java.util.Map;
 import java.util.Set;
 
 public class GameState {
+    private static final String GOLD_ITEM_ID = "GOLD";
+    private static final String GOLD_ITEM_NAME = "Gold";
+    private static final String RAW_FISH_ITEM_ID = "RAW_FISH";
+    private static final String RAW_FISH_ITEM_NAME = "Raw Fish";
+    private static final String COOKED_FISH_ITEM_ID = "COOKED_FISH";
+    private static final String COPPER_ORE_ITEM_ID = "COPPER_ORE";
     private DungeonMap dungeonMap;
     private final List<MapEntity> entities = new ArrayList<>();
     private final Map<String, String> tileInteractionIds = new HashMap<>();
@@ -106,6 +109,7 @@ public class GameState {
     private String smithingMessage = "Use a metal bar, then interact with an anvil.";
     private String selectedQuestId;
     private InteractionSystem.Interaction activeInteraction;
+    private InteractionSystem.Interaction suspendedInteraction;
     private ShopSystem.ShopSession activeShop;
 
     public enum GameMode {
@@ -126,11 +130,7 @@ public class GameState {
 
     public InteractionSystem.Interaction getActiveInteraction() {
         if (activeInteraction != null && activeInteraction.isClosed()) {
-            activeInteraction = null;
-            stopFishing();
-            stopCooking();
-            stopMining();
-            stopSmelting();
+            restoreSuspendedInteractionOrStopActivities();
         }
 
         return activeInteraction;
@@ -141,6 +141,27 @@ public class GameState {
     }
 
     public void openInteraction(InteractionSystem.Interaction interaction) {
+        if (interaction == null) {
+            return;
+        }
+
+        InteractionSystem.Interaction current = getActiveInteraction();
+        if (current != null && current != interaction) {
+            if (interaction.pausesGameplay()
+                    && current.isCharacterMenuOverlayAllowed()
+                    && !current.pausesGameplay()) {
+                suspendedInteraction = current;
+            } else if (current.pausesGameplay()) {
+                interaction.pauseGameplay();
+            } else {
+                current.close();
+                suspendedInteraction = null;
+                if (current.isCharacterMenuOverlayAllowed()) {
+                    stopSkillingActivities();
+                }
+            }
+        }
+
         closeInventory();
         closeSkills();
         closeQuests();
@@ -154,10 +175,42 @@ public class GameState {
             activeInteraction.close();
         }
 
+        restoreSuspendedInteractionOrStopActivities();
+    }
+
+    private void restoreSuspendedInteractionOrStopActivities() {
+        if (activeInteraction != null
+                && activeInteraction.pausesGameplay()
+                && suspendedInteraction != null
+                && !suspendedInteraction.isClosed()) {
+            activeInteraction = suspendedInteraction;
+            suspendedInteraction = null;
+            return;
+        }
+
         activeInteraction = null;
+        suspendedInteraction = null;
+        stopSkillingActivities();
+    }
+
+    private void clearInteractionsAndStopActivities() {
+        if (activeInteraction != null) {
+            activeInteraction.close();
+        }
+        if (suspendedInteraction != null) {
+            suspendedInteraction.close();
+        }
+
+        activeInteraction = null;
+        suspendedInteraction = null;
+        stopSkillingActivities();
+    }
+
+    private void stopSkillingActivities() {
         stopFishing();
         stopCooking();
         stopMining();
+        stopSmelting();
     }
 
     public PlayerCharacter getPlayerCharacter() {
@@ -206,6 +259,16 @@ public class GameState {
         return interaction != null && interaction.isInventoryOverlayAllowed();
     }
 
+    public boolean isCharacterMenuOverlayAllowed() {
+        InteractionSystem.Interaction interaction = getActiveInteraction();
+        return interaction != null && interaction.isCharacterMenuOverlayAllowed();
+    }
+
+    public boolean isGameplayPaused() {
+        InteractionSystem.Interaction interaction = getActiveInteraction();
+        return interaction != null && interaction.pausesGameplay();
+    }
+
     public boolean isSkillsOpen() {
         return skillsOpen;
     }
@@ -216,7 +279,9 @@ public class GameState {
             closeQuests();
             closeStats();
             closeShop();
-            closeInteraction();
+            if (!isCharacterMenuOverlayAllowed()) {
+                closeInteraction();
+            }
         }
 
         this.skillsOpen = skillsOpen;
@@ -240,7 +305,9 @@ public class GameState {
             closeSkills();
             closeStats();
             closeShop();
-            closeInteraction();
+            if (!isCharacterMenuOverlayAllowed()) {
+                closeInteraction();
+            }
         }
 
         this.questsOpen = questsOpen;
@@ -264,7 +331,9 @@ public class GameState {
             closeSkills();
             closeQuests();
             closeShop();
-            closeInteraction();
+            if (!isCharacterMenuOverlayAllowed()) {
+                closeInteraction();
+            }
         }
 
         this.statsOpen = statsOpen;
@@ -700,7 +769,7 @@ public class GameState {
             closeQuests();
             closeStats();
             closeShop();
-            closeInteraction();
+            clearInteractionsAndStopActivities();
             clearBattleState();
         }
     }
@@ -757,7 +826,7 @@ public class GameState {
         closeQuests();
         closeStats();
         closeShop();
-        closeInteraction();
+        clearInteractionsAndStopActivities();
         clearBattleState();
     }
 
@@ -792,7 +861,7 @@ public class GameState {
         closeQuests();
         closeStats();
         closeShop();
-        closeInteraction();
+        clearInteractionsAndStopActivities();
         clearBattleState();
     }
 
@@ -880,6 +949,7 @@ public class GameState {
                 mapTriggers.add(trigger);
             }
         }
+        evaluateQuestStageTriggers();
     }
 
     public void setFiredMapTriggerIds(Set<String> triggerIds) {
@@ -918,8 +988,35 @@ public class GameState {
         return doorClosed;
     }
 
+    public boolean evaluateQuestStageTriggers() {
+        if (dungeonMap == null || mapTriggers.isEmpty()) {
+            return false;
+        }
+
+        boolean doorChanged = false;
+        for (MapDesignLibrary.MapTrigger trigger : mapTriggers) {
+            if (trigger == null
+                    || trigger.fireMode() != MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE
+                    || trigger.requiredQuestId().isBlank()
+                    || getQuestStage(trigger.requiredQuestId()) < trigger.requiredQuestStage()) {
+                continue;
+            }
+            if (trigger.oneShot() && firedMapTriggerIds.contains(trigger.id())) {
+                continue;
+            }
+
+            for (MapDesignLibrary.TriggerAction action : trigger.actions()) {
+                doorChanged |= runTriggerAction(action);
+            }
+            if (trigger.oneShot()) {
+                firedMapTriggerIds.add(trigger.id());
+            }
+        }
+        return doorChanged;
+    }
+
     private boolean runTriggerAction(MapDesignLibrary.TriggerAction action) {
-        if (action == null || action.type() != MapDesignLibrary.TriggerActionType.CLOSE_DOOR || dungeonMap == null) {
+        if (action == null || dungeonMap == null) {
             return false;
         }
 
@@ -930,14 +1027,30 @@ public class GameState {
         }
 
         Library.TileType tile = dungeonMap.getTile(targetX, targetY);
-        if (tile == Library.TileType.DOOR_OPEN) {
-            dungeonMap.setTile(targetX, targetY, Library.TileType.DOOR_CLOSED);
-            return true;
-        } else if (tile == Library.TileType.QUEST_DOOR_OPEN) {
-            dungeonMap.setTile(targetX, targetY, Library.TileType.QUEST_DOOR_CLOSED);
-            return true;
-        }
-        return false;
+        return switch (action.type()) {
+            case CLOSE_DOOR -> {
+                if (tile == Library.TileType.DOOR_OPEN) {
+                    dungeonMap.setTile(targetX, targetY, Library.TileType.DOOR_CLOSED);
+                    yield true;
+                }
+                if (tile == Library.TileType.QUEST_DOOR_OPEN) {
+                    dungeonMap.setTile(targetX, targetY, Library.TileType.QUEST_DOOR_CLOSED);
+                    yield true;
+                }
+                yield false;
+            }
+            case OPEN_DOOR -> {
+                if (tile == Library.TileType.DOOR_CLOSED) {
+                    dungeonMap.setTile(targetX, targetY, Library.TileType.DOOR_OPEN);
+                    yield true;
+                }
+                if (tile == Library.TileType.QUEST_DOOR_CLOSED) {
+                    dungeonMap.setTile(targetX, targetY, Library.TileType.QUEST_DOOR_OPEN);
+                    yield true;
+                }
+                yield false;
+            }
+        };
     }
 
     public void setAuthoredDialogues(List<MapDesignLibrary.AuthoredDialogue> dialogues) {
@@ -1089,14 +1202,7 @@ public class GameState {
                 }
             }
         } catch (java.io.IOException ignored) {
-            // Fall back to enum-backed items below.
-        }
-
-        for (ItemLibrary libraryItem : ItemLibrary.values()) {
-            if (itemNameOrId.equalsIgnoreCase(libraryItem.name())
-                    || itemNameOrId.equalsIgnoreCase(libraryItem.getDisplayName())) {
-                return libraryItem.createItem();
-            }
+            return null;
         }
 
         return null;
@@ -1453,31 +1559,19 @@ public class GameState {
         }
     }
 
-    public int getQuestStage(QuestLibrary quest) {
-        return quest == null ? 0 : questStages.getOrDefault(quest.getId(), 0);
-    }
-
-    public void setQuestStage(QuestLibrary quest, int stage) {
-        if (quest != null) {
-            questStages.put(quest.getId(), Math.max(0, Math.min(quest.getMaxStage(), stage)));
-        }
-    }
-
     public Map<String, Integer> getQuestStagesView() {
         return Map.copyOf(questStages);
     }
 
-    public List<QuestDefinition> getQuestDefinitions() {
-        List<QuestDefinition> definitions = new ArrayList<>();
-        for (QuestLibrary quest : QuestLibrary.values()) {
-            List<String> stages = new ArrayList<>();
-            for (int stage = 0; stage <= quest.getMaxStage(); stage++) {
-                stages.add(quest.getStageDescription(stage));
-            }
-            definitions.add(new QuestDefinition(quest.getId(), quest.getDisplayName(), stages));
+    public int getQuestStage(String questId) {
+        if (questId == null || questId.isBlank()) {
+            return -1;
         }
-        definitions.addAll(authoredQuestDefinitions.values());
-        return definitions;
+        return questStages.getOrDefault(questId, -1);
+    }
+
+    public List<QuestDefinition> getQuestDefinitions() {
+        return List.copyOf(authoredQuestDefinitions.values());
     }
 
     public QuestDefinition getQuestDefinition(String questId) {
@@ -1504,6 +1598,7 @@ public class GameState {
                 }
             });
         }
+        evaluateQuestStageTriggers();
     }
 
     public void setQuestStage(String questId, int stage) {
@@ -1516,10 +1611,11 @@ public class GameState {
                 ? Math.max(0, stage)
                 : Math.max(0, Math.min(definition.maxStage(), stage));
         questStages.put(questId, safeStage);
+        evaluateQuestStageTriggers();
     }
 
     public int getGold() {
-        return getInventory().countItemNamed(ItemLibrary.GOLD.getDisplayName());
+        return getInventory().countItemNamed(GOLD_ITEM_NAME);
     }
 
     public void addGold(int amount) {
@@ -1527,7 +1623,11 @@ public class GameState {
             return;
         }
 
-        getInventory().addItem(ItemLibrary.createGold(amount));
+        InventorySystem.Item gold = createItemByNameOrId(GOLD_ITEM_ID);
+        if (gold != null) {
+            gold.addQuantity(Math.max(0, amount - 1));
+            getInventory().addItem(gold);
+        }
     }
 
     public boolean canSpendGold(int amount) {
@@ -1539,7 +1639,7 @@ public class GameState {
             return false;
         }
 
-        return amount == 0 || getInventory().removeItemQuantityNamed(ItemLibrary.GOLD.getDisplayName(), amount);
+        return amount == 0 || getInventory().removeItemQuantityNamed(GOLD_ITEM_NAME, amount);
     }
 
     public ShopSystem.ShopSession getActiveShop() {
@@ -1644,14 +1744,13 @@ public class GameState {
         );
 
         InventorySystem.Item gatheredItem = node == null
-                ? org.main.content.ItemLibrary.RAW_FISH.createItem()
+                ? createItemByNameOrId(RAW_FISH_ITEM_ID)
                 : createGatheredItem(node);
         int xpReward = node == null ? fishingXpReward() : node.gatherXpReward();
         String outputName = gatheredItem == null ? "fish" : gatheredItem.getName();
 
         if (Math.random() <= successChance && gatheredItem != null && getInventory().addItem(gatheredItem)) {
             int levelsGained = playerCharacter.addSkillExperience(gatheringSkill, xpReward);
-            advanceQuestIfAt(QuestLibrary.GATHERING_BASICS, 0, 1);
             fishingMessage = levelsGained > 0
                     ? "You catch " + outputName + ". " + gatheringSkill.getDisplayName() + " level " + playerCharacter.getSkillLevel(gatheringSkill) + "!"
                     : "You catch " + outputName + ". " + gatheringSkill.getDisplayName() + " XP "
@@ -1752,14 +1851,13 @@ public class GameState {
         );
 
         InventorySystem.Item gatheredItem = node == null
-                ? ItemLibrary.COPPER_ORE.createItem()
+                ? createItemByNameOrId(COPPER_ORE_ITEM_ID)
                 : createGatheredItem(node);
         int xpReward = node == null ? miningXpReward() : node.gatherXpReward();
         String outputName = gatheredItem == null ? "ore" : gatheredItem.getName();
 
         if (Math.random() <= successChance && gatheredItem != null && getInventory().addItem(gatheredItem)) {
             int levelsGained = playerCharacter.addSkillExperience(gatheringSkill, xpReward);
-            advanceQuestIfAt(QuestLibrary.GATHERING_BASICS, 2, 3);
             miningMessage = levelsGained > 0
                     ? "You gather " + outputName + ". " + gatheringSkill.getDisplayName() + " level " + playerCharacter.getSkillLevel(gatheringSkill) + "!"
                     : "You gather " + outputName + ". " + gatheringSkill.getDisplayName() + " XP "
@@ -1910,8 +2008,9 @@ public class GameState {
         int exhaustionLevel = getResourceExhaustionLevel(x, y);
         MapEntity entity = getEntityAt(x, y);
 
-        if (entity != null && GatheringNodeLibrary.MINERAL_ROCK_A.getInteractionId().equals(entity.getInteractionId())) {
-            entity.setStaticImage(GatheringNodeLibrary.MINERAL_ROCK_A.getImageForExhaustion(exhaustionLevel));
+        if (entity != null && "mineral_rock_basic".equals(entity.getInteractionId())) {
+            int frame = Math.max(1, Math.min(3, exhaustionLevel + 1));
+            entity.setStaticImage(AssetLoader.loadImage("assets/images/generic/64x64/A_Rock1_Node" + frame + ".png"));
             return;
         }
 
@@ -1923,7 +2022,7 @@ public class GameState {
             }
         }
 
-        if (GatheringNodeLibrary.FISHING_SHOAL.getInteractionId().equals(getTileInteractionId(x, y))
+        if ("fishing_shoal".equals(getTileInteractionId(x, y))
                 && dungeonMap != null) {
             dungeonMap.setTile(x, y, exhaustionLevel >= 2 ? Library.TileType.WATER : Library.TileType.FISHING_WATER);
         }
@@ -2384,7 +2483,6 @@ public class GameState {
             return;
         }
 
-        advanceQuestIfAt(QuestLibrary.GATHERING_BASICS, 1, 2);
 
         if (cooked) {
             int xpReward = recipe == null ? cookingXpReward() : recipe.xpReward();
@@ -2416,7 +2514,7 @@ public class GameState {
 
     private boolean isCookableItem(InventorySystem.Item item) {
         return item != null
-                && (findCookingRecipe(item) != null || ItemLibrary.RAW_FISH.getDisplayName().equalsIgnoreCase(item.getName()));
+                && (findCookingRecipe(item) != null || RAW_FISH_ITEM_NAME.equalsIgnoreCase(item.getName()));
     }
 
     private InventorySystem.Item createCookedItem(String rawItemName) {
@@ -2427,7 +2525,7 @@ public class GameState {
                 return item;
             }
         }
-        return ItemLibrary.COOKED_FISH.createItem();
+        return createItemByNameOrId(COOKED_FISH_ITEM_ID);
     }
 
     private InventorySystem.Item createBurntItem(String rawItemName) {
@@ -2438,7 +2536,21 @@ public class GameState {
                 return item;
             }
         }
-        return ItemLibrary.BURNT_FISH.createItem();
+        InventorySystem.Item cookedFish = createItemByNameOrId(COOKED_FISH_ITEM_ID);
+        if (cookedFish == null) {
+            return null;
+        }
+        return new InventorySystem.Item(
+                "Burnt Fish",
+                InventorySystem.ItemType.MISC,
+                InventorySystem.Item.applyBurntTint(cookedFish.getIcon()),
+                "",
+                0,
+                GearMaterial.NONE,
+                GearDurability.PERFECT,
+                1,
+                "A sad blackened fish. It smells like ambition meeting reality."
+        );
     }
 
     private MapDesignLibrary.CustomCookingRecipe findCookingRecipe(InventorySystem.Item item) {
@@ -2477,7 +2589,7 @@ public class GameState {
         stopCooking();
         InventorySystem.Item selectedItem = getSelectedWorldUseItem();
 
-        if (!RecipeLibrary.isSmeltableItem(selectedItem)) {
+        if (!CraftingSystem.isSmeltableItem(selectedItem)) {
             smeltingMessage = "Use copper ore from your inventory first, then interact with the furnace.";
             return false;
         }
@@ -2543,7 +2655,7 @@ public class GameState {
             selectedItem = getSelectedWorldUseItem();
         }
 
-        RecipeLibrary.SmeltingRecipe recipe = RecipeLibrary.smeltingRecipeFor(selectedItem);
+        CraftingSystem.SmeltingRecipe recipe = CraftingSystem.smeltingRecipeFor(selectedItem);
         if (recipe == null || !recipe.inputName().equalsIgnoreCase(smeltingItemName)) {
             smeltingMessage = "That item cannot be smelted here.";
             smeltingItemName = null;
@@ -2568,7 +2680,6 @@ public class GameState {
             return;
         }
 
-        advanceQuestIfAt(QuestLibrary.GATHERING_BASICS, 3, 4);
 
         int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.SMITHING, recipe.xpReward());
         smeltingMessage = levelsGained > 0
@@ -2601,7 +2712,7 @@ public class GameState {
         stopSmelting();
 
         InventorySystem.Item selectedItem = getSelectedWorldUseItem();
-        if (!RecipeLibrary.isSmithingMaterial(selectedItem)) {
+        if (!CraftingSystem.isSmithingMaterial(selectedItem)) {
             smithingMaterialName = null;
             smithingMessage = "Use a metal bar from your inventory first, then interact with the anvil.";
             return false;
@@ -2612,8 +2723,8 @@ public class GameState {
         return true;
     }
 
-    public List<RecipeLibrary.SmithingRecipe> getAvailableSmithingRecipes() {
-        return RecipeLibrary.smithingRecipesForMaterial(smithingMaterialName);
+    public List<CraftingSystem.SmithingRecipe> getAvailableSmithingRecipes() {
+        return CraftingSystem.smithingRecipesForMaterial(smithingMaterialName);
     }
 
     public String getSmithingMaterialName() {
@@ -2624,7 +2735,7 @@ public class GameState {
         return smithingMessage;
     }
 
-    public boolean craftSmithingRecipe(RecipeLibrary.SmithingRecipe recipe) {
+    public boolean craftSmithingRecipe(CraftingSystem.SmithingRecipe recipe) {
         if (recipe == null || playerCharacter == null) {
             return false;
         }
@@ -2689,12 +2800,6 @@ public class GameState {
         }
 
         return count;
-    }
-
-    private void advanceQuestIfAt(QuestLibrary quest, int expectedStage, int nextStage) {
-        if (getQuestStage(quest) == expectedStage) {
-            setQuestStage(quest, nextStage);
-        }
     }
 
     private static class ResourceNodeState {
@@ -2844,7 +2949,7 @@ public class GameState {
         closeQuests();
         closeStats();
         closeShop();
-        closeInteraction();
+        clearInteractionsAndStopActivities();
         gameMode = GameMode.GAME_OVER;
     }
 

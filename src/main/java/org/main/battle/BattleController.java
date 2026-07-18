@@ -6,8 +6,7 @@ import org.main.core.InventorySystem;
 import org.main.core.InteractionSystem;
 import org.main.core.Library;
 import org.main.content.SkillLibrary;
-import org.main.content.QuestLibrary;
-import org.main.content.EnvironmentLibrary;
+import org.main.core.GameEnvironment;
 import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
 import org.main.monsters.Monster;
@@ -20,7 +19,7 @@ public class BattleController {
     private final GameState gameState;
     private final BattleRenderer battleRenderer;
     private final SoundSystem soundSystem;
-    private final EnvironmentLibrary environment;
+    private final GameEnvironment environment;
 
     private BattleSkill pendingSkill = null;
     private Library.BattleCommand pendingBattleCommand = null;
@@ -29,7 +28,7 @@ public class BattleController {
             GameState gameState,
             BattleRenderer battleRenderer,
             SoundSystem soundSystem,
-            EnvironmentLibrary environment
+            GameEnvironment environment
     ) {
         this.gameState = gameState;
         this.battleRenderer = battleRenderer;
@@ -494,12 +493,6 @@ public class BattleController {
         if (removeEnemy && gameState.getCurrentEnemyEntity() != null) {
             MapEntity defeatedEnemy = gameState.getCurrentEnemyEntity();
             defeatedMonster = defeatedEnemy.getMonster();
-
-            if (defeatedEnemy.getMonster() != null
-                    && "slime".equals(defeatedEnemy.getMonster().getCustomId())
-                    && gameState.getQuestStage(QuestLibrary.SKELETON_HAT) == 1) {
-                gameState.setQuestStage(QuestLibrary.SKELETON_HAT, 2);
-            }
 
             gameState.removeEntity(defeatedEnemy);
             spawnLootDrops(defeatedEnemy);

@@ -3,7 +3,6 @@ package org.main.core;
 import org.main.battle.BattleController;
 import org.main.battle.BattleAssets;
 import org.main.battle.BattleRenderer;
-import org.main.content.EnvironmentLibrary;
 import org.main.content.MapDesignLibrary;
 import org.main.content.WorldManifestLibrary;
 import org.main.content.PlayerRegionLibrary;
@@ -23,7 +22,7 @@ public final class AetherGameRuntime {
     private static final String TUTORIAL_MAP_FILE = "tutorial.properties";
     private static final String GAME_OVER_MUSIC_PATH = null;
 
-    private final EnvironmentLibrary environment = EnvironmentLibrary.STARTER_DUNGEON;
+    private final GameEnvironment environment = GameEnvironment.createDefault();
     private final MovementEngine movementEngine = new MovementEngine();
     private final SoundSystem soundSystem = new SoundSystem();
     private final InteractionSystem.InteractionRegistry interactionRegistry =
@@ -76,7 +75,7 @@ public final class AetherGameRuntime {
         return soundSystem;
     }
 
-    public EnvironmentLibrary environment() {
+    public GameEnvironment environment() {
         return environment;
     }
 
@@ -210,6 +209,10 @@ public final class AetherGameRuntime {
             soundSystem.stopAll();
             soundSystem.playMusic(GAME_OVER_MUSIC_PATH);
             gameOverMusicStarted = true;
+        }
+
+        if (gameState.isGameplayPaused()) {
+            return;
         }
 
         gameState.updateMovementAnimation(deltaMs);

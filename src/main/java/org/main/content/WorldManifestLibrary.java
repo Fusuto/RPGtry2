@@ -186,6 +186,30 @@ public final class WorldManifestLibrary {
         return worlds;
     }
 
+    public static MapDesignLibrary.AuthoredContent loadWorldContent(
+            WorldManifest manifest,
+            Path manifestPath
+    ) throws IOException {
+        if (manifest == null) {
+            return MapDesignLibrary.authoredContentOf(null);
+        }
+
+        MapDesignLibrary.MapDesign catalog = MapDesignLibrary.createBlank(
+                3,
+                3,
+                ThemeLibrary.STONE_WOOD,
+                ThemeLibrary.SANDSTONE_GATE
+        );
+        for (Map.Entry<ChunkCoordinate, String> entry : manifest.chunks().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .toList()) {
+            Path chunkPath = resolveChunkPath(manifestPath, entry.getValue());
+            MapDesignLibrary.MapDesign chunk = MapDesignLibrary.load(chunkPath);
+            MapDesignLibrary.mergeAuthoredContent(catalog, MapDesignLibrary.authoredContentOf(chunk));
+        }
+        return MapDesignLibrary.authoredContentOf(catalog);
+    }
+
     public static List<MapDesignLibrary.ValidationIssue> validate(WorldManifest manifest, Path manifestPath) {
         List<MapDesignLibrary.ValidationIssue> issues = new ArrayList<>();
         if (manifest == null) {

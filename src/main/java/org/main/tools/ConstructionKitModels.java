@@ -170,6 +170,22 @@ record QuestActionOption(String label, String questId) {
     }
 }
 
+record TriggerActivationOption(String label, MapDesignLibrary.TriggerFireMode fireMode) {
+    @Override
+    public String toString() {
+        return label;
+    }
+}
+
+record TriggerSettings(
+        String id,
+        MapDesignLibrary.TriggerFireMode fireMode,
+        boolean oneShot,
+        String requiredQuestId,
+        int requiredQuestStage
+) {
+}
+
 record DialogueOption(String label, String interactionId) {
     @Override
     public String toString() {

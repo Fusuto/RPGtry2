@@ -24,12 +24,11 @@ final class MapDesignContentStore {
     }
 
     static AuthoredContent loadSharedContent() throws IOException {
-        AuthoredContent defaultContent = defaultAuthoredContent();
         AuthoredContent bundledContent = loadSharedContentFrom(Path.of(MapDesignLibrary.CONTENT_RESOURCE_FOLDER, "authored_content.properties"));
         AuthoredContent dataContent = Files.isRegularFile(MapDesignLibrary.DATA_SHARED_CONTENT_PATH)
                 ? loadSharedContentFrom(MapDesignLibrary.DATA_SHARED_CONTENT_PATH)
                 : emptyContent();
-        return mergeContent(mergeContent(defaultContent, bundledContent), dataContent);
+        return mergeContent(bundledContent, dataContent);
     }
 
     static void saveSharedContent(AuthoredContent content) throws IOException {
@@ -62,20 +61,6 @@ final class MapDesignContentStore {
                 contentDesign.spawnY()
         );
         MapDesignLibrary.save(contentDesign, MapDesignLibrary.SHARED_CONTENT_PATH);
-    }
-
-    private static AuthoredContent defaultAuthoredContent() {
-        return new AuthoredContent(
-                List.of(),
-                List.of(),
-                MapDesignLibrary.builtInItemDefinitions(),
-                MapDesignLibrary.defaultEnemies(),
-                List.of(),
-                List.of(),
-                List.of(),
-                List.of(),
-                List.of()
-        );
     }
 
     private static AuthoredContent loadSharedContentFrom(Path path) throws IOException {

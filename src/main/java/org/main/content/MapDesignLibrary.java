@@ -1,6 +1,7 @@
 package org.main.content;
 
 import org.main.core.CharacterSkill;
+import org.main.core.CraftingStationType;
 import org.main.core.GearDurability;
 import org.main.core.GearMaterial;
 import org.main.core.InventorySystem;
@@ -9,6 +10,7 @@ import org.main.core.LimbItem;
 import org.main.core.LimbSlot;
 import org.main.core.PaperDollAssetLibrary;
 import org.main.core.PlayerStat;
+import org.main.core.ShopSystem;
 import org.main.core.WeaponType;
 import org.main.core.GeneratedDungeon;
 import org.main.engine.DungeonMap;
@@ -32,12 +34,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 public final class MapDesignLibrary {
-    public static final String ENEMY_SLIME = "slime";
-    public static final String ENEMY_GOBLIN = "goblin";
-    public static final String ENEMY_SKELETON = "skeleton";
+    public static final String DEFAULT_NPC_VISUAL_PATH = "assets/images/monster/Nov-2015/mon/goblin.png";
     public static final String MAP_RESOURCE_FOLDER = "assets/editor/maps";
     public static final String CONTENT_RESOURCE_FOLDER = "assets/editor/content";
     public static final Path EDITOR_RESOURCE_FOLDER = Path.of("src", "main", "resources", "assets", "editor");
@@ -51,61 +52,6 @@ public final class MapDesignLibrary {
     private MapDesignLibrary() {
     }
 
-    public static List<CustomMob> defaultEnemies() {
-        return List.of(defaultSlime(), defaultGoblin(), defaultSkeleton());
-    }
-
-    public static CustomMob defaultEnemy(String enemyId) {
-        CustomMob enemy = findDefaultEnemy(enemyId);
-        return enemy == null ? defaultSlime() : enemy;
-    }
-
-    public static CustomMob findDefaultEnemy(String enemyId) {
-        if (enemyId == null) {
-            return null;
-        }
-        return switch (enemyId.toLowerCase(Locale.ROOT)) {
-            case ENEMY_GOBLIN -> defaultGoblin();
-            case ENEMY_SKELETON -> defaultSkeleton();
-            case ENEMY_SLIME -> defaultSlime();
-            default -> null;
-        };
-    }
-
-    public static Monster createDefaultEnemy(String enemyId) {
-        return defaultEnemy(enemyId).createMonster();
-    }
-
-    public static List<CustomItem> builtInItemDefinitions() {
-        List<CustomItem> items = new ArrayList<>();
-        for (ItemLibrary item : ItemLibrary.values()) {
-            if (item == ItemLibrary.BURNT_FISH) {
-                continue;
-            }
-            items.add(new CustomItem(
-                    item.name(),
-                    item.getDisplayName(),
-                    item.getItemType(),
-                    item.getIconPath(),
-                    "",
-                    item.getUseSoundPath(),
-                    item.getWeaponType(),
-                    item.isTwoHanded(),
-                    item.getMaterial(),
-                    item.getHealAmount(),
-                    item.getBaseGoldValue(),
-                    item.getExamineText(),
-                    null,
-                    item.isStackable(),
-                    false,
-                    1,
-                    1,
-                    0
-            ));
-        }
-        return items;
-    }
-
     public static Monster createEnemyById(String enemyId) {
         if (enemyId == null || enemyId.isBlank()) {
             return null;
@@ -117,92 +63,9 @@ public final class MapDesignLibrary {
                 return customMob.createMonster();
             }
         } catch (IOException ignored) {
-            // Fall through to built-in defaults below.
+            return null;
         }
-
-        CustomMob defaultEnemy = findDefaultEnemy(enemyId);
-        return defaultEnemy == null ? null : defaultEnemy.createMonster();
-    }
-
-    private static CustomMob defaultSlime() {
-        return new CustomMob(
-                ENEMY_SLIME,
-                "Slime",
-                "assets/images/monster/Nov-2015/mon/amorphous/jelly.png",
-                PaperDollAssetLibrary.DEFAULT_BASE,
-                stats(20, 5, 5, 0, 5, 5, 3),
-                10,
-                "A quivering mass of dungeon slime.",
-                "assets/sounds/generated/enemy_attack.wav",
-                "assets/sounds/generated/player_hit.wav",
-                5,
-                List.of(SkillLibrary.ABSORB),
-                List.of(
-                        new CustomDropEntry(ItemLibrary.SLIME.name(), 1.0),
-                        new CustomDropEntry(ItemLibrary.POTION.name(), 0.15)
-                )
-        );
-    }
-
-    private static CustomMob defaultGoblin() {
-        return new CustomMob(
-                ENEMY_GOBLIN,
-                "Goblin",
-                "assets/images/monster/Nov-2015/mon/goblin.png",
-                "assets/images/monster/Nov-2015/player/base/kobold_m.png",
-                stats(10, 4, 4, 1, 4, 4, 2),
-                12,
-                "A wiry goblin clutching a crude blade.",
-                "assets/sounds/generated/enemy_attack.wav",
-                "assets/sounds/generated/player_hit.wav",
-                4,
-                List.of(),
-                List.of(
-                        new CustomDropEntry(ItemLibrary.IRON_SWORD.name(), 0.12),
-                        new CustomDropEntry(ItemLibrary.POTION.name(), 0.20)
-                )
-        );
-    }
-
-    private static CustomMob defaultSkeleton() {
-        return new CustomMob(
-                ENEMY_SKELETON,
-                "Skeleton",
-                "assets/images/monster/Nov-2015/mon/undead/skeletons/skeleton_humanoid_small.png",
-                "assets/images/monster/Nov-2015/player/base/mummy_m.png",
-                stats(12, 5, 5, 2, 5, 2, 3),
-                18,
-                "A rattling corpse animated by old magic.",
-                "assets/sounds/generated/enemy_attack.wav",
-                "assets/sounds/generated/player_hit.wav",
-                2,
-                List.of(),
-                List.of(
-                        new CustomDropEntry(ItemLibrary.BONES.name(), 1.0),
-                        new CustomDropEntry(ItemLibrary.IRON_SWORD.name(), 0.10),
-                        new CustomDropEntry(ItemLibrary.LEATHER_CAP.name(), 0.08)
-                )
-        );
-    }
-
-    private static EnumMap<PlayerStat, Integer> stats(
-            int vitality,
-            int attack,
-            int strength,
-            int defense,
-            int agility,
-            int intelligence,
-            int willpower
-    ) {
-        EnumMap<PlayerStat, Integer> stats = new EnumMap<>(PlayerStat.class);
-        stats.put(PlayerStat.VITALITY, vitality);
-        stats.put(PlayerStat.ATTACK, attack);
-        stats.put(PlayerStat.STRENGTH, strength);
-        stats.put(PlayerStat.DEFENSE, defense);
-        stats.put(PlayerStat.AGILITY, agility);
-        stats.put(PlayerStat.INTELLIGENCE, intelligence);
-        stats.put(PlayerStat.WILLPOWER, willpower);
-        return stats;
+        return null;
     }
 
     public static MapDesign createBlank(int width, int height, ThemeLibrary primaryTheme, ThemeLibrary alternateTheme) {
@@ -290,6 +153,8 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "y", String.valueOf(trigger.y()));
             properties.setProperty(prefix + "fireMode", trigger.fireMode().name());
             properties.setProperty(prefix + "oneShot", String.valueOf(trigger.oneShot()));
+            properties.setProperty(prefix + "requiredQuestId", trigger.requiredQuestId());
+            properties.setProperty(prefix + "requiredQuestStage", String.valueOf(trigger.requiredQuestStage()));
             properties.setProperty(prefix + "action.count", String.valueOf(trigger.actions().size()));
             for (int actionIndex = 0; actionIndex < trigger.actions().size(); actionIndex++) {
                 TriggerAction action = trigger.actions().get(actionIndex);
@@ -421,6 +286,21 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "imagePath", customNpc.imagePath());
             properties.setProperty(prefix + "talkSoundPath", customNpc.talkSoundPath());
             properties.setProperty(prefix + "interactionId", customNpc.interactionId());
+            CustomShop customShop = customNpc.shop();
+            properties.setProperty(prefix + "shop.enabled", String.valueOf(customShop != null));
+            if (customShop != null) {
+                properties.setProperty(prefix + "shop.name", customShop.shopName());
+                properties.setProperty(prefix + "shop.greeting", customShop.greeting());
+                properties.setProperty(prefix + "shop.stock.count", String.valueOf(customShop.stock().size()));
+                for (int stockIndex = 0; stockIndex < customShop.stock().size(); stockIndex++) {
+                    CustomShopStock stock = customShop.stock().get(stockIndex);
+                    String stockPrefix = prefix + "shop.stock." + stockIndex + ".";
+                    properties.setProperty(stockPrefix + "itemId", stock.itemId());
+                    properties.setProperty(stockPrefix + "quantity", String.valueOf(stock.quantity()));
+                    properties.setProperty(stockPrefix + "buyPrice", String.valueOf(stock.buyPrice()));
+                    properties.setProperty(stockPrefix + "sellPrice", String.valueOf(stock.sellPrice()));
+                }
+            }
         }
 
         properties.setProperty("customGatheringNode.count", String.valueOf(design.customGatheringNodes().size()));
@@ -544,6 +424,8 @@ public final class MapDesignLibrary {
             int y = readInt(properties, prefix + "y", 0);
             TriggerFireMode fireMode = readTriggerFireMode(properties.getProperty(prefix + "fireMode", ""));
             boolean oneShot = Boolean.parseBoolean(properties.getProperty(prefix + "oneShot", "true"));
+            String requiredQuestId = properties.getProperty(prefix + "requiredQuestId", "");
+            int requiredQuestStage = readInt(properties, prefix + "requiredQuestStage", 0);
             int actionCount = readInt(properties, prefix + "action.count", 0);
             List<TriggerAction> actions = new ArrayList<>();
             for (int actionIndex = 0; actionIndex < actionCount; actionIndex++) {
@@ -557,7 +439,16 @@ public final class MapDesignLibrary {
             }
 
             if (!triggerId.isBlank()) {
-                triggers.add(new MapTrigger(triggerId, x, y, fireMode, oneShot, actions));
+                triggers.add(new MapTrigger(
+                        triggerId,
+                        x,
+                        y,
+                        fireMode,
+                        oneShot,
+                        requiredQuestId,
+                        requiredQuestStage,
+                        actions
+                ));
             }
         }
 
@@ -872,8 +763,27 @@ public final class MapDesignLibrary {
             String imagePath = properties.getProperty(prefix + "imagePath", "");
             String talkSoundPath = properties.getProperty(prefix + "talkSoundPath", "");
             String interactionId = properties.getProperty(prefix + "interactionId", "");
+            CustomShop shop = null;
+            if (Boolean.parseBoolean(properties.getProperty(prefix + "shop.enabled", "false"))) {
+                int stockCount = Math.max(0, readInt(properties, prefix + "shop.stock.count", 0));
+                List<CustomShopStock> stock = new ArrayList<>();
+                for (int stockIndex = 0; stockIndex < stockCount; stockIndex++) {
+                    String stockPrefix = prefix + "shop.stock." + stockIndex + ".";
+                    stock.add(new CustomShopStock(
+                            properties.getProperty(stockPrefix + "itemId", ""),
+                            readInt(properties, stockPrefix + "quantity", 1),
+                            readInt(properties, stockPrefix + "buyPrice", -1),
+                            readInt(properties, stockPrefix + "sellPrice", -1)
+                    ));
+                }
+                shop = new CustomShop(
+                        properties.getProperty(prefix + "shop.name", npcName + "'s Shop"),
+                        properties.getProperty(prefix + "shop.greeting", "Take a look at my wares."),
+                        stock
+                );
+            }
             if (!npcId.isBlank() && !npcName.isBlank()) {
-                customNpcs.add(new CustomNpc(npcId, npcName, imagePath, talkSoundPath, interactionId));
+                customNpcs.add(new CustomNpc(npcId, npcName, imagePath, talkSoundPath, interactionId, shop));
             }
         }
 
@@ -909,6 +819,56 @@ public final class MapDesignLibrary {
 
     public static AuthoredContent loadSharedContent() throws IOException {
         return MapDesignContentStore.loadSharedContent();
+    }
+
+    public static AuthoredContent authoredContentOf(MapDesign design) {
+        if (design == null) {
+            return new AuthoredContent(
+                    List.of(), List.of(), List.of(), List.of(), List.of(),
+                    List.of(), List.of(), List.of(), List.of()
+            );
+        }
+        return new AuthoredContent(
+                design.authoredDialogues(),
+                design.authoredQuests(),
+                design.customItems(),
+                design.customMobs(),
+                design.customLimbs(),
+                design.customNpcs(),
+                design.customGatheringNodes(),
+                design.customCookingRecipes(),
+                design.customCompositeRecipes()
+        );
+    }
+
+    public static void mergeAuthoredContent(MapDesign design, AuthoredContent content) {
+        if (design == null || content == null) {
+            return;
+        }
+        mergeMissingById(design.authoredDialogues(), content.authoredDialogues(), AuthoredDialogue::interactionId);
+        mergeMissingById(design.authoredQuests(), content.authoredQuests(), AuthoredQuest::questId);
+        mergeMissingById(design.customItems(), content.customItems(), CustomItem::itemId);
+        mergeMissingById(design.customMobs(), content.customMobs(), CustomMob::mobId);
+        mergeMissingById(design.customLimbs(), content.customLimbs(), CustomLimb::limbId);
+        mergeMissingById(design.customNpcs(), content.customNpcs(), CustomNpc::npcId);
+        mergeMissingById(design.customGatheringNodes(), content.customGatheringNodes(), CustomGatheringNode::nodeId);
+        mergeMissingById(design.customCookingRecipes(), content.customCookingRecipes(), CustomCookingRecipe::recipeId);
+        mergeMissingById(design.customCompositeRecipes(), content.customCompositeRecipes(), CustomCompositeRecipe::recipeId);
+    }
+
+    private static <T> void mergeMissingById(List<T> target, List<T> source, Function<T, String> idFunction) {
+        for (T value : source == null ? List.<T>of() : source) {
+            if (value == null) {
+                continue;
+            }
+            String id = idFunction.apply(value);
+            boolean exists = target.stream().anyMatch(existing ->
+                    java.util.Objects.equals(idFunction.apply(existing), id)
+            );
+            if (!exists) {
+                target.add(value);
+            }
+        }
     }
 
     public static void saveSharedContent(AuthoredContent content) throws IOException {
@@ -1043,16 +1003,22 @@ public final class MapDesignLibrary {
             switch (placement.kind()) {
                 case CRAFTING_NODE -> {
                     dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
-                    entities.add(CraftingNodeLibrary.valueOf(placement.id()).createEntity(placement.x(), placement.y()));
+                    entities.add(CraftingStationType.valueOf(placement.id()).createEntity(placement.x(), placement.y()));
                 }
                 case GATHERING_NODE -> hydrateGatheringNode(dungeonMap, entities, tileInteractions, customGatheringNodes, placement);
                 case GENERIC_NPC -> {
                     dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
-                    entities.add(GenericNpcLibrary.valueOf(placement.id()).createEntity(placement.x(), placement.y()));
+                    MapEntity legacyNpc = createLegacyNpc(placement.id(), placement.x(), placement.y());
+                    if (legacyNpc != null) {
+                        entities.add(legacyNpc);
+                    }
                 }
                 case MAIN_NPC -> {
                     dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
-                    entities.add(MainNpcLibrary.valueOf(placement.id()).createEntity(placement.x(), placement.y()));
+                    MapEntity legacyNpc = createLegacyNpc(placement.id(), placement.x(), placement.y());
+                    if (legacyNpc != null) {
+                        entities.add(legacyNpc);
+                    }
                 }
                 case CUSTOM_NPC -> {
                     CustomNpc npc = findCustomNpc(placement.id(), customNpcs);
@@ -1069,9 +1035,6 @@ public final class MapDesignLibrary {
                 case ENEMY -> {
                     dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
                     CustomMob customMob = findCustomMob(placement.id(), customMobs);
-                    if (customMob == null) {
-                        customMob = findDefaultEnemy(placement.id());
-                    }
                     if (customMob != null) {
                         entities.add(new MapEntity(customMob.createMonster(), placement.x(), placement.y()));
                     }
@@ -1084,7 +1047,7 @@ public final class MapDesignLibrary {
                             Library.EntityType.NPC,
                             placement.x(),
                             placement.y(),
-                            AssetLoader.loadImage(dialogue == null ? defaultEnemy(ENEMY_GOBLIN).imagePath() : dialogue.visualPath())
+                            AssetLoader.loadImage(dialogue == null ? DEFAULT_NPC_VISUAL_PATH : dialogue.visualPath())
                     ).withInteractionId(placement.id()));
                 }
                 case INTERACTION -> tileInteractions.add(new GeneratedDungeon.TileInteraction(
@@ -1115,6 +1078,28 @@ public final class MapDesignLibrary {
         return null;
     }
 
+    private static MapEntity createLegacyNpc(String id, int x, int y) {
+        if ("GOBLIN_MERCHANT".equals(id)) {
+            return new MapEntity(
+                    "Goblin Merchant",
+                    Library.EntityType.NPC,
+                    x,
+                    y,
+                    AssetLoader.loadImage("assets/images/monster/Nov-2015/mon/goblin.png")
+            ).withTalkSoundPath("assets/sounds/generated/gobbo_talk.wav");
+        }
+        if ("TIPPING_THE_HAT_SKELETON".equals(id)) {
+            return new MapEntity(
+                    "Sir Tibia",
+                    Library.EntityType.NPC,
+                    x,
+                    y,
+                    AssetLoader.loadImage("assets/images/monster/Nov-2015/mon/undead/skeletons/skeleton_humanoid_small.png")
+            ).withTalkSoundPath("assets/sounds/generated/skelle_talk.wav");
+        }
+        return null;
+    }
+
     private static InventorySystem.Item createItem(String itemId, List<CustomItem> customItems, List<CustomLimb> customLimbs) {
         CustomItem customItem = findCustomItem(itemId, customItems);
         if (customItem != null) {
@@ -1126,18 +1111,12 @@ public final class MapDesignLibrary {
             return customLimb.createLimb();
         }
 
-        return ItemLibrary.valueOf(itemId).createItem();
+        return null;
     }
 
     public static String itemDisplayName(String itemIdOrName, List<CustomItem> customItems) {
         if (itemIdOrName == null || itemIdOrName.isBlank()) {
             return "";
-        }
-        for (ItemLibrary item : ItemLibrary.values()) {
-            if (itemIdOrName.equalsIgnoreCase(item.name())
-                    || itemIdOrName.equalsIgnoreCase(item.getDisplayName())) {
-                return item.getDisplayName();
-            }
         }
         CustomItem customItem = findCustomItem(itemIdOrName, customItems);
         if (customItem != null) {
@@ -1247,19 +1226,34 @@ public final class MapDesignLibrary {
             return;
         }
 
-        GatheringNodeLibrary node = GatheringNodeLibrary.valueOf(placement.id());
-        if (node == GatheringNodeLibrary.FISHING_SHOAL) {
+        if ("FISHING_SHOAL".equals(placement.id())) {
             dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FISHING_WATER);
             tileInteractions.add(new GeneratedDungeon.TileInteraction(
                     placement.x(),
                     placement.y(),
-                    node.getInteractionId()
+                    "fishing_shoal"
             ));
             return;
         }
 
         dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
-        entities.add(node.createEntity(placement.x(), placement.y()));
+        if ("MINERAL_ROCK_A".equals(placement.id())) {
+            entities.add(new MapEntity(
+                    "Mineral Rock",
+                    Library.EntityType.TRAP,
+                    placement.x(),
+                    placement.y(),
+                    AssetLoader.loadImage("assets/images/generic/64x64/A_Rock1_Node1.png")
+            ).withInteractionId("mineral_rock_basic").blocksMovement(true).withVisualScale(1.35));
+        } else if ("DECORATIVE_SHOAL".equals(placement.id())) {
+            entities.add(new MapEntity(
+                    "Shallow Water",
+                    Library.EntityType.TRAP,
+                    placement.x(),
+                    placement.y(),
+                    AssetLoader.loadImage("assets/images/monster/Nov-2015/dngn/water/shoals_shallow_water4.png")
+            ));
+        }
     }
 
     private static GridPoint resolveSpawn(DungeonMap dungeonMap, int requestedX, int requestedY) {
@@ -1464,12 +1458,12 @@ public final class MapDesignLibrary {
 
     private static String legacyVisualPath(String value) {
         if (value == null || value.isBlank()) {
-            return defaultEnemy(ENEMY_GOBLIN).imagePath();
+            return DEFAULT_NPC_VISUAL_PATH;
         }
         return switch (value.toUpperCase(Locale.ROOT)) {
-            case "SKELETON" -> defaultEnemy(ENEMY_SKELETON).imagePath();
-            case "SLIME" -> defaultEnemy(ENEMY_SLIME).imagePath();
-            case "GOBLIN" -> defaultEnemy(ENEMY_GOBLIN).imagePath();
+            case "SKELETON" -> "assets/images/monster/Nov-2015/mon/undead/skeletons/skeleton_humanoid_small.png";
+            case "SLIME" -> "assets/images/monster/Nov-2015/mon/amorphous/jelly.png";
+            case "GOBLIN" -> DEFAULT_NPC_VISUAL_PATH;
             default -> value;
         };
     }
@@ -1946,12 +1940,27 @@ public final class MapDesignLibrary {
             int y,
             TriggerFireMode fireMode,
             boolean oneShot,
+            String requiredQuestId,
+            int requiredQuestStage,
             List<TriggerAction> actions
     ) {
         public MapTrigger {
             id = id == null ? "" : id;
             fireMode = fireMode == null ? TriggerFireMode.ON_ENTRY : fireMode;
+            requiredQuestId = requiredQuestId == null ? "" : requiredQuestId.trim();
+            requiredQuestStage = Math.max(0, requiredQuestStage);
             actions = actions == null ? List.of() : List.copyOf(actions);
+        }
+
+        public MapTrigger(
+                String id,
+                int x,
+                int y,
+                TriggerFireMode fireMode,
+                boolean oneShot,
+                List<TriggerAction> actions
+        ) {
+            this(id, x, y, fireMode, oneShot, "", 0, actions);
         }
     }
 
@@ -2001,7 +2010,7 @@ public final class MapDesignLibrary {
             List<AuthoredDialogueNode> nodes
     ) {
         public AuthoredDialogue(String interactionId, String speakerName, String bodyText) {
-            this(interactionId, speakerName, bodyText, "", defaultEnemy(ENEMY_GOBLIN).imagePath());
+            this(interactionId, speakerName, bodyText, "", DEFAULT_NPC_VISUAL_PATH);
         }
 
         public AuthoredDialogue(
@@ -2010,7 +2019,7 @@ public final class MapDesignLibrary {
                 String bodyText,
                 String followUpInteractionId
         ) {
-            this(interactionId, speakerName, bodyText, followUpInteractionId, defaultEnemy(ENEMY_GOBLIN).imagePath());
+            this(interactionId, speakerName, bodyText, followUpInteractionId, DEFAULT_NPC_VISUAL_PATH);
         }
 
         public AuthoredDialogue(
@@ -2025,7 +2034,7 @@ public final class MapDesignLibrary {
 
         public AuthoredDialogue {
             followUpInteractionId = followUpInteractionId == null ? "" : followUpInteractionId;
-            visualPath = visualPath == null || visualPath.isBlank() ? defaultEnemy(ENEMY_GOBLIN).imagePath() : visualPath;
+            visualPath = visualPath == null || visualPath.isBlank() ? DEFAULT_NPC_VISUAL_PATH : visualPath;
             rewardItemId = rewardItemId == null ? "" : rewardItemId;
             rewardSkillXp = Math.max(0, rewardSkillXp);
             rewardGold = Math.max(0, rewardGold);
@@ -2426,8 +2435,19 @@ public final class MapDesignLibrary {
             String displayName,
             String imagePath,
             String talkSoundPath,
-            String interactionId
+            String interactionId,
+            CustomShop shop
     ) {
+        public CustomNpc(
+                String npcId,
+                String displayName,
+                String imagePath,
+                String talkSoundPath,
+                String interactionId
+        ) {
+            this(npcId, displayName, imagePath, talkSoundPath, interactionId, null);
+        }
+
         public CustomNpc {
             npcId = npcId == null ? "" : npcId;
             displayName = displayName == null || displayName.isBlank() ? "Custom NPC" : displayName;
@@ -2437,15 +2457,59 @@ public final class MapDesignLibrary {
         }
 
         public MapEntity createEntity(int x, int y) {
-            return new MapEntity(
+            MapEntity entity = new MapEntity(
                     displayName,
                     Library.EntityType.NPC,
                     x,
                     y,
                     imagePath.isBlank() ? null : AssetLoader.loadImage(imagePath)
-            )
-                    .withInteractionId(interactionId)
-                    .withTalkSoundPath(talkSoundPath);
+            ).withTalkSoundPath(talkSoundPath);
+            if (shop == null) {
+                return entity.withInteractionId(interactionId);
+            }
+            return entity
+                    .withInteractionId("custom_shop")
+                    .withShopBlueprint(shop.toBlueprint());
+        }
+    }
+
+    public record CustomShop(
+            String shopName,
+            String greeting,
+            List<CustomShopStock> stock
+    ) {
+        public CustomShop {
+            shopName = shopName == null || shopName.isBlank() ? "Shop" : shopName.trim();
+            greeting = greeting == null || greeting.isBlank()
+                    ? "Take a look at my wares."
+                    : greeting.trim();
+            stock = stock == null ? List.of() : List.copyOf(stock);
+        }
+
+        public ShopSystem.ShopBlueprint toBlueprint() {
+            return new ShopSystem.ShopBlueprint(
+                    shopName,
+                    greeting,
+                    stock.stream()
+                            .map(entry -> new ShopSystem.ShopStockDefinition(
+                                    entry.itemId(),
+                                    entry.quantity(),
+                                    entry.buyPrice(),
+                                    entry.sellPrice()
+                            ))
+                            .toList()
+            );
+        }
+    }
+
+    public record CustomShopStock(
+            String itemId,
+            int quantity,
+            int buyPrice,
+            int sellPrice
+    ) {
+        public CustomShopStock {
+            itemId = itemId == null ? "" : itemId.trim();
         }
     }
 
@@ -2611,10 +2675,12 @@ public final class MapDesignLibrary {
     }
 
     public enum TriggerFireMode {
-        ON_ENTRY
+        ON_ENTRY,
+        ON_QUEST_STAGE
     }
 
     public enum TriggerActionType {
-        CLOSE_DOOR
+        CLOSE_DOOR,
+        OPEN_DOOR
     }
 }

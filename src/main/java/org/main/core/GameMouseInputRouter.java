@@ -81,13 +81,14 @@ public class GameMouseInputRouter {
         component.requestFocusInWindow();
 
         if (gameState.isDungeonMode()
-                && gameState.isInventoryOverlayAllowed()
+                && gameState.isCharacterMenuOverlayAllowed()
                 && overworldHud != null
-                && overworldHud.handleInventoryButtonPressed(
+                && overworldHud.handleMousePressed(
                 e.getPoint(),
                 gameState,
                 component.getWidth(),
-                component.getHeight()
+                component.getHeight(),
+                escapeMenuAction
         )) {
             component.repaint();
             return;
@@ -220,10 +221,10 @@ public class GameMouseInputRouter {
 
     private void handleMouseWheelMoved(MouseWheelEvent e) {
         if (gameState.isDungeonMode()
-                && gameState.isInventoryOverlayAllowed()
-                && gameState.isInventoryOpen()) {
-            repaintIfConsumed(overworldHud != null
-                    && overworldHud.handleMouseWheelMoved(e, gameState, component.getWidth(), component.getHeight()));
+                && gameState.isCharacterMenuOverlayAllowed()
+                && overworldHud != null
+                && overworldHud.handleMouseWheelMoved(e, gameState, component.getWidth(), component.getHeight())) {
+            component.repaint();
             return;
         }
 

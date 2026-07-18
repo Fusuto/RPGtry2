@@ -1,20 +1,11 @@
-package org.main.content;
+package org.main.core;
 
+import org.main.content.ThemeLibrary;
 import org.main.engine.EnvironmentTheme;
 
 import java.util.List;
 
-public enum EnvironmentLibrary {
-    STARTER_DUNGEON(
-            ThemeLibrary.STONE_WOOD,
-            ThemeLibrary.SANDSTONE_GATE,
-            "assets/sounds/generated/Bryan stuff 11.wav",
-            "assets/sounds/generated/Concept 4.wav",
-            "assets/sounds/generated/footstep.wav",
-            "assets/sounds/generated/player_hit.wav"
-    ),
-
-    ;
+public final class GameEnvironment {
 
     private final List<EnvironmentTheme> themes;
     private final List<ThemeLibrary> themeLibraries;
@@ -23,7 +14,7 @@ public enum EnvironmentLibrary {
     private final String footstepSoundPath;
     private final String playerHitSoundPath;
 
-    EnvironmentLibrary(
+    private GameEnvironment(
             ThemeLibrary primaryTheme,
             ThemeLibrary alternateTheme,
             String ambienceSoundPath,
@@ -39,6 +30,17 @@ public enum EnvironmentLibrary {
         this.combatMusicPath = combatMusicPath;
         this.footstepSoundPath = footstepSoundPath;
         this.playerHitSoundPath = playerHitSoundPath;
+    }
+
+    public static GameEnvironment createDefault() {
+        return new GameEnvironment(
+                ThemeLibrary.STONE_WOOD,
+                ThemeLibrary.SANDSTONE_GATE,
+                "assets/sounds/generated/Bryan stuff 11.wav",
+                "assets/sounds/generated/Concept 4.wav",
+                "assets/sounds/generated/footstep.wav",
+                "assets/sounds/generated/player_hit.wav"
+        );
     }
 
     public List<EnvironmentTheme> getThemes() {

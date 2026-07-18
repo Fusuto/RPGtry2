@@ -1,7 +1,5 @@
 package org.main.core;
 
-import org.main.content.ItemLibrary;
-
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
@@ -20,7 +18,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.logging.Logger;
 
 public final class ShopSystem {
@@ -34,59 +31,54 @@ public final class ShopSystem {
         SELL
     }
 
-    public static ShopSession createBasicMerchantShop(String merchantName) {
-        ShopSession shop = new ShopSession(
-                merchantName == null || merchantName.isBlank()
-                        ? "Merchant"
-                        : merchantName
-        );
-
-        shop.addStock(ShopStockItem.fromItem(ItemLibrary.POTION.createItem(), -1));
-        shop.addStock(ShopStockItem.fromItem(ItemLibrary.IRON_SWORD.createItem(), 3));
-        shop.addStock(ShopStockItem.fromItem(ItemLibrary.LEATHER_CAP.createItem(), 2));
-        shop.addStock(ShopStockItem.fromItem(ItemLibrary.SILVER_RING.createItem(), 1));
-
-        return shop;
+    public record ShopStockDefinition(
+            String itemId,
+            int quantity,
+            int buyPrice,
+            int sellPrice
+    ) {
+        public ShopStockDefinition {
+            itemId = itemId == null ? "" : itemId.trim();
+        }
     }
 
-    public static ShopSession createRandomMerchantShop(String merchantName, int stockCount) {
-        ShopSession shop = new ShopSession(
-                merchantName == null || merchantName.isBlank()
-                        ? "Merchant"
-                        : merchantName
-        );
-        Random random = new Random();
-        ItemLibrary[] items = ItemLibrary.values();
-        int count = Math.max(1, stockCount);
-
-        for (int i = 0; i < count; i++) {
-            ItemLibrary item = items[random.nextInt(items.length)];
-            int quantity = item.getItemType() == InventorySystem.ItemType.CONSUMABLE
-                    ? -1
-                    : 1 + random.nextInt(3);
-            shop.addStock(ShopStockItem.fromItem(item.createItem(), quantity));
+    public record ShopBlueprint(
+            String shopName,
+            String greeting,
+            List<ShopStockDefinition> stock
+    ) {
+        public ShopBlueprint {
+            shopName = shopName == null || shopName.isBlank() ? "Shop" : shopName.trim();
+            greeting = greeting == null || greeting.isBlank()
+                    ? "Take a look at my wares."
+                    : greeting.trim();
+            stock = stock == null ? List.of() : List.copyOf(stock);
         }
-
-        return shop;
     }
 
-    public static ShopSession createMerchantShop(String merchantName, List<ItemLibrary> setInventory) {
-        if (setInventory == null || setInventory.isEmpty()) {
-            return createRandomMerchantShop(merchantName, 4);
+    public static ShopSession createAuthoredShop(GameState gameState, ShopBlueprint blueprint) {
+        if (gameState == null || blueprint == null) {
+            return null;
         }
 
-        ShopSession shop = new ShopSession(
-                merchantName == null || merchantName.isBlank()
-                        ? "Merchant"
-                        : merchantName
-        );
-
-        for (ItemLibrary item : setInventory) {
-            if (item != null) {
-                shop.addStock(ShopStockItem.fromItem(item.createItem(), 1));
+        ShopSession shop = new ShopSession(blueprint.shopName());
+        for (ShopStockDefinition definition : blueprint.stock()) {
+            if (definition == null || definition.itemId().isBlank()) {
+                continue;
             }
+            InventorySystem.Item item = gameState.createItemByNameOrId(definition.itemId());
+            if (item == null) {
+                LOGGER.warning(() -> "Custom shop references unknown item: " + definition.itemId());
+                continue;
+            }
+            int buyPrice = definition.buyPrice() < 0
+                    ? item.getCalculatedBuyPrice()
+                    : definition.buyPrice();
+            int sellPrice = definition.sellPrice() < 0
+                    ? item.getCalculatedSellPrice()
+                    : definition.sellPrice();
+            shop.addStock(new ShopStockItem(item, buyPrice, sellPrice, definition.quantity()));
         }
-
         return shop;
     }
 
@@ -268,7 +260,7 @@ public final class ShopSystem {
                 return false;
             }
 
-            return ItemLibrary.fromDisplayName(item.getName()) != ItemLibrary.GOLD;
+            return !"Gold".equalsIgnoreCase(item.getName());
         }
 
         public int getSellPriceForItem(InventorySystem.Item item) {

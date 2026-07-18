@@ -1,13 +1,12 @@
-package org.main.content;
+package org.main.core;
 
-import org.main.core.Library;
 import org.main.engine.AssetLoader;
 import org.main.engine.MapEntity;
 import org.main.engine.SpriteAnimation;
 
 import java.awt.image.BufferedImage;
 
-public enum CraftingNodeLibrary {
+public enum CraftingStationType {
     CAMPFIRE(
             "Campfire",
             "campfire_basic",
@@ -32,7 +31,7 @@ public enum CraftingNodeLibrary {
             VisualMode.STATIC,
             "assets/images/resourceObjects/anvil_1.png",
             1000,
-            1.35
+            0.65
     );
 
     private static final int FURNACE_FIRST_LIT_FRAME = 1;
@@ -45,7 +44,7 @@ public enum CraftingNodeLibrary {
     private final int frameDurationMs;
     private final double visualScale;
 
-    CraftingNodeLibrary(
+    CraftingStationType(
             String displayName,
             String interactionId,
             VisualMode visualMode,

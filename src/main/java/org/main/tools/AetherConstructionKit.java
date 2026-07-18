@@ -1,15 +1,10 @@
 package org.main.tools;
 
 import org.main.battle.DifficultyResolver;
-import org.main.content.CraftingNodeLibrary;
-import org.main.content.GatheringNodeLibrary;
-import org.main.content.GenericNpcLibrary;
-import org.main.content.InteractionLibrary;
-import org.main.content.ItemLibrary;
-import org.main.content.MainNpcLibrary;
 import org.main.content.MapDesignLibrary;
 import org.main.content.PaintBrushLibrary;
-import org.main.content.RecipeLibrary;
+import org.main.core.CraftingSystem;
+import org.main.core.CraftingStationType;
 import org.main.content.SkillLibrary;
 import org.main.content.ThemeLibrary;
 import org.main.content.WorldManifestLibrary;
@@ -20,6 +15,7 @@ import org.main.core.GameConfiguration;
 import org.main.core.GearMaterial;
 import org.main.core.GearDurability;
 import org.main.core.InventorySystem;
+import org.main.core.InteractionSystem;
 import org.main.core.Library;
 import org.main.core.LimbSlot;
 import org.main.core.PlayerCharacter;
@@ -110,6 +106,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.function.Function;
 
 public class AetherConstructionKit extends JFrame {
     private static final int DEFAULT_WIDTH = 14;
@@ -118,6 +115,12 @@ public class AetherConstructionKit extends JFrame {
     private static final int MAX_DIMENSION = 80;
     private static final int MAX_HISTORY_STATES = 80;
     private static final int AUTOSAVE_INTERVAL_MS = 60_000;
+    private static final int DEFAULT_FISHING_FRAME_DURATION_MS = 260;
+    private static final List<String> DEFAULT_FISHING_FRAME_PATHS = List.of(
+            "assets/images/monster/Nov-2015/dngn/water/shoals_shallow_water_disturbance1.png",
+            "assets/images/monster/Nov-2015/dngn/water/shoals_shallow_water_disturbance2.png",
+            "assets/images/monster/Nov-2015/dngn/water/shoals_shallow_water_disturbance3.png"
+    );
     private static final String DEFAULT_LIMB_ICON = "assets/images/monster/Ancient/Oct-5-2010/player/hand1/misc/head.png";
     private static final Path CONFIG_RESOURCE_PATH = Path.of("src", "main", "resources", "assets", "configuration.properties");
     private static final Path AUTOSAVE_PATH = Path.of("data", "editor", "autosave", "aether_construction_kit_recovery.properties");
@@ -159,6 +162,10 @@ public class AetherConstructionKit extends JFrame {
     private final Timer autosaveTimer = new Timer(AUTOSAVE_INTERVAL_MS, event -> autosaveRecovery());
     private boolean dirty;
     private String pendingTriggerId = "";
+    private MapDesignLibrary.TriggerFireMode pendingTriggerFireMode = MapDesignLibrary.TriggerFireMode.ON_ENTRY;
+    private boolean pendingTriggerOneShot = true;
+    private String pendingTriggerQuestId = "";
+    private int pendingTriggerQuestStage;
     private String wiringTriggerId = "";
     private String lastFindKey = "";
     private int lastFindIndex = -1;
@@ -170,6 +177,7 @@ public class AetherConstructionKit extends JFrame {
     private Path currentWorldManifestPath;
     private WorldManifest activeWorld;
     private ChunkCoordinate activeWorldChunk;
+    private MapDesignLibrary.AuthoredContent activeWorldContent;
     private final Map<ChunkCoordinate, MapDesignLibrary.MapDesign> worldNeighborDesigns = new HashMap<>();
 
     private MapDesignLibrary.MapDesign design = MapDesignLibrary.createBlank(
@@ -633,7 +641,7 @@ public class AetherConstructionKit extends JFrame {
         JOptionPane pane = new JOptionPane(panel, JOptionPane.PLAIN_MESSAGE, JOptionPane.DEFAULT_OPTION, null, new Object[]{}, null);
         var dialog = pane.createDialog(this, "Asset Browser");
         closeButton.addActionListener(event -> dialog.dispose());
-        dialog.setVisible(true);
+        showManagedDialog(dialog);
     }
 
     private void manageSoundEffectConfiguration() {
@@ -662,13 +670,7 @@ public class AetherConstructionKit extends JFrame {
         panel.add(fields, BorderLayout.CENTER);
         panel.add(note, BorderLayout.SOUTH);
 
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                panel,
-                "Sound Effects",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
+        int result = showScrollableFormDialog(panel, "Sound Effects");
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -779,7 +781,7 @@ public class AetherConstructionKit extends JFrame {
             if (selected == null) {
                 return;
             }
-            int result = JOptionPane.showConfirmDialog(
+            int result = showAdaptiveTextConfirmDialog(
                     dialog,
                     "Delete backup " + selected.getFileName() + "?",
                     "Delete Content Backup",
@@ -799,7 +801,7 @@ public class AetherConstructionKit extends JFrame {
         });
         refreshButton.addActionListener(event -> refreshBackups.run());
         closeButton.addActionListener(event -> dialog.dispose());
-        dialog.setVisible(true);
+        showManagedDialog(dialog);
     }
 
     private List<Path> listSharedContentBackups() {
@@ -858,7 +860,7 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void restoreSharedContentBackup(Path backup) {
-        int result = JOptionPane.showConfirmDialog(
+        int result = showAdaptiveTextConfirmDialog(
                 this,
                 "Restore " + backup.getFileName() + " as the current authored content?\n\n"
                         + "The current authored_content.properties file will be backed up first.",
@@ -1047,13 +1049,7 @@ public class AetherConstructionKit extends JFrame {
         panel.add(new JScrollPane(fields), BorderLayout.CENTER);
         panel.add(note, BorderLayout.SOUTH);
 
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                panel,
-                "Ability Cooldowns",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
+        int result = showScrollableFormDialog(panel, "Ability Cooldowns");
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -1145,13 +1141,7 @@ public class AetherConstructionKit extends JFrame {
         panel.add(tabs, BorderLayout.CENTER);
         panel.add(note, BorderLayout.SOUTH);
 
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                panel,
-                "Level Gates",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
+        int result = showScrollableFormDialog(panel, "Level Gates");
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -1368,7 +1358,7 @@ public class AetherConstructionKit extends JFrame {
             return;
         }
 
-        int result = JOptionPane.showConfirmDialog(
+        int result = showAdaptiveTextConfirmDialog(
                 this,
                 "A Construction Kit recovery file was found.\n\nLoad it now?",
                 "Recover Unsaved Map",
@@ -1517,30 +1507,12 @@ public class AetherConstructionKit extends JFrame {
             options.add(new PlaceableOption("None", null, ""));
         }
 
-        for (GatheringNodeLibrary node : GatheringNodeLibrary.values()) {
-            if (node.getInteractionId() != null && !node.getInteractionId().isBlank()) {
-                addPlaceableIfSelected(options, selectedCategory, new PlaceableOption(
-                        "Gathering: " + node.name(),
-                        MapDesignLibrary.PlacementKind.GATHERING_NODE,
-                        node.name()
-                ));
-            }
-        }
-
-        for (CraftingNodeLibrary node : CraftingNodeLibrary.values()) {
+        for (CraftingStationType node : CraftingStationType.values()) {
             addPlaceableIfSelected(options, selectedCategory, new PlaceableOption(
                     "Crafting: " + node.name(),
                     MapDesignLibrary.PlacementKind.CRAFTING_NODE,
                     node.name()
             ));
-        }
-
-        for (GenericNpcLibrary npc : GenericNpcLibrary.values()) {
-            addPlaceableIfSelected(options, selectedCategory, new PlaceableOption("Generic NPC: " + npc.name(), MapDesignLibrary.PlacementKind.GENERIC_NPC, npc.name()));
-        }
-
-        for (MainNpcLibrary npc : MainNpcLibrary.values()) {
-            addPlaceableIfSelected(options, selectedCategory, new PlaceableOption("Main NPC: " + npc.name(), MapDesignLibrary.PlacementKind.MAIN_NPC, npc.name()));
         }
 
         for (MapDesignLibrary.CustomNpc npc : design.customNpcs()) {
@@ -1555,15 +1527,8 @@ public class AetherConstructionKit extends JFrame {
             ));
         }
 
-        for (ItemLibrary item : ItemLibrary.values()) {
-            if (hasCustomItemId(item.name())) {
-                continue;
-            }
-            addPlaceableIfSelected(options, selectedCategory, new PlaceableOption("Item: " + item.name(), MapDesignLibrary.PlacementKind.ITEM, item.name()));
-        }
-
         for (MapDesignLibrary.CustomItem item : design.customItems()) {
-            addPlaceableIfSelected(options, selectedCategory, new PlaceableOption("Custom Item: " + item.displayName(), MapDesignLibrary.PlacementKind.ITEM, item.itemId()));
+            addPlaceableIfSelected(options, selectedCategory, new PlaceableOption("Item: " + item.displayName(), MapDesignLibrary.PlacementKind.ITEM, item.itemId()));
         }
 
         for (MapDesignLibrary.CustomLimb limb : design.customLimbs()) {
@@ -1578,14 +1543,12 @@ public class AetherConstructionKit extends JFrame {
             ));
         }
 
-        for (InteractionLibrary interaction : InteractionLibrary.values()) {
-            if (interaction.isPlaceable()) {
-                addPlaceableIfSelected(options, selectedCategory, new PlaceableOption(
-                        "Interaction: " + interaction.getDisplayName(),
-                        MapDesignLibrary.PlacementKind.INTERACTION,
-                        interaction.getInteractionId()
-                ));
-            }
+        for (InteractionSystem.EditorInteractionDefinition interaction : InteractionSystem.EDITOR_INTERACTIONS) {
+            addPlaceableIfSelected(options, selectedCategory, new PlaceableOption(
+                    "Interaction: " + interaction.displayName(),
+                    MapDesignLibrary.PlacementKind.INTERACTION,
+                    interaction.interactionId()
+            ));
         }
 
         for (MapDesignLibrary.AuthoredDialogue dialogue : design.authoredDialogues()) {
@@ -1807,6 +1770,10 @@ public class AetherConstructionKit extends JFrame {
             builder.append("Dialogue: ").append(npc.interactionId().isBlank() ? "None" : npc.interactionId()).append('\n');
             builder.append("Sprite: ").append(npc.imagePath()).append('\n');
             builder.append("Talk Sound: ").append(npc.talkSoundPath().isBlank() ? "None" : npc.talkSoundPath()).append('\n');
+            if (npc.shop() != null) {
+                builder.append("Shop: ").append(npc.shop().shopName()).append('\n');
+                builder.append("Stock: ").append(npc.shop().stock().size()).append(" item(s)\n");
+            }
         } else if (value instanceof MapDesignLibrary.CustomLimb limb) {
             builder.append("Slot: ").append(limb.limbSlot()).append('\n');
             builder.append("Source: ").append(limb.sourceCreatureId().isBlank() ? "None" : limb.sourceCreatureId()).append('\n');
@@ -1845,6 +1812,13 @@ public class AetherConstructionKit extends JFrame {
             builder.append("Choices: ").append(dialogue.choices().size()).append('\n');
         } else if (value instanceof MapDesignLibrary.MapTrigger trigger) {
             builder.append("Tile: ").append(trigger.x()).append(',').append(trigger.y()).append('\n');
+            builder.append("Activation: ").append(trigger.fireMode() == MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE
+                    ? "Quest reaches stage"
+                    : "Player enters tile").append('\n');
+            if (trigger.fireMode() == MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE) {
+                builder.append("Quest: ").append(trigger.requiredQuestId()).append('\n');
+                builder.append("Minimum Stage: ").append(trigger.requiredQuestStage()).append('\n');
+            }
             builder.append("One Shot: ").append(trigger.oneShot()).append('\n');
             builder.append("Actions: ").append(trigger.actions()).append('\n');
         } else if (value instanceof MapDesignLibrary.MapPlacement placement) {
@@ -1880,9 +1854,8 @@ public class AetherConstructionKit extends JFrame {
         dependencyArea.setEditable(false);
         dependencyArea.setLineWrap(true);
         dependencyArea.setWrapStyleWord(true);
-        JOptionPane.showMessageDialog(
-                this,
-                new JScrollPane(dependencyArea),
+        showScrollableMessageDialog(
+                dependencyArea,
                 "Dependencies: " + entry.label(),
                 JOptionPane.INFORMATION_MESSAGE
         );
@@ -1944,8 +1917,7 @@ public class AetherConstructionKit extends JFrame {
         );
         splitPane.setResizeWeight(0.72);
         splitPane.setPreferredSize(new Dimension(860, 640));
-        JOptionPane.showMessageDialog(
-                this,
+        showScrollableMessageDialog(
                 splitPane,
                 "Graph: " + entry.label(),
                 JOptionPane.INFORMATION_MESSAGE
@@ -1984,7 +1956,7 @@ public class AetherConstructionKit extends JFrame {
             refreshContentBrowser();
         });
         closeButton.addActionListener(event -> dialog.dispose());
-        dialog.setVisible(true);
+        showManagedDialog(dialog);
     }
 
     private String dialogueGraphReport(MapDesignLibrary.AuthoredDialogue dialogue) {
@@ -2123,6 +2095,11 @@ public class AetherConstructionKit extends JFrame {
             addAssetDependency(dependencies, "Talk sound", npc.talkSoundPath());
             if (!npc.interactionId().isBlank()) {
                 dependencies.add("Dialogue " + npc.interactionId());
+            }
+            if (npc.shop() != null) {
+                for (MapDesignLibrary.CustomShopStock stock : npc.shop().stock()) {
+                    dependencies.add("Shop stock " + stock.itemId());
+                }
             }
         } else if (value instanceof MapDesignLibrary.CustomLimb limb) {
             addAssetDependency(dependencies, "Icon", limb.iconPath());
@@ -2393,7 +2370,8 @@ public class AetherConstructionKit extends JFrame {
                     copiedName,
                     npc.imagePath(),
                     npc.talkSoundPath(),
-                    npc.interactionId()
+                    npc.interactionId(),
+                    npc.shop()
             ));
             persistSharedContent("custom NPC");
         } else if (value instanceof MapDesignLibrary.CustomLimb limb) {
@@ -2963,13 +2941,7 @@ public class AetherConstructionKit extends JFrame {
         fields.add(new JLabel("Y"));
         fields.add(ySpinner);
 
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                fields,
-                "Edit Placement",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
+        int result = showScrollableFormDialog(fields, "Edit Placement");
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -2987,7 +2959,7 @@ public class AetherConstructionKit extends JFrame {
                 .filter(existing -> existing.x() == x && existing.y() == y)
                 .toList();
         if (!targetConflicts.isEmpty()) {
-            int replaceResult = JOptionPane.showConfirmDialog(
+            int replaceResult = showAdaptiveTextConfirmDialog(
                     this,
                     "Tile " + x + "," + y + " already has " + targetConflicts.size()
                             + " placement(s).\n\nReplace them?",
@@ -3053,7 +3025,7 @@ public class AetherConstructionKit extends JFrame {
                 "New NPC",
                 "Hello there.",
                 "",
-                MapDesignLibrary.defaultEnemy(MapDesignLibrary.ENEMY_GOBLIN).imagePath(),
+                MapDesignLibrary.DEFAULT_NPC_VISUAL_PATH,
                 "",
                 -1,
                 List.of(),
@@ -3133,7 +3105,7 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void deleteAuthoredQuest(MapDesignLibrary.AuthoredQuest selected) {
-        int result = JOptionPane.showConfirmDialog(
+        int result = showAdaptiveTextConfirmDialog(
                 this,
                 deleteMessage(
                         "Delete " + selected.displayName() + "? Dialogue actions using it will be cleared.",
@@ -3244,7 +3216,7 @@ public class AetherConstructionKit extends JFrame {
                 smithingRecipeBox.setSelected(false);
             }
             smithingMaterialLabel.setText(metal
-                ? "Uses " + RecipeLibrary.smithingMaterialNameFor(material)
+                ? "Uses " + CraftingSystem.smithingMaterialNameFor(material)
                 : "Metal materials only");
         };
         browseButton.addActionListener(event -> browsePathInto(iconPathField));
@@ -3386,13 +3358,7 @@ public class AetherConstructionKit extends JFrame {
         panel.add(fields, BorderLayout.NORTH);
         panel.add(new JScrollPane(examineArea), BorderLayout.CENTER);
 
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                panel,
-                title,
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
+        int result = showScrollableFormDialog(panel, title);
         if (result != JOptionPane.OK_OPTION) {
             return null;
         }
@@ -3571,7 +3537,7 @@ public class AetherConstructionKit extends JFrame {
         panel.add(textPanel, BorderLayout.CENTER);
         panel.add(new JScrollPane(skillList), BorderLayout.EAST);
 
-        int result = JOptionPane.showConfirmDialog(this, panel, "Create Enemy", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        int result = showScrollableFormDialog(panel, "Create Enemy");
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -3635,7 +3601,7 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void createCustomNpc() {
-        MapDesignLibrary.CustomNpc npc = showCustomNpcDialog("Create NPC", null);
+        MapDesignLibrary.CustomNpc npc = showCustomNpcDialog("Create NPC", null, false);
         if (npc == null) {
             return;
         }
@@ -3646,7 +3612,11 @@ public class AetherConstructionKit extends JFrame {
         setStatus("Created custom NPC " + npc.displayName() + ".");
     }
 
-    private MapDesignLibrary.CustomNpc showCustomNpcDialog(String title, MapDesignLibrary.CustomNpc existing) {
+    private MapDesignLibrary.CustomNpc showCustomNpcDialog(
+            String title,
+            MapDesignLibrary.CustomNpc existing,
+            boolean shopByDefault
+    ) {
         JTextField nameField = new JTextField(existing == null ? "Custom NPC" : existing.displayName(), 24);
         JTextField imagePathField = new JTextField(
                 existing == null ? "assets/images/generated/npcs/custom_npc.png" : existing.imagePath(),
@@ -3659,12 +3629,62 @@ public class AetherConstructionKit extends JFrame {
         if (existing != null) {
             selectDialogueOption(dialogueBox, existing.interactionId());
         }
+        JComboBox<NpcBaseOption> baseBox = new JComboBox<>(npcBaseOptions(existing).toArray(new NpcBaseOption[0]));
+        JCheckBox shopkeeperBox = new JCheckBox(
+                "Enable shop",
+                existing == null ? shopByDefault : existing.shop() != null
+        );
+        JTextField shopNameField = new JTextField(
+                existing != null && existing.shop() != null
+                        ? existing.shop().shopName()
+                        : nameField.getText() + "'s Shop",
+                24
+        );
+        JTextArea greetingArea = new JTextArea(
+                existing != null && existing.shop() != null
+                        ? existing.shop().greeting()
+                        : "Take a look at my wares.",
+                3,
+                28
+        );
+        greetingArea.setLineWrap(true);
+        greetingArea.setWrapStyleWord(true);
+        DefaultListModel<MapDesignLibrary.CustomShopStock> stockModel = new DefaultListModel<>();
+        if (existing != null && existing.shop() != null) {
+            existing.shop().stock().forEach(stockModel::addElement);
+        }
+        JList<MapDesignLibrary.CustomShopStock> stockList = new JList<>(stockModel);
+        stockList.setVisibleRowCount(7);
+        stockList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        stockList.setCellRenderer((list, value, index, selected, focus) -> {
+            String quantity = value.quantity() == -1 ? "∞" : String.valueOf(value.quantity());
+            String buyPrice = value.buyPrice() < 0 ? "default" : value.buyPrice() + "g";
+            String sellPrice = value.sellPrice() < 0 ? "default" : value.sellPrice() + "g";
+            JLabel label = new JLabel(value.itemId() + " — qty " + quantity
+                    + ", buy " + buyPrice + ", sell " + sellPrice);
+            label.setOpaque(true);
+            label.setBackground(selected ? list.getSelectionBackground() : list.getBackground());
+            label.setForeground(selected ? list.getSelectionForeground() : list.getForeground());
+            return label;
+        });
 
         imageBrowseButton.addActionListener(event -> browsePathInto(imagePathField));
         talkSoundBrowseButton.addActionListener(event -> browsePathInto(talkSoundField));
+        baseBox.addActionListener(event -> {
+            NpcBaseOption base = (NpcBaseOption) baseBox.getSelectedItem();
+            if (base == null || base.manual()) {
+                return;
+            }
+            nameField.setText(base.displayName());
+            imagePathField.setText(base.imagePath());
+            talkSoundField.setText(base.talkSoundPath());
+            shopNameField.setText(base.displayName() + "'s Shop");
+        });
 
-        JPanel panel = new JPanel(new BorderLayout(6, 6));
+        JPanel identityPanel = new JPanel(new BorderLayout(6, 6));
         JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        fields.add(new JLabel("Base NPC"));
+        fields.add(baseBox);
         fields.add(new JLabel("Name"));
         fields.add(nameField);
         fields.add(new JLabel("Sprite PNG"));
@@ -3673,9 +3693,68 @@ public class AetherConstructionKit extends JFrame {
         fields.add(pathFieldPanel(talkSoundField, talkSoundBrowseButton));
         fields.add(new JLabel("Dialogue"));
         fields.add(dialogueBox);
-        panel.add(fields, BorderLayout.CENTER);
+        identityPanel.add(fields, BorderLayout.NORTH);
 
-        int result = JOptionPane.showConfirmDialog(this, panel, title, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        JButton addStockButton = new JButton("Add");
+        JButton editStockButton = new JButton("Edit");
+        JButton removeStockButton = new JButton("Remove");
+        addStockButton.addActionListener(event -> {
+            MapDesignLibrary.CustomShopStock stock = showShopStockDialog(null);
+            if (stock != null) {
+                stockModel.addElement(stock);
+            }
+        });
+        editStockButton.addActionListener(event -> {
+            int index = stockList.getSelectedIndex();
+            if (index < 0) {
+                return;
+            }
+            MapDesignLibrary.CustomShopStock stock = showShopStockDialog(stockModel.get(index));
+            if (stock != null) {
+                stockModel.set(index, stock);
+            }
+        });
+        removeStockButton.addActionListener(event -> {
+            int index = stockList.getSelectedIndex();
+            if (index >= 0) {
+                stockModel.remove(index);
+            }
+        });
+
+        JPanel shopPanel = new JPanel(new BorderLayout(6, 6));
+        JPanel shopFields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        shopFields.add(shopkeeperBox);
+        shopFields.add(new JLabel("Stock quantities: -1 means infinite"));
+        shopFields.add(new JLabel("Shop Name"));
+        shopFields.add(shopNameField);
+        shopFields.add(new JLabel("Greeting"));
+        shopFields.add(new JScrollPane(greetingArea));
+        shopPanel.add(shopFields, BorderLayout.NORTH);
+        shopPanel.add(new JScrollPane(stockList), BorderLayout.CENTER);
+        JPanel stockButtons = new JPanel(new java.awt.GridLayout(1, 0, 4, 0));
+        stockButtons.add(addStockButton);
+        stockButtons.add(editStockButton);
+        stockButtons.add(removeStockButton);
+        shopPanel.add(stockButtons, BorderLayout.SOUTH);
+
+        Runnable updateShopControls = () -> {
+            boolean enabled = shopkeeperBox.isSelected();
+            shopNameField.setEnabled(enabled);
+            greetingArea.setEnabled(enabled);
+            stockList.setEnabled(enabled);
+            addStockButton.setEnabled(enabled);
+            editStockButton.setEnabled(enabled);
+            removeStockButton.setEnabled(enabled);
+            dialogueBox.setEnabled(!enabled);
+        };
+        shopkeeperBox.addActionListener(event -> updateShopControls.run());
+        updateShopControls.run();
+
+        JTabbedPane tabs = new JTabbedPane();
+        tabs.addTab("Identity", identityPanel);
+        tabs.addTab("Shop", shopPanel);
+
+        int result = showScrollableFormDialog(tabs, title);
         if (result != JOptionPane.OK_OPTION) {
             return null;
         }
@@ -3687,12 +3766,103 @@ public class AetherConstructionKit extends JFrame {
         }
 
         DialogueOption dialogueOption = (DialogueOption) dialogueBox.getSelectedItem();
+        MapDesignLibrary.CustomShop shop = null;
+        if (shopkeeperBox.isSelected()) {
+            List<MapDesignLibrary.CustomShopStock> stock = new ArrayList<>();
+            for (int i = 0; i < stockModel.size(); i++) {
+                stock.add(stockModel.get(i));
+            }
+            shop = new MapDesignLibrary.CustomShop(
+                    shopNameField.getText(),
+                    greetingArea.getText(),
+                    stock
+            );
+        }
         return new MapDesignLibrary.CustomNpc(
                 existing == null ? nextCustomNpcId(name) : existing.npcId(),
                 name,
                 imagePathField.getText() == null ? "" : imagePathField.getText().trim(),
                 talkSoundField.getText() == null ? "" : talkSoundField.getText().trim(),
-                dialogueOption == null ? "" : dialogueOption.interactionId()
+                shop == null && dialogueOption != null ? dialogueOption.interactionId() : "",
+                shop
+        );
+    }
+
+    private List<NpcBaseOption> npcBaseOptions(MapDesignLibrary.CustomNpc existing) {
+        List<NpcBaseOption> options = new ArrayList<>();
+        options.add(new NpcBaseOption("Manual / Custom Sprite", "", "", "", true));
+        for (MapDesignLibrary.CustomNpc npc : design.customNpcs()) {
+            if (existing != null && existing.npcId().equals(npc.npcId())) {
+                continue;
+            }
+            options.add(new NpcBaseOption(
+                    "Custom: " + npc.displayName(),
+                    npc.displayName(),
+                    npc.imagePath(),
+                    npc.talkSoundPath(),
+                    false
+            ));
+        }
+        return options;
+    }
+
+    private MapDesignLibrary.CustomShopStock showShopStockDialog(
+            MapDesignLibrary.CustomShopStock existing
+    ) {
+        JComboBox<DropItemOption> itemBox =
+                new JComboBox<>(dropItemOptions().toArray(new DropItemOption[0]));
+        if (existing != null) {
+            selectDropItem(itemBox, existing.itemId());
+        }
+        JCheckBox infiniteBox = new JCheckBox("Infinite stock", existing != null && existing.quantity() == -1);
+        JSpinner quantityField = new JSpinner(new SpinnerNumberModel(
+                existing == null || existing.quantity() < 1 ? 1 : existing.quantity(),
+                1,
+                9999,
+                1
+        ));
+        JSpinner buyPriceField = new JSpinner(new SpinnerNumberModel(
+                existing == null ? -1 : existing.buyPrice(),
+                -1,
+                1_000_000,
+                1
+        ));
+        JSpinner sellPriceField = new JSpinner(new SpinnerNumberModel(
+                existing == null ? -1 : existing.sellPrice(),
+                -1,
+                1_000_000,
+                1
+        ));
+        infiniteBox.addActionListener(event -> quantityField.setEnabled(!infiniteBox.isSelected()));
+        quantityField.setEnabled(!infiniteBox.isSelected());
+
+        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
+        fields.add(new JLabel("Item"));
+        fields.add(itemBox);
+        fields.add(new JLabel("Quantity"));
+        fields.add(quantityField);
+        fields.add(new JLabel(""));
+        fields.add(infiniteBox);
+        fields.add(new JLabel("Buy Price (-1 = default)"));
+        fields.add(buyPriceField);
+        fields.add(new JLabel("Sell Price (-1 = default)"));
+        fields.add(sellPriceField);
+        if (showScrollableFormDialog(
+                fields,
+                existing == null ? "Add Shop Stock" : "Edit Shop Stock"
+        ) != JOptionPane.OK_OPTION) {
+            return null;
+        }
+
+        DropItemOption item = (DropItemOption) itemBox.getSelectedItem();
+        if (item == null) {
+            return null;
+        }
+        return new MapDesignLibrary.CustomShopStock(
+                item.itemId(),
+                infiniteBox.isSelected() ? -1 : ((Number) quantityField.getValue()).intValue(),
+                ((Number) buyPriceField.getValue()).intValue(),
+                ((Number) sellPriceField.getValue()).intValue()
         );
     }
 
@@ -3805,7 +3975,7 @@ public class AetherConstructionKit extends JFrame {
             if (!mining) {
                 smeltingBox.setSelected(false);
             }
-            frameDurationSpinner.setValue(fishing ? GatheringNodeLibrary.FISHING_SHOAL.getFrameDurationMs() : 1000);
+            frameDurationSpinner.setValue(fishing ? DEFAULT_FISHING_FRAME_DURATION_MS : 1000);
             visualScaleSpinner.setValue(fishing ? 1.0 : 1.35);
             fields.revalidate();
             fields.repaint();
@@ -3814,8 +3984,7 @@ public class AetherConstructionKit extends JFrame {
         smeltingBox.addActionListener(event -> updateGatheringNodeFields.run());
         updateGatheringNodeFields.run();
 
-        if (JOptionPane.showConfirmDialog(this, fields, "Create Gathering Node", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
-                != JOptionPane.OK_OPTION) {
+        if (showScrollableFormDialog(fields, "Create Gathering Node") != JOptionPane.OK_OPTION) {
             return;
         }
 
@@ -3873,7 +4042,7 @@ public class AetherConstructionKit extends JFrame {
                 lootEntries.add(new MapDesignLibrary.CustomDropEntry(outputItemId, 1.0));
 
                 if (mining && smeltingBox.isSelected()) {
-                    String barName = RecipeLibrary.smithingMaterialNameFor(material);
+                    String barName = CraftingSystem.smithingMaterialNameFor(material);
                     if (barName.isBlank()) {
                         barName = materialName + " Bar";
                     }
@@ -3919,7 +4088,7 @@ public class AetherConstructionKit extends JFrame {
                     mining ? smeltOutputItemId : "",
                     mining ? ((Number) smeltingXpSpinner.getValue()).intValue() : 0,
                     frames,
-                    fishing ? GatheringNodeLibrary.FISHING_SHOAL.getFrameDurationMs() : ((Number) frameDurationSpinner.getValue()).intValue(),
+                    fishing ? DEFAULT_FISHING_FRAME_DURATION_MS : ((Number) frameDurationSpinner.getValue()).intValue(),
                     ((Number) visualScaleSpinner.getValue()).doubleValue(),
                     (CharacterSkill) skillBox.getSelectedItem(),
                     new ArrayList<>(lootEntries),
@@ -3982,8 +4151,7 @@ public class AetherConstructionKit extends JFrame {
         smeltingBox.addActionListener(event -> updateCompositeSmeltingRows.run());
         updateCompositeSmeltingRows.run();
 
-        if (JOptionPane.showConfirmDialog(this, fields, "Create Composite Recipe", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
-                != JOptionPane.OK_OPTION) {
+        if (showScrollableFormDialog(fields, "Create Composite Recipe") != JOptionPane.OK_OPTION) {
             return;
         }
 
@@ -4076,7 +4244,7 @@ public class AetherConstructionKit extends JFrame {
         autoBurntBox.addActionListener(event -> updateOutputRows.run());
         updateOutputRows.run();
 
-        int result = JOptionPane.showConfirmDialog(this, fields, title, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        int result = showScrollableFormDialog(fields, title);
         if (result != JOptionPane.OK_OPTION) {
             return null;
         }
@@ -4284,8 +4452,7 @@ public class AetherConstructionKit extends JFrame {
         fields.add(new JLabel("Bar Icon"));
         fields.add(pathFieldPanel(barImageField, barBrowse));
 
-        if (JOptionPane.showConfirmDialog(this, fields, "Create Mining Rock", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
-                != JOptionPane.OK_OPTION) {
+        if (showScrollableFormDialog(fields, "Create Mining Rock") != JOptionPane.OK_OPTION) {
             return;
         }
 
@@ -4298,7 +4465,7 @@ public class AetherConstructionKit extends JFrame {
         GearMaterial material = (GearMaterial) materialBox.getSelectedItem();
         String metalName = material == null ? "Metal" : material.getDisplayName();
         String oreName = metalName + " Ore";
-        String barName = RecipeLibrary.smithingMaterialNameFor(material);
+        String barName = CraftingSystem.smithingMaterialNameFor(material);
         if (barName.isBlank()) {
             barName = metalName + " Bar";
         }
@@ -4411,8 +4578,7 @@ public class AetherConstructionKit extends JFrame {
         fields.add(new JLabel("Frame 3"));
         fields.add(pathFieldPanel(frameThreeField, frameThreeBrowse));
 
-        if (JOptionPane.showConfirmDialog(this, fields, "Create Fishing Spot", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
-                != JOptionPane.OK_OPTION) {
+        if (showScrollableFormDialog(fields, "Create Fishing Spot") != JOptionPane.OK_OPTION) {
             return;
         }
 
@@ -4538,7 +4704,18 @@ public class AetherConstructionKit extends JFrame {
         JSpinner visualScaleSpinner = new JSpinner(new SpinnerNumberModel(selected.visualScale(), 0.1, 10.0, 0.05));
         JSpinner smeltingLevelSpinner = new JSpinner(new SpinnerNumberModel(selected.smeltRequiredLevel(), 1, 100, 1));
         JSpinner smeltingXpSpinner = new JSpinner(new SpinnerNumberModel(selected.smeltXpReward(), 0, 100000, 1));
-        JTextField smeltOutputField = new JTextField(selected.smeltOutputItemId(), 28);
+        JCheckBox smeltingBox = new JCheckBox("Output can be smelted", !selected.smeltOutputItemId().isBlank());
+        JComboBox<DropItemOption> smeltOutputBox =
+                new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
+        if (!selectDropItem(smeltOutputBox, selected.smeltOutputItemId())
+                && !selected.smeltOutputItemId().isBlank()) {
+            DropItemOption legacyOutput = new DropItemOption(
+                    selected.smeltOutputItemId(),
+                    "Current / Missing Item"
+            );
+            smeltOutputBox.addItem(legacyOutput);
+            smeltOutputBox.setSelectedItem(legacyOutput);
+        }
         JTextField frameOneField = new JTextField(framePathAt(selected, 0), 28);
         JTextField frameTwoField = new JTextField(framePathAt(selected, 1), 28);
         JTextField frameThreeField = new JTextField(framePathAt(selected, 2), 28);
@@ -4566,12 +4743,14 @@ public class AetherConstructionKit extends JFrame {
         fields.add(frameDurationRow);
         fields.add(formRow("Visual Scale", visualScaleSpinner));
         fields.add(formRow("Loot Table", lootButton));
-        JPanel smeltOutputRow = formRow("Smelt Output Item Id", smeltOutputField);
+        JPanel smeltingRow = formRow("Smelting", smeltingBox);
+        JPanel smeltOutputRow = formRow("Smelt Output", smeltOutputBox);
         JPanel smeltingLevelRow = formRow("Smelting Level", smeltingLevelSpinner);
         JPanel smeltingXpRow = formRow("Smelting XP", smeltingXpSpinner);
         JPanel frameOneRow = formRow("Stage / Frame 0", pathFieldPanel(frameOneField, frameOneBrowse));
         JPanel frameTwoRow = formRow("Stage / Frame 1", pathFieldPanel(frameTwoField, frameTwoBrowse));
         JPanel frameThreeRow = formRow("Stage / Frame 2", pathFieldPanel(frameThreeField, frameThreeBrowse));
+        fields.add(smeltingRow);
         fields.add(smeltOutputRow);
         fields.add(smeltingLevelRow);
         fields.add(smeltingXpRow);
@@ -4584,9 +4763,10 @@ public class AetherConstructionKit extends JFrame {
             boolean fishing = type == MapDesignLibrary.GatheringNodeType.FISHING_SPOT;
             boolean mining = type == MapDesignLibrary.GatheringNodeType.MINING_ROCK;
             frameDurationRow.setVisible(false);
-            smeltOutputRow.setVisible(mining);
-            smeltingLevelRow.setVisible(mining);
-            smeltingXpRow.setVisible(mining);
+            smeltingRow.setVisible(mining);
+            smeltOutputRow.setVisible(mining && smeltingBox.isSelected());
+            smeltingLevelRow.setVisible(mining && smeltingBox.isSelected());
+            smeltingXpRow.setVisible(mining && smeltingBox.isSelected());
             frameOneRow.setVisible(!fishing);
             frameTwoRow.setVisible(!fishing);
             frameThreeRow.setVisible(!fishing);
@@ -4594,10 +4774,10 @@ public class AetherConstructionKit extends JFrame {
             fields.repaint();
         };
         typeBox.addActionListener(event -> updateGatheringNodeFields.run());
+        smeltingBox.addActionListener(event -> updateGatheringNodeFields.run());
         updateGatheringNodeFields.run();
 
-        if (JOptionPane.showConfirmDialog(this, fields, "Edit Gathering Node", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
-                != JOptionPane.OK_OPTION) {
+        if (showScrollableFormDialog(fields, "Edit Gathering Node") != JOptionPane.OK_OPTION) {
             return;
         }
 
@@ -4615,6 +4795,11 @@ public class AetherConstructionKit extends JFrame {
             MapDesignLibrary.GatheringNodeType nodeType = (MapDesignLibrary.GatheringNodeType) typeBox.getSelectedItem();
             boolean fishing = nodeType == MapDesignLibrary.GatheringNodeType.FISHING_SPOT;
             boolean mining = nodeType == MapDesignLibrary.GatheringNodeType.MINING_ROCK;
+            DropItemOption smeltOutput = (DropItemOption) smeltOutputBox.getSelectedItem();
+            if (mining && smeltingBox.isSelected() && smeltOutput == null) {
+                setStatus("Choose an authored item for the smelting output.");
+                return;
+            }
             List<String> frames = fishing
                     ? defaultFishingFramePaths()
                     : List.of(
@@ -4629,14 +4814,16 @@ public class AetherConstructionKit extends JFrame {
                     ((Number) requiredLevelSpinner.getValue()).intValue(),
                     lootEntries.get(0).itemId(),
                     ((Number) gatherXpSpinner.getValue()).intValue(),
-                    mining && smeltOutputField.getText() != null ? smeltOutputField.getText().trim() : "",
-                    mining ? ((Number) smeltingXpSpinner.getValue()).intValue() : 0,
+                    mining && smeltingBox.isSelected() ? smeltOutput.itemId() : "",
+                    mining && smeltingBox.isSelected() ? ((Number) smeltingXpSpinner.getValue()).intValue() : 0,
                     frames,
-                    fishing ? GatheringNodeLibrary.FISHING_SHOAL.getFrameDurationMs() : ((Number) frameDurationSpinner.getValue()).intValue(),
+                    fishing ? DEFAULT_FISHING_FRAME_DURATION_MS : ((Number) frameDurationSpinner.getValue()).intValue(),
                     ((Number) visualScaleSpinner.getValue()).doubleValue(),
                     (CharacterSkill) skillBox.getSelectedItem(),
                     new ArrayList<>(lootEntries),
-                    mining ? ((Number) smeltingLevelSpinner.getValue()).intValue() : 1
+                    mining && smeltingBox.isSelected()
+                            ? ((Number) smeltingLevelSpinner.getValue()).intValue()
+                            : 1
             );
             int index = design.customGatheringNodes().indexOf(selected);
             if (index >= 0) {
@@ -4738,8 +4925,7 @@ public class AetherConstructionKit extends JFrame {
         smeltingBox.addActionListener(event -> updateCompositeSmeltingRows.run());
         updateCompositeSmeltingRows.run();
 
-        if (JOptionPane.showConfirmDialog(this, fields, "Edit Composite Recipe", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
-                != JOptionPane.OK_OPTION) {
+        if (showScrollableFormDialog(fields, "Edit Composite Recipe") != JOptionPane.OK_OPTION) {
             return;
         }
 
@@ -4869,7 +5055,7 @@ public class AetherConstructionKit extends JFrame {
         panel.add(new JScrollPane(descriptionArea), BorderLayout.CENTER);
         panel.add(new JScrollPane(skillList), BorderLayout.EAST);
 
-        int result = JOptionPane.showConfirmDialog(this, panel, "Edit Enemy", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        int result = showScrollableFormDialog(panel, "Edit Enemy");
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -4915,7 +5101,7 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void editCustomNpc(MapDesignLibrary.CustomNpc selected) {
-        MapDesignLibrary.CustomNpc edited = showCustomNpcDialog("Edit NPC", selected);
+        MapDesignLibrary.CustomNpc edited = showCustomNpcDialog("Edit NPC", selected, selected.shop() != null);
         if (edited == null) {
             return;
         }
@@ -4950,7 +5136,7 @@ public class AetherConstructionKit extends JFrame {
                 : findReferences(new ContentEntry(category, name, id, type, value));
         String message = deleteMessage("Delete " + name + "?", references);
 
-        int result = JOptionPane.showConfirmDialog(
+        int result = showAdaptiveTextConfirmDialog(
                 this,
                 message,
                 "Delete " + type,
@@ -5103,7 +5289,7 @@ public class AetherConstructionKit extends JFrame {
             }
         });
 
-        JOptionPane.showMessageDialog(this, panel, "Generated Limbs", JOptionPane.PLAIN_MESSAGE);
+        showScrollableMessageDialog(panel, "Generated Limbs", JOptionPane.PLAIN_MESSAGE);
     }
 
     private void editDropEntries(List<MapDesignLibrary.CustomDropEntry> drops) {
@@ -5151,7 +5337,7 @@ public class AetherConstructionKit extends JFrame {
         panel.add(new JScrollPane(dropList), BorderLayout.CENTER);
         panel.add(controls, BorderLayout.SOUTH);
 
-        int result = JOptionPane.showConfirmDialog(this, panel, "Enemy Drops", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        int result = showScrollableFormDialog(panel, "Enemy Drops");
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -5205,7 +5391,7 @@ public class AetherConstructionKit extends JFrame {
         panel.add(new JScrollPane(dropList), BorderLayout.CENTER);
         panel.add(controls, BorderLayout.SOUTH);
 
-        int result = JOptionPane.showConfirmDialog(this, panel, "Gathering Loot", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        int result = showScrollableFormDialog(panel, "Gathering Loot");
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -5218,12 +5404,6 @@ public class AetherConstructionKit extends JFrame {
 
     private List<DropItemOption> dropItemOptions() {
         List<DropItemOption> options = new ArrayList<>();
-        for (ItemLibrary item : ItemLibrary.values()) {
-            if (hasCustomItemId(item.name())) {
-                continue;
-            }
-            options.add(new DropItemOption(item.name(), item.getDisplayName()));
-        }
         for (MapDesignLibrary.CustomItem item : design.customItems()) {
             options.add(new DropItemOption(item.itemId(), item.displayName()));
         }
@@ -5235,12 +5415,6 @@ public class AetherConstructionKit extends JFrame {
 
     private List<DropItemOption> gatheringOutputItemOptions() {
         List<DropItemOption> options = new ArrayList<>();
-        for (ItemLibrary item : ItemLibrary.values()) {
-            if (hasCustomItemId(item.name())) {
-                continue;
-            }
-            options.add(new DropItemOption(item.name(), item.getDisplayName()));
-        }
         for (MapDesignLibrary.CustomItem item : design.customItems()) {
             options.add(new DropItemOption(item.itemId(), item.displayName()));
         }
@@ -5250,49 +5424,15 @@ public class AetherConstructionKit extends JFrame {
     private ItemTemplateOption[] itemTemplateOptions() {
         List<ItemTemplateOption> options = new ArrayList<>();
         options.add(new ItemTemplateOption("None", null));
-        for (ItemLibrary item : ItemLibrary.values()) {
-            if (hasCustomItemId(item.name())) {
-                continue;
-            }
-            options.add(new ItemTemplateOption(item.getDisplayName() + " [built-in]", builtInItemTemplate(item)));
-        }
         for (MapDesignLibrary.CustomItem item : design.customItems()) {
-            options.add(new ItemTemplateOption(item.displayName() + " [custom]", item));
+            options.add(new ItemTemplateOption(item.displayName(), item));
         }
         return options.toArray(new ItemTemplateOption[0]);
-    }
-
-    private MapDesignLibrary.CustomItem builtInItemTemplate(ItemLibrary item) {
-        return new MapDesignLibrary.CustomItem(
-                "",
-                item.getDisplayName(),
-                item.getItemType(),
-                item.getIconPath(),
-                "",
-                item.getUseSoundPath(),
-                item.getWeaponType(),
-                item.isTwoHanded(),
-                item.getMaterial(),
-                item.getHealAmount(),
-                item.getBaseGoldValue(),
-                item.getExamineText(),
-                null,
-                item.isStackable(),
-                false,
-                1,
-                1,
-                0
-        );
     }
 
     private String findItemIdByDisplayName(String displayName) {
         if (displayName == null || displayName.isBlank()) {
             return "";
-        }
-        for (ItemLibrary item : ItemLibrary.values()) {
-            if (displayName.equalsIgnoreCase(item.getDisplayName())) {
-                return item.name();
-            }
         }
         for (MapDesignLibrary.CustomItem item : design.customItems()) {
             if (displayName.equalsIgnoreCase(item.displayName())) {
@@ -5313,12 +5453,6 @@ public class AetherConstructionKit extends JFrame {
         if (itemIdOrName == null || itemIdOrName.isBlank()) {
             return "";
         }
-        for (ItemLibrary item : ItemLibrary.values()) {
-            if (itemIdOrName.equalsIgnoreCase(item.name())
-                    || itemIdOrName.equalsIgnoreCase(item.getDisplayName())) {
-                return item.getIconPath();
-            }
-        }
         for (MapDesignLibrary.CustomItem item : design.customItems()) {
             if (itemIdOrName.equalsIgnoreCase(item.itemId())
                     || itemIdOrName.equalsIgnoreCase(item.displayName())) {
@@ -5328,17 +5462,18 @@ public class AetherConstructionKit extends JFrame {
         return "";
     }
 
-    private void selectDropItem(JComboBox<DropItemOption> comboBox, String itemId) {
+    private boolean selectDropItem(JComboBox<DropItemOption> comboBox, String itemId) {
         if (comboBox == null || itemId == null || itemId.isBlank()) {
-            return;
+            return false;
         }
         for (int i = 0; i < comboBox.getItemCount(); i++) {
             DropItemOption option = comboBox.getItemAt(i);
             if (option != null && itemId.equals(option.itemId())) {
                 comboBox.setSelectedIndex(i);
-                return;
+                return true;
             }
         }
+        return false;
     }
 
     private record DropItemOption(String itemId, String displayName) {
@@ -5350,6 +5485,19 @@ public class AetherConstructionKit extends JFrame {
         @Override
         public String toString() {
             return displayName + " [" + itemId + "]";
+        }
+    }
+
+    private record NpcBaseOption(
+            String label,
+            String displayName,
+            String imagePath,
+            String talkSoundPath,
+            boolean manual
+    ) {
+        @Override
+        public String toString() {
+            return label;
         }
     }
 
@@ -5512,7 +5660,7 @@ public class AetherConstructionKit extends JFrame {
         panel.add(centerPanel, BorderLayout.CENTER);
         panel.add(new JScrollPane(skillsPanel), BorderLayout.EAST);
 
-        int result = JOptionPane.showConfirmDialog(this, panel, title, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        int result = showScrollableFormDialog(panel, title);
         if (result != JOptionPane.OK_OPTION) {
             return null;
         }
@@ -5567,6 +5715,109 @@ public class AetherConstructionKit extends JFrame {
         row.add(rowLabel, BorderLayout.WEST);
         row.add(component, BorderLayout.CENTER);
         return row;
+    }
+
+    private int showScrollableFormDialog(Component form, String title) {
+        return showScrollableFormDialog(this, form, title);
+    }
+
+    private int showScrollableFormDialog(Component parent, Component form, String title) {
+        Component content = screenAwarePopupContent(form);
+        return JOptionPane.showConfirmDialog(
+                parent,
+                content,
+                title,
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+        );
+    }
+
+    private Component screenAwarePopupContent(Component form) {
+        Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
+        Dimension preferred = form == null ? new Dimension(600, 500) : form.getPreferredSize();
+        int availableWidth = Math.max(420, screen.width - 180);
+        int availableHeight = Math.max(240, screen.height - 200);
+        int viewportWidth = Math.min(720, Math.min(availableWidth, Math.max(420, preferred.width + 24)));
+        int viewportHeight = Math.min(680, Math.min(availableHeight, Math.max(240, preferred.height + 24)));
+
+        JScrollPane scrollPane = form instanceof JScrollPane existing
+                ? existing
+                : new JScrollPane(
+                        form,
+                        JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+                        JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+                );
+        scrollPane.setPreferredSize(new Dimension(viewportWidth, viewportHeight));
+        scrollPane.getVerticalScrollBar().setUnitIncrement(18);
+        scrollPane.getHorizontalScrollBar().setUnitIncrement(18);
+        SwingUtilities.invokeLater(() -> scrollPane.getVerticalScrollBar().setValue(0));
+        return scrollPane;
+    }
+
+    private void showScrollableMessageDialog(Component content, String title, int messageType) {
+        JOptionPane.showMessageDialog(this, screenAwarePopupContent(content), title, messageType);
+    }
+
+    private int showAdaptiveTextConfirmDialog(
+            Component parent,
+            String message,
+            String title,
+            int optionType,
+            int messageType
+    ) {
+        String safeMessage = message == null ? "" : message;
+        long lineCount = safeMessage.lines().count();
+        if (safeMessage.length() < 280 && lineCount < 9) {
+            return JOptionPane.showConfirmDialog(parent, safeMessage, title, optionType, messageType);
+        }
+        JTextArea area = new JTextArea(safeMessage, Math.min(24, (int) Math.max(8, lineCount)), 68);
+        area.setEditable(false);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setCaretPosition(0);
+        return JOptionPane.showConfirmDialog(
+                parent,
+                screenAwarePopupContent(area),
+                title,
+                optionType,
+                messageType
+        );
+    }
+
+    private void showAdaptiveTextMessageDialog(String message, String title, int messageType) {
+        showAdaptiveTextMessageDialog(this, message, title, messageType);
+    }
+
+    private void showAdaptiveTextMessageDialog(Component parent, String message, String title, int messageType) {
+        String safeMessage = message == null ? "" : message;
+        long lineCount = safeMessage.lines().count();
+        if (safeMessage.length() < 280 && lineCount < 9) {
+            JOptionPane.showMessageDialog(parent, safeMessage, title, messageType);
+            return;
+        }
+        JTextArea area = new JTextArea(safeMessage, Math.min(24, (int) Math.max(8, lineCount)), 68);
+        area.setEditable(false);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setCaretPosition(0);
+        JOptionPane.showMessageDialog(parent, screenAwarePopupContent(area), title, messageType);
+    }
+
+    private void showManagedDialog(javax.swing.JDialog dialog) {
+        if (dialog == null) {
+            return;
+        }
+        dialog.setResizable(true);
+        dialog.pack();
+        Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
+        int maxWidth = Math.max(420, screen.width - 140);
+        int maxHeight = Math.max(260, screen.height - 160);
+        dialog.setSize(
+                Math.min(dialog.getWidth(), maxWidth),
+                Math.min(dialog.getHeight(), maxHeight)
+        );
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
     }
 
     private void setFormRowLabel(JPanel row, String label) {
@@ -5653,6 +5904,12 @@ public class AetherConstructionKit extends JFrame {
             String id = properties.getProperty(prefix + "id", "");
             int x = readPrefabInt(properties, prefix + "x", 0);
             int y = readPrefabInt(properties, prefix + "y", 0);
+            MapDesignLibrary.TriggerFireMode fireMode = readPrefabTriggerFireMode(
+                    properties.getProperty(prefix + "fireMode", "")
+            );
+            boolean oneShot = Boolean.parseBoolean(properties.getProperty(prefix + "oneShot", "true"));
+            String requiredQuestId = properties.getProperty(prefix + "requiredQuestId", "");
+            int requiredQuestStage = readPrefabInt(properties, prefix + "requiredQuestStage", 0);
             List<MapDesignLibrary.TriggerAction> actions = new ArrayList<>();
             int actionCount = readPrefabInt(properties, prefix + "action.count", 0);
             for (int actionIndex = 0; actionIndex < actionCount; actionIndex++) {
@@ -5669,8 +5926,10 @@ public class AetherConstructionKit extends JFrame {
                         id,
                         x,
                         y,
-                        MapDesignLibrary.TriggerFireMode.ON_ENTRY,
-                        true,
+                        fireMode,
+                        oneShot,
+                        requiredQuestId,
+                        requiredQuestStage,
                         actions
                 ));
             }
@@ -5709,7 +5968,7 @@ public class AetherConstructionKit extends JFrame {
         panel.add(new JLabel("Height"));
         panel.add(heightSpinner);
 
-        int result = JOptionPane.showConfirmDialog(this, panel, "Create Prefab From Region", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        int result = showScrollableFormDialog(panel, "Create Prefab From Region");
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -5800,6 +6059,8 @@ public class AetherConstructionKit extends JFrame {
                     trigger.y() - startY,
                     trigger.fireMode(),
                     trigger.oneShot(),
+                    trigger.requiredQuestId(),
+                    trigger.requiredQuestStage(),
                     actions
             ));
         }
@@ -5856,6 +6117,10 @@ public class AetherConstructionKit extends JFrame {
             properties.setProperty(prefix + "id", trigger.id());
             properties.setProperty(prefix + "x", String.valueOf(trigger.x()));
             properties.setProperty(prefix + "y", String.valueOf(trigger.y()));
+            properties.setProperty(prefix + "fireMode", trigger.fireMode().name());
+            properties.setProperty(prefix + "oneShot", String.valueOf(trigger.oneShot()));
+            properties.setProperty(prefix + "requiredQuestId", trigger.requiredQuestId());
+            properties.setProperty(prefix + "requiredQuestStage", String.valueOf(trigger.requiredQuestStage()));
             properties.setProperty(prefix + "action.count", String.valueOf(trigger.actions().size()));
             for (int actionIndex = 0; actionIndex < trigger.actions().size(); actionIndex++) {
                 MapDesignLibrary.TriggerAction action = trigger.actions().get(actionIndex);
@@ -5909,7 +6174,7 @@ public class AetherConstructionKit extends JFrame {
         });
         deleteButton.addActionListener(event -> {
             MapPrefab selected = prefabList.getSelectedValue();
-            if (selected == null || JOptionPane.showConfirmDialog(
+            if (selected == null || showAdaptiveTextConfirmDialog(
                     dialog,
                     "Delete prefab " + selected.name() + "?",
                     "Delete Prefab",
@@ -5928,7 +6193,7 @@ public class AetherConstructionKit extends JFrame {
             }
         });
         closeButton.addActionListener(event -> dialog.dispose());
-        dialog.setVisible(true);
+        showManagedDialog(dialog);
     }
 
     private void selectPrefab(String prefabName) {
@@ -6034,6 +6299,14 @@ public class AetherConstructionKit extends JFrame {
         }
     }
 
+    private MapDesignLibrary.TriggerFireMode readPrefabTriggerFireMode(String value) {
+        try {
+            return MapDesignLibrary.TriggerFireMode.valueOf(value);
+        } catch (RuntimeException ignored) {
+            return MapDesignLibrary.TriggerFireMode.ON_ENTRY;
+        }
+    }
+
     private void createMapLink() {
         try {
             Files.createDirectories(MapDesignLibrary.MAP_FOLDER);
@@ -6057,13 +6330,7 @@ public class AetherConstructionKit extends JFrame {
                 targetWorld = WorldManifestLibrary.load(selectedPath);
                 List<ChunkCoordinate> coordinates = targetWorld.chunks().keySet().stream().sorted().toList();
                 JComboBox<ChunkCoordinate> chunkBox = new JComboBox<>(coordinates.toArray(new ChunkCoordinate[0]));
-                if (JOptionPane.showConfirmDialog(
-                        this,
-                        chunkBox,
-                        "Choose World Chunk",
-                        JOptionPane.OK_CANCEL_OPTION,
-                        JOptionPane.PLAIN_MESSAGE
-                ) != JOptionPane.OK_OPTION) {
+                if (showScrollableFormDialog(chunkBox, "Choose World Chunk") != JOptionPane.OK_OPTION) {
                     return;
                 }
                 targetChunk = (ChunkCoordinate) chunkBox.getSelectedItem();
@@ -6084,13 +6351,7 @@ public class AetherConstructionKit extends JFrame {
         }
 
         TargetMapPickerPanel pickerPanel = new TargetMapPickerPanel(targetDesign);
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                new JScrollPane(pickerPanel),
-                "Choose Map Link Target",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
+        int result = showScrollableFormDialog(pickerPanel, "Choose Map Link Target");
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -6102,7 +6363,7 @@ public class AetherConstructionKit extends JFrame {
         }
 
         if (targetDesign.tiles()[selectedTarget.y][selectedTarget.x].blocksMovement()) {
-            int confirm = JOptionPane.showConfirmDialog(
+            int confirm = showAdaptiveTextConfirmDialog(
                     this,
                     "The selected target tile blocks movement. Create this link anyway?",
                     "Blocking Target",
@@ -6139,27 +6400,139 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void createTrigger() {
-        String defaultId = nextTriggerId();
-        String id = JOptionPane.showInputDialog(this, "Trigger id", defaultId);
-        if (id == null) {
+        TriggerSettings settings = showTriggerSettings(this, null, "Create Trigger");
+        if (settings == null) {
             return;
         }
 
-        id = id.trim();
-        if (id.isBlank()) {
-            setStatus("Trigger id cannot be blank.");
+        if (findTrigger(settings.id()) != null) {
+            setStatus("Trigger id already exists: " + settings.id() + ".");
             return;
         }
 
-        if (findTrigger(id) != null) {
-            setStatus("Trigger id already exists: " + id + ".");
-            return;
-        }
-
-        pendingTriggerId = id;
+        pendingTriggerId = settings.id();
+        pendingTriggerFireMode = settings.fireMode();
+        pendingTriggerOneShot = settings.oneShot();
+        pendingTriggerQuestId = settings.requiredQuestId();
+        pendingTriggerQuestStage = settings.requiredQuestStage();
         wiringTriggerId = "";
         paintModeBox.setSelectedItem(PaintMode.PLACE_TRIGGER);
-        setStatus("Click a floor tile to place trigger " + id + ".");
+        setStatus("Click a floor tile to place trigger " + settings.id() + ".");
+    }
+
+    private TriggerSettings showTriggerSettings(
+            Component parent,
+            MapDesignLibrary.MapTrigger trigger,
+            String title
+    ) {
+        JTextField idField = new JTextField(trigger == null ? nextTriggerId() : trigger.id(), 22);
+        JComboBox<TriggerActivationOption> activationBox = new JComboBox<>(new TriggerActivationOption[]{
+                new TriggerActivationOption("Player enters trigger tile", MapDesignLibrary.TriggerFireMode.ON_ENTRY),
+                new TriggerActivationOption("Quest reaches stage", MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE)
+        });
+        if (trigger != null && trigger.fireMode() == MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE) {
+            activationBox.setSelectedIndex(1);
+        }
+
+        JComboBox<QuestActionOption> questBox = new JComboBox<>(questActionOptions());
+        if (trigger != null) {
+            selectQuestActionOption(questBox, trigger.requiredQuestId());
+        }
+        JSpinner stageSpinner = new JSpinner(new SpinnerNumberModel(
+                trigger == null ? 0 : trigger.requiredQuestStage(),
+                0,
+                999,
+                1
+        ));
+        JCheckBox oneShotBox = new JCheckBox("Fire only once", trigger == null || trigger.oneShot());
+        JLabel stageHint = new JLabel("Quest stages are numbered from 0.");
+
+        Runnable updateQuestControls = () -> {
+            TriggerActivationOption activation = (TriggerActivationOption) activationBox.getSelectedItem();
+            boolean questActivation = activation != null
+                    && activation.fireMode() == MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE;
+            questBox.setEnabled(questActivation);
+            stageSpinner.setEnabled(questActivation);
+            stageHint.setEnabled(questActivation);
+        };
+        activationBox.addActionListener(event -> updateQuestControls.run());
+        updateQuestControls.run();
+
+        JPanel panel = new JPanel(new GridBagLayout());
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.insets = new Insets(3, 3, 3, 3);
+        constraints.anchor = GridBagConstraints.WEST;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridx = 0;
+        constraints.gridy = 0;
+        panel.add(new JLabel("Trigger id"), constraints);
+        constraints.gridx = 1;
+        constraints.weightx = 1;
+        panel.add(idField, constraints);
+        constraints.gridx = 0;
+        constraints.gridy++;
+        constraints.weightx = 0;
+        panel.add(new JLabel("Activate when"), constraints);
+        constraints.gridx = 1;
+        constraints.weightx = 1;
+        panel.add(activationBox, constraints);
+        constraints.gridx = 0;
+        constraints.gridy++;
+        constraints.weightx = 0;
+        panel.add(new JLabel("Quest"), constraints);
+        constraints.gridx = 1;
+        constraints.weightx = 1;
+        panel.add(questBox, constraints);
+        constraints.gridx = 0;
+        constraints.gridy++;
+        constraints.weightx = 0;
+        panel.add(new JLabel("Minimum stage"), constraints);
+        constraints.gridx = 1;
+        constraints.weightx = 1;
+        panel.add(stageSpinner, constraints);
+        constraints.gridx = 1;
+        constraints.gridy++;
+        panel.add(stageHint, constraints);
+        constraints.gridy++;
+        panel.add(oneShotBox, constraints);
+
+        while (showScrollableFormDialog(parent, panel, title) == JOptionPane.OK_OPTION) {
+            String id = idField.getText() == null ? "" : idField.getText().trim();
+            TriggerActivationOption activation = (TriggerActivationOption) activationBox.getSelectedItem();
+            MapDesignLibrary.TriggerFireMode fireMode = activation == null
+                    ? MapDesignLibrary.TriggerFireMode.ON_ENTRY
+                    : activation.fireMode();
+            QuestActionOption quest = (QuestActionOption) questBox.getSelectedItem();
+            String questId = fireMode == MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE && quest != null
+                    ? quest.questId()
+                    : "";
+            if (id.isBlank()) {
+                showAdaptiveTextMessageDialog(
+                        parent,
+                        "Trigger id cannot be blank.",
+                        title,
+                        JOptionPane.WARNING_MESSAGE
+                );
+                continue;
+            }
+            if (fireMode == MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE && questId.isBlank()) {
+                showAdaptiveTextMessageDialog(
+                        parent,
+                        "Choose an authored quest for a quest-stage trigger.",
+                        title,
+                        JOptionPane.WARNING_MESSAGE
+                );
+                continue;
+            }
+            return new TriggerSettings(
+                    id,
+                    fireMode,
+                    oneShotBox.isSelected(),
+                    questId,
+                    ((Number) stageSpinner.getValue()).intValue()
+            );
+        }
+        return null;
     }
 
     private void manageTriggers() {
@@ -6184,12 +6557,14 @@ public class AetherConstructionKit extends JFrame {
         });
 
         JButton renameButton = new JButton("Rename");
+        JButton configureButton = new JButton("Configure");
         JButton wireButton = new JButton("Wire Targets");
         JButton removeTargetButton = new JButton("Remove Target");
         JButton deleteButton = new JButton("Delete");
         JButton closeButton = new JButton("Close");
         JPanel buttons = new JPanel();
         buttons.add(renameButton);
+        buttons.add(configureButton);
         buttons.add(wireButton);
         buttons.add(removeTargetButton);
         buttons.add(deleteButton);
@@ -6222,10 +6597,53 @@ public class AetherConstructionKit extends JFrame {
                     trigger.y(),
                     trigger.fireMode(),
                     trigger.oneShot(),
+                    trigger.requiredQuestId(),
+                    trigger.requiredQuestStage(),
                     trigger.actions()
             ));
             refreshTriggerList(model);
             setStatus("Renamed trigger to " + newId + ".");
+            mapCanvas.repaint();
+        });
+
+        configureButton.addActionListener(event -> {
+            MapDesignLibrary.MapTrigger trigger = triggerList.getSelectedValue();
+            if (trigger == null) {
+                return;
+            }
+            TriggerSettings settings = showTriggerSettings(dialog, trigger, "Configure Trigger");
+            if (settings == null) {
+                return;
+            }
+            if (!settings.id().equals(trigger.id()) && findTrigger(settings.id()) != null) {
+                setStatus("Trigger id already exists: " + settings.id() + ".");
+                return;
+            }
+            captureHistory("configure trigger");
+            MapDesignLibrary.TriggerActionType actionType =
+                    settings.fireMode() == MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE
+                            ? MapDesignLibrary.TriggerActionType.OPEN_DOOR
+                            : MapDesignLibrary.TriggerActionType.CLOSE_DOOR;
+            List<MapDesignLibrary.TriggerAction> actions = trigger.actions().stream()
+                    .map(action -> new MapDesignLibrary.TriggerAction(
+                            actionType,
+                            action.targetX(),
+                            action.targetY()
+                    ))
+                    .toList();
+            replaceTrigger(trigger, new MapDesignLibrary.MapTrigger(
+                    settings.id(),
+                    trigger.x(),
+                    trigger.y(),
+                    settings.fireMode(),
+                    settings.oneShot(),
+                    settings.requiredQuestId(),
+                    settings.requiredQuestStage(),
+                    actions
+            ));
+            refreshTriggerList(model);
+            markDirty(true);
+            setStatus("Configured trigger " + settings.id() + ".");
             mapCanvas.repaint();
         });
 
@@ -6237,7 +6655,8 @@ public class AetherConstructionKit extends JFrame {
             wiringTriggerId = trigger.id();
             pendingTriggerId = "";
             paintModeBox.setSelectedItem(PaintMode.WIRE_TRIGGER);
-            setStatus("Click door tiles to wire targets for " + trigger.id() + ".");
+            String action = trigger.fireMode() == MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE ? "open" : "close";
+            setStatus("Click door tiles to wire " + action + " targets for " + trigger.id() + ".");
             dialog.dispose();
         });
 
@@ -6279,7 +6698,7 @@ public class AetherConstructionKit extends JFrame {
         });
 
         closeButton.addActionListener(event -> dialog.dispose());
-        dialog.setVisible(true);
+        showManagedDialog(dialog);
     }
 
     private void deleteTrigger(MapDesignLibrary.MapTrigger trigger) {
@@ -6287,7 +6706,7 @@ public class AetherConstructionKit extends JFrame {
             return;
         }
 
-        int result = JOptionPane.showConfirmDialog(
+        int result = showAdaptiveTextConfirmDialog(
                 this,
                 "Delete trigger " + trigger.id() + "?",
                 "Delete Trigger",
@@ -6329,9 +6748,12 @@ public class AetherConstructionKit extends JFrame {
         if (trigger == null) {
             return "";
         }
+        String activation = trigger.fireMode() == MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE
+                ? "Quest " + trigger.requiredQuestId() + " >= " + trigger.requiredQuestStage()
+                : "On Entry";
         return trigger.id() + " @ " + trigger.x() + "," + trigger.y()
                 + " -> " + trigger.actions().size() + " door target(s)"
-                + " [On Entry, One Shot]";
+                + " [" + activation + (trigger.oneShot() ? ", One Shot" : "") + "]";
     }
 
     private void refreshTriggerList(DefaultListModel<MapDesignLibrary.MapTrigger> model) {
@@ -6370,6 +6792,8 @@ public class AetherConstructionKit extends JFrame {
                     trigger.y(),
                     trigger.fireMode(),
                     trigger.oneShot(),
+                    trigger.requiredQuestId(),
+                    trigger.requiredQuestStage(),
                     actions
             ));
         } catch (NumberFormatException ignored) {
@@ -6384,9 +6808,8 @@ public class AetherConstructionKit extends JFrame {
         helpArea.setWrapStyleWord(true);
         helpArea.setCaretPosition(0);
 
-        JOptionPane.showMessageDialog(
-                this,
-                new JScrollPane(helpArea),
+        showScrollableMessageDialog(
+                helpArea,
                 "Aether Construction Kit Authoring Help",
                 JOptionPane.INFORMATION_MESSAGE
         );
@@ -6395,11 +6818,30 @@ public class AetherConstructionKit extends JFrame {
     private String authoringHelpText() {
         return """
                 Dialogue Basics
-                - The top text box is the NPC's default repeat text.
-                - Use ::firstTalk for the first thing the NPC says only once.
+                - The top text box is the NPC's default repeat text when no ::repeatTalk node is defined.
+                - Use ::firstTalk or ::firstTime for the first thing the NPC says only once.
+                - Use ::repeatTalk for the menu shown whenever the player talks to the NPC again.
                 - Define nodes with ::node_id.
                 - Choices use: Button text => response text
                 - To jump to another node, use: Button text => node_id
+                - Choices placed before the first ::node are also reusable choices for the default repeat text.
+                - Topic responses automatically receive an Other topics button when a repeat menu exists.
+
+                Reusable Topic Example
+                ::firstTalk
+                Did I just see you step out of the catacombs? You look lost.
+                - Where am I? => where_am_i
+
+                ::repeatTalk
+                What else would you like to know?
+                - Where am I? => where_am_i
+                - What can I do around here? => local_work
+
+                ::where_am_i
+                You are in a village. Probably the safest one you will find for some time.
+
+                ::local_work
+                The villagers always need help gathering food and repairing the walls.
 
                 Quest Stages
                 - A quest choice uses: "quest_id"[nextStage] Button => node_id
@@ -6568,7 +7010,7 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void deleteAuthoredDialogue(MapDesignLibrary.AuthoredDialogue selected) {
-        int result = JOptionPane.showConfirmDialog(
+        int result = showAdaptiveTextConfirmDialog(
                 this,
                 deleteMessage(
                         "Delete " + selected.speakerName() + " and remove its placed NPCs?",
@@ -6608,10 +7050,18 @@ public class AetherConstructionKit extends JFrame {
     ) {
         JTextField speakerField = new JTextField(speakerName, 24);
         JTextArea bodyArea = new JTextArea(bodyText, 7, 28);
-        JTextArea branchArea = new JTextArea(formatDialogueTree(choices, nodes), 9, 32);
+        boolean newDialogue = title != null
+                && title.startsWith("New ")
+                && (choices == null || choices.isEmpty())
+                && (nodes == null || nodes.isEmpty());
+        JTextArea branchArea = new JTextArea(
+                newDialogue ? newDialogueExampleTemplate() : formatDialogueTree(choices, nodes),
+                9,
+                32
+        );
         JTextField visualPathField = new JTextField(
                 visualPath == null || visualPath.isBlank()
-                        ? MapDesignLibrary.defaultEnemy(MapDesignLibrary.ENEMY_GOBLIN).imagePath()
+                        ? MapDesignLibrary.DEFAULT_NPC_VISUAL_PATH
                         : visualPath,
                 24
         );
@@ -6633,11 +7083,12 @@ public class AetherConstructionKit extends JFrame {
         speakerPanel.add(speakerField, BorderLayout.CENTER);
         panel.add(speakerPanel, BorderLayout.NORTH);
         JPanel textPanel = new JPanel(new BorderLayout(6, 6));
+        textPanel.add(new JLabel("Default repeat text"), BorderLayout.NORTH);
         textPanel.add(new JScrollPane(bodyArea), BorderLayout.CENTER);
         JPanel branchPanel = new JPanel(new BorderLayout(4, 4));
-        branchPanel.add(new JLabel("Dialogue Tree: Button => response/node, define nodes with ::node_id"), BorderLayout.NORTH);
+        branchPanel.add(new JLabel("Dialogue Tree: use ::firstTime once and ::repeatTalk for reusable topics"), BorderLayout.NORTH);
         branchPanel.add(new JScrollPane(branchArea), BorderLayout.CENTER);
-        branchPanel.add(new JLabel("Examples: ::firstTalk for intro text, [hasItem=Raw Fish] \"quest_id\"[2] Button => node_id"), BorderLayout.SOUTH);
+        branchPanel.add(new JLabel("Choice: - Button => node_id. Quest: [hasItem=Raw Fish] \"quest_id\"[2] Button => node_id"), BorderLayout.SOUTH);
         textPanel.add(branchPanel, BorderLayout.SOUTH);
         panel.add(textPanel, BorderLayout.CENTER);
         JPanel optionsPanel = new JPanel(new BorderLayout(6, 6));
@@ -6658,13 +7109,7 @@ public class AetherConstructionKit extends JFrame {
         optionsPanel.add(rewardPanel, BorderLayout.SOUTH);
         panel.add(optionsPanel, BorderLayout.SOUTH);
 
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                panel,
-                title,
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
+        int result = showScrollableFormDialog(panel, title);
 
         if (result != JOptionPane.OK_OPTION) {
             return null;
@@ -6691,6 +7136,37 @@ public class AetherConstructionKit extends JFrame {
                 treeDraft.choices(),
                 treeDraft.nodes()
         );
+    }
+
+    private String newDialogueExampleTemplate() {
+        return """
+                # EXAMPLE TEMPLATE - lines beginning with # are ignored when saved.
+                # Remove the leading "# " from any section you want to use.
+                #
+                # ::firstTime
+                # This text appears only the first time the player talks to this NPC.
+                # - Tell me about this place => about_place
+                #
+                # ::repeatTalk
+                # What would you like to discuss?
+                # - Tell me about this place => about_place
+                # - [hasItem=Raw Fish] I found the item you wanted => item_turn_in
+                # - "quest_id"[2] I completed the quest step => quest_progress
+                # - Ask a simple question => This is a direct response without another node.
+                #
+                # ::about_place
+                # This is an example topic response. It automatically gets an Other topics button.
+                #
+                # ::item_turn_in
+                # You can require, remove, and reward items from a choice.
+                # - [takeItem=Raw Fish] [giveItem=Cooked Fish] [giveGold=10] [giveXp=Cooking:25] Hand it over => item_complete
+                #
+                # ::item_complete
+                # Thank you. Here is your reward.
+                #
+                # ::quest_progress
+                # Quest choices appear at the preceding stage and set the quest to the stage in brackets.
+                """;
     }
 
     private String formatDialogueTree(
@@ -6758,6 +7234,9 @@ public class AetherConstructionKit extends JFrame {
         for (String line : text.split("\\R")) {
             String trimmed = line.trim();
             if (trimmed.isBlank()) {
+                continue;
+            }
+            if (trimmed.startsWith("#") || trimmed.startsWith("//")) {
                 continue;
             }
 
@@ -6968,13 +7447,7 @@ public class AetherConstructionKit extends JFrame {
         panel.add(namePanel, BorderLayout.NORTH);
         panel.add(new JScrollPane(stagesArea), BorderLayout.CENTER);
 
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                panel,
-                title,
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
+        int result = showScrollableFormDialog(panel, title);
         if (result != JOptionPane.OK_OPTION) {
             return null;
         }
@@ -7272,7 +7745,7 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private List<String> defaultFishingFramePaths() {
-        return List.of(GatheringNodeLibrary.FISHING_SHOAL.getFramePaths());
+        return DEFAULT_FISHING_FRAME_PATHS;
     }
 
     private String safeId(String value) {
@@ -7303,13 +7776,11 @@ public class AetherConstructionKit extends JFrame {
         List<FollowUpInteractionOption> options = new ArrayList<>();
         options.add(new FollowUpInteractionOption("None", ""));
 
-        for (InteractionLibrary interaction : InteractionLibrary.values()) {
-            if (interaction.isFollowUp()) {
-                options.add(new FollowUpInteractionOption(
-                        interaction.getDisplayName(),
-                        interaction.getInteractionId()
-                ));
-            }
+        for (MapDesignLibrary.AuthoredDialogue dialogue : design.authoredDialogues()) {
+            options.add(new FollowUpInteractionOption(
+                    dialogue.speakerName(),
+                    dialogue.interactionId()
+            ));
         }
 
         return options.toArray(new FollowUpInteractionOption[0]);
@@ -7405,13 +7876,7 @@ public class AetherConstructionKit extends JFrame {
         fields.add(new JLabel("Chunk Height"));
         fields.add(chunkHeightField);
 
-        if (JOptionPane.showConfirmDialog(
-                this,
-                fields,
-                "New Open World",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        ) != JOptionPane.OK_OPTION) {
+        if (showScrollableFormDialog(fields, "New Open World") != JOptionPane.OK_OPTION) {
             return;
         }
 
@@ -7468,6 +7933,7 @@ public class AetherConstructionKit extends JFrame {
         currentWorldManifestPath = manifestPath;
         activeWorld = manifest;
         activeWorldChunk = coordinate;
+        activeWorldContent = WorldManifestLibrary.loadWorldContent(manifest, manifestPath);
         loadWorldChunk(coordinate);
     }
 
@@ -7481,6 +7947,7 @@ public class AetherConstructionKit extends JFrame {
         currentMapPath = chunkPath;
         activeWorldChunk = coordinate;
         loadSharedContentIntoDesign();
+        mergeSharedContent(activeWorldContent);
         undoStack.clear();
         redoStack.clear();
         refreshWorldNeighbors();
@@ -7522,7 +7989,7 @@ public class AetherConstructionKit extends JFrame {
             return true;
         }
         if (dirty) {
-            int choice = JOptionPane.showConfirmDialog(
+            int choice = showAdaptiveTextConfirmDialog(
                     this,
                     "Save changes to chunk " + activeWorldChunk + " before switching?\n"
                             + "Yes = Save, No = Discard, Cancel = Stay",
@@ -7538,7 +8005,7 @@ public class AetherConstructionKit extends JFrame {
             }
         }
         if (!activeWorld.chunks().containsKey(coordinate)) {
-            int create = JOptionPane.showConfirmDialog(
+            int create = showAdaptiveTextConfirmDialog(
                     this,
                     "Create missing chunk " + coordinate + "?",
                     "Create World Chunk",
@@ -7576,6 +8043,7 @@ public class AetherConstructionKit extends JFrame {
             Path chunkPath = WorldManifestLibrary.resolveChunkPath(currentWorldManifestPath, relativePath);
             MapDesignLibrary.save(design, chunkPath);
             WorldManifestLibrary.save(activeWorld, currentWorldManifestPath);
+            activeWorldContent = WorldManifestLibrary.loadWorldContent(activeWorld, currentWorldManifestPath);
             currentMapPath = chunkPath;
             markDirty(false);
             clearAutosaveRecovery();
@@ -7688,13 +8156,7 @@ public class AetherConstructionKit extends JFrame {
         JPanel panel = new JPanel(new BorderLayout(6, 6));
         panel.add(fields, BorderLayout.NORTH);
         panel.add(new JScrollPane(descriptionArea), BorderLayout.CENTER);
-        if (JOptionPane.showConfirmDialog(
-                this,
-                panel,
-                "World Settings",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        ) != JOptionPane.OK_OPTION) {
+        if (showScrollableFormDialog(panel, "World Settings") != JOptionPane.OK_OPTION) {
             return;
         }
         int startX = ((Number) startXField.getValue()).intValue();
@@ -7726,14 +8188,18 @@ public class AetherConstructionKit extends JFrame {
         List<MapDesignLibrary.ValidationIssue> issues =
                 WorldManifestLibrary.validate(activeWorld, currentWorldManifestPath);
         if (issues.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "World validation passed.", "Validate World", JOptionPane.INFORMATION_MESSAGE);
+            showAdaptiveTextMessageDialog(
+                    "World validation passed.",
+                    "Validate World",
+                    JOptionPane.INFORMATION_MESSAGE
+            );
             return;
         }
         JTextArea area = new JTextArea(issues.stream()
                 .map(issue -> issue.severity() + ": " + issue.message())
                 .collect(java.util.stream.Collectors.joining("\n")), 18, 64);
         area.setEditable(false);
-        JOptionPane.showMessageDialog(this, new JScrollPane(area), "World Validation", JOptionPane.WARNING_MESSAGE);
+        showScrollableMessageDialog(area, "World Validation", JOptionPane.WARNING_MESSAGE);
     }
 
     private ChunkCoordinate promptChunkCoordinate(String title, ChunkCoordinate initial) {
@@ -7744,13 +8210,7 @@ public class AetherConstructionKit extends JFrame {
         fields.add(xField);
         fields.add(new JLabel("Chunk Y"));
         fields.add(yField);
-        if (JOptionPane.showConfirmDialog(
-                this,
-                fields,
-                title,
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        ) != JOptionPane.OK_OPTION) {
+        if (showScrollableFormDialog(fields, title) != JOptionPane.OK_OPTION) {
             return null;
         }
         return new ChunkCoordinate(
@@ -7791,6 +8251,7 @@ public class AetherConstructionKit extends JFrame {
         currentWorldManifestPath = null;
         activeWorld = null;
         activeWorldChunk = null;
+        activeWorldContent = null;
         worldNeighborDesigns.clear();
         currentMapPath = null;
         MapDesignLibrary.MapDesign blank = MapDesignLibrary.createBlank(
@@ -7865,7 +8326,7 @@ public class AetherConstructionKit extends JFrame {
         }
 
         if (droppedPlacements > 0 || droppedTriggers > 0 || droppedTriggerActions > 0) {
-            int result = JOptionPane.showConfirmDialog(
+            int result = showAdaptiveTextConfirmDialog(
                     this,
                     "Resize will remove content outside the new bounds:\n"
                             + "- Placements: " + droppedPlacements + "\n"
@@ -7912,6 +8373,8 @@ public class AetherConstructionKit extends JFrame {
                     trigger.y(),
                     trigger.fireMode(),
                     trigger.oneShot(),
+                    trigger.requiredQuestId(),
+                    trigger.requiredQuestStage(),
                     actions
             ));
         }
@@ -7982,13 +8445,7 @@ public class AetherConstructionKit extends JFrame {
         fields.add(new JLabel("Height"));
         fields.add(heightField);
 
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                fields,
-                "New Map",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
+        int result = showScrollableFormDialog(fields, "New Map");
         if (result != JOptionPane.OK_OPTION) {
             return false;
         }
@@ -8020,13 +8477,7 @@ public class AetherConstructionKit extends JFrame {
         fields.add(new JLabel("Height"));
         fields.add(heightField);
 
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                fields,
-                "Resize Map",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
+        int result = showScrollableFormDialog(fields, "Resize Map");
         if (result != JOptionPane.OK_OPTION) {
             return false;
         }
@@ -8101,6 +8552,7 @@ public class AetherConstructionKit extends JFrame {
             currentWorldManifestPath = null;
             activeWorld = null;
             activeWorldChunk = null;
+            activeWorldContent = null;
             worldNeighborDesigns.clear();
             loadSharedContentIntoDesign();
             undoStack.clear();
@@ -8165,13 +8617,7 @@ public class AetherConstructionKit extends JFrame {
         panel.add(fields, BorderLayout.NORTH);
         panel.add(new JScrollPane(descriptionArea), BorderLayout.CENTER);
 
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                panel,
-                "Map Metadata",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
+        int result = showScrollableFormDialog(panel, "Map Metadata");
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -8222,13 +8668,17 @@ public class AetherConstructionKit extends JFrame {
 
         if (issues.isEmpty()) {
             setStatus("Validation passed.");
-            JOptionPane.showMessageDialog(this, "Validation passed.", "Map Validation", JOptionPane.INFORMATION_MESSAGE);
+            showAdaptiveTextMessageDialog(
+                    "Validation passed.",
+                    "Map Validation",
+                    JOptionPane.INFORMATION_MESSAGE
+            );
             return;
         }
 
         String message = validationMessage(issues);
         setStatus("Validation found " + issues.size() + " issue(s).");
-        JOptionPane.showMessageDialog(this, message, "Map Validation", JOptionPane.WARNING_MESSAGE);
+        showAdaptiveTextMessageDialog(message, "Map Validation", JOptionPane.WARNING_MESSAGE);
     }
 
     private boolean confirmSaveWithValidationIssues() {
@@ -8237,7 +8687,7 @@ public class AetherConstructionKit extends JFrame {
             return true;
         }
 
-        int result = JOptionPane.showConfirmDialog(
+        int result = showAdaptiveTextConfirmDialog(
                 this,
                 validationMessage(issues) + "\n\nSave anyway?",
                 "Map Validation",
@@ -8251,23 +8701,9 @@ public class AetherConstructionKit extends JFrame {
     private void loadSharedContentIntoDesign() {
         try {
             mergeSharedContent(MapDesignLibrary.loadSharedContent());
-            if (seedBuiltInItemsIntoDesign()) {
-                persistSharedContent("built-in item seed");
-            }
         } catch (IOException exception) {
             setStatus("Shared content load failed: " + exception.getMessage());
         }
-    }
-
-    private boolean seedBuiltInItemsIntoDesign() {
-        boolean changed = false;
-        for (MapDesignLibrary.CustomItem item : MapDesignLibrary.builtInItemDefinitions()) {
-            if (!hasCustomItemId(item.itemId())) {
-                design.customItems().add(item);
-                changed = true;
-            }
-        }
-        return changed;
     }
 
     private void mergeSharedContent(MapDesignLibrary.AuthoredContent content) {
@@ -8275,50 +8711,22 @@ public class AetherConstructionKit extends JFrame {
             return;
         }
 
-        for (MapDesignLibrary.AuthoredQuest quest : content.authoredQuests()) {
-            if (!hasAuthoredQuestId(quest.questId())) {
-                design.authoredQuests().add(quest);
-            }
-        }
-        for (MapDesignLibrary.AuthoredDialogue dialogue : content.authoredDialogues()) {
-            if (!hasAuthoredDialogueId(dialogue.interactionId())) {
-                design.authoredDialogues().add(dialogue);
-            }
-        }
-        for (MapDesignLibrary.CustomItem item : content.customItems()) {
-            if (!hasCustomItemId(item.itemId())) {
-                design.customItems().add(item);
-            }
-        }
-        for (MapDesignLibrary.CustomMob mob : content.customMobs()) {
-            if (!hasCustomMobId(mob.mobId())) {
-                design.customMobs().add(mob);
-            }
-        }
-        for (MapDesignLibrary.CustomLimb limb : content.customLimbs()) {
-            if (!hasCustomLimbId(limb.limbId())) {
-                design.customLimbs().add(limb);
-            }
-        }
-        for (MapDesignLibrary.CustomNpc npc : content.customNpcs()) {
-            if (!hasCustomNpcId(npc.npcId())) {
-                design.customNpcs().add(npc);
-            }
-        }
-        for (MapDesignLibrary.CustomGatheringNode node : content.customGatheringNodes()) {
-            if (!hasCustomGatheringNodeId(node.nodeId())) {
-                design.customGatheringNodes().add(node);
-            }
-        }
-        for (MapDesignLibrary.CustomCookingRecipe recipe : content.customCookingRecipes()) {
-            if (!hasCookingRecipeId(recipe.recipeId())) {
-                design.customCookingRecipes().add(recipe);
-            }
-        }
-        for (MapDesignLibrary.CustomCompositeRecipe recipe : content.customCompositeRecipes()) {
-            if (!hasCompositeRecipeId(recipe.recipeId())) {
-                design.customCompositeRecipes().add(recipe);
-            }
+        mergeSharedEntries(design.authoredQuests(), content.authoredQuests(), MapDesignLibrary.AuthoredQuest::questId);
+        mergeSharedEntries(design.authoredDialogues(), content.authoredDialogues(), MapDesignLibrary.AuthoredDialogue::interactionId);
+        mergeSharedEntries(design.customItems(), content.customItems(), MapDesignLibrary.CustomItem::itemId);
+        mergeSharedEntries(design.customMobs(), content.customMobs(), MapDesignLibrary.CustomMob::mobId);
+        mergeSharedEntries(design.customLimbs(), content.customLimbs(), MapDesignLibrary.CustomLimb::limbId);
+        mergeSharedEntries(design.customNpcs(), content.customNpcs(), MapDesignLibrary.CustomNpc::npcId);
+        mergeSharedEntries(design.customGatheringNodes(), content.customGatheringNodes(), MapDesignLibrary.CustomGatheringNode::nodeId);
+        mergeSharedEntries(design.customCookingRecipes(), content.customCookingRecipes(), MapDesignLibrary.CustomCookingRecipe::recipeId);
+        mergeSharedEntries(design.customCompositeRecipes(), content.customCompositeRecipes(), MapDesignLibrary.CustomCompositeRecipe::recipeId);
+    }
+
+    private <T> void mergeSharedEntries(List<T> target, List<T> sharedEntries, Function<T, String> idFunction) {
+        for (T sharedEntry : sharedEntries) {
+            String sharedId = idFunction.apply(sharedEntry);
+            target.removeIf(existing -> sharedId.equals(idFunction.apply(existing)));
+            target.add(sharedEntry);
         }
     }
 
@@ -9304,6 +9712,8 @@ public class AetherConstructionKit extends JFrame {
                         y + trigger.y(),
                         trigger.fireMode(),
                         trigger.oneShot(),
+                        trigger.requiredQuestId(),
+                        trigger.requiredQuestStage(),
                         actions
                 ));
             }
@@ -9364,6 +9774,8 @@ public class AetherConstructionKit extends JFrame {
                             trigger.y(),
                             trigger.fireMode(),
                             trigger.oneShot(),
+                            trigger.requiredQuestId(),
+                            trigger.requiredQuestStage(),
                             actions
                     ));
                 } else {
@@ -9394,17 +9806,24 @@ public class AetherConstructionKit extends JFrame {
                     pendingTriggerId,
                     x,
                     y,
-                    MapDesignLibrary.TriggerFireMode.ON_ENTRY,
-                    true,
+                    pendingTriggerFireMode,
+                    pendingTriggerOneShot,
+                    pendingTriggerQuestId,
+                    pendingTriggerQuestStage,
                     List.of()
             );
             design.triggers().removeIf(existing -> existing.id().equals(trigger.id()));
             design.triggers().add(trigger);
             wiringTriggerId = trigger.id();
             pendingTriggerId = "";
+            pendingTriggerFireMode = MapDesignLibrary.TriggerFireMode.ON_ENTRY;
+            pendingTriggerOneShot = true;
+            pendingTriggerQuestId = "";
+            pendingTriggerQuestStage = 0;
             paintModeBox.setSelectedItem(PaintMode.WIRE_TRIGGER);
             refreshContentBrowser();
-            setStatus("Placed " + trigger.id() + ". Click door tiles to wire close targets.");
+            String action = trigger.fireMode() == MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE ? "open" : "close";
+            setStatus("Placed " + trigger.id() + ". Click door tiles to wire " + action + " targets.");
         }
 
         private void wireTriggerTarget(int x, int y) {
@@ -9429,17 +9848,24 @@ public class AetherConstructionKit extends JFrame {
             }
 
             List<MapDesignLibrary.TriggerAction> actions = new ArrayList<>(trigger.actions());
-            actions.add(new MapDesignLibrary.TriggerAction(MapDesignLibrary.TriggerActionType.CLOSE_DOOR, x, y));
+            MapDesignLibrary.TriggerActionType actionType =
+                    trigger.fireMode() == MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE
+                            ? MapDesignLibrary.TriggerActionType.OPEN_DOOR
+                            : MapDesignLibrary.TriggerActionType.CLOSE_DOOR;
+            actions.add(new MapDesignLibrary.TriggerAction(actionType, x, y));
             replaceTrigger(trigger, new MapDesignLibrary.MapTrigger(
                     trigger.id(),
                     trigger.x(),
                     trigger.y(),
                     trigger.fireMode(),
                     trigger.oneShot(),
+                    trigger.requiredQuestId(),
+                    trigger.requiredQuestStage(),
                     actions
             ));
             refreshContentBrowser();
-            setStatus("Wired " + trigger.id() + " to close door at " + x + "," + y + ".");
+            String action = actionType == MapDesignLibrary.TriggerActionType.OPEN_DOOR ? "open" : "close";
+            setStatus("Wired " + trigger.id() + " to " + action + " door at " + x + "," + y + ".");
         }
 
         private Color tileColor(Library.TileType tile) {

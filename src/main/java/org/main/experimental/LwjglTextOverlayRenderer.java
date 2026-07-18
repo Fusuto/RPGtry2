@@ -285,8 +285,22 @@ public final class LwjglTextOverlayRenderer {
             java.awt.Point point = new java.awt.Point(x, y);
             boolean primaryClick = button == MouseEvent.BUTTON1;
 
+            if (gameState.isCharacterMenuOverlayAllowed()
+                    && primaryClick
+                    && overworldHud.handleMousePressed(
+                    point,
+                    gameState,
+                    lastOverlayWidth,
+                    lastOverlayHeight,
+                    () -> openConfigMenu(runtime, gameState)
+            )) {
+                return true;
+            }
+
             if (gameState.isInventoryOpen()) {
-                if (primaryClick && overworldHud.handleInventoryButtonPressed(point, gameState, lastOverlayWidth, lastOverlayHeight)) {
+                if (!gameState.isCharacterMenuOverlayAllowed()
+                        && primaryClick
+                        && overworldHud.handleInventoryButtonPressed(point, gameState, lastOverlayWidth, lastOverlayHeight)) {
                     return true;
                 }
                 InventorySystem.InventoryPanel panel = ensureInventoryPanel(runtime);
@@ -372,6 +386,11 @@ public final class LwjglTextOverlayRenderer {
     public boolean handleMouseWheel(double yOffset, int mouseX, int mouseY, AetherGameRuntime runtime) {
         if (runtime != null && runtime.gameState().isDungeonMode()) {
             GameState gameState = runtime.gameState();
+            if (gameState.isCharacterMenuOverlayAllowed()
+                    && handleOverworldHudMouseWheel(yOffset, mouseX, mouseY, runtime)) {
+                return true;
+            }
+
             if (gameState.hasActiveInteraction()) {
                 return ensureInteractionWindow(runtime).handleMouseWheelMoved(
                         mouseWheelEvent(yOffset, mouseX, mouseY),
@@ -420,22 +439,33 @@ public final class LwjglTextOverlayRenderer {
             return;
         }
 
-        if (runtime.gameState().hasActiveInteraction()) {
+        GameState gameState = runtime.gameState();
+        if (gameState.isCharacterMenuOverlayAllowed()) {
+            overworldHud.handleMouseMoved(new java.awt.Point(x, y), gameState);
+            if (gameState.isInventoryOpen()) {
+                InventorySystem.InventoryPanel panel = ensureInventoryPanel(runtime);
+                if (panel != null && panel.handleMouseMoved(mouseEvent(MouseEvent.MOUSE_MOVED, x, y, MouseEvent.NOBUTTON))) {
+                    return;
+                }
+            }
+        }
+
+        if (gameState.hasActiveInteraction()) {
             ensureInteractionWindow(runtime).handleMouseMoved(
                     new java.awt.Point(x, y),
-                    runtime.gameState().getActiveInteraction()
+                    gameState.getActiveInteraction()
             );
             return;
         }
 
-        if (runtime.gameState().isInventoryOpen()) {
+        if (gameState.isInventoryOpen()) {
             InventorySystem.InventoryPanel panel = ensureInventoryPanel(runtime);
             if (panel != null && panel.handleMouseMoved(mouseEvent(MouseEvent.MOUSE_MOVED, x, y, MouseEvent.NOBUTTON))) {
                 return;
             }
         }
 
-        overworldHud.handleMouseMoved(new java.awt.Point(x, y), runtime.gameState());
+        overworldHud.handleMouseMoved(new java.awt.Point(x, y), gameState);
     }
 
     private void drawGameOverlay(Graphics2D graphics, AetherGameRuntime runtime, int width, int height) {

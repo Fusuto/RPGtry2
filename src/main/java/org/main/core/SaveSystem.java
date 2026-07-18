@@ -1,9 +1,7 @@
 package org.main.core;
 
-import org.main.content.ItemLibrary;
 import org.main.content.MapDesignLibrary;
 import org.main.content.PlayerRegionLibrary;
-import org.main.content.RecipeLibrary;
 import org.main.content.WorldManifestLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapGeometryData;
@@ -616,6 +614,8 @@ public final class SaveSystem {
             properties.setProperty(triggerPrefix + "y", String.valueOf(trigger.y()));
             properties.setProperty(triggerPrefix + "fireMode", trigger.fireMode().name());
             properties.setProperty(triggerPrefix + "oneShot", String.valueOf(trigger.oneShot()));
+            properties.setProperty(triggerPrefix + "requiredQuestId", trigger.requiredQuestId());
+            properties.setProperty(triggerPrefix + "requiredQuestStage", String.valueOf(trigger.requiredQuestStage()));
             properties.setProperty(triggerPrefix + "action.count", String.valueOf(trigger.actions().size()));
             for (int actionIndex = 0; actionIndex < trigger.actions().size(); actionIndex++) {
                 MapDesignLibrary.TriggerAction action = trigger.actions().get(actionIndex);
@@ -666,6 +666,8 @@ public final class SaveSystem {
                             MapDesignLibrary.TriggerFireMode.ON_ENTRY
                     ),
                     Boolean.parseBoolean(properties.getProperty(triggerPrefix + "oneShot", "true")),
+                    properties.getProperty(triggerPrefix + "requiredQuestId", ""),
+                    readInt(properties, triggerPrefix + "requiredQuestStage", 0),
                     actions
             ));
         }
@@ -797,9 +799,9 @@ public final class SaveSystem {
         }
 
         if (item.isStackable()) {
-            ItemLibrary libraryItem = ItemLibrary.fromDisplayName(item.getName());
-            if (libraryItem != null) {
-                return "STACK|" + libraryItem.name() + "|" + item.getQuantity();
+            String itemId = sharedItemId(item.getName());
+            if (!itemId.isBlank()) {
+                return "STACK|" + itemId + "|" + item.getQuantity();
             }
         }
 
@@ -808,12 +810,7 @@ public final class SaveSystem {
             return customItemKey;
         }
 
-        ItemLibrary libraryItem = ItemLibrary.fromDisplayName(item.getName());
-        if (libraryItem != null) {
-            return libraryItem.name();
-        }
-
-        return RecipeLibrary.isSmithingResult(item) ? "RECIPE|" + item.getName() : "";
+        return CraftingSystem.isSmithingResult(item) ? "RECIPE|" + item.getName() : "";
     }
 
     private static String customItemKey(InventorySystem.Item item) {
@@ -848,48 +845,26 @@ public final class SaveSystem {
         }
 
         if (itemName.startsWith("RECIPE|")) {
-            return RecipeLibrary.createSmithingResultByDisplayName(itemName.substring("RECIPE|".length()));
+            return CraftingSystem.createSmithingResultByDisplayName(itemName.substring("RECIPE|".length()));
         }
 
         if (itemName.startsWith("STACK|")) {
             String[] parts = itemName.split("\\|");
             if (parts.length >= 3) {
                 try {
-                    ItemLibrary item = ItemLibrary.valueOf(parts[1]);
                     int quantity = Math.max(1, Integer.parseInt(parts[2]));
-                    if (item == ItemLibrary.GOLD) {
-                        return ItemLibrary.createGold(quantity);
-                    }
-
-                    InventorySystem.Item created = item.createItem();
+                    InventorySystem.Item created = readSharedItem(parts[1]);
                     if (created.isStackable()) {
-                        return new InventorySystem.Item(
-                                created.getName(),
-                                created.getItemType(),
-                                created.getIcon(),
-                                created.getUseSoundPath(),
-                                created.getHealAmount(),
-                                created.getMaterial(),
-                                created.getDurability(),
-                                created.getBaseGoldValue(),
-                                created.getExamineText(),
-                                created.getStatBonusTarget(),
-                                true,
-                                quantity
-                        );
+                        created.addQuantity(quantity - 1);
+                        return created;
                     }
-                } catch (IllegalArgumentException ignored) {
+                } catch (IllegalArgumentException | NullPointerException ignored) {
                     return null;
                 }
             }
         }
 
-        try {
-            return ItemLibrary.valueOf(itemName).createItem();
-        } catch (IllegalArgumentException ignored) {
-            ItemLibrary item = ItemLibrary.fromDisplayName(itemName);
-            return item == null ? null : item.createItem();
-        }
+        return readSharedItem(itemName);
     }
 
     private static InventorySystem.Item readCustomItem(String itemId) {
@@ -908,6 +883,39 @@ public final class SaveSystem {
         }
 
         return null;
+    }
+
+    private static InventorySystem.Item readSharedItem(String itemIdOrName) {
+        if (itemIdOrName == null || itemIdOrName.isBlank()) {
+            return null;
+        }
+        try {
+            for (MapDesignLibrary.CustomItem item : MapDesignLibrary.loadSharedContent().customItems()) {
+                if (itemIdOrName.equalsIgnoreCase(item.itemId())
+                        || itemIdOrName.equalsIgnoreCase(item.displayName())) {
+                    return item.createItem();
+                }
+            }
+        } catch (IOException ignored) {
+            return null;
+        }
+        return null;
+    }
+
+    private static String sharedItemId(String displayName) {
+        if (displayName == null || displayName.isBlank()) {
+            return "";
+        }
+        try {
+            for (MapDesignLibrary.CustomItem item : MapDesignLibrary.loadSharedContent().customItems()) {
+                if (displayName.equalsIgnoreCase(item.displayName())) {
+                    return item.itemId();
+                }
+            }
+        } catch (IOException ignored) {
+            return "";
+        }
+        return "";
     }
 
     private static String limbKey(LimbItem limb) {
