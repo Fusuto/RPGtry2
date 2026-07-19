@@ -9,7 +9,9 @@ import org.main.engine.EnvironmentTheme;
 import org.main.engine.MapEntity;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapPaintData;
+import org.main.engine.MobAreaData;
 import org.main.engine.AssetLoader;
+import org.main.monsters.Monster;
 
 import java.awt.Point;
 import java.io.IOException;
@@ -90,6 +92,7 @@ public class GameState {
     private String miningInteractionId = "";
     private String miningMessage = "Strike the rock.";
     private final Map<String, ResourceNodeState> resourceNodeStates = new HashMap<>();
+    private final Map<String, EnemyRespawnState> enemyRespawnStates = new HashMap<>();
     private boolean cookingActive = false;
     private int cookingX = -1;
     private int cookingY = -1;
@@ -204,6 +207,15 @@ public class GameState {
         activeInteraction = null;
         suspendedInteraction = null;
         stopSkillingActivities();
+    }
+
+    public void prepareForEnemyEngagement() {
+        closeInventory();
+        closeSkills();
+        closeQuests();
+        closeStats();
+        closeShop();
+        clearInteractionsAndStopActivities();
     }
 
     private void stopSkillingActivities() {
@@ -490,6 +502,7 @@ public class GameState {
         }
 
         changeDungeon(MapDesignLibrary.toGeneratedDungeon(mapDesign, playerX, playerY));
+        qualifyAuthoredEnemySpawns(mapDesignPath);
         currentMapDesignPath = mapDesignPath;
     }
 
@@ -503,7 +516,33 @@ public class GameState {
         }
 
         changeDungeon(MapDesignLibrary.toGeneratedDungeon(mapDesign));
+        qualifyAuthoredEnemySpawns(mapDesignPath);
         currentMapDesignPath = mapDesignPath;
+    }
+
+    private void qualifyAuthoredEnemySpawns(Path mapDesignPath) {
+        String sourceId = mapRuntimeKey(mapDesignPath);
+        if (sourceId.isBlank()) {
+            return;
+        }
+        for (MapEntity entity : entities) {
+            if (entity.getType() != Library.EntityType.ENEMY || entity.getEnemySpawnId().isBlank()) {
+                continue;
+            }
+            int cooldown = entity.getWorldAiCooldownMs();
+            boolean alerted = entity.isWorldAlerted();
+            entity.configureEnemySpawn(
+                    sourceId + "|" + entity.getEnemySpawnId(),
+                    entity.getSpawnX(),
+                    entity.getSpawnY(),
+                    entity.getRoamingAreaId(),
+                    entity.getAwarenessRadius(),
+                    entity.getMovementIntervalMs(),
+                    entity.getRespawnDelayMs()
+            );
+            entity.setWorldAiCooldownMs(cooldown);
+            entity.setWorldAlerted(alerted);
+        }
     }
 
     public Path getCurrentMapDesignPath() {
@@ -560,6 +599,9 @@ public class GameState {
                 new HashMap<>(tileInteractionIds),
                 new HashSet<>(removedEntityKeys),
                 copyResourceNodeSnapshots(),
+                getEnemyRespawnSnapshots(),
+                getEnemyActiveSnapshots(),
+                System.currentTimeMillis(),
                 getDiscoveredMiniMapTileKeys(),
                 new ArrayList<>(mapTriggers),
                 new HashSet<>(firedMapTriggerIds),
@@ -731,6 +773,7 @@ public class GameState {
                 new ArrayList<>(entities),
                 new HashMap<>(tileInteractionIds),
                 copyResourceNodeSnapshots(),
+                getEnemyRespawnSnapshots(),
                 getDiscoveredMiniMapTileKeys(),
                 new HashSet<>(removedEntityKeys),
                 new ArrayList<>(mapTriggers),
@@ -759,6 +802,7 @@ public class GameState {
         setCustomCookingRecipes(window.cookingRecipes());
         setCustomCompositeRecipes(window.compositeRecipes());
         restoreResourceNodeSnapshots(window.resourceNodeStates());
+        restoreEnemyRespawnSnapshots(window.enemyRespawns());
         resetMiniMapDiscovery();
         setDiscoveredMiniMapTileKeys(window.discoveredTiles());
 
@@ -812,6 +856,7 @@ public class GameState {
         customCompositeRecipes.clear();
         currentMapDesignPath = null;
         resourceNodeStates.clear();
+        enemyRespawnStates.clear();
         resetMiniMapDiscovery();
 
         if (newEntities != null) {
@@ -843,6 +888,7 @@ public class GameState {
         removedEntityKeys.clear();
         removedEntityKeys.addAll(state.removedEntityKeys());
         restoreResourceNodeSnapshots(state.resourceNodeStates());
+        restoreEnemySpawnSnapshots(state);
         currentMapDesignPath = targetPath;
         setAuthoredDialogues(state.authoredDialogues());
         setAuthoredQuests(state.authoredQuests());
@@ -882,6 +928,7 @@ public class GameState {
         removedEntityKeys.addAll(state.removedEntityKeys());
         entities.removeIf(this::isEntityRemoved);
         restoreResourceNodeSnapshots(state.resourceNodeStates());
+        restoreEnemySpawnSnapshots(state);
         setDiscoveredMiniMapTileKeys(state.discoveredMiniMapTiles());
         revealMiniMapTile(currentPosition.x, currentPosition.y);
     }
@@ -1957,6 +2004,171 @@ public class GameState {
         }
     }
 
+    public void defeatEnemy(MapEntity enemy) {
+        if (enemy == null || enemy.getType() != Library.EntityType.ENEMY || !entities.remove(enemy)) {
+            return;
+        }
+        if (enemy.getEnemySpawnId().isBlank()) {
+            removedEntityKeys.add(entityKey(enemy));
+            return;
+        }
+        enemyRespawnStates.put(enemy.getEnemySpawnId(), new EnemyRespawnState(
+                enemy.getEnemySpawnId(),
+                enemy.getMonster().freshCopy(),
+                enemy.getSpawnX(),
+                enemy.getSpawnY(),
+                enemy.getRoamingAreaId(),
+                enemy.getAwarenessRadius(),
+                enemy.getMovementIntervalMs(),
+                enemy.getRespawnDelayMs(),
+                enemy.getRespawnDelayMs()
+        ));
+    }
+
+    public void updateEnemyRespawns(int deltaMs) {
+        if (enemyRespawnStates.isEmpty() || !isDungeonMode()) {
+            return;
+        }
+        List<String> ready = new ArrayList<>();
+        for (EnemyRespawnState state : enemyRespawnStates.values()) {
+            if (state.respawnDelayMs <= 0) {
+                continue;
+            }
+            state.remainingMs = Math.max(0, state.remainingMs - Math.max(0, deltaMs));
+            if (state.remainingMs == 0 && canRespawnEnemy(state)) {
+                ready.add(state.spawnId);
+            }
+        }
+        for (String spawnId : ready) {
+            EnemyRespawnState state = enemyRespawnStates.remove(spawnId);
+            MapEntity enemy = new MapEntity(state.monster.freshCopy(), state.spawnX, state.spawnY)
+                    .configureEnemySpawn(
+                            state.spawnId,
+                            state.spawnX,
+                            state.spawnY,
+                            state.areaId,
+                            state.awarenessRadius,
+                            state.movementIntervalMs,
+                            state.respawnDelayMs
+                    );
+            entities.add(enemy);
+        }
+    }
+
+    private boolean canRespawnEnemy(EnemyRespawnState state) {
+        if (dungeonMap == null || !dungeonMap.isWalkable(state.spawnX, state.spawnY)) {
+            return false;
+        }
+        int safeDistance = Math.max(1, state.awarenessRadius);
+        if (Math.max(Math.abs(playerX - state.spawnX), Math.abs(playerY - state.spawnY)) <= safeDistance) {
+            return false;
+        }
+        for (MapEntity entity : entities) {
+            if (entity.blocksMovement() && entity.isAt(state.spawnX, state.spawnY)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public Map<String, EnemyRespawnSnapshot> getEnemyRespawnSnapshots() {
+        Map<String, EnemyRespawnSnapshot> snapshots = new HashMap<>();
+        for (EnemyRespawnState state : enemyRespawnStates.values()) {
+            snapshots.put(state.spawnId, new EnemyRespawnSnapshot(
+                    state.spawnId,
+                    state.monster.getCustomId(),
+                    state.spawnX,
+                    state.spawnY,
+                    state.areaId,
+                    state.awarenessRadius,
+                    state.movementIntervalMs,
+                    state.respawnDelayMs,
+                    state.remainingMs
+            ));
+        }
+        return Map.copyOf(snapshots);
+    }
+
+    public Map<String, EnemyActiveSnapshot> getEnemyActiveSnapshots() {
+        Map<String, EnemyActiveSnapshot> snapshots = new HashMap<>();
+        for (MapEntity entity : entities) {
+            if (entity.getType() != Library.EntityType.ENEMY || entity.getEnemySpawnId().isBlank()) {
+                continue;
+            }
+            snapshots.put(entity.getEnemySpawnId(), new EnemyActiveSnapshot(
+                    entity.getEnemySpawnId(),
+                    entity.getX(),
+                    entity.getY(),
+                    entity.getWorldAiCooldownMs(),
+                    entity.isWorldAlerted()
+            ));
+        }
+        return Map.copyOf(snapshots);
+    }
+
+    private void restoreEnemySpawnSnapshots(MapRuntimeState state) {
+        long elapsed = Math.max(0L, System.currentTimeMillis() - state.lastUpdatedEpochMs());
+        Map<String, EnemyRespawnSnapshot> advancedRespawns = new HashMap<>();
+        for (EnemyRespawnSnapshot snapshot : state.enemyRespawns().values()) {
+            advancedRespawns.put(snapshot.spawnId(), new EnemyRespawnSnapshot(
+                    snapshot.spawnId(),
+                    snapshot.mobId(),
+                    snapshot.spawnX(),
+                    snapshot.spawnY(),
+                    snapshot.areaId(),
+                    snapshot.awarenessRadius(),
+                    snapshot.movementIntervalMs(),
+                    snapshot.respawnDelayMs(),
+                    (int) Math.max(0L, (long) snapshot.remainingMs() - elapsed)
+            ));
+        }
+        restoreEnemyRespawnSnapshots(advancedRespawns);
+        entities.removeIf(entity -> entity.getType() == Library.EntityType.ENEMY
+                && advancedRespawns.containsKey(entity.getEnemySpawnId()));
+        for (EnemyActiveSnapshot snapshot : state.activeEnemies().values()) {
+            for (MapEntity entity : entities) {
+                if (snapshot.spawnId().equals(entity.getEnemySpawnId())) {
+                    entity.setPosition(snapshot.currentX(), snapshot.currentY());
+                    entity.setWorldAiCooldownMs(snapshot.aiCooldownMs());
+                    entity.setWorldAlerted(snapshot.alerted());
+                    break;
+                }
+            }
+        }
+    }
+
+    public void restoreEnemyRespawnSnapshots(Map<String, EnemyRespawnSnapshot> snapshots) {
+        Map<String, Monster> authoredMonsters = new HashMap<>();
+        for (MapEntity entity : entities) {
+            if (entity.getMonster() != null && !entity.getEnemySpawnId().isBlank()) {
+                authoredMonsters.put(entity.getEnemySpawnId(), entity.getMonster().freshCopy());
+            }
+        }
+        enemyRespawnStates.clear();
+        if (snapshots == null) {
+            return;
+        }
+        for (EnemyRespawnSnapshot snapshot : snapshots.values()) {
+            Monster monster = authoredMonsters.get(snapshot.spawnId());
+            if (monster == null) {
+                monster = MapDesignLibrary.createEnemyById(snapshot.mobId());
+            }
+            if (monster != null) {
+                enemyRespawnStates.put(snapshot.spawnId(), new EnemyRespawnState(
+                        snapshot.spawnId(),
+                        monster,
+                        snapshot.spawnX(),
+                        snapshot.spawnY(),
+                        snapshot.areaId(),
+                        snapshot.awarenessRadius(),
+                        snapshot.movementIntervalMs(),
+                        snapshot.respawnDelayMs(),
+                        snapshot.remainingMs()
+                ));
+            }
+        }
+    }
+
     public int getResourceExhaustionLevel(int x, int y) {
         return getResourceNodeState(x, y).exhaustionLevel;
     }
@@ -2831,7 +3043,10 @@ public class GameState {
         MapGeometryData geometryData = source.getGeometryData() == null
                 ? MapGeometryData.blank(source.getWidth(), source.getHeight())
                 : source.getGeometryData().copy();
-        return new DungeonMap(tiles, themes, paintData, geometryData);
+        MobAreaData mobAreaData = source.getMobAreaData() == null
+                ? MobAreaData.blank(source.getWidth(), source.getHeight())
+                : source.getMobAreaData().copy();
+        return new DungeonMap(tiles, themes, paintData, geometryData, mobAreaData);
     }
 
     private Map<String, ResourceNodeSnapshot> copyResourceNodeSnapshots() {
@@ -3063,6 +3278,75 @@ public class GameState {
     ) {
     }
 
+    public record EnemyRespawnSnapshot(
+            String spawnId,
+            String mobId,
+            int spawnX,
+            int spawnY,
+            String areaId,
+            int awarenessRadius,
+            int movementIntervalMs,
+            int respawnDelayMs,
+            int remainingMs
+    ) {
+        public EnemyRespawnSnapshot {
+            spawnId = spawnId == null ? "" : spawnId;
+            mobId = mobId == null ? "" : mobId;
+            areaId = areaId == null ? "" : areaId;
+            awarenessRadius = Math.max(0, awarenessRadius);
+            movementIntervalMs = Math.max(250, movementIntervalMs);
+            respawnDelayMs = Math.max(0, respawnDelayMs);
+            remainingMs = Math.max(0, remainingMs);
+        }
+    }
+
+    public record EnemyActiveSnapshot(
+            String spawnId,
+            int currentX,
+            int currentY,
+            int aiCooldownMs,
+            boolean alerted
+    ) {
+        public EnemyActiveSnapshot {
+            spawnId = spawnId == null ? "" : spawnId;
+            aiCooldownMs = Math.max(0, aiCooldownMs);
+        }
+    }
+
+    private static final class EnemyRespawnState {
+        private final String spawnId;
+        private final Monster monster;
+        private final int spawnX;
+        private final int spawnY;
+        private final String areaId;
+        private final int awarenessRadius;
+        private final int movementIntervalMs;
+        private final int respawnDelayMs;
+        private int remainingMs;
+
+        private EnemyRespawnState(
+                String spawnId,
+                Monster monster,
+                int spawnX,
+                int spawnY,
+                String areaId,
+                int awarenessRadius,
+                int movementIntervalMs,
+                int respawnDelayMs,
+                int remainingMs
+        ) {
+            this.spawnId = spawnId;
+            this.monster = monster;
+            this.spawnX = spawnX;
+            this.spawnY = spawnY;
+            this.areaId = areaId;
+            this.awarenessRadius = awarenessRadius;
+            this.movementIntervalMs = movementIntervalMs;
+            this.respawnDelayMs = respawnDelayMs;
+            this.remainingMs = remainingMs;
+        }
+    }
+
     public record MovementCoordinates(
             int previousX,
             int previousY,
@@ -3091,6 +3375,9 @@ public class GameState {
             Map<String, String> tileInteractionIds,
             Set<String> removedEntityKeys,
             Map<String, ResourceNodeSnapshot> resourceNodeStates,
+            Map<String, EnemyRespawnSnapshot> enemyRespawns,
+            Map<String, EnemyActiveSnapshot> activeEnemies,
+            long lastUpdatedEpochMs,
             Set<String> discoveredMiniMapTiles,
             List<MapDesignLibrary.MapTrigger> mapTriggers,
             Set<String> firedTriggerIds,
@@ -3107,6 +3394,9 @@ public class GameState {
             tileInteractionIds = tileInteractionIds == null ? Map.of() : Map.copyOf(tileInteractionIds);
             removedEntityKeys = removedEntityKeys == null ? Set.of() : Set.copyOf(removedEntityKeys);
             resourceNodeStates = resourceNodeStates == null ? Map.of() : Map.copyOf(resourceNodeStates);
+            enemyRespawns = enemyRespawns == null ? Map.of() : Map.copyOf(enemyRespawns);
+            activeEnemies = activeEnemies == null ? Map.of() : Map.copyOf(activeEnemies);
+            lastUpdatedEpochMs = lastUpdatedEpochMs <= 0L ? System.currentTimeMillis() : lastUpdatedEpochMs;
             discoveredMiniMapTiles = discoveredMiniMapTiles == null ? Set.of() : Set.copyOf(discoveredMiniMapTiles);
             mapTriggers = mapTriggers == null ? List.of() : List.copyOf(mapTriggers);
             firedTriggerIds = firedTriggerIds == null ? Set.of() : Set.copyOf(firedTriggerIds);
@@ -3117,6 +3407,32 @@ public class GameState {
             customGatheringNodes = customGatheringNodes == null ? List.of() : List.copyOf(customGatheringNodes);
             customCookingRecipes = customCookingRecipes == null ? List.of() : List.copyOf(customCookingRecipes);
             customCompositeRecipes = customCompositeRecipes == null ? List.of() : List.copyOf(customCompositeRecipes);
+        }
+
+        public MapRuntimeState(
+                Path mapPath,
+                DungeonMap dungeonMap,
+                List<MapEntity> entities,
+                boolean hasEntitySnapshot,
+                Map<String, String> tileInteractionIds,
+                Set<String> removedEntityKeys,
+                Map<String, ResourceNodeSnapshot> resourceNodeStates,
+                Set<String> discoveredMiniMapTiles,
+                List<MapDesignLibrary.MapTrigger> mapTriggers,
+                Set<String> firedTriggerIds,
+                List<MapDesignLibrary.AuthoredDialogue> authoredDialogues,
+                List<MapDesignLibrary.AuthoredQuest> authoredQuests,
+                List<MapDesignLibrary.CustomItem> customItems,
+                List<MapDesignLibrary.CustomLimb> customLimbs,
+                List<MapDesignLibrary.CustomGatheringNode> customGatheringNodes,
+                List<MapDesignLibrary.CustomCookingRecipe> customCookingRecipes,
+                List<MapDesignLibrary.CustomCompositeRecipe> customCompositeRecipes
+        ) {
+            this(mapPath, dungeonMap, entities, hasEntitySnapshot, tileInteractionIds, removedEntityKeys,
+                    resourceNodeStates, Map.of(), Map.of(), System.currentTimeMillis(),
+                    discoveredMiniMapTiles, mapTriggers, firedTriggerIds,
+                    authoredDialogues, authoredQuests, customItems, customLimbs, customGatheringNodes,
+                    customCookingRecipes, customCompositeRecipes);
         }
     }
 }

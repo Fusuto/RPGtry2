@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Function;
 
 import static org.main.content.MapDesignLibrary.AuthoredContent;
@@ -20,15 +21,67 @@ import static org.main.content.MapDesignLibrary.CustomNpc;
 import static org.main.content.MapDesignLibrary.MapDesign;
 
 final class MapDesignContentStore {
+    static final String DIALOGUE_FILE = "dialogue.properties";
+    static final String QUEST_FILE = "quest.properties";
+    static final String ITEM_FILE = "item.properties";
+    static final String MOB_FILE = "mob.properties";
+    static final String LIMB_FILE = "limb.properties";
+    static final String NPC_FILE = "npc.properties";
+    static final String GATHERING_NODE_FILE = "gathering_node.properties";
+    static final String COOKING_RECIPE_FILE = "cooking_recipe.properties";
+    static final String COMPOSITE_RECIPE_FILE = "composite_recipe.properties";
+
+    private static final Set<String> CATALOG_FILES = Set.of(
+            DIALOGUE_FILE,
+            QUEST_FILE,
+            ITEM_FILE,
+            MOB_FILE,
+            LIMB_FILE,
+            NPC_FILE,
+            GATHERING_NODE_FILE,
+            COOKING_RECIPE_FILE,
+            COMPOSITE_RECIPE_FILE,
+            "authored_content.properties"
+    );
+
     private MapDesignContentStore() {
     }
 
     static AuthoredContent loadSharedContent() throws IOException {
-        AuthoredContent bundledContent = loadSharedContentFrom(Path.of(MapDesignLibrary.CONTENT_RESOURCE_FOLDER, "authored_content.properties"));
-        AuthoredContent dataContent = Files.isRegularFile(MapDesignLibrary.DATA_SHARED_CONTENT_PATH)
-                ? loadSharedContentFrom(MapDesignLibrary.DATA_SHARED_CONTENT_PATH)
-                : emptyContent();
-        return mergeContent(bundledContent, dataContent);
+        MapDesign dialogues = loadSegment(DIALOGUE_FILE);
+        MapDesign quests = loadSegment(QUEST_FILE);
+        MapDesign items = loadSegment(ITEM_FILE);
+        MapDesign mobs = loadSegment(MOB_FILE);
+        MapDesign limbs = loadSegment(LIMB_FILE);
+        MapDesign npcs = loadSegment(NPC_FILE);
+        MapDesign gatheringNodes = loadSegment(GATHERING_NODE_FILE);
+        MapDesign cookingRecipes = loadSegment(COOKING_RECIPE_FILE);
+        MapDesign compositeRecipes = loadSegment(COMPOSITE_RECIPE_FILE);
+
+        boolean hasSegmentCatalog = dialogues != null
+                || quests != null
+                || items != null
+                || mobs != null
+                || limbs != null
+                || npcs != null
+                || gatheringNodes != null
+                || cookingRecipes != null
+                || compositeRecipes != null;
+        if (hasSegmentCatalog) {
+            return new AuthoredContent(
+                    dialogues == null ? List.of() : dialogues.authoredDialogues(),
+                    quests == null ? List.of() : quests.authoredQuests(),
+                    items == null ? List.of() : items.customItems(),
+                    mobs == null ? List.of() : mobs.customMobs(),
+                    limbs == null ? List.of() : limbs.customLimbs(),
+                    npcs == null ? List.of() : npcs.customNpcs(),
+                    gatheringNodes == null ? List.of() : gatheringNodes.customGatheringNodes(),
+                    cookingRecipes == null ? List.of() : cookingRecipes.customCookingRecipes(),
+                    compositeRecipes == null ? List.of() : compositeRecipes.customCompositeRecipes()
+            );
+        }
+
+        return loadLegacySharedContent();
     }
 
     static void saveSharedContent(AuthoredContent content) throws IOException {
@@ -36,17 +89,89 @@ final class MapDesignContentStore {
             return;
         }
 
-        MapDesign contentDesign = MapDesignLibrary.createBlank(3, 3, ThemeLibrary.STONE_WOOD, ThemeLibrary.SANDSTONE_GATE);
-        contentDesign = new MapDesign(
-                contentDesign.width(),
-                contentDesign.height(),
-                "Authored Content",
-                "Shared reusable authored content for the Aether Construction Kit.",
-                contentDesign.primaryTheme(),
-                contentDesign.alternateTheme(),
-                contentDesign.tiles(),
-                contentDesign.themeIndexes(),
-                contentDesign.placements(),
+        saveSegment(DIALOGUE_FILE, new AuthoredContent(
+                content.authoredDialogues(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of()
+        ));
+        saveSegment(QUEST_FILE, new AuthoredContent(
+                List.of(), content.authoredQuests(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of()
+        ));
+        saveSegment(ITEM_FILE, new AuthoredContent(
+                List.of(), List.of(), content.customItems(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of()
+        ));
+        saveSegment(MOB_FILE, new AuthoredContent(
+                List.of(), List.of(), List.of(), content.customMobs(), List.of(),
+                List.of(), List.of(), List.of(), List.of()
+        ));
+        saveSegment(LIMB_FILE, new AuthoredContent(
+                List.of(), List.of(), List.of(), List.of(), content.customLimbs(),
+                List.of(), List.of(), List.of(), List.of()
+        ));
+        saveSegment(NPC_FILE, new AuthoredContent(
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                content.customNpcs(), List.of(), List.of(), List.of()
+        ));
+        saveSegment(GATHERING_NODE_FILE, new AuthoredContent(
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), content.customGatheringNodes(), List.of(), List.of()
+        ));
+        saveSegment(COOKING_RECIPE_FILE, new AuthoredContent(
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), content.customCookingRecipes(), List.of()
+        ));
+        saveSegment(COMPOSITE_RECIPE_FILE, new AuthoredContent(
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), content.customCompositeRecipes()
+        ));
+    }
+
+    static boolean isContentCatalogPath(Path path) {
+        if (path == null || path.getFileName() == null) {
+            return false;
+        }
+        return CATALOG_FILES.contains(path.getFileName().toString());
+    }
+
+    private static MapDesign loadSegment(String fileName) throws IOException {
+        Path editablePath = MapDesignLibrary.CONTENT_FOLDER.resolve(fileName);
+        if (Files.isRegularFile(editablePath)) {
+            return MapDesignLibrary.loadContentSegment(editablePath);
+        }
+
+        Path resourcePath = Path.of(MapDesignLibrary.CONTENT_RESOURCE_FOLDER, fileName);
+        try {
+            return MapDesignLibrary.loadContentSegment(resourcePath);
+        } catch (IOException missingResource) {
+            return null;
+        }
+    }
+
+    private static void saveSegment(String fileName, AuthoredContent content) throws IOException {
+        MapDesignLibrary.saveContentSegment(
+                contentDesign(fileName, content),
+                MapDesignLibrary.CONTENT_FOLDER.resolve(fileName)
+        );
+    }
+
+    private static MapDesign contentDesign(String fileName, AuthoredContent content) {
+        MapDesign blank = MapDesignLibrary.createBlank(
+                3,
+                3,
+                ThemeLibrary.STONE_WOOD,
+                ThemeLibrary.SANDSTONE_GATE
+        );
+        return new MapDesign(
+                blank.width(),
+                blank.height(),
+                fileName,
+                "Construction Kit content catalog.",
+                blank.primaryTheme(),
+                blank.alternateTheme(),
+                blank.tiles(),
+                blank.themeIndexes(),
+                blank.placements(),
                 new ArrayList<>(content.authoredDialogues()),
                 new ArrayList<>(content.authoredQuests()),
                 new ArrayList<>(content.customItems()),
@@ -57,26 +182,37 @@ final class MapDesignContentStore {
                 new ArrayList<>(content.customCookingRecipes()),
                 new ArrayList<>(content.customCompositeRecipes()),
                 new ArrayList<>(),
-                contentDesign.spawnX(),
-                contentDesign.spawnY()
+                blank.spawnX(),
+                blank.spawnY()
         );
-        MapDesignLibrary.save(contentDesign, MapDesignLibrary.SHARED_CONTENT_PATH);
     }
 
-    private static AuthoredContent loadSharedContentFrom(Path path) throws IOException {
+    private static AuthoredContent loadLegacySharedContent() throws IOException {
+        Path editableResourcePath = MapDesignLibrary.LEGACY_SHARED_CONTENT_PATH;
+        boolean hasEditableResource = Files.isRegularFile(editableResourcePath);
+        AuthoredContent bundledContent = loadLegacySharedContentFrom(hasEditableResource
+                ? editableResourcePath
+                : Path.of(MapDesignLibrary.CONTENT_RESOURCE_FOLDER, "authored_content.properties"));
+
+        Path dataPath = MapDesignLibrary.DATA_LEGACY_SHARED_CONTENT_PATH;
+        if (!Files.isRegularFile(dataPath)) {
+            return bundledContent;
+        }
+
+        AuthoredContent dataContent = loadLegacySharedContentFrom(dataPath);
+        long bundledModified = hasEditableResource
+                ? Files.getLastModifiedTime(editableResourcePath).toMillis()
+                : Long.MIN_VALUE;
+        long dataModified = Files.getLastModifiedTime(dataPath).toMillis();
+        return dataModified > bundledModified
+                ? mergeContent(bundledContent, dataContent)
+                : mergeContent(dataContent, bundledContent);
+    }
+
+    private static AuthoredContent loadLegacySharedContentFrom(Path path) throws IOException {
         try {
-            MapDesign contentDesign = MapDesignLibrary.load(path);
-            return new AuthoredContent(
-                    contentDesign.authoredDialogues(),
-                    contentDesign.authoredQuests(),
-                    contentDesign.customItems(),
-                    contentDesign.customMobs(),
-                    contentDesign.customLimbs(),
-                    contentDesign.customNpcs(),
-                    contentDesign.customGatheringNodes(),
-                    contentDesign.customCookingRecipes(),
-                    contentDesign.customCompositeRecipes()
-            );
+            MapDesign contentDesign = MapDesignLibrary.loadContentSegment(path);
+            return MapDesignLibrary.authoredContentOf(contentDesign);
         } catch (IOException exception) {
             if (Files.isRegularFile(path)) {
                 throw exception;
@@ -117,6 +253,9 @@ final class MapDesignContentStore {
     }
 
     private static AuthoredContent emptyContent() {
-        return new AuthoredContent(List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+        return new AuthoredContent(
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of()
+        );
     }
 }

@@ -494,7 +494,7 @@ public class BattleController {
             MapEntity defeatedEnemy = gameState.getCurrentEnemyEntity();
             defeatedMonster = defeatedEnemy.getMonster();
 
-            gameState.removeEntity(defeatedEnemy);
+            gameState.defeatEnemy(defeatedEnemy);
             spawnLootDrops(defeatedEnemy);
         }
 

@@ -24,6 +24,16 @@ public class MapEntity {
     private boolean blocksMovementOverride = false;
     private boolean renderOnWall = false;
     private double visualScale = 1.0;
+    private String enemySpawnId = "";
+    private String enemyLocalSpawnId = "";
+    private String roamingAreaId = "";
+    private int spawnX;
+    private int spawnY;
+    private int awarenessRadius = 4;
+    private int movementIntervalMs = 3000;
+    private int respawnDelayMs = 300000;
+    private int worldAiCooldownMs;
+    private boolean worldAlerted;
 
     private int x;
     private int y;
@@ -53,11 +63,15 @@ public class MapEntity {
     public MapEntity(Monster monster, int x, int y) {
         this(monster.getName(), Library.EntityType.ENEMY, x, y, monster.getImage());
         this.monster = monster;
+        this.spawnX = x;
+        this.spawnY = y;
     }
 
     public MapEntity(Monster monster, int x, int y, Library.EntityType type) {
         this(monster.getName(), type, x, y, monster.getImage());
         this.monster = monster;
+        this.spawnX = x;
+        this.spawnY = y;
     }
 
     public BufferedImage getStaticImage() {
@@ -188,5 +202,97 @@ public class MapEntity {
     public void setPosition(int x, int y) {
         this.x = x;
         this.y = y;
+    }
+
+    public MapEntity configureEnemySpawn(
+            String spawnId,
+            int spawnX,
+            int spawnY,
+            String areaId,
+            int awarenessRadius,
+            int movementIntervalMs,
+            int respawnDelayMs
+    ) {
+        this.enemySpawnId = spawnId == null ? "" : spawnId;
+        this.enemyLocalSpawnId = this.enemySpawnId;
+        this.spawnX = spawnX;
+        this.spawnY = spawnY;
+        this.roamingAreaId = areaId == null ? "" : areaId;
+        this.awarenessRadius = Math.max(0, awarenessRadius);
+        this.movementIntervalMs = Math.max(250, movementIntervalMs);
+        this.respawnDelayMs = Math.max(0, respawnDelayMs);
+        this.worldAiCooldownMs = this.movementIntervalMs;
+        return this;
+    }
+
+    public String getEnemySpawnId() {
+        return enemySpawnId;
+    }
+
+    public void enterWorldWindow(String runtimeSpawnId, int offsetX, int offsetY) {
+        if (enemyLocalSpawnId.isBlank()) {
+            return;
+        }
+        enemySpawnId = runtimeSpawnId == null ? enemyLocalSpawnId : runtimeSpawnId;
+        spawnX += offsetX;
+        spawnY += offsetY;
+    }
+
+    public void leaveWorldWindow(int offsetX, int offsetY) {
+        if (enemyLocalSpawnId.isBlank()) {
+            return;
+        }
+        enemySpawnId = enemyLocalSpawnId;
+        spawnX -= offsetX;
+        spawnY -= offsetY;
+    }
+
+    public String getRoamingAreaId() {
+        return roamingAreaId;
+    }
+
+    public int getSpawnX() {
+        return spawnX;
+    }
+
+    public int getSpawnY() {
+        return spawnY;
+    }
+
+    public int getAwarenessRadius() {
+        return awarenessRadius;
+    }
+
+    public int getMovementIntervalMs() {
+        return movementIntervalMs;
+    }
+
+    public int getRespawnDelayMs() {
+        return respawnDelayMs;
+    }
+
+    public boolean advanceWorldAiCooldown(int deltaMs) {
+        worldAiCooldownMs -= Math.max(0, deltaMs);
+        if (worldAiCooldownMs > 0) {
+            return false;
+        }
+        worldAiCooldownMs = movementIntervalMs;
+        return true;
+    }
+
+    public int getWorldAiCooldownMs() {
+        return worldAiCooldownMs;
+    }
+
+    public void setWorldAiCooldownMs(int value) {
+        worldAiCooldownMs = Math.max(0, value);
+    }
+
+    public boolean isWorldAlerted() {
+        return worldAlerted;
+    }
+
+    public void setWorldAlerted(boolean worldAlerted) {
+        this.worldAlerted = worldAlerted;
     }
 }

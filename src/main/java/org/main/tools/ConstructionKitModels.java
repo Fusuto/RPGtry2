@@ -5,6 +5,7 @@ import org.main.core.CharacterSkill;
 import org.main.core.Library;
 import org.main.core.PlayerStat;
 import org.main.engine.MapGeometryData;
+import org.main.engine.MobAreaData;
 import org.main.engine.MapPaintData;
 
 import java.nio.file.Path;
@@ -73,6 +74,7 @@ enum ContentCategory {
     COMPOSITES("Composite Recipes"),
     QUESTS("Quests"),
     DIALOGUES("Dialogues"),
+    AREAS("Mob Areas"),
     TRIGGERS("Triggers"),
     PLACEMENTS("Placements"),
     DIAGNOSTICS("Diagnostics");
@@ -112,6 +114,13 @@ record ContentEntry(ContentCategory category, String label, String id, String ty
     @Override
     public String toString() {
         return label;
+    }
+}
+
+record MobAreaEntry(String areaId) {
+    @Override
+    public String toString() {
+        return areaId;
     }
 }
 
@@ -197,7 +206,6 @@ record AuthoredDialogueDraft(
         String speakerName,
         String bodyText,
         String followUpInteractionId,
-        String visualPath,
         String questId,
         int questStage,
         List<MapDesignLibrary.AuthoredDialogueChoice> choices,
@@ -246,6 +254,7 @@ record MapPrefab(
         int[][] themes,
         MapPaintData paintData,
         MapGeometryData geometryData,
+        MobAreaData mobAreas,
         List<MapDesignLibrary.MapPlacement> placements,
         List<MapDesignLibrary.MapTrigger> triggers
 ) {
@@ -255,6 +264,7 @@ record MapPrefab(
         height = Math.max(1, height);
         paintData = paintData == null ? MapPaintData.blank(width, height) : paintData;
         geometryData = geometryData == null ? MapGeometryData.blank(width, height) : geometryData;
+        mobAreas = mobAreas == null ? MobAreaData.blank(width, height) : mobAreas;
         placements = placements == null ? List.of() : List.copyOf(placements);
         triggers = triggers == null ? List.of() : List.copyOf(triggers);
     }
@@ -282,6 +292,8 @@ enum PaintMode {
     WALL_BRUSH("Wall Brush"),
     DOOR_BRUSH("Door Brush"),
     ROOF_BRUSH("Roof Brush"),
+    MOB_AREA("Mob Area"),
+    CLEAR_MOB_AREA("Clear Mob Area"),
     CLEAR_BRUSH("Clear Brushes"),
     SET_HEIGHT("Set Height"),
     PLACE_OBJECT("Place Object"),

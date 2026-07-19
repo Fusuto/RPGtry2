@@ -15,6 +15,7 @@ public class Monster {
     private final EnumMap<PlayerStat, Integer> customStats;
     private final int customXpReward;
     private final String customDescription;
+    private final String customImagePath;
     private final BufferedImage customImage;
     private final String customAttackSoundPath;
     private final String customDamageSoundPath;
@@ -44,7 +45,8 @@ public class Monster {
         this.customStats = safeStats(stats);
         this.customXpReward = Math.max(0, xpReward);
         this.customDescription = description == null ? "" : description;
-        this.customImage = imagePath == null || imagePath.isBlank() ? null : AssetLoader.loadImage(imagePath);
+        this.customImagePath = imagePath == null ? "" : imagePath;
+        this.customImage = customImagePath.isBlank() ? null : AssetLoader.loadImage(customImagePath);
         this.customPaperDollSourcePath = paperDollSourcePath == null ? "" : paperDollSourcePath;
         this.customAttackSoundPath = attackSoundPath == null ? "" : attackSoundPath;
         this.customDamageSoundPath = damageSoundPath == null ? "" : damageSoundPath;
@@ -128,6 +130,23 @@ public class Monster {
 
     public boolean isAlive() {
         return currentHp > 0;
+    }
+
+    public Monster freshCopy() {
+        return new Monster(
+                customId,
+                customName,
+                customStats,
+                customXpReward,
+                customDescription,
+                customImagePath,
+                customPaperDollSourcePath,
+                customAttackSoundPath,
+                customDamageSoundPath,
+                customCombatAiIntelligence,
+                customSkills,
+                customDrops
+        );
     }
 
     public void takeDamage(int amount) {

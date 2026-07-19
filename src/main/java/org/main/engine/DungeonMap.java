@@ -16,6 +16,7 @@ public class DungeonMap {
     private final int[][] environmentThemeIndexes;
     private final MapPaintData paintData;
     private final MapGeometryData geometryData;
+    private final MobAreaData mobAreaData;
 
     public DungeonMap(Library.TileType[][] tiles) {
         this(tiles, new int[tiles.length][tiles[0].length]);
@@ -35,6 +36,17 @@ public class DungeonMap {
             MapPaintData paintData,
             MapGeometryData geometryData
     ) {
+        this(tiles, environmentThemeIndexes, paintData, geometryData,
+                MobAreaData.blank(tiles[0].length, tiles.length));
+    }
+
+    public DungeonMap(
+            Library.TileType[][] tiles,
+            int[][] environmentThemeIndexes,
+            MapPaintData paintData,
+            MapGeometryData geometryData,
+            MobAreaData mobAreaData
+    ) {
         this.tiles = tiles;
         this.environmentThemeIndexes = environmentThemeIndexes;
         this.paintData = paintData == null
@@ -43,6 +55,9 @@ public class DungeonMap {
         this.geometryData = geometryData == null
                 ? MapGeometryData.blank(tiles[0].length, tiles.length)
                 : geometryData;
+        this.mobAreaData = mobAreaData == null
+                ? MobAreaData.blank(tiles[0].length, tiles.length)
+                : mobAreaData;
     }
 
     public int getWidth() {
@@ -75,6 +90,14 @@ public class DungeonMap {
 
     public MapGeometryData getGeometryData() {
         return geometryData;
+    }
+
+    public MobAreaData getMobAreaData() {
+        return mobAreaData;
+    }
+
+    public String getMobAreaId(int x, int y) {
+        return isOutOfBounds(x, y) ? "" : mobAreaData.get(x, y);
     }
 
     public String getPaintBrushId(MapPaintData.Layer layer, int x, int y) {

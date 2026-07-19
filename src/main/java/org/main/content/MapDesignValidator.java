@@ -3,6 +3,7 @@ package org.main.content;
 import org.main.core.Library;
 import org.main.core.CraftingStationType;
 import org.main.engine.MapGeometryData;
+import org.main.engine.MobAreaData;
 import org.main.engine.MapPaintData;
 
 import java.nio.file.Files;
@@ -83,6 +84,7 @@ final class MapDesignValidator {
         }
         validatePaintBrushes(design, issues);
         validateGeometry(design, issues);
+        validateMobAreas(design, issues);
 
         for (MapPlacement placement : placements) {
             validatePlacement(design, issues, authoredIds, placement);
@@ -127,6 +129,44 @@ final class MapDesignValidator {
 
         if (geometry.width() != design.width() || geometry.height() != design.height()) {
             issues.add(new ValidationIssue(ValidationSeverity.WARNING, "Map geometry dimensions do not match map dimensions."));
+        }
+    }
+
+    private static void validateMobAreas(MapDesign design, List<ValidationIssue> issues) {
+        MobAreaData areas = design.mobAreas();
+        if (areas == null) {
+            issues.add(new ValidationIssue(ValidationSeverity.WARNING, "Mob Area data is missing; enemies will remain stationary."));
+            return;
+        }
+        if (areas.width() != design.width() || areas.height() != design.height()) {
+            issues.add(new ValidationIssue(ValidationSeverity.ERROR, "Mob Area rows do not match the map dimensions."));
+            return;
+        }
+
+        for (MapPlacement placement : design.placements()) {
+            if (placement == null || placement.kind() != PlacementKind.ENEMY
+                    || !isInside(design, placement.x(), placement.y())) {
+                continue;
+            }
+            String areaId = areas.get(placement.x(), placement.y());
+            if (areaId.isBlank()) {
+                continue;
+            }
+            boolean hasWalkableTile = false;
+            for (int y = 0; y < design.height() && !hasWalkableTile; y++) {
+                for (int x = 0; x < design.width(); x++) {
+                    if (areaId.equals(areas.get(x, y)) && !design.tiles()[y][x].blocksMovement()) {
+                        hasWalkableTile = true;
+                        break;
+                    }
+                }
+            }
+            if (!hasWalkableTile) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.ERROR,
+                        "Enemy " + placement.id() + " is assigned to completely unwalkable Mob Area '" + areaId + "'."
+                ));
+            }
         }
     }
 
@@ -498,6 +538,30 @@ final class MapDesignValidator {
         }
 
         for (CustomMob mob : design.customMobs()) {
+            if (mob.combatAiIntelligence() < 0 || mob.combatAiIntelligence() > 10) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.ERROR,
+                        "Enemy " + mob.mobId() + " has Combat AI Intelligence outside 0-10."
+                ));
+            }
+            if (mob.awarenessRadius() < 0 || mob.awarenessRadius() > 64) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.ERROR,
+                        "Enemy " + mob.mobId() + " has an invalid awareness radius."
+                ));
+            }
+            if (mob.movementIntervalMs() < 250) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.ERROR,
+                        "Enemy " + mob.mobId() + " has an invalid movement interval."
+                ));
+            }
+            if (mob.respawnDelayMs() < 0) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.ERROR,
+                        "Enemy " + mob.mobId() + " has an invalid respawn delay."
+                ));
+            }
             validateAssetPath(issues, "Enemy " + mob.mobId(), "sprite", mob.imagePath(), true);
             validateAssetPath(issues, "Enemy " + mob.mobId(), "paper-doll source", mob.paperDollSourcePath(), false);
             validateAssetPath(issues, "Enemy " + mob.mobId(), "attack sound", mob.attackSoundPath(), false);

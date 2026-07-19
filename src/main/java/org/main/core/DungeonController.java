@@ -171,7 +171,7 @@ public class DungeonController {
 
         if (blockingEntity != null) {
             if (blockingEntity.getType() == Library.EntityType.ENEMY) {
-                startBattle(blockingEntity);
+                engageEnemy(blockingEntity);
             }
 
             return;
@@ -223,7 +223,7 @@ public class DungeonController {
         soundSystem.playSound(environment.getFootstepSoundPath());
     }
 
-    private void startBattle(MapEntity enemyEntity) {
+    public void engageEnemy(MapEntity enemyEntity) {
         if (gameState.isBattleMode()) {
             return;
         }
@@ -233,6 +233,7 @@ public class DungeonController {
             return;
         }
 
+        gameState.prepareForEnemyEngagement();
         gameState.setCurrentEnemyEntity(enemyEntity);
 
         List<Monster> monsters = new ArrayList<>();

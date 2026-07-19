@@ -17,6 +17,7 @@ import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapPaintData;
+import org.main.engine.MobAreaData;
 import org.main.engine.AssetLoader;
 import org.main.engine.SpriteAnimation;
 import org.main.monsters.Monster;
@@ -44,10 +45,10 @@ public final class MapDesignLibrary {
     public static final Path EDITOR_RESOURCE_FOLDER = Path.of("src", "main", "resources", "assets", "editor");
     public static final Path MAP_FOLDER = EDITOR_RESOURCE_FOLDER.resolve("maps");
     public static final Path CONTENT_FOLDER = EDITOR_RESOURCE_FOLDER.resolve("content");
-    public static final Path SHARED_CONTENT_PATH = CONTENT_FOLDER.resolve("authored_content.properties");
+    public static final Path LEGACY_SHARED_CONTENT_PATH = CONTENT_FOLDER.resolve("authored_content.properties");
     public static final Path DATA_MAP_FOLDER = Path.of("data", "maps");
     public static final Path DATA_CONTENT_FOLDER = Path.of("data", "content");
-    public static final Path DATA_SHARED_CONTENT_PATH = DATA_CONTENT_FOLDER.resolve("authored_content.properties");
+    public static final Path DATA_LEGACY_SHARED_CONTENT_PATH = DATA_CONTENT_FOLDER.resolve("authored_content.properties");
 
     private MapDesignLibrary() {
     }
@@ -110,6 +111,14 @@ public final class MapDesignLibrary {
     }
 
     public static void save(MapDesign design, Path path) throws IOException {
+        saveInternal(design, path, false);
+    }
+
+    static void saveContentSegment(MapDesign design, Path path) throws IOException {
+        saveInternal(design, path, true);
+    }
+
+    private static void saveInternal(MapDesign design, Path path, boolean includeContent) throws IOException {
         if (design == null || path == null) {
             return;
         }
@@ -133,6 +142,7 @@ public final class MapDesignLibrary {
         }
         writeMapPaint(properties, design.mapPaint());
         writeMapGeometry(properties, design.mapGeometry());
+        writeMobAreas(properties, design.mobAreas());
 
         properties.setProperty("placement.count", String.valueOf(design.placements().size()));
         for (int i = 0; i < design.placements().size(); i++) {
@@ -165,15 +175,15 @@ public final class MapDesignLibrary {
             }
         }
 
-        properties.setProperty("authoredDialogue.count", String.valueOf(design.authoredDialogues().size()));
+        if (includeContent) {
+        properties.setProperty("dialogue.count", String.valueOf(design.authoredDialogues().size()));
         for (int i = 0; i < design.authoredDialogues().size(); i++) {
             AuthoredDialogue authoredDialogue = design.authoredDialogues().get(i);
-            String prefix = "authoredDialogue." + i + ".";
+            String prefix = "dialogue." + i + ".";
             properties.setProperty(prefix + "interactionId", authoredDialogue.interactionId());
             properties.setProperty(prefix + "speakerName", authoredDialogue.speakerName());
             properties.setProperty(prefix + "bodyText", authoredDialogue.bodyText());
             properties.setProperty(prefix + "followUpInteractionId", authoredDialogue.followUpInteractionId());
-            properties.setProperty(prefix + "visualPath", authoredDialogue.visualPath());
             properties.setProperty(prefix + "rewardItemId", authoredDialogue.rewardItemId());
             properties.setProperty(prefix + "rewardSkill", authoredDialogue.rewardSkill() == null ? "" : authoredDialogue.rewardSkill().name());
             properties.setProperty(prefix + "rewardSkillXp", String.valueOf(authoredDialogue.rewardSkillXp()));
@@ -197,10 +207,10 @@ public final class MapDesignLibrary {
             }
         }
 
-        properties.setProperty("authoredQuest.count", String.valueOf(design.authoredQuests().size()));
+        properties.setProperty("quest.count", String.valueOf(design.authoredQuests().size()));
         for (int i = 0; i < design.authoredQuests().size(); i++) {
             AuthoredQuest authoredQuest = design.authoredQuests().get(i);
-            String prefix = "authoredQuest." + i + ".";
+            String prefix = "quest." + i + ".";
             properties.setProperty(prefix + "questId", authoredQuest.questId());
             properties.setProperty(prefix + "displayName", authoredQuest.displayName());
             properties.setProperty(prefix + "stage.count", String.valueOf(authoredQuest.stageDescriptions().size()));
@@ -209,10 +219,10 @@ public final class MapDesignLibrary {
             }
         }
 
-        properties.setProperty("customItem.count", String.valueOf(design.customItems().size()));
+        properties.setProperty("item.count", String.valueOf(design.customItems().size()));
         for (int i = 0; i < design.customItems().size(); i++) {
             CustomItem customItem = design.customItems().get(i);
-            String prefix = "customItem." + i + ".";
+            String prefix = "item." + i + ".";
             properties.setProperty(prefix + "itemId", customItem.itemId());
             properties.setProperty(prefix + "displayName", customItem.displayName());
             properties.setProperty(prefix + "itemType", customItem.itemType().name());
@@ -233,10 +243,10 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "smithingXpReward", String.valueOf(customItem.smithingXpReward()));
         }
 
-        properties.setProperty("customMob.count", String.valueOf(design.customMobs().size()));
+        properties.setProperty("mob.count", String.valueOf(design.customMobs().size()));
         for (int i = 0; i < design.customMobs().size(); i++) {
             CustomMob customMob = design.customMobs().get(i);
-            String prefix = "customMob." + i + ".";
+            String prefix = "mob." + i + ".";
             properties.setProperty(prefix + "mobId", customMob.mobId());
             properties.setProperty(prefix + "displayName", customMob.displayName());
             properties.setProperty(prefix + "imagePath", customMob.imagePath());
@@ -249,6 +259,9 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "attackSoundPath", customMob.attackSoundPath());
             properties.setProperty(prefix + "damageSoundPath", customMob.damageSoundPath());
             properties.setProperty(prefix + "combatAiIntelligence", String.valueOf(customMob.combatAiIntelligence()));
+            properties.setProperty(prefix + "awarenessRadius", String.valueOf(customMob.awarenessRadius()));
+            properties.setProperty(prefix + "movementIntervalMs", String.valueOf(customMob.movementIntervalMs()));
+            properties.setProperty(prefix + "respawnDelayMs", String.valueOf(customMob.respawnDelayMs()));
             properties.setProperty(prefix + "skillIds", joinSkills(customMob.skillIds()));
             properties.setProperty(prefix + "drop.count", String.valueOf(customMob.dropEntries().size()));
             for (int dropIndex = 0; dropIndex < customMob.dropEntries().size(); dropIndex++) {
@@ -259,10 +272,10 @@ public final class MapDesignLibrary {
             }
         }
 
-        properties.setProperty("customLimb.count", String.valueOf(design.customLimbs().size()));
+        properties.setProperty("limb.count", String.valueOf(design.customLimbs().size()));
         for (int i = 0; i < design.customLimbs().size(); i++) {
             CustomLimb customLimb = design.customLimbs().get(i);
-            String prefix = "customLimb." + i + ".";
+            String prefix = "limb." + i + ".";
             properties.setProperty(prefix + "limbId", customLimb.limbId());
             properties.setProperty(prefix + "displayName", customLimb.displayName());
             properties.setProperty(prefix + "limbSlot", customLimb.limbSlot().name());
@@ -277,10 +290,10 @@ public final class MapDesignLibrary {
             }
         }
 
-        properties.setProperty("customNpc.count", String.valueOf(design.customNpcs().size()));
+        properties.setProperty("npc.count", String.valueOf(design.customNpcs().size()));
         for (int i = 0; i < design.customNpcs().size(); i++) {
             CustomNpc customNpc = design.customNpcs().get(i);
-            String prefix = "customNpc." + i + ".";
+            String prefix = "npc." + i + ".";
             properties.setProperty(prefix + "npcId", customNpc.npcId());
             properties.setProperty(prefix + "displayName", customNpc.displayName());
             properties.setProperty(prefix + "imagePath", customNpc.imagePath());
@@ -303,10 +316,10 @@ public final class MapDesignLibrary {
             }
         }
 
-        properties.setProperty("customGatheringNode.count", String.valueOf(design.customGatheringNodes().size()));
+        properties.setProperty("gatheringNode.count", String.valueOf(design.customGatheringNodes().size()));
         for (int i = 0; i < design.customGatheringNodes().size(); i++) {
             CustomGatheringNode node = design.customGatheringNodes().get(i);
-            String prefix = "customGatheringNode." + i + ".";
+            String prefix = "gatheringNode." + i + ".";
             properties.setProperty(prefix + "nodeId", node.nodeId());
             properties.setProperty(prefix + "displayName", node.displayName());
             properties.setProperty(prefix + "nodeType", node.nodeType().name());
@@ -332,10 +345,10 @@ public final class MapDesignLibrary {
             }
         }
 
-        properties.setProperty("customCookingRecipe.count", String.valueOf(design.customCookingRecipes().size()));
+        properties.setProperty("cookingRecipe.count", String.valueOf(design.customCookingRecipes().size()));
         for (int i = 0; i < design.customCookingRecipes().size(); i++) {
             CustomCookingRecipe recipe = design.customCookingRecipes().get(i);
-            String prefix = "customCookingRecipe." + i + ".";
+            String prefix = "cookingRecipe." + i + ".";
             properties.setProperty(prefix + "recipeId", recipe.recipeId());
             properties.setProperty(prefix + "displayName", recipe.displayName());
             properties.setProperty(prefix + "rawItemId", recipe.rawItemId());
@@ -345,10 +358,10 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "xpReward", String.valueOf(recipe.xpReward()));
         }
 
-        properties.setProperty("customCompositeRecipe.count", String.valueOf(design.customCompositeRecipes().size()));
+        properties.setProperty("compositeRecipe.count", String.valueOf(design.customCompositeRecipes().size()));
         for (int i = 0; i < design.customCompositeRecipes().size(); i++) {
             CustomCompositeRecipe recipe = design.customCompositeRecipes().get(i);
-            String prefix = "customCompositeRecipe." + i + ".";
+            String prefix = "compositeRecipe." + i + ".";
             properties.setProperty(prefix + "recipeId", recipe.recipeId());
             properties.setProperty(prefix + "displayName", recipe.displayName());
             properties.setProperty(prefix + "category", recipe.category().name());
@@ -364,13 +377,25 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "smeltRequiredLevel", String.valueOf(recipe.smeltRequiredLevel()));
             properties.setProperty(prefix + "smeltXpReward", String.valueOf(recipe.smeltXpReward()));
         }
+        }
 
+        if (includeContent) {
+            retainRequestedContentSegment(properties, path);
+        }
         try (OutputStream outputStream = Files.newOutputStream(path)) {
             properties.store(outputStream, "Aether map design");
         }
     }
 
     public static MapDesign load(Path path) throws IOException {
+        MapDesign design = loadContentSegment(path);
+        if (!MapDesignContentStore.isContentCatalogPath(path)) {
+            replaceAuthoredContent(design, loadSharedContent());
+        }
+        return design;
+    }
+
+    static MapDesign loadContentSegment(Path path) throws IOException {
         Properties properties = new Properties();
         try (InputStream inputStream = openMapDesignStream(path)) {
             properties.load(inputStream);
@@ -400,6 +425,7 @@ public final class MapDesignLibrary {
         }
         MapPaintData mapPaint = readMapPaint(properties, width, height);
         MapGeometryData mapGeometry = readMapGeometry(properties, width, height);
+        MobAreaData mobAreas = readMobAreas(properties, width, height);
 
         int placementCount = readInt(properties, "placement.count", 0);
         List<MapPlacement> placements = new ArrayList<>();
@@ -452,10 +478,11 @@ public final class MapDesignLibrary {
             }
         }
 
-        int authoredDialogueCount = readInt(properties, "authoredDialogue.count", 0);
+        String dialogueRoot = contentRoot(properties, "dialogue", "authoredDialogue");
+        int authoredDialogueCount = readInt(properties, dialogueRoot + ".count", 0);
         List<AuthoredDialogue> authoredDialogues = new ArrayList<>();
         for (int i = 0; i < authoredDialogueCount; i++) {
-            String prefix = "authoredDialogue." + i + ".";
+            String prefix = dialogueRoot + "." + i + ".";
             String interactionId = properties.getProperty(prefix + "interactionId", "");
             String speakerName = properties.getProperty(prefix + "speakerName", "");
             String bodyText = properties.getProperty(prefix + "bodyText", "");
@@ -513,10 +540,11 @@ public final class MapDesignLibrary {
             }
         }
 
-        int authoredQuestCount = readInt(properties, "authoredQuest.count", 0);
+        String questRoot = contentRoot(properties, "quest", "authoredQuest");
+        int authoredQuestCount = readInt(properties, questRoot + ".count", 0);
         List<AuthoredQuest> authoredQuests = new ArrayList<>();
         for (int i = 0; i < authoredQuestCount; i++) {
-            String prefix = "authoredQuest." + i + ".";
+            String prefix = questRoot + "." + i + ".";
             String questId = properties.getProperty(prefix + "questId", "");
             String questName = properties.getProperty(prefix + "displayName", "");
             int stageCount = readInt(properties, prefix + "stage.count", 0);
@@ -533,10 +561,11 @@ public final class MapDesignLibrary {
             }
         }
 
-        int customItemCount = readInt(properties, "customItem.count", 0);
+        String itemRoot = contentRoot(properties, "item", "customItem");
+        int customItemCount = readInt(properties, itemRoot + ".count", 0);
         List<CustomItem> customItems = new ArrayList<>();
         for (int i = 0; i < customItemCount; i++) {
-            String prefix = "customItem." + i + ".";
+            String prefix = itemRoot + "." + i + ".";
             String itemId = properties.getProperty(prefix + "itemId", "");
             String itemName = properties.getProperty(prefix + "displayName", "");
             InventorySystem.ItemType itemType = readItemType(properties.getProperty(prefix + "itemType", ""), InventorySystem.ItemType.MISC);
@@ -579,10 +608,11 @@ public final class MapDesignLibrary {
             }
         }
 
-        int customGatheringNodeCount = readInt(properties, "customGatheringNode.count", 0);
+        String gatheringNodeRoot = contentRoot(properties, "gatheringNode", "customGatheringNode");
+        int customGatheringNodeCount = readInt(properties, gatheringNodeRoot + ".count", 0);
         List<CustomGatheringNode> customGatheringNodes = new ArrayList<>();
         for (int i = 0; i < customGatheringNodeCount; i++) {
-            String prefix = "customGatheringNode." + i + ".";
+            String prefix = gatheringNodeRoot + "." + i + ".";
             String nodeId = properties.getProperty(prefix + "nodeId", "");
             String nodeName = properties.getProperty(prefix + "displayName", "");
             GatheringNodeType nodeType = readGatheringNodeType(properties.getProperty(prefix + "nodeType", ""));
@@ -637,10 +667,11 @@ public final class MapDesignLibrary {
             }
         }
 
-        int customCookingRecipeCount = readInt(properties, "customCookingRecipe.count", 0);
+        String cookingRecipeRoot = contentRoot(properties, "cookingRecipe", "customCookingRecipe");
+        int customCookingRecipeCount = readInt(properties, cookingRecipeRoot + ".count", 0);
         List<CustomCookingRecipe> customCookingRecipes = new ArrayList<>();
         for (int i = 0; i < customCookingRecipeCount; i++) {
-            String prefix = "customCookingRecipe." + i + ".";
+            String prefix = cookingRecipeRoot + "." + i + ".";
             String recipeId = properties.getProperty(prefix + "recipeId", "");
             String recipeName = properties.getProperty(prefix + "displayName", "");
             String rawItemId = properties.getProperty(prefix + "rawItemId", "");
@@ -661,10 +692,11 @@ public final class MapDesignLibrary {
             }
         }
 
-        int customCompositeRecipeCount = readInt(properties, "customCompositeRecipe.count", 0);
+        String compositeRecipeRoot = contentRoot(properties, "compositeRecipe", "customCompositeRecipe");
+        int customCompositeRecipeCount = readInt(properties, compositeRecipeRoot + ".count", 0);
         List<CustomCompositeRecipe> customCompositeRecipes = new ArrayList<>();
         for (int i = 0; i < customCompositeRecipeCount; i++) {
-            String prefix = "customCompositeRecipe." + i + ".";
+            String prefix = compositeRecipeRoot + "." + i + ".";
             String recipeId = properties.getProperty(prefix + "recipeId", "");
             String recipeName = properties.getProperty(prefix + "displayName", "");
             CompositeRecipeCategory category = readCompositeRecipeCategory(properties.getProperty(prefix + "category", ""));
@@ -699,10 +731,11 @@ public final class MapDesignLibrary {
             }
         }
 
-        int customMobCount = readInt(properties, "customMob.count", 0);
+        String mobRoot = contentRoot(properties, "mob", "customMob");
+        int customMobCount = readInt(properties, mobRoot + ".count", 0);
         List<CustomMob> customMobs = new ArrayList<>();
         for (int i = 0; i < customMobCount; i++) {
-            String prefix = "customMob." + i + ".";
+            String prefix = mobRoot + "." + i + ".";
             String mobId = properties.getProperty(prefix + "mobId", "");
             String mobName = properties.getProperty(prefix + "displayName", "");
             String imagePath = properties.getProperty(prefix + "imagePath", "");
@@ -716,6 +749,9 @@ public final class MapDesignLibrary {
             String attackSoundPath = properties.getProperty(prefix + "attackSoundPath", "");
             String damageSoundPath = properties.getProperty(prefix + "damageSoundPath", "");
             int combatAiIntelligence = readInt(properties, prefix + "combatAiIntelligence", statValues.getOrDefault(PlayerStat.INTELLIGENCE, 0));
+            int awarenessRadius = readInt(properties, prefix + "awarenessRadius", 4);
+            int movementIntervalMs = readInt(properties, prefix + "movementIntervalMs", 3000);
+            int respawnDelayMs = readInt(properties, prefix + "respawnDelayMs", 300000);
             List<SkillLibrary> skillIds = readSkillList(properties.getProperty(prefix + "skillIds", ""));
             int dropCount = readInt(properties, prefix + "drop.count", 0);
             List<CustomDropEntry> dropEntries = new ArrayList<>();
@@ -728,14 +764,17 @@ public final class MapDesignLibrary {
                 }
             }
             if (!mobId.isBlank() && !mobName.isBlank()) {
-                customMobs.add(new CustomMob(mobId, mobName, imagePath, paperDollSourcePath, statValues, xpReward, mobDescription, attackSoundPath, damageSoundPath, combatAiIntelligence, skillIds, dropEntries));
+                customMobs.add(new CustomMob(mobId, mobName, imagePath, paperDollSourcePath, statValues,
+                        xpReward, mobDescription, attackSoundPath, damageSoundPath, combatAiIntelligence,
+                        awarenessRadius, movementIntervalMs, respawnDelayMs, skillIds, dropEntries));
             }
         }
 
-        int customLimbCount = readInt(properties, "customLimb.count", 0);
+        String limbRoot = contentRoot(properties, "limb", "customLimb");
+        int customLimbCount = readInt(properties, limbRoot + ".count", 0);
         List<CustomLimb> customLimbs = new ArrayList<>();
         for (int i = 0; i < customLimbCount; i++) {
-            String prefix = "customLimb." + i + ".";
+            String prefix = limbRoot + "." + i + ".";
             String limbId = properties.getProperty(prefix + "limbId", "");
             String limbName = properties.getProperty(prefix + "displayName", "");
             LimbSlot limbSlot = readLimbSlot(properties.getProperty(prefix + "limbSlot", ""), LimbSlot.HEAD);
@@ -754,10 +793,11 @@ public final class MapDesignLibrary {
             }
         }
 
-        int customNpcCount = readInt(properties, "customNpc.count", 0);
+        String npcRoot = contentRoot(properties, "npc", "customNpc");
+        int customNpcCount = readInt(properties, npcRoot + ".count", 0);
         List<CustomNpc> customNpcs = new ArrayList<>();
         for (int i = 0; i < customNpcCount; i++) {
-            String prefix = "customNpc." + i + ".";
+            String prefix = npcRoot + "." + i + ".";
             String npcId = properties.getProperty(prefix + "npcId", "");
             String npcName = properties.getProperty(prefix + "displayName", "");
             String imagePath = properties.getProperty(prefix + "imagePath", "");
@@ -787,7 +827,7 @@ public final class MapDesignLibrary {
             }
         }
 
-        return new MapDesign(width, height, displayName, description, musicPath, skyboxPath, primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry, placements, authoredDialogues, authoredQuests, customItems, customMobs, customLimbs, customNpcs, customGatheringNodes, customCookingRecipes, customCompositeRecipes, triggers, spawnX, spawnY);
+        return new MapDesign(width, height, displayName, description, musicPath, skyboxPath, primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry, mobAreas, placements, authoredDialogues, authoredQuests, customItems, customMobs, customLimbs, customNpcs, customGatheringNodes, customCookingRecipes, customCompositeRecipes, triggers, spawnX, spawnY);
     }
 
     private static InputStream openMapDesignStream(Path path) throws IOException {
@@ -854,6 +894,26 @@ public final class MapDesignLibrary {
         mergeMissingById(design.customGatheringNodes(), content.customGatheringNodes(), CustomGatheringNode::nodeId);
         mergeMissingById(design.customCookingRecipes(), content.customCookingRecipes(), CustomCookingRecipe::recipeId);
         mergeMissingById(design.customCompositeRecipes(), content.customCompositeRecipes(), CustomCompositeRecipe::recipeId);
+    }
+
+    static void replaceAuthoredContent(MapDesign design, AuthoredContent content) {
+        if (design == null || content == null) {
+            return;
+        }
+        replaceEntries(design.authoredDialogues(), content.authoredDialogues());
+        replaceEntries(design.authoredQuests(), content.authoredQuests());
+        replaceEntries(design.customItems(), content.customItems());
+        replaceEntries(design.customMobs(), content.customMobs());
+        replaceEntries(design.customLimbs(), content.customLimbs());
+        replaceEntries(design.customNpcs(), content.customNpcs());
+        replaceEntries(design.customGatheringNodes(), content.customGatheringNodes());
+        replaceEntries(design.customCookingRecipes(), content.customCookingRecipes());
+        replaceEntries(design.customCompositeRecipes(), content.customCompositeRecipes());
+    }
+
+    private static <T> void replaceEntries(List<T> target, List<T> source) {
+        target.clear();
+        target.addAll(source == null ? List.of() : source);
     }
 
     private static <T> void mergeMissingById(List<T> target, List<T> source, Function<T, String> idFunction) {
@@ -936,7 +996,10 @@ public final class MapDesignLibrary {
                         : design.mapPaint().copy(),
                 design.mapGeometry() == null
                         ? MapGeometryData.blank(design.width(), design.height())
-                        : design.mapGeometry().copy()
+                        : design.mapGeometry().copy(),
+                design.mobAreas() == null
+                        ? MobAreaData.blank(design.width(), design.height())
+                        : design.mobAreas().copy()
         );
     }
 
@@ -1036,7 +1099,17 @@ public final class MapDesignLibrary {
                     dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
                     CustomMob customMob = findCustomMob(placement.id(), customMobs);
                     if (customMob != null) {
-                        entities.add(new MapEntity(customMob.createMonster(), placement.x(), placement.y()));
+                        String spawnId = placement.id() + "|" + placement.x() + "|" + placement.y();
+                        entities.add(new MapEntity(customMob.createMonster(), placement.x(), placement.y())
+                                .configureEnemySpawn(
+                                        spawnId,
+                                        placement.x(),
+                                        placement.y(),
+                                        dungeonMap.getMobAreaId(placement.x(), placement.y()),
+                                        customMob.awarenessRadius(),
+                                        customMob.movementIntervalMs(),
+                                        customMob.respawnDelayMs()
+                                ));
                     }
                 }
                 case AUTHORED_DIALOGUE_NPC -> {
@@ -1047,7 +1120,7 @@ public final class MapDesignLibrary {
                             Library.EntityType.NPC,
                             placement.x(),
                             placement.y(),
-                            AssetLoader.loadImage(dialogue == null ? DEFAULT_NPC_VISUAL_PATH : dialogue.visualPath())
+                            AssetLoader.loadImage(DEFAULT_NPC_VISUAL_PATH)
                     ).withInteractionId(placement.id()));
                 }
                 case INTERACTION -> tileInteractions.add(new GeneratedDungeon.TileInteraction(
@@ -1401,6 +1474,20 @@ public final class MapDesignLibrary {
         return MapGeometryData.of(width, height, heightLevels);
     }
 
+    private static void writeMobAreas(Properties properties, MobAreaData mobAreas) {
+        if (mobAreas == null) {
+            return;
+        }
+        String[][] rows = mobAreas.copyRows();
+        for (int y = 0; y < rows.length; y++) {
+            properties.setProperty("mobArea." + y, joinPaintRow(rows[y]));
+        }
+    }
+
+    private static MobAreaData readMobAreas(Properties properties, int width, int height) {
+        return MobAreaData.of(width, height, readPaintLayer(properties, "mobArea.", width, height));
+    }
+
     private static String[][] readPaintLayer(Properties properties, String prefix, int width, int height) {
         String[][] layer = new String[Math.max(1, height)][Math.max(1, width)];
         for (int y = 0; y < height; y++) {
@@ -1642,6 +1729,26 @@ public final class MapDesignLibrary {
         }
     }
 
+    private static String contentRoot(Properties properties, String currentRoot, String legacyRoot) {
+        return properties.containsKey(currentRoot + ".count") ? currentRoot : legacyRoot;
+    }
+
+    private static void retainRequestedContentSegment(Properties properties, Path path) {
+        String fileName = path.getFileName() == null ? "" : path.getFileName().toString();
+        String requestedRoot = fileName.endsWith(".properties")
+                ? fileName.substring(0, fileName.length() - ".properties".length())
+                : fileName;
+        String retainedRoot = switch (requestedRoot) {
+            case "gathering_node" -> "gatheringNode";
+            case "cooking_recipe" -> "cookingRecipe";
+            case "composite_recipe" -> "compositeRecipe";
+            default -> requestedRoot;
+        };
+        properties.keySet().removeIf(rawKey ->
+                !String.valueOf(rawKey).startsWith(retainedRoot + ".")
+        );
+    }
+
     private static double readDouble(Properties properties, String key, double fallback) {
         try {
             return Double.parseDouble(properties.getProperty(key, String.valueOf(fallback)));
@@ -1691,6 +1798,7 @@ public final class MapDesignLibrary {
             int[][] themeIndexes,
             MapPaintData mapPaint,
             MapGeometryData mapGeometry,
+            MobAreaData mobAreas,
             List<MapPlacement> placements,
             List<AuthoredDialogue> authoredDialogues,
             List<AuthoredQuest> authoredQuests,
@@ -1712,6 +1820,7 @@ public final class MapDesignLibrary {
             skyboxPath = skyboxPath == null ? "" : skyboxPath.trim();
             mapPaint = mapPaint == null ? MapPaintData.blank(width, height) : mapPaint;
             mapGeometry = mapGeometry == null ? MapGeometryData.blank(width, height) : mapGeometry;
+            mobAreas = mobAreas == null ? MobAreaData.blank(width, height) : mobAreas;
             authoredQuests = authoredQuests == null ? new ArrayList<>() : authoredQuests;
             customItems = customItems == null ? new ArrayList<>() : customItems;
             customMobs = customMobs == null ? new ArrayList<>() : customMobs;
@@ -1721,6 +1830,40 @@ public final class MapDesignLibrary {
             customCookingRecipes = customCookingRecipes == null ? new ArrayList<>() : customCookingRecipes;
             customCompositeRecipes = customCompositeRecipes == null ? new ArrayList<>() : customCompositeRecipes;
             triggers = triggers == null ? new ArrayList<>() : triggers;
+        }
+
+        public MapDesign(
+                int width,
+                int height,
+                String displayName,
+                String description,
+                String musicPath,
+                String skyboxPath,
+                ThemeLibrary primaryTheme,
+                ThemeLibrary alternateTheme,
+                Library.TileType[][] tiles,
+                int[][] themeIndexes,
+                MapPaintData mapPaint,
+                MapGeometryData mapGeometry,
+                List<MapPlacement> placements,
+                List<AuthoredDialogue> authoredDialogues,
+                List<AuthoredQuest> authoredQuests,
+                List<CustomItem> customItems,
+                List<CustomMob> customMobs,
+                List<CustomLimb> customLimbs,
+                List<CustomNpc> customNpcs,
+                List<CustomGatheringNode> customGatheringNodes,
+                List<CustomCookingRecipe> customCookingRecipes,
+                List<CustomCompositeRecipe> customCompositeRecipes,
+                List<MapTrigger> triggers,
+                int spawnX,
+                int spawnY
+        ) {
+            this(width, height, displayName, description, musicPath, skyboxPath,
+                    primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry,
+                    MobAreaData.blank(width, height), placements, authoredDialogues, authoredQuests,
+                    customItems, customMobs, customLimbs, customNpcs, customGatheringNodes,
+                    customCookingRecipes, customCompositeRecipes, triggers, spawnX, spawnY);
         }
 
         public MapDesign(
@@ -2210,6 +2353,9 @@ public final class MapDesignLibrary {
             String attackSoundPath,
             String damageSoundPath,
             int combatAiIntelligence,
+            int awarenessRadius,
+            int movementIntervalMs,
+            int respawnDelayMs,
             List<SkillLibrary> skillIds,
             List<CustomDropEntry> dropEntries
     ) {
@@ -2230,8 +2376,30 @@ public final class MapDesignLibrary {
             attackSoundPath = attackSoundPath == null ? "" : attackSoundPath;
             damageSoundPath = damageSoundPath == null ? "" : damageSoundPath;
             combatAiIntelligence = Math.max(0, combatAiIntelligence);
+            awarenessRadius = Math.max(0, awarenessRadius);
+            movementIntervalMs = Math.max(250, movementIntervalMs);
+            respawnDelayMs = Math.max(0, respawnDelayMs);
             skillIds = skillIds == null ? List.of() : List.copyOf(skillIds);
             dropEntries = dropEntries == null ? List.of() : List.copyOf(dropEntries);
+        }
+
+        public CustomMob(
+                String mobId,
+                String displayName,
+                String imagePath,
+                String paperDollSourcePath,
+                Map<PlayerStat, Integer> statValues,
+                int xpReward,
+                String description,
+                String attackSoundPath,
+                String damageSoundPath,
+                int combatAiIntelligence,
+                List<SkillLibrary> skillIds,
+                List<CustomDropEntry> dropEntries
+        ) {
+            this(mobId, displayName, imagePath, paperDollSourcePath, statValues, xpReward,
+                    description, attackSoundPath, damageSoundPath, combatAiIntelligence,
+                    4, 3000, 300000, skillIds, dropEntries);
         }
 
         public Monster createMonster() {

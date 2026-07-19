@@ -6,6 +6,7 @@ import org.main.content.WorldManifestLibrary;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapPaintData;
+import org.main.engine.MobAreaData;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -251,6 +252,7 @@ public final class SaveSystem {
         }
         saveMapPaint(properties, prefix + "paint.", dungeonMap.getPaintData());
         saveMapGeometry(properties, prefix + "geometry.", dungeonMap.getGeometryData());
+        saveMobAreas(properties, prefix + "mobArea.", dungeonMap.getMobAreaData());
     }
 
     private static DungeonMap loadDungeonMap(Properties properties) {
@@ -282,7 +284,8 @@ public final class SaveSystem {
                 tiles,
                 themes,
                 loadMapPaint(properties, prefix + "paint.", width, height),
-                loadMapGeometry(properties, prefix + "geometry.", width, height)
+                loadMapGeometry(properties, prefix + "geometry.", width, height),
+                loadMobAreas(properties, prefix + "mobArea.", width, height)
         );
     }
 
@@ -320,6 +323,20 @@ public final class SaveSystem {
             }
         }
         return layer;
+    }
+
+    private static void saveMobAreas(Properties properties, String prefix, MobAreaData mobAreas) {
+        if (mobAreas == null) {
+            return;
+        }
+        String[][] rows = mobAreas.copyRows();
+        for (int y = 0; y < rows.length; y++) {
+            properties.setProperty(prefix + y, joinPaintRow(rows[y]));
+        }
+    }
+
+    private static MobAreaData loadMobAreas(Properties properties, String prefix, int width, int height) {
+        return MobAreaData.of(width, height, loadPaintLayer(properties, prefix, width, height));
     }
 
     private static void saveMapGeometry(Properties properties, String prefix, MapGeometryData geometryData) {
@@ -415,9 +432,12 @@ public final class SaveSystem {
             properties.setProperty(prefix + "removed", join(state.removedEntityKeys()));
             properties.setProperty(prefix + "discovered", join(state.discoveredMiniMapTiles()));
             properties.setProperty(prefix + "firedTriggers", join(state.firedTriggerIds()));
+            properties.setProperty(prefix + "lastUpdatedEpochMs", String.valueOf(state.lastUpdatedEpochMs()));
             saveDungeonMap(properties, prefix + "map.", state.dungeonMap());
             saveTileInteractionMap(properties, prefix + "tileInteraction.", state.tileInteractionIds());
             saveResourceNodeSnapshots(properties, prefix + "resource.", state.resourceNodeStates());
+            saveEnemyRespawnSnapshots(properties, prefix + "enemyRespawn.", state.enemyRespawns());
+            saveEnemyActiveSnapshots(properties, prefix + "enemyActive.", state.activeEnemies());
             saveMapTriggers(properties, prefix + "trigger.", state.mapTriggers());
             index++;
         }
@@ -440,6 +460,9 @@ public final class SaveSystem {
                     loadTileInteractionMap(properties, prefix + "tileInteraction."),
                     readSet(properties.getProperty(prefix + "removed", "")),
                     loadResourceNodeSnapshots(properties, prefix + "resource."),
+                    loadEnemyRespawnSnapshots(properties, prefix + "enemyRespawn."),
+                    loadEnemyActiveSnapshots(properties, prefix + "enemyActive."),
+                    readLong(properties, prefix + "lastUpdatedEpochMs", System.currentTimeMillis()),
                     readSet(properties.getProperty(prefix + "discovered", "")),
                     loadMapTriggers(properties, prefix + "trigger."),
                     readSet(properties.getProperty(prefix + "firedTriggers", "")),
@@ -454,6 +477,101 @@ public final class SaveSystem {
         }
 
         return states;
+    }
+
+    private static void saveEnemyActiveSnapshots(
+            Properties properties,
+            String prefix,
+            Map<String, GameState.EnemyActiveSnapshot> snapshots
+    ) {
+        properties.setProperty(prefix + "count", String.valueOf(snapshots == null ? 0 : snapshots.size()));
+        if (snapshots == null) {
+            return;
+        }
+        int index = 0;
+        for (GameState.EnemyActiveSnapshot snapshot : snapshots.values()) {
+            String itemPrefix = prefix + index + ".";
+            properties.setProperty(itemPrefix + "spawnId", encode(snapshot.spawnId()));
+            properties.setProperty(itemPrefix + "currentX", String.valueOf(snapshot.currentX()));
+            properties.setProperty(itemPrefix + "currentY", String.valueOf(snapshot.currentY()));
+            properties.setProperty(itemPrefix + "aiCooldownMs", String.valueOf(snapshot.aiCooldownMs()));
+            properties.setProperty(itemPrefix + "alerted", String.valueOf(snapshot.alerted()));
+            index++;
+        }
+    }
+
+    private static Map<String, GameState.EnemyActiveSnapshot> loadEnemyActiveSnapshots(
+            Properties properties,
+            String prefix
+    ) {
+        int count = Math.max(0, readInt(properties, prefix + "count", 0));
+        Map<String, GameState.EnemyActiveSnapshot> snapshots = new HashMap<>();
+        for (int index = 0; index < count; index++) {
+            String itemPrefix = prefix + index + ".";
+            String spawnId = decode(properties.getProperty(itemPrefix + "spawnId", ""));
+            if (spawnId.isBlank()) {
+                continue;
+            }
+            snapshots.put(spawnId, new GameState.EnemyActiveSnapshot(
+                    spawnId,
+                    readInt(properties, itemPrefix + "currentX", 0),
+                    readInt(properties, itemPrefix + "currentY", 0),
+                    readInt(properties, itemPrefix + "aiCooldownMs", 0),
+                    Boolean.parseBoolean(properties.getProperty(itemPrefix + "alerted", "false"))
+            ));
+        }
+        return Map.copyOf(snapshots);
+    }
+
+    private static void saveEnemyRespawnSnapshots(
+            Properties properties,
+            String prefix,
+            Map<String, GameState.EnemyRespawnSnapshot> snapshots
+    ) {
+        properties.setProperty(prefix + "count", String.valueOf(snapshots == null ? 0 : snapshots.size()));
+        if (snapshots == null) {
+            return;
+        }
+        int index = 0;
+        for (GameState.EnemyRespawnSnapshot snapshot : snapshots.values()) {
+            String entry = prefix + index + ".";
+            properties.setProperty(entry + "spawnId", encode(snapshot.spawnId()));
+            properties.setProperty(entry + "mobId", encode(snapshot.mobId()));
+            properties.setProperty(entry + "spawnX", String.valueOf(snapshot.spawnX()));
+            properties.setProperty(entry + "spawnY", String.valueOf(snapshot.spawnY()));
+            properties.setProperty(entry + "areaId", encode(snapshot.areaId()));
+            properties.setProperty(entry + "awarenessRadius", String.valueOf(snapshot.awarenessRadius()));
+            properties.setProperty(entry + "movementIntervalMs", String.valueOf(snapshot.movementIntervalMs()));
+            properties.setProperty(entry + "respawnDelayMs", String.valueOf(snapshot.respawnDelayMs()));
+            properties.setProperty(entry + "remainingMs", String.valueOf(snapshot.remainingMs()));
+            index++;
+        }
+    }
+
+    private static Map<String, GameState.EnemyRespawnSnapshot> loadEnemyRespawnSnapshots(
+            Properties properties,
+            String prefix
+    ) {
+        Map<String, GameState.EnemyRespawnSnapshot> snapshots = new HashMap<>();
+        int count = Math.max(0, readInt(properties, prefix + "count", 0));
+        for (int index = 0; index < count; index++) {
+            String entry = prefix + index + ".";
+            GameState.EnemyRespawnSnapshot snapshot = new GameState.EnemyRespawnSnapshot(
+                    decode(properties.getProperty(entry + "spawnId", "")),
+                    decode(properties.getProperty(entry + "mobId", "")),
+                    readInt(properties, entry + "spawnX", 0),
+                    readInt(properties, entry + "spawnY", 0),
+                    decode(properties.getProperty(entry + "areaId", "")),
+                    readInt(properties, entry + "awarenessRadius", 4),
+                    readInt(properties, entry + "movementIntervalMs", 3000),
+                    readInt(properties, entry + "respawnDelayMs", 300000),
+                    readInt(properties, entry + "remainingMs", 0)
+            );
+            if (!snapshot.spawnId().isBlank()) {
+                snapshots.put(snapshot.spawnId(), snapshot);
+            }
+        }
+        return snapshots;
     }
 
     private static void saveOpenWorldRuntimeStates(
@@ -491,6 +609,7 @@ public final class SaveSystem {
                 saveOpenWorldEntities(properties, chunkPrefix + "entity.", chunk.entities());
                 saveTileInteractionMap(properties, chunkPrefix + "tileInteraction.", chunk.tileInteractions());
                 saveResourceNodeSnapshots(properties, chunkPrefix + "resource.", chunk.resourceNodeStates());
+                saveEnemyRespawnSnapshots(properties, chunkPrefix + "enemyRespawn.", chunk.enemyRespawns());
                 saveMapTriggers(properties, chunkPrefix + "trigger.", chunk.triggers());
                 chunkIndex++;
             }
@@ -524,6 +643,7 @@ public final class SaveSystem {
                         loadTileInteractionMap(properties, chunkPrefix + "tileInteraction."),
                         readSet(properties.getProperty(chunkPrefix + "removed", "")),
                         loadResourceNodeSnapshots(properties, chunkPrefix + "resource."),
+                        loadEnemyRespawnSnapshots(properties, chunkPrefix + "enemyRespawn."),
                         readSet(properties.getProperty(chunkPrefix + "discovered", "")),
                         loadMapTriggers(properties, chunkPrefix + "trigger."),
                         readSet(properties.getProperty(chunkPrefix + "firedTriggers", "")),
@@ -562,6 +682,16 @@ public final class SaveSystem {
             properties.setProperty(entityPrefix + "renderOnWall", String.valueOf(entity.renderOnWall()));
             properties.setProperty(entityPrefix + "visualScale", String.valueOf(entity.visualScale()));
             properties.setProperty(entityPrefix + "item", itemKey(entity.item()));
+            properties.setProperty(entityPrefix + "monsterId", encode(entity.monsterId()));
+            properties.setProperty(entityPrefix + "enemySpawnId", encode(entity.enemySpawnId()));
+            properties.setProperty(entityPrefix + "spawnX", String.valueOf(entity.spawnX()));
+            properties.setProperty(entityPrefix + "spawnY", String.valueOf(entity.spawnY()));
+            properties.setProperty(entityPrefix + "areaId", encode(entity.areaId()));
+            properties.setProperty(entityPrefix + "awarenessRadius", String.valueOf(entity.awarenessRadius()));
+            properties.setProperty(entityPrefix + "movementIntervalMs", String.valueOf(entity.movementIntervalMs()));
+            properties.setProperty(entityPrefix + "respawnDelayMs", String.valueOf(entity.respawnDelayMs()));
+            properties.setProperty(entityPrefix + "aiCooldownMs", String.valueOf(entity.aiCooldownMs()));
+            properties.setProperty(entityPrefix + "alerted", String.valueOf(entity.alerted()));
         }
     }
 
@@ -590,7 +720,17 @@ public final class SaveSystem {
                     Boolean.parseBoolean(properties.getProperty(entityPrefix + "blocksMovement", "false")),
                     Boolean.parseBoolean(properties.getProperty(entityPrefix + "renderOnWall", "false")),
                     readDouble(properties, entityPrefix + "visualScale", 1.0),
-                    readInventoryItem(properties.getProperty(entityPrefix + "item", ""))
+                    readInventoryItem(properties.getProperty(entityPrefix + "item", "")),
+                    decode(properties.getProperty(entityPrefix + "monsterId", "")),
+                    decode(properties.getProperty(entityPrefix + "enemySpawnId", "")),
+                    readInt(properties, entityPrefix + "spawnX", readInt(properties, entityPrefix + "x", 0)),
+                    readInt(properties, entityPrefix + "spawnY", readInt(properties, entityPrefix + "y", 0)),
+                    decode(properties.getProperty(entityPrefix + "areaId", "")),
+                    readInt(properties, entityPrefix + "awarenessRadius", 4),
+                    readInt(properties, entityPrefix + "movementIntervalMs", 3000),
+                    readInt(properties, entityPrefix + "respawnDelayMs", 300000),
+                    readInt(properties, entityPrefix + "aiCooldownMs", 0),
+                    Boolean.parseBoolean(properties.getProperty(entityPrefix + "alerted", "false"))
             ));
         }
         return entities;

@@ -45,6 +45,7 @@ public final class AetherGameRuntime {
             soundSystem,
             environment
     );
+    private final WorldCreatureSystem worldCreatureSystem = new WorldCreatureSystem();
     private boolean gameOverMusicStarted = false;
     private String lastChunkAmbienceKey = "";
 
@@ -217,10 +218,12 @@ public final class AetherGameRuntime {
 
         gameState.updateMovementAnimation(deltaMs);
         gameState.updateResourceNodes(deltaMs);
+        gameState.updateEnemyRespawns(deltaMs);
         gameState.updateFishing(deltaMs);
         gameState.updateMining(deltaMs);
         gameState.updateCooking(deltaMs);
         gameState.updateSmelting(deltaMs);
+        worldCreatureSystem.update(gameState, deltaMs, dungeonController::engageEnemy);
         battleController.update(deltaMs);
         refreshChunkAmbienceIfNeeded();
 

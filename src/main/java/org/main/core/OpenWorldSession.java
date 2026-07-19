@@ -10,6 +10,7 @@ import org.main.engine.EnvironmentTheme;
 import org.main.engine.MapEntity;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapPaintData;
+import org.main.engine.MobAreaData;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -176,6 +177,7 @@ public final class OpenWorldSession {
             state.entities.clear();
             state.tileInteractions.clear();
             state.resourceNodeStates.clear();
+            state.enemyRespawns.clear();
             state.discoveredTiles.clear();
             state.triggers.clear();
             state.firedTriggerIds.clear();
@@ -184,16 +186,20 @@ public final class OpenWorldSession {
         }
 
         for (MapEntity entity : capture.entities()) {
-            ChunkCoordinate coordinate = coordinateForWindow(entity.getX(), entity.getY());
+            ChunkCoordinate coordinate = entity.getEnemySpawnId().isBlank()
+                    ? coordinateForWindow(entity.getX(), entity.getY())
+                    : coordinateForWindow(entity.getSpawnX(), entity.getSpawnY());
             ChunkState state = chunkStates.get(coordinate);
             if (state == null || !loadedCoordinates.contains(coordinate)) {
                 continue;
             }
+            entity.leaveWorldWindow(windowOffsetX(coordinate), windowOffsetY(coordinate));
             entity.setPosition(entity.getX() - windowOffsetX(coordinate), entity.getY() - windowOffsetY(coordinate));
             state.entities.add(entity);
         }
         distributeStringMap(capture.tileInteractions(), (state, key, value) -> state.tileInteractions.put(key, value));
         distributeResourceMap(capture.resourceNodeStates());
+        distributeEnemyRespawns(capture.enemyRespawns());
         distributeCoordinateSet(capture.discoveredTiles(), (state, key) -> state.discoveredTiles.add(key));
         distributeCoordinateSet(capture.removedEntityKeys(), (state, key) -> state.removedEntityKeys.add(key));
 
@@ -273,6 +279,8 @@ public final class OpenWorldSession {
             state.removedEntityKeys.addAll(snapshot.removedEntityKeys());
             state.resourceNodeStates.clear();
             state.resourceNodeStates.putAll(snapshot.resourceNodeStates());
+            state.enemyRespawns.clear();
+            state.enemyRespawns.putAll(snapshot.enemyRespawns());
             state.discoveredTiles.clear();
             state.discoveredTiles.addAll(snapshot.discoveredTiles());
             state.triggers.clear();
@@ -294,13 +302,24 @@ public final class OpenWorldSession {
                 entity = new MapEntity(snapshot.item(), snapshot.x(), snapshot.y());
             } else {
                 for (MapEntity candidate : authoredEntities) {
-                    if (!claimed.contains(candidate)
+                    boolean stableEnemyMatch = snapshot.type() == Library.EntityType.ENEMY
+                            && !snapshot.enemySpawnId().isBlank()
+                            && snapshot.enemySpawnId().equals(candidate.getEnemySpawnId());
+                    boolean legacyMatch = snapshot.enemySpawnId().isBlank()
                             && candidate.getType() == snapshot.type()
                             && candidate.getName().equals(snapshot.name())
-                            && normalizedText(candidate.getInteractionId()).equals(snapshot.interactionId())) {
+                            && normalizedText(candidate.getInteractionId()).equals(snapshot.interactionId());
+                    if (!claimed.contains(candidate) && (stableEnemyMatch || legacyMatch)) {
                         entity = candidate;
                         claimed.add(candidate);
                         break;
+                    }
+                }
+                if (entity == null && snapshot.type() == Library.EntityType.ENEMY
+                        && !snapshot.monsterId().isBlank()) {
+                    var monster = MapDesignLibrary.createEnemyById(snapshot.monsterId());
+                    if (monster != null) {
+                        entity = new MapEntity(monster, snapshot.x(), snapshot.y());
                     }
                 }
                 if (entity == null) {
@@ -313,6 +332,19 @@ public final class OpenWorldSession {
             entity.blocksMovement(snapshot.blocksMovement());
             entity.renderOnWall(snapshot.renderOnWall());
             entity.withVisualScale(snapshot.visualScale());
+            if (entity.getMonster() != null && !snapshot.enemySpawnId().isBlank()) {
+                entity.configureEnemySpawn(
+                        snapshot.enemySpawnId(),
+                        snapshot.spawnX(),
+                        snapshot.spawnY(),
+                        snapshot.areaId(),
+                        snapshot.awarenessRadius(),
+                        snapshot.movementIntervalMs(),
+                        snapshot.respawnDelayMs()
+                );
+                entity.setWorldAiCooldownMs(snapshot.aiCooldownMs());
+                entity.setWorldAlerted(snapshot.alerted());
+            }
             state.entities.add(entity);
         }
     }
@@ -327,6 +359,7 @@ public final class OpenWorldSession {
         Library.TileType[][] tiles = new Library.TileType[height][width];
         int[][] themes = new int[height][width];
         int[][] heights = new int[height][width];
+        String[][] mobAreas = new String[height][width];
         Map<MapPaintData.Layer, String[][]> paintLayers = new LinkedHashMap<>();
         for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
             paintLayers.put(layer, new String[height][width]);
@@ -341,6 +374,7 @@ public final class OpenWorldSession {
         List<MapEntity> entities = new ArrayList<>();
         Map<String, String> tileInteractions = new HashMap<>();
         Map<String, GameState.ResourceNodeSnapshot> resources = new HashMap<>();
+        Map<String, GameState.EnemyRespawnSnapshot> enemyRespawns = new HashMap<>();
         Set<String> discovered = new HashSet<>();
         Set<String> removed = new HashSet<>();
         List<MapDesignLibrary.MapTrigger> triggers = new ArrayList<>();
@@ -370,6 +404,7 @@ public final class OpenWorldSession {
                                 ? primaryIndex
                                 : alternateIndex;
                         heights[windowY][windowX] = chunk.map.getHeightLevel(x, y);
+                        mobAreas[windowY][windowX] = chunk.map.getMobAreaId(x, y);
                         for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
                             paintLayers.get(layer)[windowY][windowX] = chunk.map.getPaintBrushId(layer, x, y);
                         }
@@ -377,11 +412,17 @@ public final class OpenWorldSession {
                 }
 
                 for (MapEntity entity : chunk.entities) {
+                    entity.enterWorldWindow(
+                            runtimeEnemySpawnId(coordinate, entity.getEnemySpawnId()),
+                            offsetX,
+                            offsetY
+                    );
                     entity.setPosition(entity.getX() + offsetX, entity.getY() + offsetY);
                     entities.add(entity);
                 }
                 translateStringMap(chunk.tileInteractions, offsetX, offsetY, tileInteractions);
                 translateResourceMap(chunk.resourceNodeStates, offsetX, offsetY, resources);
+                translateEnemyRespawns(coordinate, chunk.enemyRespawns, offsetX, offsetY, enemyRespawns);
                 translateCoordinateSet(chunk.discoveredTiles, offsetX, offsetY, discovered);
                 translateCoordinateSet(chunk.removedEntityKeys, offsetX, offsetY, removed);
                 for (MapDesignLibrary.MapTrigger trigger : chunk.triggers) {
@@ -423,7 +464,8 @@ public final class OpenWorldSession {
                 tiles,
                 themes,
                 paint,
-                MapGeometryData.of(width, height, heights)
+                MapGeometryData.of(width, height, heights),
+                MobAreaData.of(width, height, mobAreas)
         );
         currentEnvironmentThemes = List.copyOf(environmentThemes);
         windowMaterialized = true;
@@ -432,6 +474,7 @@ public final class OpenWorldSession {
                 entities,
                 tileInteractions,
                 resources,
+                enemyRespawns,
                 discovered,
                 removed,
                 triggers,
@@ -480,6 +523,7 @@ public final class OpenWorldSession {
                 new ArrayList<>(generated.entities()),
                 interactions,
                 new HashSet<>(),
+                new HashMap<>(),
                 new HashMap<>(),
                 new HashSet<>(),
                 new ArrayList<>(generated.mapTriggers()),
@@ -549,6 +593,51 @@ public final class OpenWorldSession {
                         entry.getValue()
                 );
             }
+        }
+    }
+
+    private void distributeEnemyRespawns(Map<String, GameState.EnemyRespawnSnapshot> values) {
+        for (GameState.EnemyRespawnSnapshot snapshot : values.values()) {
+            ChunkCoordinate coordinate = coordinateForWindow(snapshot.spawnX(), snapshot.spawnY());
+            ChunkState state = chunkStates.get(coordinate);
+            if (state == null || !loadedCoordinates.contains(coordinate)) {
+                continue;
+            }
+            String localId = stripRuntimeEnemySpawnPrefix(snapshot.spawnId());
+            state.enemyRespawns.put(localId, new GameState.EnemyRespawnSnapshot(
+                    localId,
+                    snapshot.mobId(),
+                    snapshot.spawnX() - windowOffsetX(coordinate),
+                    snapshot.spawnY() - windowOffsetY(coordinate),
+                    snapshot.areaId(),
+                    snapshot.awarenessRadius(),
+                    snapshot.movementIntervalMs(),
+                    snapshot.respawnDelayMs(),
+                    snapshot.remainingMs()
+            ));
+        }
+    }
+
+    private void translateEnemyRespawns(
+            ChunkCoordinate coordinate,
+            Map<String, GameState.EnemyRespawnSnapshot> source,
+            int offsetX,
+            int offsetY,
+            Map<String, GameState.EnemyRespawnSnapshot> target
+    ) {
+        for (GameState.EnemyRespawnSnapshot snapshot : source.values()) {
+            String runtimeId = runtimeEnemySpawnId(coordinate, snapshot.spawnId());
+            target.put(runtimeId, new GameState.EnemyRespawnSnapshot(
+                    runtimeId,
+                    snapshot.mobId(),
+                    snapshot.spawnX() + offsetX,
+                    snapshot.spawnY() + offsetY,
+                    snapshot.areaId(),
+                    snapshot.awarenessRadius(),
+                    snapshot.movementIntervalMs(),
+                    snapshot.respawnDelayMs(),
+                    snapshot.remainingMs()
+            ));
         }
     }
 
@@ -653,6 +742,15 @@ public final class OpenWorldSession {
         return "chunk[" + coordinate.x() + "," + coordinate.y() + "]::" + localId;
     }
 
+    private static String runtimeEnemySpawnId(ChunkCoordinate coordinate, String localId) {
+        return "chunk[" + coordinate.x() + "," + coordinate.y() + "]::enemy::" + localId;
+    }
+
+    private static String stripRuntimeEnemySpawnPrefix(String runtimeId) {
+        int separator = runtimeId == null ? -1 : runtimeId.indexOf("::enemy::");
+        return separator < 0 ? runtimeId : runtimeId.substring(separator + 9);
+    }
+
     private static String stripRuntimeTriggerPrefix(String runtimeId) {
         int separator = runtimeId == null ? -1 : runtimeId.indexOf("]::");
         return separator < 0 ? runtimeId : runtimeId.substring(separator + 3);
@@ -693,7 +791,8 @@ public final class OpenWorldSession {
                 tiles,
                 themes,
                 source.getPaintData().copy(),
-                source.getGeometryData().copy()
+                source.getGeometryData().copy(),
+                source.getMobAreaData().copy()
         );
     }
 
@@ -702,6 +801,7 @@ public final class OpenWorldSession {
             List<MapEntity> entities,
             Map<String, String> tileInteractions,
             Map<String, GameState.ResourceNodeSnapshot> resourceNodeStates,
+            Map<String, GameState.EnemyRespawnSnapshot> enemyRespawns,
             Set<String> discoveredTiles,
             Set<String> removedEntityKeys,
             List<MapDesignLibrary.MapTrigger> triggers,
@@ -720,7 +820,7 @@ public final class OpenWorldSession {
     ) {
         public WindowState withPlayer(int x, int y) {
             return new WindowState(
-                    map, entities, tileInteractions, resourceNodeStates, discoveredTiles, removedEntityKeys,
+                    map, entities, tileInteractions, resourceNodeStates, enemyRespawns, discoveredTiles, removedEntityKeys,
                     triggers, firedTriggerIds, dialogues, quests, items, limbs, gatheringNodes,
                     cookingRecipes, compositeRecipes, environmentThemes, centerChunkPath, x, y
             );
@@ -732,6 +832,7 @@ public final class OpenWorldSession {
             List<MapEntity> entities,
             Map<String, String> tileInteractions,
             Map<String, GameState.ResourceNodeSnapshot> resourceNodeStates,
+            Map<String, GameState.EnemyRespawnSnapshot> enemyRespawns,
             Set<String> discoveredTiles,
             Set<String> removedEntityKeys,
             List<MapDesignLibrary.MapTrigger> triggers,
@@ -748,6 +849,7 @@ public final class OpenWorldSession {
             Map<String, String> tileInteractions,
             Set<String> removedEntityKeys,
             Map<String, GameState.ResourceNodeSnapshot> resourceNodeStates,
+            Map<String, GameState.EnemyRespawnSnapshot> enemyRespawns,
             Set<String> discoveredTiles,
             List<MapDesignLibrary.MapTrigger> triggers,
             Set<String> firedTriggerIds,
@@ -758,6 +860,7 @@ public final class OpenWorldSession {
             tileInteractions = tileInteractions == null ? Map.of() : Map.copyOf(tileInteractions);
             removedEntityKeys = removedEntityKeys == null ? Set.of() : Set.copyOf(removedEntityKeys);
             resourceNodeStates = resourceNodeStates == null ? Map.of() : Map.copyOf(resourceNodeStates);
+            enemyRespawns = enemyRespawns == null ? Map.of() : Map.copyOf(enemyRespawns);
             discoveredTiles = discoveredTiles == null ? Set.of() : Set.copyOf(discoveredTiles);
             triggers = triggers == null ? List.of() : List.copyOf(triggers);
             firedTriggerIds = firedTriggerIds == null ? Set.of() : Set.copyOf(firedTriggerIds);
@@ -774,14 +877,47 @@ public final class OpenWorldSession {
             boolean blocksMovement,
             boolean renderOnWall,
             double visualScale,
-            InventorySystem.Item item
+            InventorySystem.Item item,
+            String monsterId,
+            String enemySpawnId,
+            int spawnX,
+            int spawnY,
+            String areaId,
+            int awarenessRadius,
+            int movementIntervalMs,
+            int respawnDelayMs,
+            int aiCooldownMs,
+            boolean alerted
     ) {
         public PersistedEntityState {
             name = name == null ? "" : name;
             type = type == null ? Library.EntityType.ITEM : type;
             interactionId = interactionId == null ? "" : interactionId;
             talkSoundPath = talkSoundPath == null ? "" : talkSoundPath;
+            monsterId = monsterId == null ? "" : monsterId;
+            enemySpawnId = enemySpawnId == null ? "" : enemySpawnId;
+            areaId = areaId == null ? "" : areaId;
+            awarenessRadius = Math.max(0, awarenessRadius);
+            movementIntervalMs = Math.max(250, movementIntervalMs);
+            respawnDelayMs = Math.max(0, respawnDelayMs);
+            aiCooldownMs = Math.max(0, aiCooldownMs);
             visualScale = Math.max(0.10, visualScale);
+        }
+
+        public PersistedEntityState(
+                String name,
+                Library.EntityType type,
+                int x,
+                int y,
+                String interactionId,
+                String talkSoundPath,
+                boolean blocksMovement,
+                boolean renderOnWall,
+                double visualScale,
+                InventorySystem.Item item
+        ) {
+            this(name, type, x, y, interactionId, talkSoundPath, blocksMovement, renderOnWall,
+                    visualScale, item, "", "", x, y, "", 4, 3000, 300000, 0, false);
         }
     }
 
@@ -793,6 +929,7 @@ public final class OpenWorldSession {
         private final Map<String, String> tileInteractions;
         private final Set<String> removedEntityKeys;
         private final Map<String, GameState.ResourceNodeSnapshot> resourceNodeStates;
+        private final Map<String, GameState.EnemyRespawnSnapshot> enemyRespawns;
         private final Set<String> discoveredTiles;
         private final List<MapDesignLibrary.MapTrigger> triggers;
         private final Set<String> firedTriggerIds;
@@ -806,6 +943,7 @@ public final class OpenWorldSession {
                 Map<String, String> tileInteractions,
                 Set<String> removedEntityKeys,
                 Map<String, GameState.ResourceNodeSnapshot> resourceNodeStates,
+                Map<String, GameState.EnemyRespawnSnapshot> enemyRespawns,
                 Set<String> discoveredTiles,
                 List<MapDesignLibrary.MapTrigger> triggers,
                 Set<String> firedTriggerIds,
@@ -818,6 +956,7 @@ public final class OpenWorldSession {
             this.tileInteractions = tileInteractions;
             this.removedEntityKeys = removedEntityKeys;
             this.resourceNodeStates = resourceNodeStates;
+            this.enemyRespawns = enemyRespawns;
             this.discoveredTiles = discoveredTiles;
             this.triggers = triggers;
             this.firedTriggerIds = firedTriggerIds;
@@ -841,6 +980,23 @@ public final class OpenWorldSession {
                 }
                 resourceNodeStates.clear();
                 resourceNodeStates.putAll(advanced);
+
+                Map<String, GameState.EnemyRespawnSnapshot> advancedEnemies = new HashMap<>();
+                for (GameState.EnemyRespawnSnapshot snapshot : enemyRespawns.values()) {
+                    advancedEnemies.put(snapshot.spawnId(), new GameState.EnemyRespawnSnapshot(
+                            snapshot.spawnId(),
+                            snapshot.mobId(),
+                            snapshot.spawnX(),
+                            snapshot.spawnY(),
+                            snapshot.areaId(),
+                            snapshot.awarenessRadius(),
+                            snapshot.movementIntervalMs(),
+                            snapshot.respawnDelayMs(),
+                            (int) Math.max(0L, (long) snapshot.remainingMs() - elapsed)
+                    ));
+                }
+                enemyRespawns.clear();
+                enemyRespawns.putAll(advancedEnemies);
             }
             lastUpdatedEpochMs = now;
         }
@@ -859,12 +1015,23 @@ public final class OpenWorldSession {
                                     entity.blocksMovement(),
                                     entity.shouldRenderOnWall(),
                                     entity.getVisualScale(),
-                                    entity.getItem()
+                                    entity.getItem(),
+                                    entity.getMonster() == null ? "" : entity.getMonster().getCustomId(),
+                                    entity.getEnemySpawnId(),
+                                    entity.getSpawnX(),
+                                    entity.getSpawnY(),
+                                    entity.getRoamingAreaId(),
+                                    entity.getAwarenessRadius(),
+                                    entity.getMovementIntervalMs(),
+                                    entity.getRespawnDelayMs(),
+                                    entity.getWorldAiCooldownMs(),
+                                    entity.isWorldAlerted()
                             ))
                             .toList(),
                     tileInteractions,
                     removedEntityKeys,
                     resourceNodeStates,
+                    enemyRespawns,
                     discoveredTiles,
                     triggers,
                     firedTriggerIds,
