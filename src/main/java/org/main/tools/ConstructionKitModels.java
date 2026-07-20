@@ -71,7 +71,7 @@ enum ContentCategory {
     LIMBS("Limbs"),
     GATHERING("Gathering"),
     COOKING("Cooking"),
-    COMPOSITES("Composite Recipes"),
+    CRAFTING_RECIPES("Crafting Recipes"),
     QUESTS("Quests"),
     DIALOGUES("Dialogues"),
     AREAS("Mob Areas"),

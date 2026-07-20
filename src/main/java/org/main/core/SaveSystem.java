@@ -438,6 +438,7 @@ public final class SaveSystem {
             saveResourceNodeSnapshots(properties, prefix + "resource.", state.resourceNodeStates());
             saveEnemyRespawnSnapshots(properties, prefix + "enemyRespawn.", state.enemyRespawns());
             saveEnemyActiveSnapshots(properties, prefix + "enemyActive.", state.activeEnemies());
+            saveTemporaryStationSnapshots(properties, prefix + "temporaryStation.", state.temporaryStations());
             saveMapTriggers(properties, prefix + "trigger.", state.mapTriggers());
             index++;
         }
@@ -472,11 +473,64 @@ public final class SaveSystem {
                     List.of(),
                     List.of(),
                     List.of(),
-                    List.of()
+                    List.of(),
+                    loadTemporaryStationSnapshots(properties, prefix + "temporaryStation.")
             ));
         }
 
         return states;
+    }
+
+    private static void saveTemporaryStationSnapshots(
+            Properties properties,
+            String prefix,
+            List<GameState.TemporaryStationSnapshot> snapshots
+    ) {
+        properties.setProperty(prefix + "count", String.valueOf(snapshots == null ? 0 : snapshots.size()));
+        if (snapshots == null) {
+            return;
+        }
+        for (int i = 0; i < snapshots.size(); i++) {
+            GameState.TemporaryStationSnapshot snapshot = snapshots.get(i);
+            String itemPrefix = prefix + i + ".";
+            properties.setProperty(itemPrefix + "id", encode(snapshot.stationId()));
+            properties.setProperty(
+                    itemPrefix + "type",
+                    snapshot.stationType() == null ? "" : snapshot.stationType().name()
+            );
+            properties.setProperty(itemPrefix + "x", String.valueOf(snapshot.x()));
+            properties.setProperty(itemPrefix + "y", String.valueOf(snapshot.y()));
+            properties.setProperty(itemPrefix + "remainingMs", String.valueOf(snapshot.remainingMs()));
+            properties.setProperty(itemPrefix + "pendingExpiry", String.valueOf(snapshot.pendingExpiry()));
+        }
+    }
+
+    private static List<GameState.TemporaryStationSnapshot> loadTemporaryStationSnapshots(
+            Properties properties,
+            String prefix
+    ) {
+        int count = Math.max(0, readInt(properties, prefix + "count", 0));
+        List<GameState.TemporaryStationSnapshot> snapshots = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            String itemPrefix = prefix + i + ".";
+            CraftingStationType stationType = readOptionalEnum(
+                    properties.getProperty(itemPrefix + "type", ""),
+                    CraftingStationType.class
+            );
+            String id = decode(properties.getProperty(itemPrefix + "id", ""));
+            if (stationType == null || id.isBlank()) {
+                continue;
+            }
+            snapshots.add(new GameState.TemporaryStationSnapshot(
+                    id,
+                    stationType,
+                    readInt(properties, itemPrefix + "x", 0),
+                    readInt(properties, itemPrefix + "y", 0),
+                    readInt(properties, itemPrefix + "remainingMs", 0),
+                    Boolean.parseBoolean(properties.getProperty(itemPrefix + "pendingExpiry", "false"))
+            ));
+        }
+        return snapshots;
     }
 
     private static void saveEnemyActiveSnapshots(
@@ -692,6 +746,19 @@ public final class SaveSystem {
             properties.setProperty(entityPrefix + "respawnDelayMs", String.valueOf(entity.respawnDelayMs()));
             properties.setProperty(entityPrefix + "aiCooldownMs", String.valueOf(entity.aiCooldownMs()));
             properties.setProperty(entityPrefix + "alerted", String.valueOf(entity.alerted()));
+            properties.setProperty(entityPrefix + "temporaryStationId", encode(entity.temporaryStationId()));
+            properties.setProperty(
+                    entityPrefix + "temporaryStationType",
+                    entity.temporaryStationType() == null ? "" : entity.temporaryStationType().name()
+            );
+            properties.setProperty(
+                    entityPrefix + "temporaryStationRemainingMs",
+                    String.valueOf(entity.temporaryStationRemainingMs())
+            );
+            properties.setProperty(
+                    entityPrefix + "temporaryStationPendingExpiry",
+                    String.valueOf(entity.temporaryStationPendingExpiry())
+            );
         }
     }
 
@@ -730,7 +797,17 @@ public final class SaveSystem {
                     readInt(properties, entityPrefix + "movementIntervalMs", 3000),
                     readInt(properties, entityPrefix + "respawnDelayMs", 300000),
                     readInt(properties, entityPrefix + "aiCooldownMs", 0),
-                    Boolean.parseBoolean(properties.getProperty(entityPrefix + "alerted", "false"))
+                    Boolean.parseBoolean(properties.getProperty(entityPrefix + "alerted", "false")),
+                    decode(properties.getProperty(entityPrefix + "temporaryStationId", "")),
+                    readOptionalEnum(
+                            properties.getProperty(entityPrefix + "temporaryStationType", ""),
+                            CraftingStationType.class
+                    ),
+                    readInt(properties, entityPrefix + "temporaryStationRemainingMs", 0),
+                    Boolean.parseBoolean(properties.getProperty(
+                            entityPrefix + "temporaryStationPendingExpiry",
+                            "false"
+                    ))
             ));
         }
         return entities;
@@ -1270,6 +1347,17 @@ public final class SaveSystem {
             return Enum.valueOf(type, properties.getProperty(key, fallback.name()));
         } catch (IllegalArgumentException ignored) {
             return fallback;
+        }
+    }
+
+    private static <T extends Enum<T>> T readOptionalEnum(String value, Class<T> type) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Enum.valueOf(type, value.trim());
+        } catch (IllegalArgumentException ignored) {
+            return null;
         }
     }
 

@@ -22,6 +22,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 public class GameState {
     private static final String GOLD_ITEM_ID = "GOLD";
@@ -40,7 +41,7 @@ public class GameState {
     private final Map<String, MapDesignLibrary.CustomLimb> customLimbs = new HashMap<>();
     private final Map<String, MapDesignLibrary.CustomGatheringNode> customGatheringNodes = new HashMap<>();
     private final Map<String, MapDesignLibrary.CustomCookingRecipe> customCookingRecipes = new HashMap<>();
-    private final Map<String, MapDesignLibrary.CustomCompositeRecipe> customCompositeRecipes = new HashMap<>();
+    private final Map<String, MapDesignLibrary.CraftingRecipe> craftingRecipes = new HashMap<>();
     private final Map<String, MapRuntimeState> mapRuntimeStates = new HashMap<>();
     private final Map<String, OpenWorldSession> openWorldSessions = new HashMap<>();
     private final Set<String> spokenAuthoredDialogues = new HashSet<>();
@@ -487,7 +488,7 @@ public class GameState {
         setCustomLimbs(generatedDungeon.customLimbs());
         setCustomGatheringNodes(generatedDungeon.customGatheringNodes());
         setCustomCookingRecipes(generatedDungeon.customCookingRecipes());
-        setCustomCompositeRecipes(generatedDungeon.customCompositeRecipes());
+        setCraftingRecipes(generatedDungeon.craftingRecipes());
         setMapTriggers(generatedDungeon.mapTriggers());
         currentMapDesignPath = null;
     }
@@ -617,7 +618,8 @@ public class GameState {
                 new ArrayList<>(customLimbs.values()),
                 new ArrayList<>(getCustomGatheringNodes()),
                 new ArrayList<>(customCookingRecipes.values()),
-                new ArrayList<>(customCompositeRecipes.values())
+                new ArrayList<>(craftingRecipes.values()),
+                getTemporaryStationSnapshots()
         ));
     }
 
@@ -800,7 +802,7 @@ public class GameState {
         setCustomLimbs(window.limbs());
         setCustomGatheringNodes(window.gatheringNodes());
         setCustomCookingRecipes(window.cookingRecipes());
-        setCustomCompositeRecipes(window.compositeRecipes());
+        setCraftingRecipes(window.craftingRecipes());
         restoreResourceNodeSnapshots(window.resourceNodeStates());
         restoreEnemyRespawnSnapshots(window.enemyRespawns());
         resetMiniMapDiscovery();
@@ -853,7 +855,7 @@ public class GameState {
         customLimbs.clear();
         customGatheringNodes.clear();
         customCookingRecipes.clear();
-        customCompositeRecipes.clear();
+        craftingRecipes.clear();
         currentMapDesignPath = null;
         resourceNodeStates.clear();
         enemyRespawnStates.clear();
@@ -879,6 +881,10 @@ public class GameState {
         dungeonMap = copyDungeonMap(state.dungeonMap());
         entities.clear();
         entities.addAll(state.entities());
+        restoreTemporaryStationSnapshots(
+                state.temporaryStations(),
+                Math.max(0L, System.currentTimeMillis() - state.lastUpdatedEpochMs())
+        );
         tileInteractionIds.clear();
         tileInteractionIds.putAll(state.tileInteractionIds());
         mapTriggers.clear();
@@ -896,7 +902,7 @@ public class GameState {
         setCustomLimbs(state.customLimbs());
         setCustomGatheringNodes(state.customGatheringNodes());
         setCustomCookingRecipes(state.customCookingRecipes());
-        setCustomCompositeRecipes(state.customCompositeRecipes());
+        setCraftingRecipes(state.craftingRecipes());
         resetMiniMapDiscovery();
         Point target = resolveTarget(targetX, targetY);
         setPlayerPosition(target.x, target.y);
@@ -929,6 +935,10 @@ public class GameState {
         entities.removeIf(this::isEntityRemoved);
         restoreResourceNodeSnapshots(state.resourceNodeStates());
         restoreEnemySpawnSnapshots(state);
+        restoreTemporaryStationSnapshots(
+                state.temporaryStations(),
+                Math.max(0L, System.currentTimeMillis() - state.lastUpdatedEpochMs())
+        );
         setDiscoveredMiniMapTileKeys(state.discoveredMiniMapTiles());
         revealMiniMapTile(currentPosition.x, currentPosition.y);
     }
@@ -1207,15 +1217,15 @@ public class GameState {
         return List.copyOf(customCookingRecipes.values());
     }
 
-    public void setCustomCompositeRecipes(List<MapDesignLibrary.CustomCompositeRecipe> recipes) {
-        customCompositeRecipes.clear();
+    public void setCraftingRecipes(List<MapDesignLibrary.CraftingRecipe> recipes) {
+        craftingRecipes.clear();
         if (recipes == null) {
             return;
         }
 
-        for (MapDesignLibrary.CustomCompositeRecipe recipe : recipes) {
+        for (MapDesignLibrary.CraftingRecipe recipe : recipes) {
             if (recipe != null && !recipe.recipeId().isBlank()) {
-                customCompositeRecipes.put(recipe.recipeId(), recipe);
+                craftingRecipes.put(recipe.recipeId(), recipe);
             }
         }
     }
@@ -1825,6 +1835,7 @@ public class GameState {
         stopCooking();
         stopSmelting();
         MapDesignLibrary.CustomGatheringNode node = getCustomGatheringNodeAt(x, y);
+        boolean tree = node != null && node.nodeType() == MapDesignLibrary.GatheringNodeType.TREE;
         CharacterSkill gatheringSkill = node == null ? CharacterSkill.MINING : node.gatheringSkill();
         if (node != null && playerCharacter != null
                 && playerCharacter.getSkillLevel(gatheringSkill) < node.requiredLevel()) {
@@ -1833,7 +1844,9 @@ public class GameState {
         }
 
         if (isResourceExhausted(x, y)) {
-            miningMessage = "The rock is depleted. Give it time to recover.";
+            miningMessage = tree
+                    ? "Only a stump remains. Give the tree time to regrow."
+                    : "The rock is depleted. Give it time to recover.";
             return false;
         }
 
@@ -1842,7 +1855,9 @@ public class GameState {
         miningY = y;
         miningElapsedMs = 0;
         miningInteractionId = node == null ? "" : node.interactionId();
-        miningMessage = "You swing at the " + (node == null ? "mineral rock" : node.displayName()) + ".";
+        miningMessage = tree
+                ? "You begin cutting the " + node.displayName() + "."
+                : "You swing at the " + (node == null ? "mineral rock" : node.displayName()) + ".";
         return true;
     }
 
@@ -1876,38 +1891,45 @@ public class GameState {
         miningElapsedMs = 0;
 
         if (isResourceExhausted(miningX, miningY)) {
-            miningMessage = "The rock is depleted. Give it time to recover.";
+            MapDesignLibrary.CustomGatheringNode exhaustedNode = customGatheringNodes.get(miningInteractionId);
+            miningMessage = exhaustedNode != null && exhaustedNode.nodeType() == MapDesignLibrary.GatheringNodeType.TREE
+                    ? "Only a stump remains. Give the tree time to regrow."
+                    : "The rock is depleted. Give it time to recover.";
             stopMining();
             return;
         }
 
         recordResourceAttempt(miningX, miningY);
 
+        MapDesignLibrary.CustomGatheringNode node = customGatheringNodes.get(miningInteractionId);
+        boolean tree = node != null && node.nodeType() == MapDesignLibrary.GatheringNodeType.TREE;
         if (isResourceExhausted(miningX, miningY)) {
-            miningMessage = "The rock crumbles down to bare stone. It needs time to recover.";
+            miningMessage = tree
+                    ? "The tree falls, leaving only a stump. It needs time to regrow."
+                    : "The rock crumbles down to bare stone. It needs time to recover.";
             stopMining();
             return;
         }
 
-        MapDesignLibrary.CustomGatheringNode node = customGatheringNodes.get(miningInteractionId);
         CharacterSkill gatheringSkill = node == null ? CharacterSkill.MINING : node.gatheringSkill();
         int miningLevel = Math.max(1, playerCharacter.getSkillLevel(gatheringSkill));
         double successChance = Math.min(
-                maxMiningSuccessChance(),
-                baseMiningSuccessChance() + miningLevel * miningSuccessChancePerLevel()
+                tree ? maxWoodcuttingSuccessChance() : maxMiningSuccessChance(),
+                (tree ? baseWoodcuttingSuccessChance() : baseMiningSuccessChance())
+                        + miningLevel * (tree ? woodcuttingSuccessChancePerLevel() : miningSuccessChancePerLevel())
         );
 
         InventorySystem.Item gatheredItem = node == null
                 ? createItemByNameOrId(COPPER_ORE_ITEM_ID)
                 : createGatheredItem(node);
         int xpReward = node == null ? miningXpReward() : node.gatherXpReward();
-        String outputName = gatheredItem == null ? "ore" : gatheredItem.getName();
+        String outputName = gatheredItem == null ? (tree ? "wood" : "ore") : gatheredItem.getName();
 
         if (Math.random() <= successChance && gatheredItem != null && getInventory().addItem(gatheredItem)) {
             int levelsGained = playerCharacter.addSkillExperience(gatheringSkill, xpReward);
             miningMessage = levelsGained > 0
-                    ? "You gather " + outputName + ". " + gatheringSkill.getDisplayName() + " level " + playerCharacter.getSkillLevel(gatheringSkill) + "!"
-                    : "You gather " + outputName + ". " + gatheringSkill.getDisplayName() + " XP "
+                    ? "You " + (tree ? "cut" : "gather") + " " + outputName + ". " + gatheringSkill.getDisplayName() + " level " + playerCharacter.getSkillLevel(gatheringSkill) + "!"
+                    : "You " + (tree ? "cut" : "gather") + " " + outputName + ". " + gatheringSkill.getDisplayName() + " XP "
                     + playerCharacter.getSkillExperience(gatheringSkill)
                     + "/"
                     + playerCharacter.getSkillExperienceRequired(gatheringSkill)
@@ -1916,11 +1938,13 @@ public class GameState {
         }
 
         if (!getInventory().hasFreeSlot()) {
-            miningMessage = "Your inventory is too full to hold any ore.";
+            miningMessage = "Your inventory is too full to hold any " + (tree ? "wood." : "ore.");
             return;
         }
 
-        miningMessage = "You chip the rock, but no usable ore breaks free.";
+        miningMessage = tree
+                ? "Your cuts fail to produce usable wood."
+                : "You chip the rock, but no usable ore breaks free.";
     }
 
     public String getMiningMessage() {
@@ -1938,6 +1962,10 @@ public class GameState {
 
         String tileInteractionId = getTileInteractionId(x, y);
         return tileInteractionId == null ? null : customGatheringNodes.get(tileInteractionId);
+    }
+
+    public MapDesignLibrary.CustomGatheringNode getCustomGatheringNodeAtPosition(int x, int y) {
+        return getCustomGatheringNodeAt(x, y);
     }
 
     private InventorySystem.Item createGatheredItem(MapDesignLibrary.CustomGatheringNode node) {
@@ -2230,6 +2258,7 @@ public class GameState {
             MapDesignLibrary.CustomGatheringNode node = customGatheringNodes.get(entity.getInteractionId());
             if (node != null && node.nodeType() != MapDesignLibrary.GatheringNodeType.FISHING_SPOT) {
                 entity.setStaticImage(node.getImageForExhaustion(exhaustionLevel));
+                entity.setStaticModelVisible(exhaustionLevel < maxResourceExhaustionLevel());
                 return;
             }
         }
@@ -2463,93 +2492,220 @@ public class GameState {
             return false;
         }
 
-        MapDesignLibrary.CustomCompositeRecipe recipe = findCompositeRecipe(selectedItem, targetItem);
+        MapDesignLibrary.CraftingRecipe recipe = findCraftingRecipe(selectedItem, targetItem);
         if (recipe == null) {
             return false;
         }
+        craftRecipe(recipe);
+        return true;
+    }
 
-        if (playerCharacter.getSkillLevel(recipe.requiredSkill()) < recipe.requiredLevel()) {
-            openInteraction(InteractionSystem.prompt(
-                    "Not Ready",
-                    "You need " + recipe.requiredSkill().getDisplayName() + " level " + recipe.requiredLevel() + " to make " + recipe.displayName() + ".",
-                    InteractionSystem.closeOption("Close")
+    public boolean hasSingleIngredientCraftingRecipe(int inventoryIndex) {
+        InventorySystem.Item item = getInventory().getItem(inventoryIndex);
+        return item != null && !matchingSingleIngredientRecipes(item).isEmpty();
+    }
+
+    public boolean openSingleIngredientCraftingMenu(int inventoryIndex) {
+        InventorySystem.Item item = getInventory().getItem(inventoryIndex);
+        List<MapDesignLibrary.CraftingRecipe> recipes = matchingSingleIngredientRecipes(item);
+        if (item == null || recipes.isEmpty()) {
+            return false;
+        }
+
+        List<InteractionSystem.InteractionOption> options = new ArrayList<>();
+        for (MapDesignLibrary.CraftingRecipe recipe : recipes) {
+            options.add(InteractionSystem.option(
+                    recipe.displayName(),
+                    () -> craftRecipe(recipe)
             ));
-            return true;
         }
-
-        InventorySystem.Item output = createItemByNameOrId(recipe.outputItemId());
-        if (output == null) {
-            openInteraction(InteractionSystem.prompt(
-                    "Recipe Failed",
-                    "The output item for " + recipe.displayName() + " could not be found.",
-                    InteractionSystem.closeOption("Close")
-            ));
-            return true;
-        }
-
-        boolean selectedMatchesPrimary = recipeItemMatches(recipe.primaryItemId(), selectedItem);
-        boolean selectedMatchesSecondary = recipeItemMatches(recipe.secondaryItemId(), selectedItem);
-        boolean targetMatchesPrimary = recipeItemMatches(recipe.primaryItemId(), targetItem);
-        boolean targetMatchesSecondary = recipeItemMatches(recipe.secondaryItemId(), targetItem);
-
-        if (recipe.consumePrimary()) {
-            InventorySystem.Item itemToConsume = selectedMatchesPrimary ? selectedItem : targetMatchesPrimary ? targetItem : null;
-            if (itemToConsume != null && !getInventory().removeFirstItemNamed(itemToConsume.getName())) {
-                return true;
-            }
-        }
-        if (recipe.consumeSecondary()) {
-            InventorySystem.Item itemToConsume = selectedMatchesSecondary ? selectedItem : targetMatchesSecondary ? targetItem : null;
-            if (itemToConsume != null && !getInventory().removeFirstItemNamed(itemToConsume.getName())) {
-                return true;
-            }
-        }
-
-        clearSelectedWorldUseItem();
-        if (!getInventory().addItem(output)) {
-            openInteraction(InteractionSystem.prompt(
-                    "Inventory Full",
-                    "You made " + output.getName() + ", but your inventory is too full to hold it.",
-                    InteractionSystem.closeOption("Close")
-            ));
-            return true;
-        }
-
-        int levelsGained = playerCharacter.addSkillExperience(recipe.requiredSkill(), recipe.xpReward());
-        String message = levelsGained > 0
-                ? "You make " + output.getName() + ". " + recipe.requiredSkill().getDisplayName()
-                + " level " + playerCharacter.getSkillLevel(recipe.requiredSkill()) + "!"
-                : "You make " + output.getName() + ".";
+        options.add(InteractionSystem.closeOption("Close"));
         openInteraction(InteractionSystem.prompt(
-                recipe.displayName(),
-                message,
-                InteractionSystem.closeOption("Close")
+                "Craft with " + item.getName(),
+                "Choose what you want to craft.",
+                options.toArray(new InteractionSystem.InteractionOption[0])
         ));
         return true;
     }
 
-    private MapDesignLibrary.CustomCompositeRecipe findCompositeRecipe(
+    private boolean craftRecipe(MapDesignLibrary.CraftingRecipe recipe) {
+        if (recipe == null || playerCharacter == null) {
+            return false;
+        }
+        if (playerCharacter.getSkillLevel(recipe.requiredSkill()) < recipe.requiredLevel()) {
+            showCraftingMessage(
+                    "Not Ready",
+                    "You need " + recipe.requiredSkill().getDisplayName() + " level "
+                            + recipe.requiredLevel() + " to make " + recipe.displayName() + "."
+            );
+            return false;
+        }
+
+        InventorySystem.Item primary = createItemByNameOrId(recipe.primaryItemId());
+        InventorySystem.Item secondary = recipe.secondaryItemId().isBlank()
+                ? null
+                : createItemByNameOrId(recipe.secondaryItemId());
+        if (primary == null || (!recipe.secondaryItemId().isBlank() && secondary == null)) {
+            showCraftingMessage("Recipe Failed", "One or more ingredients for " + recipe.displayName() + " could not be found.");
+            return false;
+        }
+        if (getInventory().countItemNamed(primary.getName()) < recipe.primaryQuantity()
+                || secondary != null
+                && getInventory().countItemNamed(secondary.getName()) < recipe.secondaryQuantity()) {
+            showCraftingMessage("Missing Ingredients", ingredientRequirementText(recipe, primary, secondary));
+            return false;
+        }
+
+        InventorySystem.Item output = null;
+        int stationX = playerX + forwardX(direction);
+        int stationY = playerY + forwardY(direction);
+        if (recipe.outputsStation()) {
+            if (recipe.outputStationType() == null
+                    || dungeonMap == null
+                    || !dungeonMap.isWalkable(stationX, stationY)
+                    || getEntityAt(stationX, stationY) != null
+                    || stationX == playerX && stationY == playerY) {
+                showCraftingMessage(
+                        "No Room",
+                        "The tile directly in front of you must be walkable and unoccupied."
+                );
+                return false;
+            }
+        } else {
+            output = createItemByNameOrId(recipe.outputItemId());
+            if (output == null) {
+                showCraftingMessage(
+                        "Recipe Failed",
+                        "The output item for " + recipe.displayName() + " could not be found."
+                );
+                return false;
+            }
+            if (!canHoldCraftingOutput(output, recipe, primary, secondary)) {
+                showCraftingMessage("Inventory Full", "You do not have room for the crafted item.");
+                return false;
+            }
+        }
+
+        if (recipe.consumePrimary()
+                && !getInventory().removeItemQuantityNamed(primary.getName(), recipe.primaryQuantity())) {
+            showCraftingMessage("Recipe Failed", "The primary ingredient could not be consumed.");
+            return false;
+        }
+        if (secondary != null
+                && recipe.consumeSecondary()
+                && !getInventory().removeItemQuantityNamed(secondary.getName(), recipe.secondaryQuantity())) {
+            showCraftingMessage("Recipe Failed", "The secondary ingredient could not be consumed.");
+            return false;
+        }
+
+        String resultName;
+        if (recipe.outputsStation()) {
+            CraftingStationType stationType = recipe.outputStationType();
+            MapEntity station = stationType.createEntity(stationX, stationY)
+                    .configureTemporaryStation(
+                            UUID.randomUUID().toString(),
+                            stationType,
+                            recipe.stationLifetimeMs(),
+                            false
+                    );
+            entities.add(station);
+            resultName = stationType.getDisplayName();
+        } else {
+            getInventory().addItem(output);
+            resultName = output.getName();
+        }
+
+        clearSelectedWorldUseItem();
+        int levelsGained = playerCharacter.addSkillExperience(recipe.requiredSkill(), recipe.xpReward());
+        String message = recipe.outputsStation()
+                ? "You place a temporary " + resultName + " in front of you."
+                : "You make " + resultName + ".";
+        if (levelsGained > 0) {
+            message += " " + recipe.requiredSkill().getDisplayName() + " level "
+                    + playerCharacter.getSkillLevel(recipe.requiredSkill()) + "!";
+        }
+        showCraftingMessage(recipe.displayName(), message);
+        return true;
+    }
+
+    private boolean canHoldCraftingOutput(
+            InventorySystem.Item output,
+            MapDesignLibrary.CraftingRecipe recipe,
+            InventorySystem.Item primary,
+            InventorySystem.Item secondary
+    ) {
+        if (getInventory().canAddItem(output)) {
+            return true;
+        }
+        return recipe.consumePrimary()
+                && getInventory().wouldRemovingQuantityFreeSlot(primary.getName(), recipe.primaryQuantity())
+                || secondary != null
+                && recipe.consumeSecondary()
+                && getInventory().wouldRemovingQuantityFreeSlot(secondary.getName(), recipe.secondaryQuantity());
+    }
+
+    private String ingredientRequirementText(
+            MapDesignLibrary.CraftingRecipe recipe,
+            InventorySystem.Item primary,
+            InventorySystem.Item secondary
+    ) {
+        String text = "You need " + recipe.primaryQuantity() + " " + primary.getName();
+        if (secondary != null) {
+            text += " and " + recipe.secondaryQuantity() + " " + secondary.getName();
+        }
+        return text + ".";
+    }
+
+    private void showCraftingMessage(String title, String message) {
+        openInteraction(InteractionSystem.prompt(
+                title,
+                message,
+                InteractionSystem.closeOption("Close")
+        ));
+    }
+
+    private List<MapDesignLibrary.CraftingRecipe> matchingSingleIngredientRecipes(InventorySystem.Item item) {
+        if (item == null) {
+            return List.of();
+        }
+        List<MapDesignLibrary.CraftingRecipe> matches = new ArrayList<>();
+        for (MapDesignLibrary.CraftingRecipe recipe : allCraftingRecipes()) {
+            if (recipe.isSingleIngredient() && recipeItemMatches(recipe.primaryItemId(), item)) {
+                matches.add(recipe);
+            }
+        }
+        return matches;
+    }
+
+    private MapDesignLibrary.CraftingRecipe findCraftingRecipe(
             InventorySystem.Item first,
             InventorySystem.Item second
     ) {
-        for (MapDesignLibrary.CustomCompositeRecipe recipe : customCompositeRecipes.values()) {
+        for (MapDesignLibrary.CraftingRecipe recipe : allCraftingRecipes()) {
+            if (recipe.isSingleIngredient()) {
+                continue;
+            }
             if ((recipeItemMatches(recipe.primaryItemId(), first) && recipeItemMatches(recipe.secondaryItemId(), second))
                     || (recipeItemMatches(recipe.primaryItemId(), second) && recipeItemMatches(recipe.secondaryItemId(), first))) {
                 return recipe;
             }
         }
+        return null;
+    }
 
+    private List<MapDesignLibrary.CraftingRecipe> allCraftingRecipes() {
+        Map<String, MapDesignLibrary.CraftingRecipe> recipes = new HashMap<>();
         try {
-            for (MapDesignLibrary.CustomCompositeRecipe recipe : MapDesignLibrary.loadSharedContent().customCompositeRecipes()) {
-                if ((recipeItemMatches(recipe.primaryItemId(), first) && recipeItemMatches(recipe.secondaryItemId(), second))
-                        || (recipeItemMatches(recipe.primaryItemId(), second) && recipeItemMatches(recipe.secondaryItemId(), first))) {
-                    return recipe;
-                }
+            for (MapDesignLibrary.CraftingRecipe recipe : MapDesignLibrary.loadSharedContent().craftingRecipes()) {
+                recipes.put(recipe.recipeId().toLowerCase(), recipe);
             }
         } catch (java.io.IOException ignored) {
-            return null;
+            // The currently loaded map content remains available.
         }
-        return null;
+        for (MapDesignLibrary.CraftingRecipe recipe : craftingRecipes.values()) {
+            recipes.put(recipe.recipeId().toLowerCase(), recipe);
+        }
+        return new ArrayList<>(recipes.values());
     }
 
     private boolean recipeItemMatches(String configuredItemId, InventorySystem.Item item) {
@@ -2614,6 +2770,7 @@ public class GameState {
         cookingY = -1;
         cookingElapsedMs = 0;
         cookingItemName = null;
+        removeExpiredTemporaryStations();
     }
 
     public boolean isCookingActive() {
@@ -2821,6 +2978,7 @@ public class GameState {
         smeltingY = -1;
         smeltingElapsedMs = 0;
         smeltingItemName = null;
+        removeExpiredTemporaryStations();
     }
 
     public boolean isSmeltingActive() {
@@ -2829,6 +2987,90 @@ public class GameState {
 
     public boolean isSmeltingAt(int x, int y) {
         return smeltingActive && smeltingX == x && smeltingY == y;
+    }
+
+    public void updateTemporaryStations(int deltaMs) {
+        if (isBattleMode()) {
+            return;
+        }
+        int elapsed = Math.max(0, deltaMs);
+        if (elapsed == 0) {
+            return;
+        }
+        for (MapEntity entity : new ArrayList<>(entities)) {
+            if (!entity.isTemporaryStation() || !entity.advanceTemporaryStationTimer(elapsed)) {
+                continue;
+            }
+            if (isTemporaryStationInUse(entity)) {
+                entity.setTemporaryStationPendingExpiry(true);
+            } else {
+                entities.remove(entity);
+            }
+        }
+    }
+
+    private void removeExpiredTemporaryStations() {
+        entities.removeIf(entity -> entity.isTemporaryStation()
+                && entity.getTemporaryStationRemainingMs() <= 0
+                && !isTemporaryStationInUse(entity));
+    }
+
+    private boolean isTemporaryStationInUse(MapEntity entity) {
+        if (entity == null || entity.getTemporaryStationType() == null) {
+            return false;
+        }
+        return switch (entity.getTemporaryStationType()) {
+            case CAMPFIRE -> isCookingAt(entity.getX(), entity.getY());
+            case FURNACE -> isSmeltingAt(entity.getX(), entity.getY());
+            case ANVIL -> false;
+        };
+    }
+
+    private List<TemporaryStationSnapshot> getTemporaryStationSnapshots() {
+        List<TemporaryStationSnapshot> snapshots = new ArrayList<>();
+        for (MapEntity entity : entities) {
+            if (!entity.isTemporaryStation()) {
+                continue;
+            }
+            snapshots.add(new TemporaryStationSnapshot(
+                    entity.getTemporaryStationId(),
+                    entity.getTemporaryStationType(),
+                    entity.getX(),
+                    entity.getY(),
+                    entity.getTemporaryStationRemainingMs(),
+                    entity.isTemporaryStationPendingExpiry()
+            ));
+        }
+        return List.copyOf(snapshots);
+    }
+
+    private void restoreTemporaryStationSnapshots(
+            List<TemporaryStationSnapshot> snapshots,
+            long unloadedElapsedMs
+    ) {
+        entities.removeIf(MapEntity::isTemporaryStation);
+        for (TemporaryStationSnapshot snapshot : snapshots == null
+                ? List.<TemporaryStationSnapshot>of()
+                : snapshots) {
+            if (snapshot.stationType() == null || snapshot.stationId().isBlank()) {
+                continue;
+            }
+            int remaining = (int) Math.max(
+                    0L,
+                    (long) snapshot.remainingMs() - Math.max(0L, unloadedElapsedMs)
+            );
+            if (remaining <= 0) {
+                continue;
+            }
+            entities.add(snapshot.stationType()
+                    .createEntity(snapshot.x(), snapshot.y())
+                    .configureTemporaryStation(
+                            snapshot.stationId(),
+                            snapshot.stationType(),
+                            remaining,
+                            false
+                    ));
+        }
     }
 
     public void updateSmelting(int deltaMs) {
@@ -3228,6 +3470,18 @@ public class GameState {
         return Math.max(0, GameConfiguration.intValue("mining.xpReward", 18));
     }
 
+    private double baseWoodcuttingSuccessChance() {
+        return clampChance(GameConfiguration.doubleValue("woodcutting.baseSuccessChance", 0.40));
+    }
+
+    private double woodcuttingSuccessChancePerLevel() {
+        return Math.max(0.0, GameConfiguration.doubleValue("woodcutting.successChancePerLevel", 0.03));
+    }
+
+    private double maxWoodcuttingSuccessChance() {
+        return clampChance(GameConfiguration.doubleValue("woodcutting.maxSuccessChance", 0.88));
+    }
+
     private double baseCookingSuccessChance() {
         return clampChance(GameConfiguration.doubleValue("cooking.baseSuccessChance", 0.45));
     }
@@ -3367,6 +3621,20 @@ public class GameState {
         }
     }
 
+    public record TemporaryStationSnapshot(
+            String stationId,
+            CraftingStationType stationType,
+            int x,
+            int y,
+            int remainingMs,
+            boolean pendingExpiry
+    ) {
+        public TemporaryStationSnapshot {
+            stationId = stationId == null ? "" : stationId;
+            remainingMs = Math.max(0, remainingMs);
+        }
+    }
+
     public record MapRuntimeState(
             Path mapPath,
             DungeonMap dungeonMap,
@@ -3387,7 +3655,8 @@ public class GameState {
             List<MapDesignLibrary.CustomLimb> customLimbs,
             List<MapDesignLibrary.CustomGatheringNode> customGatheringNodes,
             List<MapDesignLibrary.CustomCookingRecipe> customCookingRecipes,
-            List<MapDesignLibrary.CustomCompositeRecipe> customCompositeRecipes
+            List<MapDesignLibrary.CraftingRecipe> craftingRecipes,
+            List<TemporaryStationSnapshot> temporaryStations
     ) {
         public MapRuntimeState {
             entities = entities == null ? List.of() : List.copyOf(entities);
@@ -3406,7 +3675,8 @@ public class GameState {
             customLimbs = customLimbs == null ? List.of() : List.copyOf(customLimbs);
             customGatheringNodes = customGatheringNodes == null ? List.of() : List.copyOf(customGatheringNodes);
             customCookingRecipes = customCookingRecipes == null ? List.of() : List.copyOf(customCookingRecipes);
-            customCompositeRecipes = customCompositeRecipes == null ? List.of() : List.copyOf(customCompositeRecipes);
+            craftingRecipes = craftingRecipes == null ? List.of() : List.copyOf(craftingRecipes);
+            temporaryStations = temporaryStations == null ? List.of() : List.copyOf(temporaryStations);
         }
 
         public MapRuntimeState(
@@ -3426,13 +3696,13 @@ public class GameState {
                 List<MapDesignLibrary.CustomLimb> customLimbs,
                 List<MapDesignLibrary.CustomGatheringNode> customGatheringNodes,
                 List<MapDesignLibrary.CustomCookingRecipe> customCookingRecipes,
-                List<MapDesignLibrary.CustomCompositeRecipe> customCompositeRecipes
+                List<MapDesignLibrary.CraftingRecipe> craftingRecipes
         ) {
             this(mapPath, dungeonMap, entities, hasEntitySnapshot, tileInteractionIds, removedEntityKeys,
                     resourceNodeStates, Map.of(), Map.of(), System.currentTimeMillis(),
                     discoveredMiniMapTiles, mapTriggers, firedTriggerIds,
                     authoredDialogues, authoredQuests, customItems, customLimbs, customGatheringNodes,
-                    customCookingRecipes, customCompositeRecipes);
+                    customCookingRecipes, craftingRecipes, List.of());
         }
     }
 }

@@ -49,6 +49,7 @@ public final class MapDesignLibrary {
     public static final Path DATA_MAP_FOLDER = Path.of("data", "maps");
     public static final Path DATA_CONTENT_FOLDER = Path.of("data", "content");
     public static final Path DATA_LEGACY_SHARED_CONTENT_PATH = DATA_CONTENT_FOLDER.resolve("authored_content.properties");
+    private static final String OAK_TREE_TEST_MODEL_PATH = "assets/3D/gatheringNode/Tree3.glb";
 
     private MapDesignLibrary() {
     }
@@ -241,6 +242,8 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "smithingRequiredBars", String.valueOf(customItem.smithingRequiredBars()));
             properties.setProperty(prefix + "smithingRequiredLevel", String.valueOf(customItem.smithingRequiredLevel()));
             properties.setProperty(prefix + "smithingXpReward", String.valueOf(customItem.smithingXpReward()));
+            properties.setProperty(prefix + "magicAccuracyBonus", String.valueOf(customItem.magicAccuracyBonus()));
+            properties.setProperty(prefix + "magicPowerBonus", String.valueOf(customItem.magicPowerBonus()));
         }
 
         properties.setProperty("mob.count", String.valueOf(design.customMobs().size()));
@@ -358,10 +361,10 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "xpReward", String.valueOf(recipe.xpReward()));
         }
 
-        properties.setProperty("compositeRecipe.count", String.valueOf(design.customCompositeRecipes().size()));
-        for (int i = 0; i < design.customCompositeRecipes().size(); i++) {
-            CustomCompositeRecipe recipe = design.customCompositeRecipes().get(i);
-            String prefix = "compositeRecipe." + i + ".";
+        properties.setProperty("craftingRecipe.count", String.valueOf(design.craftingRecipes().size()));
+        for (int i = 0; i < design.craftingRecipes().size(); i++) {
+            CraftingRecipe recipe = design.craftingRecipes().get(i);
+            String prefix = "craftingRecipe." + i + ".";
             properties.setProperty(prefix + "recipeId", recipe.recipeId());
             properties.setProperty(prefix + "displayName", recipe.displayName());
             properties.setProperty(prefix + "category", recipe.category().name());
@@ -376,6 +379,13 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "smeltOutputItemId", recipe.smeltOutputItemId());
             properties.setProperty(prefix + "smeltRequiredLevel", String.valueOf(recipe.smeltRequiredLevel()));
             properties.setProperty(prefix + "smeltXpReward", String.valueOf(recipe.smeltXpReward()));
+            properties.setProperty(prefix + "primaryQuantity", String.valueOf(recipe.primaryQuantity()));
+            properties.setProperty(prefix + "secondaryQuantity", String.valueOf(recipe.secondaryQuantity()));
+            properties.setProperty(prefix + "outputType", recipe.outputType().name());
+            properties.setProperty(prefix + "outputStationType", recipe.outputStationType() == null
+                    ? ""
+                    : recipe.outputStationType().name());
+            properties.setProperty(prefix + "stationLifetimeMs", String.valueOf(recipe.stationLifetimeMs()));
         }
         }
 
@@ -584,6 +594,8 @@ public final class MapDesignLibrary {
             int smithingRequiredBars = readInt(properties, prefix + "smithingRequiredBars", 1);
             int smithingRequiredLevel = readInt(properties, prefix + "smithingRequiredLevel", 1);
             int smithingXpReward = readInt(properties, prefix + "smithingXpReward", 25);
+            int magicAccuracyBonus = readInt(properties, prefix + "magicAccuracyBonus", 0);
+            int magicPowerBonus = readInt(properties, prefix + "magicPowerBonus", 0);
             if (!itemId.isBlank() && !itemName.isBlank()) {
                 customItems.add(new CustomItem(
                         itemId,
@@ -603,7 +615,9 @@ public final class MapDesignLibrary {
                         smithingRecipeEnabled,
                         smithingRequiredBars,
                         smithingRequiredLevel,
-                        smithingXpReward
+                        smithingXpReward,
+                        magicAccuracyBonus,
+                        magicPowerBonus
                 ));
             }
         }
@@ -620,6 +634,9 @@ public final class MapDesignLibrary {
                     properties.getProperty(prefix + "gatheringSkill", ""),
                     defaultGatheringSkill(nodeType)
             );
+            if (nodeType == GatheringNodeType.TREE && gatheringSkill == CharacterSkill.MINING) {
+                gatheringSkill = CharacterSkill.WOODCUTTING;
+            }
             int requiredLevel = readInt(properties, prefix + "requiredLevel", 1);
             String outputItemId = properties.getProperty(prefix + "outputItemId", "");
             int gatherXpReward = readInt(properties, prefix + "gatherXpReward", 18);
@@ -645,6 +662,9 @@ public final class MapDesignLibrary {
                 if (!framePath.isBlank()) {
                     framePaths.add(framePath);
                 }
+            }
+            if (nodeType == GatheringNodeType.TREE && framePaths.size() > 2) {
+                framePaths = List.of(framePaths.get(0), framePaths.get(framePaths.size() - 1));
             }
 
             if (!nodeId.isBlank() && !nodeName.isBlank()) {
@@ -692,18 +712,25 @@ public final class MapDesignLibrary {
             }
         }
 
-        String compositeRecipeRoot = contentRoot(properties, "compositeRecipe", "customCompositeRecipe");
-        int customCompositeRecipeCount = readInt(properties, compositeRecipeRoot + ".count", 0);
-        List<CustomCompositeRecipe> customCompositeRecipes = new ArrayList<>();
+        String craftingRecipeRoot = properties.containsKey("craftingRecipe.count")
+                ? "craftingRecipe"
+                : properties.containsKey("compositeRecipe.count")
+                ? "compositeRecipe"
+                : "customCompositeRecipe";
+        int customCompositeRecipeCount = readInt(properties, craftingRecipeRoot + ".count", 0);
+        List<CraftingRecipe> craftingRecipes = new ArrayList<>();
         for (int i = 0; i < customCompositeRecipeCount; i++) {
-            String prefix = compositeRecipeRoot + "." + i + ".";
+            String prefix = craftingRecipeRoot + "." + i + ".";
             String recipeId = properties.getProperty(prefix + "recipeId", "");
             String recipeName = properties.getProperty(prefix + "displayName", "");
-            CompositeRecipeCategory category = readCompositeRecipeCategory(properties.getProperty(prefix + "category", ""));
+            CraftingRecipeCategory category = readCraftingRecipeCategory(properties.getProperty(prefix + "category", ""));
             String primaryItemId = properties.getProperty(prefix + "primaryItemId", "");
             String secondaryItemId = properties.getProperty(prefix + "secondaryItemId", "");
             String outputItemId = properties.getProperty(prefix + "outputItemId", "");
-            CharacterSkill requiredSkill = readCharacterSkill(properties.getProperty(prefix + "requiredSkill", ""), CharacterSkill.SMITHING);
+            CharacterSkill requiredSkill = readCharacterSkill(
+                    properties.getProperty(prefix + "requiredSkill", ""),
+                    "craftingRecipe".equals(craftingRecipeRoot) ? CharacterSkill.CRAFTING : CharacterSkill.SMITHING
+            );
             int requiredLevel = readInt(properties, prefix + "requiredLevel", 1);
             int xpReward = readInt(properties, prefix + "xpReward", 0);
             boolean consumePrimary = Boolean.parseBoolean(properties.getProperty(prefix + "consumePrimary", "true"));
@@ -711,8 +738,20 @@ public final class MapDesignLibrary {
             String smeltOutputItemId = properties.getProperty(prefix + "smeltOutputItemId", "");
             int smeltRequiredLevel = readInt(properties, prefix + "smeltRequiredLevel", 1);
             int smeltXpReward = readInt(properties, prefix + "smeltXpReward", 0);
+            int primaryQuantity = readInt(properties, prefix + "primaryQuantity", 1);
+            int secondaryQuantity = secondaryItemId.isBlank()
+                    ? 0
+                    : readInt(properties, prefix + "secondaryQuantity", 1);
+            CraftingOutputType outputType = readCraftingOutputType(
+                    properties.getProperty(prefix + "outputType", ""),
+                    CraftingOutputType.ITEM
+            );
+            CraftingStationType outputStationType = readCraftingStationType(
+                    properties.getProperty(prefix + "outputStationType", "")
+            );
+            int stationLifetimeMs = readInt(properties, prefix + "stationLifetimeMs", 300000);
             if (!recipeId.isBlank() && !recipeName.isBlank()) {
-                customCompositeRecipes.add(new CustomCompositeRecipe(
+                craftingRecipes.add(new CraftingRecipe(
                         recipeId,
                         recipeName,
                         category,
@@ -726,7 +765,12 @@ public final class MapDesignLibrary {
                         consumeSecondary,
                         smeltOutputItemId,
                         smeltRequiredLevel,
-                        smeltXpReward
+                        smeltXpReward,
+                        primaryQuantity,
+                        secondaryQuantity,
+                        outputType,
+                        outputStationType,
+                        stationLifetimeMs
                 ));
             }
         }
@@ -827,7 +871,7 @@ public final class MapDesignLibrary {
             }
         }
 
-        return new MapDesign(width, height, displayName, description, musicPath, skyboxPath, primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry, mobAreas, placements, authoredDialogues, authoredQuests, customItems, customMobs, customLimbs, customNpcs, customGatheringNodes, customCookingRecipes, customCompositeRecipes, triggers, spawnX, spawnY);
+        return new MapDesign(width, height, displayName, description, musicPath, skyboxPath, primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry, mobAreas, placements, authoredDialogues, authoredQuests, customItems, customMobs, customLimbs, customNpcs, customGatheringNodes, customCookingRecipes, craftingRecipes, triggers, spawnX, spawnY);
     }
 
     private static InputStream openMapDesignStream(Path path) throws IOException {
@@ -877,7 +921,7 @@ public final class MapDesignLibrary {
                 design.customNpcs(),
                 design.customGatheringNodes(),
                 design.customCookingRecipes(),
-                design.customCompositeRecipes()
+                design.craftingRecipes()
         );
     }
 
@@ -893,7 +937,7 @@ public final class MapDesignLibrary {
         mergeMissingById(design.customNpcs(), content.customNpcs(), CustomNpc::npcId);
         mergeMissingById(design.customGatheringNodes(), content.customGatheringNodes(), CustomGatheringNode::nodeId);
         mergeMissingById(design.customCookingRecipes(), content.customCookingRecipes(), CustomCookingRecipe::recipeId);
-        mergeMissingById(design.customCompositeRecipes(), content.customCompositeRecipes(), CustomCompositeRecipe::recipeId);
+        mergeMissingById(design.craftingRecipes(), content.craftingRecipes(), CraftingRecipe::recipeId);
     }
 
     static void replaceAuthoredContent(MapDesign design, AuthoredContent content) {
@@ -908,7 +952,7 @@ public final class MapDesignLibrary {
         replaceEntries(design.customNpcs(), content.customNpcs());
         replaceEntries(design.customGatheringNodes(), content.customGatheringNodes());
         replaceEntries(design.customCookingRecipes(), content.customCookingRecipes());
-        replaceEntries(design.customCompositeRecipes(), content.customCompositeRecipes());
+        replaceEntries(design.craftingRecipes(), content.craftingRecipes());
     }
 
     private static <T> void replaceEntries(List<T> target, List<T> source) {
@@ -1025,7 +1069,7 @@ public final class MapDesignLibrary {
                 design.customLimbs(),
                 design.customGatheringNodes(),
                 design.customCookingRecipes(),
-                design.customCompositeRecipes(),
+                design.craftingRecipes(),
                 design.triggers()
         );
     }
@@ -1689,17 +1733,36 @@ public final class MapDesignLibrary {
         }
     }
 
-    private static CompositeRecipeCategory readCompositeRecipeCategory(String value) {
+    private static CraftingRecipeCategory readCraftingRecipeCategory(String value) {
         try {
-            return CompositeRecipeCategory.valueOf(value.toUpperCase(Locale.ROOT));
+            return CraftingRecipeCategory.valueOf(value.toUpperCase(Locale.ROOT));
         } catch (RuntimeException ignored) {
-            return CompositeRecipeCategory.MATERIAL;
+            return CraftingRecipeCategory.MATERIAL;
+        }
+    }
+
+    private static CraftingOutputType readCraftingOutputType(String value, CraftingOutputType fallback) {
+        try {
+            return CraftingOutputType.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (RuntimeException ignored) {
+            return fallback;
+        }
+    }
+
+    private static CraftingStationType readCraftingStationType(String value) {
+        try {
+            return CraftingStationType.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (RuntimeException ignored) {
+            return null;
         }
     }
 
     public static CharacterSkill defaultGatheringSkill(GatheringNodeType nodeType) {
         if (nodeType == GatheringNodeType.FISHING_SPOT) {
             return CharacterSkill.FISHING;
+        }
+        if (nodeType == GatheringNodeType.TREE) {
+            return CharacterSkill.WOODCUTTING;
         }
         return CharacterSkill.MINING;
     }
@@ -1741,7 +1804,7 @@ public final class MapDesignLibrary {
         String retainedRoot = switch (requestedRoot) {
             case "gathering_node" -> "gatheringNode";
             case "cooking_recipe" -> "cookingRecipe";
-            case "composite_recipe" -> "compositeRecipe";
+            case "crafting_recipe", "composite_recipe" -> "craftingRecipe";
             default -> requestedRoot;
         };
         properties.keySet().removeIf(rawKey ->
@@ -1808,7 +1871,7 @@ public final class MapDesignLibrary {
             List<CustomNpc> customNpcs,
             List<CustomGatheringNode> customGatheringNodes,
             List<CustomCookingRecipe> customCookingRecipes,
-            List<CustomCompositeRecipe> customCompositeRecipes,
+            List<CraftingRecipe> craftingRecipes,
             List<MapTrigger> triggers,
             int spawnX,
             int spawnY
@@ -1828,7 +1891,7 @@ public final class MapDesignLibrary {
             customNpcs = customNpcs == null ? new ArrayList<>() : customNpcs;
             customGatheringNodes = customGatheringNodes == null ? new ArrayList<>() : customGatheringNodes;
             customCookingRecipes = customCookingRecipes == null ? new ArrayList<>() : customCookingRecipes;
-            customCompositeRecipes = customCompositeRecipes == null ? new ArrayList<>() : customCompositeRecipes;
+            craftingRecipes = craftingRecipes == null ? new ArrayList<>() : craftingRecipes;
             triggers = triggers == null ? new ArrayList<>() : triggers;
         }
 
@@ -1854,7 +1917,7 @@ public final class MapDesignLibrary {
                 List<CustomNpc> customNpcs,
                 List<CustomGatheringNode> customGatheringNodes,
                 List<CustomCookingRecipe> customCookingRecipes,
-                List<CustomCompositeRecipe> customCompositeRecipes,
+                List<CraftingRecipe> craftingRecipes,
                 List<MapTrigger> triggers,
                 int spawnX,
                 int spawnY
@@ -1863,7 +1926,7 @@ public final class MapDesignLibrary {
                     primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry,
                     MobAreaData.blank(width, height), placements, authoredDialogues, authoredQuests,
                     customItems, customMobs, customLimbs, customNpcs, customGatheringNodes,
-                    customCookingRecipes, customCompositeRecipes, triggers, spawnX, spawnY);
+                    customCookingRecipes, craftingRecipes, triggers, spawnX, spawnY);
         }
 
         public MapDesign(
@@ -1887,7 +1950,7 @@ public final class MapDesignLibrary {
                 List<CustomNpc> customNpcs,
                 List<CustomGatheringNode> customGatheringNodes,
                 List<CustomCookingRecipe> customCookingRecipes,
-                List<CustomCompositeRecipe> customCompositeRecipes,
+                List<CraftingRecipe> craftingRecipes,
                 List<MapTrigger> triggers,
                 int spawnX,
                 int spawnY
@@ -1914,7 +1977,7 @@ public final class MapDesignLibrary {
                     customNpcs,
                     customGatheringNodes,
                     customCookingRecipes,
-                    customCompositeRecipes,
+                    craftingRecipes,
                     triggers,
                     spawnX,
                     spawnY
@@ -1941,7 +2004,7 @@ public final class MapDesignLibrary {
                 List<CustomNpc> customNpcs,
                 List<CustomGatheringNode> customGatheringNodes,
                 List<CustomCookingRecipe> customCookingRecipes,
-                List<CustomCompositeRecipe> customCompositeRecipes,
+                List<CraftingRecipe> craftingRecipes,
                 List<MapTrigger> triggers,
                 int spawnX,
                 int spawnY
@@ -1968,7 +2031,7 @@ public final class MapDesignLibrary {
                     customNpcs,
                     customGatheringNodes,
                     customCookingRecipes,
-                    customCompositeRecipes,
+                    craftingRecipes,
                     triggers,
                     spawnX,
                     spawnY
@@ -1993,7 +2056,7 @@ public final class MapDesignLibrary {
                 List<CustomNpc> customNpcs,
                 List<CustomGatheringNode> customGatheringNodes,
                 List<CustomCookingRecipe> customCookingRecipes,
-                List<CustomCompositeRecipe> customCompositeRecipes,
+                List<CraftingRecipe> craftingRecipes,
                 List<MapTrigger> triggers,
                 int spawnX,
                 int spawnY
@@ -2020,7 +2083,7 @@ public final class MapDesignLibrary {
                     customNpcs,
                     customGatheringNodes,
                     customCookingRecipes,
-                    customCompositeRecipes,
+                    craftingRecipes,
                     triggers,
                     spawnX,
                     spawnY
@@ -2122,7 +2185,7 @@ public final class MapDesignLibrary {
             List<CustomNpc> customNpcs,
             List<CustomGatheringNode> customGatheringNodes,
             List<CustomCookingRecipe> customCookingRecipes,
-            List<CustomCompositeRecipe> customCompositeRecipes
+            List<CraftingRecipe> craftingRecipes
     ) {
         public AuthoredContent {
             authoredDialogues = authoredDialogues == null ? List.of() : List.copyOf(authoredDialogues);
@@ -2133,7 +2196,7 @@ public final class MapDesignLibrary {
             customNpcs = customNpcs == null ? List.of() : List.copyOf(customNpcs);
             customGatheringNodes = customGatheringNodes == null ? List.of() : List.copyOf(customGatheringNodes);
             customCookingRecipes = customCookingRecipes == null ? List.of() : List.copyOf(customCookingRecipes);
-            customCompositeRecipes = customCompositeRecipes == null ? List.of() : List.copyOf(customCompositeRecipes);
+            craftingRecipes = craftingRecipes == null ? List.of() : List.copyOf(craftingRecipes);
         }
     }
 
@@ -2256,7 +2319,9 @@ public final class MapDesignLibrary {
             boolean smithingRecipeEnabled,
             int smithingRequiredBars,
             int smithingRequiredLevel,
-            int smithingXpReward
+            int smithingXpReward,
+            int magicAccuracyBonus,
+            int magicPowerBonus
     ) {
         public CustomItem {
             itemId = itemId == null ? "" : itemId;
@@ -2278,6 +2343,8 @@ public final class MapDesignLibrary {
             smithingRequiredBars = Math.max(1, smithingRequiredBars);
             smithingRequiredLevel = Math.max(1, smithingRequiredLevel);
             smithingXpReward = Math.max(0, smithingXpReward);
+            magicAccuracyBonus = itemType == InventorySystem.ItemType.WEAPON ? Math.max(0, magicAccuracyBonus) : 0;
+            magicPowerBonus = itemType == InventorySystem.ItemType.WEAPON ? Math.max(0, magicPowerBonus) : 0;
         }
 
         public InventorySystem.Item createItem() {
@@ -2297,7 +2364,33 @@ public final class MapDesignLibrary {
                     paperDollOverlayPath,
                     weaponType,
                     twoHanded
-            );
+            ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus);
+        }
+
+        public CustomItem(
+                String itemId,
+                String displayName,
+                InventorySystem.ItemType itemType,
+                String iconPath,
+                String paperDollOverlayPath,
+                String useSoundPath,
+                WeaponType weaponType,
+                boolean twoHanded,
+                GearMaterial material,
+                int healAmount,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                boolean stackable,
+                boolean smithingRecipeEnabled,
+                int smithingRequiredBars,
+                int smithingRequiredLevel,
+                int smithingXpReward
+        ) {
+            this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath,
+                    weaponType, twoHanded, material, healAmount, baseGoldValue, examineText,
+                    statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
+                    smithingRequiredLevel, smithingXpReward, 0, 0);
         }
 
         public CustomItem(
@@ -2337,7 +2430,9 @@ public final class MapDesignLibrary {
                     smithingRecipeEnabled,
                     smithingRequiredBars,
                     smithingRequiredLevel,
-                    smithingXpReward
+                    smithingXpReward,
+                    0,
+                    0
             );
         }
     }
@@ -2440,10 +2535,10 @@ public final class MapDesignLibrary {
         }
     }
 
-    public record CustomCompositeRecipe(
+    public record CraftingRecipe(
             String recipeId,
             String displayName,
-            CompositeRecipeCategory category,
+            CraftingRecipeCategory category,
             String primaryItemId,
             String secondaryItemId,
             String outputItemId,
@@ -2454,27 +2549,64 @@ public final class MapDesignLibrary {
             boolean consumeSecondary,
             String smeltOutputItemId,
             int smeltRequiredLevel,
-            int smeltXpReward
+            int smeltXpReward,
+            int primaryQuantity,
+            int secondaryQuantity,
+            CraftingOutputType outputType,
+            CraftingStationType outputStationType,
+            int stationLifetimeMs
     ) {
-        public CustomCompositeRecipe {
+        public CraftingRecipe {
             recipeId = recipeId == null ? "" : recipeId;
-            displayName = displayName == null || displayName.isBlank() ? "Composite Recipe" : displayName;
-            category = category == null ? CompositeRecipeCategory.MATERIAL : category;
+            displayName = displayName == null || displayName.isBlank() ? "Crafting Recipe" : displayName;
+            category = category == null ? CraftingRecipeCategory.MATERIAL : category;
             primaryItemId = primaryItemId == null ? "" : primaryItemId;
             secondaryItemId = secondaryItemId == null ? "" : secondaryItemId;
             outputItemId = outputItemId == null ? "" : outputItemId;
-            requiredSkill = requiredSkill == null ? CharacterSkill.SMITHING : requiredSkill;
+            requiredSkill = requiredSkill == null ? CharacterSkill.CRAFTING : requiredSkill;
             requiredLevel = Math.max(1, requiredLevel);
             xpReward = Math.max(0, xpReward);
             smeltOutputItemId = smeltOutputItemId == null ? "" : smeltOutputItemId;
             smeltRequiredLevel = Math.max(1, smeltRequiredLevel);
             smeltXpReward = Math.max(0, smeltXpReward);
+            primaryQuantity = Math.max(1, primaryQuantity);
+            secondaryQuantity = secondaryItemId.isBlank() ? 0 : Math.max(1, secondaryQuantity);
+            outputType = outputType == null ? CraftingOutputType.ITEM : outputType;
+            outputStationType = outputType == CraftingOutputType.CRAFTING_STATION
+                    ? outputStationType
+                    : null;
+            stationLifetimeMs = outputType == CraftingOutputType.CRAFTING_STATION
+                    ? Math.max(1, stationLifetimeMs)
+                    : 0;
         }
 
-        public CustomCompositeRecipe(
+        public CraftingRecipe(
                 String recipeId,
                 String displayName,
-                CompositeRecipeCategory category,
+                CraftingRecipeCategory category,
+                String primaryItemId,
+                String secondaryItemId,
+                String outputItemId,
+                CharacterSkill requiredSkill,
+                int requiredLevel,
+                int xpReward,
+                boolean consumePrimary,
+                boolean consumeSecondary,
+                String smeltOutputItemId,
+                int smeltRequiredLevel,
+                int smeltXpReward
+        ) {
+            this(recipeId, displayName, category, primaryItemId, secondaryItemId, outputItemId,
+                    requiredSkill, requiredLevel, xpReward, consumePrimary, consumeSecondary,
+                    smeltOutputItemId, smeltRequiredLevel, smeltXpReward,
+                    1, secondaryItemId == null || secondaryItemId.isBlank() ? 0 : 1,
+                    CraftingOutputType.ITEM, null, 0);
+        }
+
+        public CraftingRecipe(
+                String recipeId,
+                String displayName,
+                CraftingRecipeCategory category,
                 String primaryItemId,
                 String secondaryItemId,
                 String outputItemId,
@@ -2498,8 +2630,21 @@ public final class MapDesignLibrary {
                     consumeSecondary,
                     "",
                     1,
+                    0,
+                    1,
+                    secondaryItemId == null || secondaryItemId.isBlank() ? 0 : 1,
+                    CraftingOutputType.ITEM,
+                    null,
                     0
             );
+        }
+
+        public boolean isSingleIngredient() {
+            return secondaryItemId.isBlank();
+        }
+
+        public boolean outputsStation() {
+            return outputType == CraftingOutputType.CRAFTING_STATION;
         }
 
         public boolean matches(String firstItemIdOrName, String secondItemIdOrName) {
@@ -2754,7 +2899,11 @@ public final class MapDesignLibrary {
         }
 
         public String interactionId() {
-            return (nodeType == GatheringNodeType.FISHING_SPOT ? "custom_fishing_" : "custom_mining_") + nodeId;
+            return switch (nodeType) {
+                case FISHING_SPOT -> "custom_fishing_" + nodeId;
+                case TREE -> "custom_woodcutting_" + nodeId;
+                default -> "custom_mining_" + nodeId;
+            };
         }
 
         public MapEntity createEntity(int x, int y) {
@@ -2778,6 +2927,9 @@ public final class MapDesignLibrary {
             }
 
             entity.withInteractionId(interactionId()).withVisualScale(visualScale);
+            if ("node_oak_tree".equalsIgnoreCase(nodeId)) {
+//                entity.withStaticModel(OAK_TREE_TEST_MODEL_PATH);
+            }
             if (nodeType == GatheringNodeType.MINING_ROCK || nodeType == GatheringNodeType.TREE) {
                 entity.blocksMovement(true);
             }
@@ -2788,7 +2940,9 @@ public final class MapDesignLibrary {
             if (framePaths.isEmpty()) {
                 return null;
             }
-            int safeIndex = Math.max(0, Math.min(framePaths.size() - 1, exhaustionLevel));
+            int safeIndex = nodeType == GatheringNodeType.TREE
+                    ? (exhaustionLevel >= 2 ? framePaths.size() - 1 : 0)
+                    : Math.max(0, Math.min(framePaths.size() - 1, exhaustionLevel));
             return AssetLoader.loadImage(framePaths.get(safeIndex));
         }
 
@@ -2835,11 +2989,18 @@ public final class MapDesignLibrary {
         FORAGING
     }
 
-    public enum CompositeRecipeCategory {
+    public enum CraftingRecipeCategory {
         METAL,
         CONSUMABLE,
         MATERIAL,
-        ARMOR
+        ARMOR,
+        WEAPON,
+        STATION
+    }
+
+    public enum CraftingOutputType {
+        ITEM,
+        CRAFTING_STATION
     }
 
     public enum TriggerFireMode {

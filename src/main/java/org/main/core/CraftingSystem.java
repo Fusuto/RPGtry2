@@ -97,7 +97,7 @@ public final class CraftingSystem {
                 }
             }
 
-            for (MapDesignLibrary.CustomCompositeRecipe recipe : content.customCompositeRecipes()) {
+            for (MapDesignLibrary.CraftingRecipe recipe : content.craftingRecipes()) {
                 if (recipe == null || recipe.outputItemId().isBlank() || recipe.smeltOutputItemId().isBlank()) {
                     continue;
                 }

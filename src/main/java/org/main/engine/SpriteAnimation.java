@@ -114,4 +114,11 @@ public class SpriteAnimation {
     public BufferedImage getCurrentFrame() {
         return frames[currentFrame];
     }
+
+    public SpriteAnimation copy() {
+        SpriteAnimation copy = new SpriteAnimation(frames.clone(), frameDurationMs);
+        copy.currentFrame = currentFrame;
+        copy.elapsedMs = elapsedMs;
+        return copy;
+    }
 }

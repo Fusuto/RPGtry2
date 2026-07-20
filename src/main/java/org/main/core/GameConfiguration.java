@@ -225,6 +225,9 @@ public final class GameConfiguration {
         put("mining.successChancePerLevel", "0.03");
         put("mining.maxSuccessChance", "0.88");
         put("mining.xpReward", "18");
+        put("woodcutting.baseSuccessChance", "0.40");
+        put("woodcutting.successChancePerLevel", "0.03");
+        put("woodcutting.maxSuccessChance", "0.88");
         put("cooking.baseSuccessChance", "0.45");
         put("cooking.successChancePerLevel", "0.035");
         put("cooking.maxSuccessChance", "0.90");

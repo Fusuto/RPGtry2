@@ -22,6 +22,7 @@ import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferInt;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
@@ -61,6 +62,7 @@ import static org.lwjgl.opengl.GL11.glOrtho;
 import static org.lwjgl.opengl.GL11.glTexCoord2f;
 import static org.lwjgl.opengl.GL11.glTexImage2D;
 import static org.lwjgl.opengl.GL11.glTexParameteri;
+import static org.lwjgl.opengl.GL11.glTexSubImage2D;
 import static org.lwjgl.opengl.GL11.glVertex2f;
 
 public final class LwjglTextOverlayRenderer {
@@ -90,6 +92,9 @@ public final class LwjglTextOverlayRenderer {
     private int textureWidth;
     private int textureHeight;
     private ByteBuffer uploadBuffer;
+    private BufferedImage overlayImage;
+    private Graphics2D overlayGraphics;
+    private int[] uploadedPixels;
     private final List<OverlayAction> overlayActions = new ArrayList<>();
     private Runnable quitAction = () -> {
     };
@@ -251,20 +256,21 @@ public final class LwjglTextOverlayRenderer {
         }
 
         overlayActions.clear();
-        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D graphics = image.createGraphics();
-        graphics.setComposite(AlphaComposite.SrcOver);
-        graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-        drawGameOverlay(graphics, runtime, width, height);
-        graphics.dispose();
-
-        upload(image);
+        ensureOverlaySurface(width, height);
+        clearOverlaySurface(width, height);
+        drawGameOverlay(overlayGraphics, runtime, width, height);
+        uploadChangedRegion();
         drawOverlayQuad(width, height);
     }
 
     public void shutdown() {
+        if (overlayGraphics != null) {
+            overlayGraphics.dispose();
+            overlayGraphics = null;
+        }
+        overlayImage = null;
+        uploadedPixels = null;
+        uploadBuffer = null;
         if (textureId != 0) {
             glDeleteTextures(textureId);
             textureId = 0;
@@ -1000,37 +1006,148 @@ public final class LwjglTextOverlayRenderer {
         graphics.drawString("Showing " + (scroll + 1) + "-" + end + " of " + total + "  [mouse wheel]", x, y);
     }
 
-    private void upload(BufferedImage image) {
-        int width = image.getWidth();
-        int height = image.getHeight();
-        int requiredBytes = width * height * 4;
+    private void ensureOverlaySurface(int width, int height) {
+        if (overlayImage != null
+                && overlayImage.getWidth() == width
+                && overlayImage.getHeight() == height) {
+            return;
+        }
+
+        if (overlayGraphics != null) {
+            overlayGraphics.dispose();
+        }
+        overlayImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        overlayGraphics = overlayImage.createGraphics();
+        overlayGraphics.setRenderingHint(
+                RenderingHints.KEY_TEXT_ANTIALIASING,
+                RenderingHints.VALUE_TEXT_ANTIALIAS_ON
+        );
+        overlayGraphics.setRenderingHint(
+                RenderingHints.KEY_ANTIALIASING,
+                RenderingHints.VALUE_ANTIALIAS_ON
+        );
+        uploadedPixels = null;
+    }
+
+    private void clearOverlaySurface(int width, int height) {
+        overlayGraphics.setComposite(AlphaComposite.Clear);
+        overlayGraphics.fillRect(0, 0, width, height);
+        overlayGraphics.setComposite(AlphaComposite.SrcOver);
+    }
+
+    private void uploadChangedRegion() {
+        int width = overlayImage.getWidth();
+        int height = overlayImage.getHeight();
+        int[] pixels = ((DataBufferInt) overlayImage.getRaster().getDataBuffer()).getData();
+        boolean textureNeedsAllocation = textureId == 0
+                || textureWidth != width
+                || textureHeight != height
+                || uploadedPixels == null
+                || uploadedPixels.length != pixels.length;
+
+        ensureOverlayTexture();
+        if (textureNeedsAllocation) {
+            uploadRegion(pixels, width, 0, 0, width, height, true);
+            uploadedPixels = pixels.clone();
+            textureWidth = width;
+            textureHeight = height;
+            return;
+        }
+
+        int minX = width;
+        int minY = height;
+        int maxX = -1;
+        int maxY = -1;
+        for (int y = 0; y < height; y++) {
+            int row = y * width;
+            for (int x = 0; x < width; x++) {
+                int index = row + x;
+                if (pixels[index] == uploadedPixels[index]) {
+                    continue;
+                }
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+            }
+        }
+
+        if (maxX < minX || maxY < minY) {
+            return;
+        }
+
+        int dirtyWidth = maxX - minX + 1;
+        int dirtyHeight = maxY - minY + 1;
+        uploadRegion(pixels, width, minX, minY, dirtyWidth, dirtyHeight, false);
+        for (int y = minY; y <= maxY; y++) {
+            int offset = y * width + minX;
+            System.arraycopy(pixels, offset, uploadedPixels, offset, dirtyWidth);
+        }
+    }
+
+    private void ensureOverlayTexture() {
+        if (textureId != 0) {
+            return;
+        }
+        textureId = glGenTextures();
+        glBindTexture(GL_TEXTURE_2D, textureId);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+
+    private void uploadRegion(
+            int[] pixels,
+            int sourceWidth,
+            int x,
+            int y,
+            int width,
+            int height,
+            boolean allocateTexture
+    ) {
+        int requiredBytes = Math.multiplyExact(Math.multiplyExact(width, height), 4);
         if (uploadBuffer == null || uploadBuffer.capacity() < requiredBytes) {
             uploadBuffer = createByteBuffer(requiredBytes);
         }
 
         uploadBuffer.clear();
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int argb = image.getRGB(x, y);
-                uploadBuffer.put((byte) ((argb >> 16) & 0xFF));
-                uploadBuffer.put((byte) ((argb >> 8) & 0xFF));
+        for (int row = y; row < y + height; row++) {
+            int offset = row * sourceWidth + x;
+            for (int column = 0; column < width; column++) {
+                int argb = pixels[offset + column];
+                uploadBuffer.put((byte) ((argb >>> 16) & 0xFF));
+                uploadBuffer.put((byte) ((argb >>> 8) & 0xFF));
                 uploadBuffer.put((byte) (argb & 0xFF));
-                uploadBuffer.put((byte) ((argb >> 24) & 0xFF));
+                uploadBuffer.put((byte) ((argb >>> 24) & 0xFF));
             }
         }
         uploadBuffer.flip();
 
-        if (textureId == 0) {
-            textureId = glGenTextures();
-            glBindTexture(GL_TEXTURE_2D, textureId);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        }
-
-        textureWidth = width;
-        textureHeight = height;
         glBindTexture(GL_TEXTURE_2D, textureId);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, textureWidth, textureHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, uploadBuffer);
+        if (allocateTexture) {
+            glTexImage2D(
+                    GL_TEXTURE_2D,
+                    0,
+                    GL_RGBA8,
+                    width,
+                    height,
+                    0,
+                    GL_RGBA,
+                    GL_UNSIGNED_BYTE,
+                    uploadBuffer
+            );
+        } else {
+            glTexSubImage2D(
+                    GL_TEXTURE_2D,
+                    0,
+                    x,
+                    y,
+                    width,
+                    height,
+                    GL_RGBA,
+                    GL_UNSIGNED_BYTE,
+                    uploadBuffer
+            );
+        }
     }
 
     private void drawOverlayQuad(int width, int height) {

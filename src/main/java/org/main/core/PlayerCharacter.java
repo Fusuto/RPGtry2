@@ -511,6 +511,22 @@ public class PlayerCharacter {
         return total;
     }
 
+    public int getUsableWeaponMagicAccuracyBonus() {
+        if (!canWieldWeapon()) {
+            return 0;
+        }
+        InventorySystem.Item weapon = inventory.getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
+        return weapon == null ? 0 : weapon.getMagicAccuracyBonus();
+    }
+
+    public int getUsableWeaponMagicPowerBonus() {
+        if (!canWieldWeapon()) {
+            return 0;
+        }
+        InventorySystem.Item weapon = inventory.getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
+        return weapon == null ? 0 : weapon.getMagicPowerBonus();
+    }
+
     public int getMeleeAccuracy() {
         return getCombinedStat(PlayerStat.ATTACK)
                 + getSkillLevel(CharacterSkill.ATTACK)
@@ -532,12 +548,14 @@ public class PlayerCharacter {
     public int getSpellcasting() {
         return getCombinedStat(PlayerStat.INTELLIGENCE)
                 + getSkillLevel(CharacterSkill.MAGIC_ACCURACY)
-                + getUsableMagicAccuracyBonus();
+                + getUsableMagicAccuracyBonus()
+                + getUsableWeaponMagicAccuracyBonus();
     }
 
     public int getSpellPotency() {
         return getCombinedStat(PlayerStat.WILLPOWER)
-                + getSkillLevel(CharacterSkill.MAGIC_POWER);
+                + getSkillLevel(CharacterSkill.MAGIC_POWER)
+                + getUsableWeaponMagicPowerBonus();
     }
 
     private boolean hasFunctionalLimb(LimbSlot slot) {

@@ -223,6 +223,7 @@ public final class AetherGameRuntime {
         gameState.updateMining(deltaMs);
         gameState.updateCooking(deltaMs);
         gameState.updateSmelting(deltaMs);
+        gameState.updateTemporaryStations(deltaMs);
         worldCreatureSystem.update(gameState, deltaMs, dungeonController::engageEnemy);
         battleController.update(deltaMs);
         refreshChunkAmbienceIfNeeded();

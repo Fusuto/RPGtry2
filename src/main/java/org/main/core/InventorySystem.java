@@ -67,6 +67,8 @@ public final class InventorySystem {
         private final boolean twoHanded;
         private final boolean stackable;
         private final boolean materialTintApplied;
+        private int magicAccuracyBonus;
+        private int magicPowerBonus;
         private int quantity;
 
         public Item(String name, ItemType itemType, BufferedImage icon) {
@@ -267,6 +269,12 @@ public final class InventorySystem {
             this.twoHanded = itemType == ItemType.WEAPON && twoHanded;
             this.stackable = stackable;
             this.quantity = Math.max(1, quantity);
+        }
+
+        public Item withMagicBonuses(int accuracyBonus, int powerBonus) {
+            this.magicAccuracyBonus = Math.max(0, accuracyBonus);
+            this.magicPowerBonus = Math.max(0, powerBonus);
+            return this;
         }
 
         private static WeaponType defaultWeaponType(ItemType itemType) {
@@ -578,6 +586,14 @@ public final class InventorySystem {
             return Math.max(0, getEffectiveStatBonus() + weaponType.getPowerBonus());
         }
 
+        public int getMagicAccuracyBonus() {
+            return itemType == ItemType.WEAPON ? magicAccuracyBonus : 0;
+        }
+
+        public int getMagicPowerBonus() {
+            return itemType == ItemType.WEAPON ? magicPowerBonus : 0;
+        }
+
         public double getWeaponSpeedMultiplier() {
             return itemType == ItemType.WEAPON ? weaponType.getSpeedMultiplier() : 1.0;
         }
@@ -621,7 +637,7 @@ public final class InventorySystem {
                     paperDollOverlayPath,
                     weaponType,
                     twoHanded
-            );
+            ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus);
         }
     }
 
@@ -753,6 +769,13 @@ public final class InventorySystem {
             return false;
         }
 
+        public boolean canAddItem(Item item) {
+            if (item == null) {
+                return false;
+            }
+            return item.isStackable() && findStack(item.getName()) != null || hasFreeSlot();
+        }
+
         public int countItemNamed(String itemName) {
             if (itemName == null || itemName.isBlank()) {
                 return 0;
@@ -812,6 +835,27 @@ public final class InventorySystem {
             }
 
             return remaining == 0;
+        }
+
+        public boolean wouldRemovingQuantityFreeSlot(String itemName, int amount) {
+            if (itemName == null || itemName.isBlank() || amount <= 0) {
+                return false;
+            }
+            int remaining = amount;
+            for (Item item : items) {
+                if (item == null || !itemName.equalsIgnoreCase(item.getName())) {
+                    continue;
+                }
+                int inSlot = item.isStackable() ? item.getQuantity() : 1;
+                if (remaining >= inSlot) {
+                    return true;
+                }
+                remaining -= Math.min(remaining, inSlot);
+                if (remaining <= 0) {
+                    return false;
+                }
+            }
+            return false;
         }
 
         public int findFirstItemIndexNamed(String itemName) {
@@ -1328,6 +1372,13 @@ public final class InventorySystem {
                 closeContextMenu();
             }));
 
+            if (gameState != null && gameState.hasSingleIngredientCraftingRecipe(inventoryIndex)) {
+                contextMenuOptions.add(new ContextMenuOption("Craft", () -> {
+                    gameState.openSingleIngredientCraftingMenu(contextInventoryIndex);
+                    closeContextMenu();
+                }));
+            }
+
             contextMenuOptions.add(new ContextMenuOption("Drop", () -> {
                 dropItem(contextInventoryIndex);
                 closeContextMenu();
@@ -1767,6 +1818,8 @@ public final class InventorySystem {
                     + "\nHands: " + (item.isTwoHanded() ? "Two-handed" : "One-handed")
                     + "\nAccuracy: " + item.getWeaponAccuracyBonus()
                     + "\nPower: " + item.getWeaponPowerBonus()
+                    + "\nMagic Accuracy: " + item.getMagicAccuracyBonus()
+                    + "\nMagic Power: " + item.getMagicPowerBonus()
                     + "\nSpeed: " + Math.round(item.getWeaponSpeedMultiplier() * 100.0) + "% interval";
         }
 
@@ -1902,8 +1955,10 @@ public final class InventorySystem {
             int currentDamage = player.getUsableWeaponPowerBonus() + player.getEquipmentStatBonus(PlayerStat.STRENGTH);
             int currentDefense = player.getUsableArmorStatBonus() + player.getEquipmentStatBonus(PlayerStat.DEFENSE);
             int currentSpellcasting = player.getEquipmentStatBonus(PlayerStat.INTELLIGENCE)
-                    + player.getUsableMagicAccuracyBonus();
-            int currentPotency = player.getEquipmentStatBonus(PlayerStat.WILLPOWER);
+                    + player.getUsableMagicAccuracyBonus()
+                    + player.getUsableWeaponMagicAccuracyBonus();
+            int currentPotency = player.getEquipmentStatBonus(PlayerStat.WILLPOWER)
+                    + player.getUsableWeaponMagicPowerBonus();
             int currentSpeed = (int) Math.round(player.getUsableWeaponSpeedMultiplier() * 100.0);
             int previewAttack = currentAttack;
             int previewDamage = currentDamage;
@@ -1917,8 +1972,12 @@ public final class InventorySystem {
                     Item currentWeapon = inventory().getEquippedItem(EquipmentSlot.WEAPON);
                     int currentWeaponAccuracy = currentWeapon == null ? 0 : currentWeapon.getWeaponAccuracyBonus();
                     int currentWeaponPower = currentWeapon == null ? 0 : currentWeapon.getWeaponPowerBonus();
+                    int currentWeaponMagicAccuracy = currentWeapon == null ? 0 : currentWeapon.getMagicAccuracyBonus();
+                    int currentWeaponMagicPower = currentWeapon == null ? 0 : currentWeapon.getMagicPowerBonus();
                     previewAttack = currentAttack - currentWeaponAccuracy + draggedItem.getWeaponAccuracyBonus();
                     previewDamage = currentDamage - currentWeaponPower + draggedItem.getWeaponPowerBonus();
+                    previewSpellcasting = currentSpellcasting - currentWeaponMagicAccuracy + draggedItem.getMagicAccuracyBonus();
+                    previewPotency = currentPotency - currentWeaponMagicPower + draggedItem.getMagicPowerBonus();
                     previewSpeed = (int) Math.round(draggedItem.getWeaponSpeedMultiplier() * 100.0);
                 } else {
                     EquipmentSlot slot = previewSlotForItem(draggedItem);

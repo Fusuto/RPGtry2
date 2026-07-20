@@ -232,7 +232,7 @@ public final class WorldManifestLibrary {
         Map<String, Object> npcIds = new LinkedHashMap<>();
         Map<String, Object> gatheringIds = new LinkedHashMap<>();
         Map<String, Object> cookingIds = new LinkedHashMap<>();
-        Map<String, Object> compositeIds = new LinkedHashMap<>();
+        Map<String, Object> craftingRecipeIds = new LinkedHashMap<>();
 
         for (Map.Entry<ChunkCoordinate, String> entry : manifest.chunks().entrySet()) {
             Path chunkPath = resolveChunkPath(manifestPath, entry.getValue());
@@ -264,8 +264,8 @@ public final class WorldManifestLibrary {
                         MapDesignLibrary.CustomGatheringNode::nodeId, gatheringIds);
                 checkContentConflicts(issues, entry.getKey(), "cooking recipe", design.customCookingRecipes(),
                         MapDesignLibrary.CustomCookingRecipe::recipeId, cookingIds);
-                checkContentConflicts(issues, entry.getKey(), "composite recipe", design.customCompositeRecipes(),
-                        MapDesignLibrary.CustomCompositeRecipe::recipeId, compositeIds);
+                checkContentConflicts(issues, entry.getKey(), "crafting recipe", design.craftingRecipes(),
+                        MapDesignLibrary.CraftingRecipe::recipeId, craftingRecipeIds);
                 validateMapLinks(issues, entry.getKey(), design);
             } catch (IOException exception) {
                 issues.add(error("Chunk " + entry.getKey() + " could not be loaded: " + entry.getValue()));

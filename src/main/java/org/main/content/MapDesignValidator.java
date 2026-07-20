@@ -15,7 +15,7 @@ import static org.main.content.MapDesignLibrary.AuthoredDialogue;
 import static org.main.content.MapDesignLibrary.AuthoredDialogueChoice;
 import static org.main.content.MapDesignLibrary.AuthoredDialogueNode;
 import static org.main.content.MapDesignLibrary.AuthoredQuest;
-import static org.main.content.MapDesignLibrary.CustomCompositeRecipe;
+import static org.main.content.MapDesignLibrary.CraftingRecipe;
 import static org.main.content.MapDesignLibrary.CustomCookingRecipe;
 import static org.main.content.MapDesignLibrary.CustomDropEntry;
 import static org.main.content.MapDesignLibrary.CustomGatheringNode;
@@ -491,7 +491,7 @@ final class MapDesignValidator {
         validateDuplicateIds(issues, "limb", design.customLimbs().stream().map(CustomLimb::limbId).toList());
         validateDuplicateIds(issues, "gathering node", design.customGatheringNodes().stream().map(CustomGatheringNode::nodeId).toList());
         validateDuplicateIds(issues, "cooking recipe", design.customCookingRecipes().stream().map(CustomCookingRecipe::recipeId).toList());
-        validateDuplicateIds(issues, "composite recipe", design.customCompositeRecipes().stream().map(CustomCompositeRecipe::recipeId).toList());
+        validateDuplicateIds(issues, "crafting recipe", design.craftingRecipes().stream().map(CraftingRecipe::recipeId).toList());
         validateDuplicateIds(issues, "quest", design.authoredQuests().stream().map(AuthoredQuest::questId).toList());
         validateDuplicateIds(issues, "dialogue", design.authoredDialogues().stream().map(AuthoredDialogue::interactionId).toList());
 
@@ -614,7 +614,14 @@ final class MapDesignValidator {
                         "Gathering node " + node.nodeId() + " smelts to unknown item " + node.smeltOutputItemId() + "."
                 ));
             }
-            if (node.nodeType() != GatheringNodeType.FISHING_SPOT && node.framePaths().size() < 3) {
+            if (node.nodeType() == GatheringNodeType.TREE && node.framePaths().size() != 2) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.ERROR,
+                        "Tree gathering node " + node.nodeId() + " must have exactly 2 images: full tree and stump."
+                ));
+            } else if (node.nodeType() != GatheringNodeType.FISHING_SPOT
+                    && node.nodeType() != GatheringNodeType.TREE
+                    && node.framePaths().size() < 3) {
                 issues.add(new ValidationIssue(
                         ValidationSeverity.WARNING,
                         "Gathering node " + node.nodeId() + " has fewer than 3 stage images."
@@ -631,12 +638,43 @@ final class MapDesignValidator {
             validateRecipeItem(issues, knownItems, "Cooking recipe " + recipe.recipeId(), "burnt item", recipe.burntItemId());
         }
 
-        for (CustomCompositeRecipe recipe : design.customCompositeRecipes()) {
-            validateRecipeItem(issues, knownItems, "Composite recipe " + recipe.recipeId(), "primary item", recipe.primaryItemId());
-            validateRecipeItem(issues, knownItems, "Composite recipe " + recipe.recipeId(), "secondary item", recipe.secondaryItemId());
-            validateRecipeItem(issues, knownItems, "Composite recipe " + recipe.recipeId(), "output item", recipe.outputItemId());
+        for (CraftingRecipe recipe : design.craftingRecipes()) {
+            String owner = "Crafting recipe " + recipe.recipeId();
+            validateRecipeItem(issues, knownItems, owner, "primary item", recipe.primaryItemId());
+            if (!recipe.secondaryItemId().isBlank()) {
+                validateRecipeItem(issues, knownItems, owner, "secondary item", recipe.secondaryItemId());
+                if (recipe.primaryItemId().equalsIgnoreCase(recipe.secondaryItemId())) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.ERROR,
+                            owner + " repeats the same ingredient; use one ingredient with a larger quantity."
+                    ));
+                }
+            }
+            if (recipe.primaryQuantity() <= 0
+                    || (!recipe.secondaryItemId().isBlank() && recipe.secondaryQuantity() <= 0)) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.ERROR,
+                        owner + " has an invalid ingredient quantity."
+                ));
+            }
+            if (recipe.outputType() == MapDesignLibrary.CraftingOutputType.ITEM) {
+                validateRecipeItem(issues, knownItems, owner, "output item", recipe.outputItemId());
+            } else {
+                if (recipe.outputStationType() == null) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.ERROR,
+                            owner + " is missing its crafting-station output."
+                    ));
+                }
+                if (recipe.stationLifetimeMs() <= 0) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.ERROR,
+                            owner + " needs a positive temporary-station lifetime."
+                    ));
+                }
+            }
             if (!recipe.smeltOutputItemId().isBlank()) {
-                validateRecipeItem(issues, knownItems, "Composite recipe " + recipe.recipeId(), "smelt output item", recipe.smeltOutputItemId());
+                validateRecipeItem(issues, knownItems, owner, "smelt output item", recipe.smeltOutputItemId());
             }
         }
     }

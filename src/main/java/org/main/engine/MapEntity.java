@@ -1,6 +1,7 @@
 package org.main.engine;
 
 import org.main.core.Library;
+import org.main.core.CraftingStationType;
 import org.main.monsters.Monster;
 import org.main.core.InventorySystem;
 import org.main.core.ShopSystem;
@@ -24,6 +25,8 @@ public class MapEntity {
     private boolean blocksMovementOverride = false;
     private boolean renderOnWall = false;
     private double visualScale = 1.0;
+    private String staticModelPath = "";
+    private boolean staticModelVisible = true;
     private String enemySpawnId = "";
     private String enemyLocalSpawnId = "";
     private String roamingAreaId = "";
@@ -34,6 +37,10 @@ public class MapEntity {
     private int respawnDelayMs = 300000;
     private int worldAiCooldownMs;
     private boolean worldAlerted;
+    private String temporaryStationId = "";
+    private CraftingStationType temporaryStationType;
+    private int temporaryStationRemainingMs;
+    private boolean temporaryStationPendingExpiry;
 
     private int x;
     private int y;
@@ -157,6 +164,24 @@ public class MapEntity {
     public MapEntity withVisualScale(double visualScale) {
         this.visualScale = Math.max(MIN_VISUAL_SCALE, visualScale);
         return this;
+    }
+
+    public String getStaticModelPath() {
+        return staticModelPath;
+    }
+
+    public boolean hasVisibleStaticModel() {
+        return staticModelVisible && !staticModelPath.isBlank();
+    }
+
+    public MapEntity withStaticModel(String assetPath) {
+        staticModelPath = assetPath == null ? "" : assetPath.trim().replace('\\', '/');
+        staticModelVisible = !staticModelPath.isBlank();
+        return this;
+    }
+
+    public void setStaticModelVisible(boolean visible) {
+        staticModelVisible = visible;
     }
 
     public InventorySystem.Item getItem() {
@@ -294,5 +319,88 @@ public class MapEntity {
 
     public void setWorldAlerted(boolean worldAlerted) {
         this.worldAlerted = worldAlerted;
+    }
+
+    public MapEntity configureTemporaryStation(
+            String stationId,
+            CraftingStationType stationType,
+            int remainingMs,
+            boolean pendingExpiry
+    ) {
+        temporaryStationId = stationId == null ? "" : stationId;
+        temporaryStationType = stationType;
+        temporaryStationRemainingMs = Math.max(0, remainingMs);
+        temporaryStationPendingExpiry = pendingExpiry;
+        return this;
+    }
+
+    public boolean isTemporaryStation() {
+        return !temporaryStationId.isBlank() && temporaryStationType != null;
+    }
+
+    public String getTemporaryStationId() {
+        return temporaryStationId;
+    }
+
+    public CraftingStationType getTemporaryStationType() {
+        return temporaryStationType;
+    }
+
+    public int getTemporaryStationRemainingMs() {
+        return temporaryStationRemainingMs;
+    }
+
+    public void setTemporaryStationRemainingMs(int remainingMs) {
+        temporaryStationRemainingMs = Math.max(0, remainingMs);
+    }
+
+    public boolean advanceTemporaryStationTimer(long elapsedMs) {
+        if (!isTemporaryStation() || temporaryStationRemainingMs <= 0) {
+            return isTemporaryStation();
+        }
+        temporaryStationRemainingMs = (int) Math.max(
+                0L,
+                (long) temporaryStationRemainingMs - Math.max(0L, elapsedMs)
+        );
+        return temporaryStationRemainingMs == 0;
+    }
+
+    public boolean isTemporaryStationPendingExpiry() {
+        return temporaryStationPendingExpiry;
+    }
+
+    public void setTemporaryStationPendingExpiry(boolean pendingExpiry) {
+        temporaryStationPendingExpiry = pendingExpiry;
+    }
+
+    public MapEntity copy() {
+        MapEntity copy = new MapEntity(name, type, x, y);
+        copy.monster = monster;
+        copy.idleAnimation = idleAnimation == null ? null : idleAnimation.copy();
+        copy.staticImage = staticImage;
+        copy.item = item == null ? null : item.copy();
+        copy.interactionId = interactionId;
+        copy.talkSoundPath = talkSoundPath;
+        copy.shopBlueprint = shopBlueprint;
+        copy.blocksMovementOverride = blocksMovementOverride;
+        copy.renderOnWall = renderOnWall;
+        copy.visualScale = visualScale;
+        copy.staticModelPath = staticModelPath;
+        copy.staticModelVisible = staticModelVisible;
+        copy.enemySpawnId = enemySpawnId;
+        copy.enemyLocalSpawnId = enemyLocalSpawnId;
+        copy.roamingAreaId = roamingAreaId;
+        copy.spawnX = spawnX;
+        copy.spawnY = spawnY;
+        copy.awarenessRadius = awarenessRadius;
+        copy.movementIntervalMs = movementIntervalMs;
+        copy.respawnDelayMs = respawnDelayMs;
+        copy.worldAiCooldownMs = worldAiCooldownMs;
+        copy.worldAlerted = worldAlerted;
+        copy.temporaryStationId = temporaryStationId;
+        copy.temporaryStationType = temporaryStationType;
+        copy.temporaryStationRemainingMs = temporaryStationRemainingMs;
+        copy.temporaryStationPendingExpiry = temporaryStationPendingExpiry;
+        return copy;
     }
 }

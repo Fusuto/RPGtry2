@@ -193,9 +193,13 @@ public final class OpenWorldSession {
             if (state == null || !loadedCoordinates.contains(coordinate)) {
                 continue;
             }
-            entity.leaveWorldWindow(windowOffsetX(coordinate), windowOffsetY(coordinate));
-            entity.setPosition(entity.getX() - windowOffsetX(coordinate), entity.getY() - windowOffsetY(coordinate));
-            state.entities.add(entity);
+            MapEntity localEntity = entity.copy();
+            localEntity.leaveWorldWindow(windowOffsetX(coordinate), windowOffsetY(coordinate));
+            localEntity.setPosition(
+                    localEntity.getX() - windowOffsetX(coordinate),
+                    localEntity.getY() - windowOffsetY(coordinate)
+            );
+            state.entities.add(localEntity);
         }
         distributeStringMap(capture.tileInteractions(), (state, key, value) -> state.tileInteractions.put(key, value));
         distributeResourceMap(capture.resourceNodeStates());
@@ -298,7 +302,16 @@ public final class OpenWorldSession {
         state.entities.clear();
         for (PersistedEntityState snapshot : snapshots == null ? List.<PersistedEntityState>of() : snapshots) {
             MapEntity entity = null;
-            if (snapshot.item() != null) {
+            if (snapshot.temporaryStationType() != null && !snapshot.temporaryStationId().isBlank()) {
+                entity = snapshot.temporaryStationType()
+                        .createEntity(snapshot.x(), snapshot.y())
+                        .configureTemporaryStation(
+                                snapshot.temporaryStationId(),
+                                snapshot.temporaryStationType(),
+                                snapshot.temporaryStationRemainingMs(),
+                                snapshot.temporaryStationPendingExpiry()
+                        );
+            } else if (snapshot.item() != null) {
                 entity = new MapEntity(snapshot.item(), snapshot.x(), snapshot.y());
             } else {
                 for (MapEntity candidate : authoredEntities) {
@@ -412,13 +425,14 @@ public final class OpenWorldSession {
                 }
 
                 for (MapEntity entity : chunk.entities) {
-                    entity.enterWorldWindow(
-                            runtimeEnemySpawnId(coordinate, entity.getEnemySpawnId()),
+                    MapEntity windowEntity = entity.copy();
+                    windowEntity.enterWorldWindow(
+                            runtimeEnemySpawnId(coordinate, windowEntity.getEnemySpawnId()),
                             offsetX,
                             offsetY
                     );
-                    entity.setPosition(entity.getX() + offsetX, entity.getY() + offsetY);
-                    entities.add(entity);
+                    windowEntity.setPosition(windowEntity.getX() + offsetX, windowEntity.getY() + offsetY);
+                    entities.add(windowEntity);
                 }
                 translateStringMap(chunk.tileInteractions, offsetX, offsetY, tileInteractions);
                 translateResourceMap(chunk.resourceNodeStates, offsetX, offsetY, resources);
@@ -485,7 +499,7 @@ public final class OpenWorldSession {
                 content.limbs,
                 content.gatheringNodes,
                 content.cookingRecipes,
-                content.compositeRecipes,
+                content.craftingRecipes,
                 environmentThemes,
                 centerChunkPath(),
                 -1,
@@ -812,7 +826,7 @@ public final class OpenWorldSession {
             List<MapDesignLibrary.CustomLimb> limbs,
             List<MapDesignLibrary.CustomGatheringNode> gatheringNodes,
             List<MapDesignLibrary.CustomCookingRecipe> cookingRecipes,
-            List<MapDesignLibrary.CustomCompositeRecipe> compositeRecipes,
+            List<MapDesignLibrary.CraftingRecipe> craftingRecipes,
             List<EnvironmentTheme> environmentThemes,
             Path centerChunkPath,
             int playerX,
@@ -822,7 +836,7 @@ public final class OpenWorldSession {
             return new WindowState(
                     map, entities, tileInteractions, resourceNodeStates, enemyRespawns, discoveredTiles, removedEntityKeys,
                     triggers, firedTriggerIds, dialogues, quests, items, limbs, gatheringNodes,
-                    cookingRecipes, compositeRecipes, environmentThemes, centerChunkPath, x, y
+                    cookingRecipes, craftingRecipes, environmentThemes, centerChunkPath, x, y
             );
         }
     }
@@ -887,7 +901,11 @@ public final class OpenWorldSession {
             int movementIntervalMs,
             int respawnDelayMs,
             int aiCooldownMs,
-            boolean alerted
+            boolean alerted,
+            String temporaryStationId,
+            CraftingStationType temporaryStationType,
+            int temporaryStationRemainingMs,
+            boolean temporaryStationPendingExpiry
     ) {
         public PersistedEntityState {
             name = name == null ? "" : name;
@@ -902,6 +920,8 @@ public final class OpenWorldSession {
             respawnDelayMs = Math.max(0, respawnDelayMs);
             aiCooldownMs = Math.max(0, aiCooldownMs);
             visualScale = Math.max(0.10, visualScale);
+            temporaryStationId = temporaryStationId == null ? "" : temporaryStationId;
+            temporaryStationRemainingMs = Math.max(0, temporaryStationRemainingMs);
         }
 
         public PersistedEntityState(
@@ -917,7 +937,8 @@ public final class OpenWorldSession {
                 InventorySystem.Item item
         ) {
             this(name, type, x, y, interactionId, talkSoundPath, blocksMovement, renderOnWall,
-                    visualScale, item, "", "", x, y, "", 4, 3000, 300000, 0, false);
+                    visualScale, item, "", "", x, y, "", 4, 3000, 300000, 0, false,
+                    "", null, 0, false);
         }
     }
 
@@ -997,11 +1018,15 @@ public final class OpenWorldSession {
                 }
                 enemyRespawns.clear();
                 enemyRespawns.putAll(advancedEnemies);
+
+                entities.removeIf(entity -> entity.isTemporaryStation()
+                        && entity.advanceTemporaryStationTimer(elapsed));
             }
             lastUpdatedEpochMs = now;
         }
 
         private PersistedChunkState persisted() {
+            validateEntityCoordinatesForPersistence();
             return new PersistedChunkState(
                     copyDungeonMap(map),
                     entities.stream()
@@ -1025,7 +1050,11 @@ public final class OpenWorldSession {
                                     entity.getMovementIntervalMs(),
                                     entity.getRespawnDelayMs(),
                                     entity.getWorldAiCooldownMs(),
-                                    entity.isWorldAlerted()
+                                    entity.isWorldAlerted(),
+                                    entity.getTemporaryStationId(),
+                                    entity.getTemporaryStationType(),
+                                    entity.getTemporaryStationRemainingMs(),
+                                    entity.isTemporaryStationPendingExpiry()
                             ))
                             .toList(),
                     tileInteractions,
@@ -1038,6 +1067,25 @@ public final class OpenWorldSession {
                     lastUpdatedEpochMs
             );
         }
+
+        private void validateEntityCoordinatesForPersistence() {
+            int width = map.getWidth();
+            int height = map.getHeight();
+            for (MapEntity entity : entities) {
+                boolean stableEnemy = entity.getType() == Library.EntityType.ENEMY
+                        && !entity.getEnemySpawnId().isBlank();
+                int localX = stableEnemy ? entity.getSpawnX() : entity.getX();
+                int localY = stableEnemy ? entity.getSpawnY() : entity.getY();
+                if (localX >= 0 && localX < width && localY >= 0 && localY < height) {
+                    continue;
+                }
+                throw new IllegalStateException(
+                        "Refusing to persist non-local entity " + entity.getName()
+                                + " at " + localX + "," + localY
+                                + " for chunk " + path + " (" + width + "x" + height + ")."
+                );
+            }
+        }
     }
 
     private static final class ContentAccumulator {
@@ -1047,14 +1095,14 @@ public final class OpenWorldSession {
         private final List<MapDesignLibrary.CustomLimb> limbs = new ArrayList<>();
         private final List<MapDesignLibrary.CustomGatheringNode> gatheringNodes = new ArrayList<>();
         private final List<MapDesignLibrary.CustomCookingRecipe> cookingRecipes = new ArrayList<>();
-        private final List<MapDesignLibrary.CustomCompositeRecipe> compositeRecipes = new ArrayList<>();
+        private final List<MapDesignLibrary.CraftingRecipe> craftingRecipes = new ArrayList<>();
         private final Set<String> dialogueIds = new LinkedHashSet<>();
         private final Set<String> questIds = new LinkedHashSet<>();
         private final Set<String> itemIds = new LinkedHashSet<>();
         private final Set<String> limbIds = new LinkedHashSet<>();
         private final Set<String> gatheringIds = new LinkedHashSet<>();
         private final Set<String> cookingIds = new LinkedHashSet<>();
-        private final Set<String> compositeIds = new LinkedHashSet<>();
+        private final Set<String> craftingRecipeIds = new LinkedHashSet<>();
 
         private void add(ChunkState chunk) {
             addUnique(dialogues, chunk.design.authoredDialogues(), MapDesignLibrary.AuthoredDialogue::interactionId, dialogueIds);
@@ -1063,7 +1111,7 @@ public final class OpenWorldSession {
             addUnique(limbs, chunk.design.customLimbs(), MapDesignLibrary.CustomLimb::limbId, limbIds);
             addUnique(gatheringNodes, chunk.design.customGatheringNodes(), MapDesignLibrary.CustomGatheringNode::nodeId, gatheringIds);
             addUnique(cookingRecipes, chunk.design.customCookingRecipes(), MapDesignLibrary.CustomCookingRecipe::recipeId, cookingIds);
-            addUnique(compositeRecipes, chunk.design.customCompositeRecipes(), MapDesignLibrary.CustomCompositeRecipe::recipeId, compositeIds);
+            addUnique(craftingRecipes, chunk.design.craftingRecipes(), MapDesignLibrary.CraftingRecipe::recipeId, craftingRecipeIds);
         }
 
         private static <T> void addUnique(

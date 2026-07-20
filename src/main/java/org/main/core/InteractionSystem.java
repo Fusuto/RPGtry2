@@ -232,6 +232,22 @@ public final class InteractionSystem {
         )).allowCharacterMenuOverlay();
     }
 
+    public static Interaction woodcuttingMenu(GameState gameState) {
+        return new Interaction(new SkillingInteractionContent(
+                gameState,
+                "Tree",
+                CharacterSkill.WOODCUTTING,
+                () -> gameState == null ? "No tree found." : gameState.getMiningMessage(),
+                "Wait a few seconds for each woodcutting attempt.",
+                "Stop Woodcutting",
+                () -> {
+                    if (gameState != null) {
+                        gameState.stopMining();
+                    }
+                }
+        )).allowCharacterMenuOverlay();
+    }
+
     public static Interaction cookingMenu(GameState gameState) {
         return new Interaction(new SkillingInteractionContent(
                 gameState,
@@ -1559,7 +1575,19 @@ public final class InteractionSystem {
                 if (interactionId != null && interactionId.startsWith("custom_mining_")) {
                     int interactionX = tileX >= 0 ? tileX : entity == null ? tileX : entity.getX();
                     int interactionY = tileY >= 0 ? tileY : entity == null ? tileY : entity.getY();
+                    MapDesignLibrary.CustomGatheringNode node = gameState == null
+                            ? null
+                            : gameState.getCustomGatheringNodeAtPosition(interactionX, interactionY);
+                    if (node != null && node.nodeType() == MapDesignLibrary.GatheringNodeType.TREE) {
+                        return createWoodcuttingInteraction(gameState, interactionX, interactionY);
+                    }
                     return createMiningInteraction(gameState, interactionX, interactionY);
+                }
+
+                if (interactionId != null && interactionId.startsWith("custom_woodcutting_")) {
+                    int interactionX = tileX >= 0 ? tileX : entity == null ? tileX : entity.getX();
+                    int interactionY = tileY >= 0 ? tileY : entity == null ? tileY : entity.getY();
+                    return createWoodcuttingInteraction(gameState, interactionX, interactionY);
                 }
 
                 Interaction authoredInteraction = createAuthoredInteraction(interactionId, gameState, entity, tileX, tileY);
@@ -2172,6 +2200,17 @@ public final class InteractionSystem {
             }
 
             return miningMenu(gameState);
+        }
+
+        private static Interaction createWoodcuttingInteraction(GameState gameState, int tileX, int tileY) {
+            if (!gameState.startMining(tileX, tileY)) {
+                return prompt(
+                        "Woodcutting",
+                        gameState.getMiningMessage(),
+                        closeOption("Close")
+                );
+            }
+            return woodcuttingMenu(gameState);
         }
     }
 

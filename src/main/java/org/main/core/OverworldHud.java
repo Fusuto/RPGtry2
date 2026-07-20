@@ -23,7 +23,7 @@ import java.util.Map;
 public class OverworldHud {
     private static final String FOOZLE_PATH = "assets/images/Foozle_UI_0001_RPG_Set_1/";
     private static final String A1_ICON_PATH = "assets/images/ui/01_UI_Resources/A1ICON/";
-    private static final String SKILL_ICON_PATH = "assets/images/ui/custom/skills/";
+    private static final String SKILL_ICON_PATH = "assets/images/skill-icons/";
     private static final String BATTLE_UI_PATH = "assets/images/ui/01_UI_Resources/01Battle/";
     private static final String MAIN_MENU_PATH = "assets/images/ui/01_UI_Resources/04MainMenu/";
 
@@ -91,6 +91,13 @@ public class OverworldHud {
         skillIcons.put(CharacterSkill.COOKING, AssetLoader.loadImage(SKILL_ICON_PATH + "cooking-pot.png"));
         skillIcons.put(CharacterSkill.BUTCHERING, AssetLoader.loadImage(SKILL_ICON_PATH + "meat-cleaver.png"));
         skillIcons.put(CharacterSkill.GRAFTING, AssetLoader.loadImage(SKILL_ICON_PATH + "grab.png"));
+        skillIcons.put(CharacterSkill.ATTACK, AssetLoader.loadImage(SKILL_ICON_PATH + "piercing-sword.png"));
+        skillIcons.put(CharacterSkill.STRENGTH, AssetLoader.loadImage(SKILL_ICON_PATH + "biceps.png"));
+        skillIcons.put(CharacterSkill.MAGIC_ACCURACY, AssetLoader.loadImage(SKILL_ICON_PATH + "magic-palm.png"));
+        skillIcons.put(CharacterSkill.MAGIC_POWER, AssetLoader.loadImage(SKILL_ICON_PATH + "fire-spell-cast.png"));
+        skillIcons.put(CharacterSkill.WOODCUTTING, AssetLoader.loadImage(SKILL_ICON_PATH + "axe-in-log.png"));
+        skillIcons.put(CharacterSkill.CRAFTING, AssetLoader.loadImage(SKILL_ICON_PATH + "froe-and-mallet.png"));
+        skillIcons.put(CharacterSkill.DEFENSE, AssetLoader.loadImage(SKILL_ICON_PATH + "shield.png"));
     }
 
     public int getBottomReservedHeight() {

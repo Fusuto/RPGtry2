@@ -64,6 +64,7 @@ final class LwjglDungeonSceneBuilder {
             double cameraYawDegrees
     ) {
         List<TexturedQuad> quads = new ArrayList<>();
+        List<ModelInstance> models = new ArrayList<>();
         List<RoofTile> roofTiles = new ArrayList<>();
         int floorQuads = 0;
         int wallQuads = 0;
@@ -124,13 +125,44 @@ final class LwjglDungeonSceneBuilder {
 
         for (MapEntity entity : context.entities()) {
             TexturedQuad sprite = spriteQuad(context, entity, maxDepth, cameraYawDegrees);
+            if (entity.hasVisibleStaticModel()) {
+                ModelInstance model = modelInstance(context, entity, maxDepth, sprite);
+                if (model != null) {
+                    models.add(model);
+                    continue;
+                }
+            }
             if (sprite != null) {
                 quads.add(sprite);
                 spriteQuads++;
             }
         }
 
-        return new Scene(quads, visibleTiles, floorQuads, wallQuads, roofQuads, spriteQuads);
+        return new Scene(quads, models, visibleTiles, floorQuads, wallQuads, roofQuads, spriteQuads);
+    }
+
+    private ModelInstance modelInstance(
+            DungeonRenderContext context,
+            MapEntity entity,
+            int maxDepth,
+            TexturedQuad fallbackSprite
+    ) {
+        double dx = entity.getX() + 0.5 - (context.playerX() + 0.5);
+        double dz = entity.getY() + 0.5 - (context.playerY() + 0.5);
+        if (dx * dx + dz * dz > maxDepth * maxDepth) {
+            return null;
+        }
+        if (context.map().getTile(entity.getX(), entity.getY()).isWallLike() && !entity.shouldRenderOnWall()) {
+            return null;
+        }
+        return new ModelInstance(
+                entity.getStaticModelPath(),
+                entity.getX() + 0.5,
+                0.0,
+                entity.getY() + 0.5,
+                spriteHeightFor(entity),
+                fallbackSprite
+        );
     }
 
     private RoofTile roofTile(DungeonRenderContext context, int x, int y, double topY, BufferedImage texture) {
@@ -764,11 +796,22 @@ final class LwjglDungeonSceneBuilder {
 
     record Scene(
             List<TexturedQuad> quads,
+            List<ModelInstance> models,
             int visibleTiles,
             int floorQuads,
             int wallQuads,
             int roofQuads,
             int spriteQuads
+    ) {
+    }
+
+    record ModelInstance(
+            String assetPath,
+            double centerX,
+            double baseY,
+            double centerZ,
+            double height,
+            TexturedQuad fallbackSprite
     ) {
     }
 

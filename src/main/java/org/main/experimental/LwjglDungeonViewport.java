@@ -15,7 +15,13 @@ import java.awt.Dimension;
 import java.awt.Point;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.GL.createCapabilities;
@@ -24,8 +30,11 @@ import static org.lwjgl.system.MemoryUtil.NULL;
 
 public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     private static final int MAX_DIFFICULTY_LABEL_DEPTH = 3;
+    private static final Logger LOGGER = Logger.getLogger(LwjglDungeonViewport.class.getName());
 
     private final LwjglTextureCache textureCache = new LwjglTextureCache();
+    private final Map<String, LwjglStaticModel> staticModelCache = new HashMap<>();
+    private final Set<String> failedStaticModels = new HashSet<>();
     private final LwjglDungeonSceneBuilder sceneBuilder;
     private final int windowWidth;
     private final int windowHeight;
@@ -44,6 +53,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     private int wallQuads;
     private int roofQuads;
     private int spriteQuads;
+    private int staticModels;
     private double lastFrameMs;
     private double smoothedFrameMs = 16.0;
     private CameraLookState lastLookState = CameraLookState.centered();
@@ -147,6 +157,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             wallQuads = scene.wallQuads();
             roofQuads = scene.roofQuads();
             spriteQuads = scene.spriteQuads();
+            staticModels = scene.models().size();
             enemyLabels = projectEnemyLabels(
                     context,
                     safeLookState,
@@ -157,12 +168,16 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             for (LwjglDungeonSceneBuilder.TexturedQuad quad : scene.quads()) {
                 drawQuad(quad);
             }
+            for (LwjglDungeonSceneBuilder.ModelInstance model : scene.models()) {
+                drawStaticModel(model);
+            }
         } else {
             visibleTiles = 0;
             floorQuads = 0;
             wallQuads = 0;
             roofQuads = 0;
             spriteQuads = 0;
+            staticModels = 0;
             enemyLabels = List.of();
         }
 
@@ -186,6 +201,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
 
     @Override
     public void shutdown() {
+        staticModelCache.clear();
+        failedStaticModels.clear();
         textureCache.shutdown();
         if (window != NULL) {
             glfwDestroyWindow(window);
@@ -210,6 +227,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                 + ", walls=" + wallQuads
                 + ", roofs=" + roofQuads
                 + ", sprites=" + spriteQuads
+                + ", models=" + staticModels
                 + ", textures=" + textureCache.textureCount();
     }
 
@@ -568,6 +586,61 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         glVertex3d(vertex.x(), vertex.y(), vertex.z());
     }
 
+    private void drawStaticModel(LwjglDungeonSceneBuilder.ModelInstance instance) {
+        LwjglStaticModel model = getStaticModel(instance.assetPath());
+        if (model == null) {
+            if (instance.fallbackSprite() != null) {
+                drawQuad(instance.fallbackSprite());
+            }
+            return;
+        }
+
+        textureCache.bind(model.texture());
+        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        glPushMatrix();
+        glTranslated(instance.centerX(), instance.baseY(), instance.centerZ());
+        double scale = model.normalizedScaleForHeight(instance.height());
+        glScaled(scale, scale, scale);
+        glTranslated(-model.centerX(), -model.baseY(), -model.centerZ());
+
+        for (LwjglStaticModel.Mesh mesh : model.meshes()) {
+            float[] positions = mesh.positions();
+            float[] texCoords = mesh.texCoords();
+            glBegin(GL_TRIANGLES);
+            for (int index : mesh.indices()) {
+                int textureOffset = index * 2;
+                int positionOffset = index * 3;
+                glTexCoord2f(texCoords[textureOffset], texCoords[textureOffset + 1]);
+                glVertex3f(
+                        positions[positionOffset],
+                        positions[positionOffset + 1],
+                        positions[positionOffset + 2]
+                );
+            }
+            glEnd();
+        }
+        glPopMatrix();
+    }
+
+    private LwjglStaticModel getStaticModel(String assetPath) {
+        if (assetPath == null || assetPath.isBlank() || failedStaticModels.contains(assetPath)) {
+            return null;
+        }
+        LwjglStaticModel cached = staticModelCache.get(assetPath);
+        if (cached != null) {
+            return cached;
+        }
+        try {
+            LwjglStaticModel loaded = LwjglStaticModel.load(assetPath);
+            staticModelCache.put(assetPath, loaded);
+            return loaded;
+        } catch (Exception exception) {
+            failedStaticModels.add(assetPath);
+            LOGGER.log(Level.WARNING, "Failed to load static model " + assetPath, exception);
+            return null;
+        }
+    }
+
     private int totalQuads() {
         return floorQuads + wallQuads + roofQuads + spriteQuads;
     }
@@ -584,6 +657,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                         + " | Walls " + wallQuads
                         + " | Roofs " + roofQuads
                         + " | Sprites " + spriteQuads
+                        + " | Models " + staticModels
                         + " | Textures " + textureCache.textureCount()
         );
     }
@@ -597,6 +671,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         lines.add("Depth " + maxDepth);
         lines.add("Tiles " + visibleTiles);
         lines.add("Quads F" + floorQuads + " W" + wallQuads + " R" + roofQuads + " S" + spriteQuads);
+        lines.add("Models " + staticModels);
         lines.add("Textures " + textureCache.textureCount());
         if (lastLookState.active()
                 || Math.abs(lastLookState.yawOffsetDegrees()) > 0.001

@@ -11,7 +11,7 @@ import java.util.function.Function;
 import static org.main.content.MapDesignLibrary.AuthoredContent;
 import static org.main.content.MapDesignLibrary.AuthoredDialogue;
 import static org.main.content.MapDesignLibrary.AuthoredQuest;
-import static org.main.content.MapDesignLibrary.CustomCompositeRecipe;
+import static org.main.content.MapDesignLibrary.CraftingRecipe;
 import static org.main.content.MapDesignLibrary.CustomCookingRecipe;
 import static org.main.content.MapDesignLibrary.CustomGatheringNode;
 import static org.main.content.MapDesignLibrary.CustomItem;
@@ -29,7 +29,8 @@ final class MapDesignContentStore {
     static final String NPC_FILE = "npc.properties";
     static final String GATHERING_NODE_FILE = "gathering_node.properties";
     static final String COOKING_RECIPE_FILE = "cooking_recipe.properties";
-    static final String COMPOSITE_RECIPE_FILE = "composite_recipe.properties";
+    static final String CRAFTING_RECIPE_FILE = "crafting_recipe.properties";
+    static final String LEGACY_COMPOSITE_RECIPE_FILE = "composite_recipe.properties";
 
     private static final Set<String> CATALOG_FILES = Set.of(
             DIALOGUE_FILE,
@@ -40,7 +41,8 @@ final class MapDesignContentStore {
             NPC_FILE,
             GATHERING_NODE_FILE,
             COOKING_RECIPE_FILE,
-            COMPOSITE_RECIPE_FILE,
+            CRAFTING_RECIPE_FILE,
+            LEGACY_COMPOSITE_RECIPE_FILE,
             "authored_content.properties"
     );
 
@@ -56,7 +58,10 @@ final class MapDesignContentStore {
         MapDesign npcs = loadSegment(NPC_FILE);
         MapDesign gatheringNodes = loadSegment(GATHERING_NODE_FILE);
         MapDesign cookingRecipes = loadSegment(COOKING_RECIPE_FILE);
-        MapDesign compositeRecipes = loadSegment(COMPOSITE_RECIPE_FILE);
+        MapDesign craftingRecipes = loadSegment(CRAFTING_RECIPE_FILE);
+        if (craftingRecipes == null) {
+            craftingRecipes = loadSegment(LEGACY_COMPOSITE_RECIPE_FILE);
+        }
 
         boolean hasSegmentCatalog = dialogues != null
                 || quests != null
@@ -66,7 +71,7 @@ final class MapDesignContentStore {
                 || npcs != null
                 || gatheringNodes != null
                 || cookingRecipes != null
-                || compositeRecipes != null;
+                || craftingRecipes != null;
         if (hasSegmentCatalog) {
             return new AuthoredContent(
                     dialogues == null ? List.of() : dialogues.authoredDialogues(),
@@ -77,7 +82,7 @@ final class MapDesignContentStore {
                     npcs == null ? List.of() : npcs.customNpcs(),
                     gatheringNodes == null ? List.of() : gatheringNodes.customGatheringNodes(),
                     cookingRecipes == null ? List.of() : cookingRecipes.customCookingRecipes(),
-                    compositeRecipes == null ? List.of() : compositeRecipes.customCompositeRecipes()
+                    craftingRecipes == null ? List.of() : craftingRecipes.craftingRecipes()
             );
         }
 
@@ -121,9 +126,9 @@ final class MapDesignContentStore {
                 List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), content.customCookingRecipes(), List.of()
         ));
-        saveSegment(COMPOSITE_RECIPE_FILE, new AuthoredContent(
+        saveSegment(CRAFTING_RECIPE_FILE, new AuthoredContent(
                 List.of(), List.of(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), List.of(), content.customCompositeRecipes()
+                List.of(), List.of(), List.of(), content.craftingRecipes()
         ));
     }
 
@@ -180,7 +185,7 @@ final class MapDesignContentStore {
                 new ArrayList<>(content.customNpcs()),
                 new ArrayList<>(content.customGatheringNodes()),
                 new ArrayList<>(content.customCookingRecipes()),
-                new ArrayList<>(content.customCompositeRecipes()),
+                new ArrayList<>(content.craftingRecipes()),
                 new ArrayList<>(),
                 blank.spawnX(),
                 blank.spawnY()
@@ -230,7 +235,7 @@ final class MapDesignContentStore {
         List<CustomNpc> npcs = new ArrayList<>(base.customNpcs());
         List<CustomGatheringNode> gatheringNodes = new ArrayList<>(base.customGatheringNodes());
         List<CustomCookingRecipe> cookingRecipes = new ArrayList<>(base.customCookingRecipes());
-        List<CustomCompositeRecipe> compositeRecipes = new ArrayList<>(base.customCompositeRecipes());
+        List<CraftingRecipe> craftingRecipes = new ArrayList<>(base.craftingRecipes());
 
         mergeById(dialogues, override.authoredDialogues(), AuthoredDialogue::interactionId);
         mergeById(quests, override.authoredQuests(), AuthoredQuest::questId);
@@ -240,8 +245,8 @@ final class MapDesignContentStore {
         mergeById(npcs, override.customNpcs(), CustomNpc::npcId);
         mergeById(gatheringNodes, override.customGatheringNodes(), CustomGatheringNode::nodeId);
         mergeById(cookingRecipes, override.customCookingRecipes(), CustomCookingRecipe::recipeId);
-        mergeById(compositeRecipes, override.customCompositeRecipes(), CustomCompositeRecipe::recipeId);
-        return new AuthoredContent(dialogues, quests, items, mobs, limbs, npcs, gatheringNodes, cookingRecipes, compositeRecipes);
+        mergeById(craftingRecipes, override.craftingRecipes(), CraftingRecipe::recipeId);
+        return new AuthoredContent(dialogues, quests, items, mobs, limbs, npcs, gatheringNodes, cookingRecipes, craftingRecipes);
     }
 
     private static <T> void mergeById(List<T> target, List<T> source, Function<T, String> idFunction) {

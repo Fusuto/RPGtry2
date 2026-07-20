@@ -19,7 +19,7 @@ public record GeneratedDungeon(
         List<MapDesignLibrary.CustomLimb> customLimbs,
         List<MapDesignLibrary.CustomGatheringNode> customGatheringNodes,
         List<MapDesignLibrary.CustomCookingRecipe> customCookingRecipes,
-        List<MapDesignLibrary.CustomCompositeRecipe> customCompositeRecipes,
+        List<MapDesignLibrary.CraftingRecipe> craftingRecipes,
         List<MapDesignLibrary.MapTrigger> mapTriggers
 ) {
     public GeneratedDungeon(DungeonMap dungeonMap, List<MapEntity> entities, int playerX, int playerY) {

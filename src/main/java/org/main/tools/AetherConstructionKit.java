@@ -504,7 +504,7 @@ public class AetherConstructionKit extends JFrame {
         addMenuItem(menu, "Limb", this::createCustomLimb);
         addMenuItem(menu, "Gathering Node", this::createCustomGatheringNode);
         addMenuItem(menu, "Cooking Recipe", this::createCookingRecipe);
-        addMenuItem(menu, "Composite Recipe", this::createCompositeRecipe);
+        addMenuItem(menu, "Crafting Recipe", this::createCraftingRecipe);
         addMenuItem(menu, "Mob Area", this::createMobArea);
         addMenuItem(menu, "Map Link", this::createMapLink);
         addMenuItem(menu, "Trigger", this::createTrigger);
@@ -848,7 +848,7 @@ public class AetherConstructionKit extends JFrame {
             builder.append("NPCs: ").append(content.customNpcs().size()).append('\n');
             builder.append("Gathering Nodes: ").append(content.customGatheringNodes().size()).append('\n');
             builder.append("Cooking Recipes: ").append(content.customCookingRecipes().size()).append('\n');
-            builder.append("Composite Recipes: ").append(content.customCompositeRecipes().size()).append('\n');
+            builder.append("Crafting Recipes: ").append(content.craftingRecipes().size()).append('\n');
             return builder.toString();
         } catch (IOException exception) {
             return "Backup could not be read:\n" + exception.getMessage();
@@ -893,7 +893,7 @@ public class AetherConstructionKit extends JFrame {
                 contentDesign.customNpcs(),
                 contentDesign.customGatheringNodes(),
                 contentDesign.customCookingRecipes(),
-                contentDesign.customCompositeRecipes()
+                contentDesign.craftingRecipes()
         );
     }
 
@@ -914,8 +914,8 @@ public class AetherConstructionKit extends JFrame {
         design.customGatheringNodes().addAll(content.customGatheringNodes());
         design.customCookingRecipes().clear();
         design.customCookingRecipes().addAll(content.customCookingRecipes());
-        design.customCompositeRecipes().clear();
-        design.customCompositeRecipes().addAll(content.customCompositeRecipes());
+        design.craftingRecipes().clear();
+        design.craftingRecipes().addAll(content.craftingRecipes());
     }
 
     private List<AssetBrowserEntry> scanEditorAssets() {
@@ -1440,7 +1440,7 @@ public class AetherConstructionKit extends JFrame {
                 new ArrayList<>(source.customNpcs()),
                 new ArrayList<>(source.customGatheringNodes()),
                 new ArrayList<>(source.customCookingRecipes()),
-                new ArrayList<>(source.customCompositeRecipes()),
+                new ArrayList<>(source.craftingRecipes()),
                 new ArrayList<>(source.triggers()),
                 source.spawnX(),
                 source.spawnY()
@@ -1783,8 +1783,8 @@ public class AetherConstructionKit extends JFrame {
         for (MapDesignLibrary.CustomCookingRecipe recipe : design.customCookingRecipes()) {
             entries.add(new ContentEntry(ContentCategory.COOKING, recipe.displayName(), recipe.recipeId(), "Cooking Recipe", recipe));
         }
-        for (MapDesignLibrary.CustomCompositeRecipe recipe : design.customCompositeRecipes()) {
-            entries.add(new ContentEntry(ContentCategory.COMPOSITES, recipe.displayName(), recipe.recipeId(), "Composite Recipe", recipe));
+        for (MapDesignLibrary.CraftingRecipe recipe : design.craftingRecipes()) {
+            entries.add(new ContentEntry(ContentCategory.CRAFTING_RECIPES, recipe.displayName(), recipe.recipeId(), "Crafting Recipe", recipe));
         }
         for (MapDesignLibrary.AuthoredQuest quest : design.authoredQuests()) {
             entries.add(new ContentEntry(ContentCategory.QUESTS, quest.displayName(), quest.questId(), "Quest", quest));
@@ -1924,7 +1924,7 @@ public class AetherConstructionKit extends JFrame {
             builder.append("Burnt: ").append(recipe.burntItemId()).append('\n');
             builder.append("Cooking: level ").append(recipe.requiredLevel())
                     .append(", ").append(recipe.xpReward()).append(" xp\n");
-        } else if (value instanceof MapDesignLibrary.CustomCompositeRecipe recipe) {
+        } else if (value instanceof MapDesignLibrary.CraftingRecipe recipe) {
             builder.append("Category: ").append(recipe.category()).append('\n');
             builder.append("Input: ").append(recipe.primaryItemId()).append(" + ").append(recipe.secondaryItemId()).append('\n');
             builder.append("Output: ").append(recipe.outputItemId()).append('\n');
@@ -2266,10 +2266,17 @@ public class AetherConstructionKit extends JFrame {
             dependencies.add("Cooked item " + recipe.cookedItemId());
             dependencies.add("Burnt item " + recipe.burntItemId());
             dependencies.add("Cooking level " + recipe.requiredLevel());
-        } else if (value instanceof MapDesignLibrary.CustomCompositeRecipe recipe) {
-            dependencies.add("Primary item " + recipe.primaryItemId());
-            dependencies.add("Secondary item " + recipe.secondaryItemId());
-            dependencies.add("Output item " + recipe.outputItemId());
+        } else if (value instanceof MapDesignLibrary.CraftingRecipe recipe) {
+            dependencies.add("Primary item " + recipe.primaryItemId() + " x" + recipe.primaryQuantity());
+            if (!recipe.secondaryItemId().isBlank()) {
+                dependencies.add("Secondary item " + recipe.secondaryItemId() + " x" + recipe.secondaryQuantity());
+            }
+            if (recipe.outputsStation()) {
+                dependencies.add("Temporary station " + recipe.outputStationType()
+                        + " for " + recipe.stationLifetimeMs() / 1000 + " seconds");
+            } else {
+                dependencies.add("Output item " + recipe.outputItemId());
+            }
             dependencies.add("Skill " + recipe.requiredSkill() + " level " + recipe.requiredLevel());
             if (!recipe.smeltOutputItemId().isBlank()) {
                 dependencies.add("Smelt output " + recipe.smeltOutputItemId() + " level " + recipe.smeltRequiredLevel());
@@ -2364,12 +2371,12 @@ public class AetherConstructionKit extends JFrame {
                 references.add("Cooking recipe " + recipe.recipeId());
             }
         }
-        for (MapDesignLibrary.CustomCompositeRecipe recipe : design.customCompositeRecipes()) {
+        for (MapDesignLibrary.CraftingRecipe recipe : design.craftingRecipes()) {
             if (id.equals(recipe.primaryItemId())
                     || id.equals(recipe.secondaryItemId())
                     || id.equals(recipe.outputItemId())
                     || id.equals(recipe.smeltOutputItemId())) {
-                references.add("Composite recipe " + recipe.recipeId());
+                references.add("Crafting recipe " + recipe.recipeId());
             }
         }
         for (MapDesignLibrary.CustomGatheringNode node : design.customGatheringNodes()) {
@@ -2441,8 +2448,8 @@ public class AetherConstructionKit extends JFrame {
             editCustomGatheringNode(node);
         } else if (value instanceof MapDesignLibrary.CustomCookingRecipe recipe) {
             editCookingRecipe(recipe);
-        } else if (value instanceof MapDesignLibrary.CustomCompositeRecipe recipe) {
-            editCompositeRecipe(recipe);
+        } else if (value instanceof MapDesignLibrary.CraftingRecipe recipe) {
+            editCraftingRecipe(recipe);
         } else if (value instanceof MapDesignLibrary.AuthoredQuest quest) {
             editAuthoredQuest(quest);
         } else if (value instanceof MapDesignLibrary.AuthoredDialogue dialogue) {
@@ -2561,9 +2568,9 @@ public class AetherConstructionKit extends JFrame {
                     recipe.xpReward()
             ));
             persistSharedContent("cooking recipe");
-        } else if (value instanceof MapDesignLibrary.CustomCompositeRecipe recipe) {
-            design.customCompositeRecipes().add(new MapDesignLibrary.CustomCompositeRecipe(
-                    nextCompositeRecipeId(copiedName),
+        } else if (value instanceof MapDesignLibrary.CraftingRecipe recipe) {
+            design.craftingRecipes().add(new MapDesignLibrary.CraftingRecipe(
+                    nextCraftingRecipeId(copiedName),
                     copiedName,
                     recipe.category(),
                     recipe.primaryItemId(),
@@ -2576,9 +2583,14 @@ public class AetherConstructionKit extends JFrame {
                     recipe.consumeSecondary(),
                     recipe.smeltOutputItemId(),
                     recipe.smeltRequiredLevel(),
-                    recipe.smeltXpReward()
+                    recipe.smeltXpReward(),
+                    recipe.primaryQuantity(),
+                    recipe.secondaryQuantity(),
+                    recipe.outputType(),
+                    recipe.outputStationType(),
+                    recipe.stationLifetimeMs()
             ));
-            persistSharedContent("composite recipe");
+            persistSharedContent("crafting recipe");
         } else if (value instanceof MapDesignLibrary.AuthoredQuest quest) {
             design.authoredQuests().add(new MapDesignLibrary.AuthoredQuest(
                     nextAuthoredQuestId(copiedName),
@@ -2698,8 +2710,8 @@ public class AetherConstructionKit extends JFrame {
             deleteCustomGatheringNode(node);
         } else if (value instanceof MapDesignLibrary.CustomCookingRecipe recipe) {
             deleteCookingRecipe(recipe);
-        } else if (value instanceof MapDesignLibrary.CustomCompositeRecipe recipe) {
-            deleteCompositeRecipe(recipe);
+        } else if (value instanceof MapDesignLibrary.CraftingRecipe recipe) {
+            deleteCraftingRecipe(recipe);
         } else if (value instanceof MapDesignLibrary.AuthoredQuest quest) {
             deleteAuthoredQuest(quest);
         } else if (value instanceof MapDesignLibrary.AuthoredDialogue dialogue) {
@@ -3000,8 +3012,8 @@ public class AetherConstructionKit extends JFrame {
                 message.startsWith("Cooking recipe " + recipe.recipeId() + " "))) {
             return true;
         }
-        if (revealFirstMatchingContent(design.customCompositeRecipes(), ContentCategory.COMPOSITES, recipe ->
-                message.startsWith("Composite recipe " + recipe.recipeId() + " "))) {
+        if (revealFirstMatchingContent(design.craftingRecipes(), ContentCategory.CRAFTING_RECIPES, recipe ->
+                message.startsWith("Crafting recipe " + recipe.recipeId() + " "))) {
             return true;
         }
         if (revealFirstMatchingContent(design.authoredDialogues(), ContentCategory.DIALOGUES, dialogue ->
@@ -3330,11 +3342,16 @@ public class AetherConstructionKit extends JFrame {
                 WeaponType.DAGGER,
                 WeaponType.SWORD,
                 WeaponType.MACE,
+                WeaponType.STAFF,
                 WeaponType.GREATSWORD
         });
         JLabel weaponTypeLabel = new JLabel("Weapon Type");
         JLabel twoHandedLabel = new JLabel("Hands");
         JCheckBox twoHandedBox = new JCheckBox("Two-handed", existing != null && existing.twoHanded());
+        JSpinner magicAccuracySpinner = new JSpinner(new SpinnerNumberModel(
+                existing == null ? 0 : existing.magicAccuracyBonus(), 0, 1000, 1));
+        JSpinner magicPowerSpinner = new JSpinner(new SpinnerNumberModel(
+                existing == null ? 0 : existing.magicPowerBonus(), 0, 1000, 1));
         JComboBox<StatTargetOption> statTargetBox = new JComboBox<>(statTargetOptions());
         JSpinner healSpinner = new JSpinner(new SpinnerNumberModel(existing == null ? 0 : existing.healAmount(), 0, 1000, 1));
         JSpinner valueSpinner = new JSpinner(new SpinnerNumberModel(existing == null ? 10 : existing.baseGoldValue(), 1, 100000, 1));
@@ -3389,6 +3406,8 @@ public class AetherConstructionKit extends JFrame {
             materialBox.setSelectedItem(item.material());
             weaponTypeBox.setSelectedItem(item.weaponType() == WeaponType.NONE ? WeaponType.SWORD : item.weaponType());
             twoHandedBox.setSelected(item.twoHanded());
+            magicAccuracySpinner.setValue(item.magicAccuracyBonus());
+            magicPowerSpinner.setValue(item.magicPowerBonus());
             selectStatTargetOption(statTargetBox, item.statBonusTarget());
             healSpinner.setValue(item.healAmount());
             valueSpinner.setValue(item.baseGoldValue());
@@ -3422,6 +3441,8 @@ public class AetherConstructionKit extends JFrame {
         JPanel materialRow = formRow("Material", materialBox);
         JPanel weaponTypeRow = formRow("Weapon Type", weaponTypeBox);
         JPanel twoHandedRow = formRow("Hands", twoHandedBox);
+        JPanel magicAccuracyRow = formRow("Magic Accuracy", magicAccuracySpinner);
+        JPanel magicPowerRow = formRow("Magic Power", magicPowerSpinner);
         JPanel ringStatRow = formRow("Ring Stat", statTargetBox);
         JPanel healRow = formRow("HP Restore", healSpinner);
         JPanel valueRow = formRow("Base Value", valueSpinner);
@@ -3439,6 +3460,8 @@ public class AetherConstructionKit extends JFrame {
         fields.add(materialRow);
         fields.add(weaponTypeRow);
         fields.add(twoHandedRow);
+        fields.add(magicAccuracyRow);
+        fields.add(magicPowerRow);
         fields.add(ringStatRow);
         fields.add(healRow);
         fields.add(valueRow);
@@ -3470,6 +3493,8 @@ public class AetherConstructionKit extends JFrame {
             paperDollRow.setVisible(paperDollAllowed);
             weaponTypeRow.setVisible(weapon);
             twoHandedRow.setVisible(weapon);
+            magicAccuracyRow.setVisible(weapon);
+            magicPowerRow.setVisible(weapon);
             ringStatRow.setVisible(ring);
             healRow.setVisible(consumable);
             stackableRow.setVisible(stackableAllowed);
@@ -3560,7 +3585,9 @@ public class AetherConstructionKit extends JFrame {
                 selectedMetal && smithingRecipeBox.isSelected(),
                 selectedMetal && smithingRecipeBox.isSelected() ? ((Number) smithingBarsSpinner.getValue()).intValue() : 1,
                 selectedMetal && smithingRecipeBox.isSelected() ? ((Number) smithingLevelSpinner.getValue()).intValue() : 1,
-                selectedMetal && smithingRecipeBox.isSelected() ? ((Number) smithingXpSpinner.getValue()).intValue() : 0
+                selectedMetal && smithingRecipeBox.isSelected() ? ((Number) smithingXpSpinner.getValue()).intValue() : 0,
+                selectedWeapon ? ((Number) magicAccuracySpinner.getValue()).intValue() : 0,
+                selectedWeapon ? ((Number) magicPowerSpinner.getValue()).intValue() : 0
         );
     }
 
@@ -4125,7 +4152,9 @@ public class AetherConstructionKit extends JFrame {
             barIconRow.setVisible(mining && smeltingBox.isSelected());
             frameOneRow.setVisible(!fishing);
             frameTwoRow.setVisible(!fishing);
-            frameThreeRow.setVisible(!fishing);
+            frameThreeRow.setVisible(!fishing && !tree);
+            setFormRowLabel(frameOneRow, tree ? "Full Tree" : "Stage / Frame 0");
+            setFormRowLabel(frameTwoRow, tree ? "Stump" : "Stage / Frame 1");
             autoMaterialOutputBox.setText(tree
                     ? "Auto-create wood logs from stage 0 image"
                     : "Auto-create metal ore from stage 0 image");
@@ -4160,6 +4189,11 @@ public class AetherConstructionKit extends JFrame {
             boolean tree = nodeType == MapDesignLibrary.GatheringNodeType.TREE;
             List<String> frames = fishing
                     ? defaultFishingFramePaths()
+                    : tree
+                    ? List.of(
+                            normalizeGeneratedImagePath(frameOneField.getText(), safeId(name) + "_full", "gathering"),
+                            normalizeGeneratedImagePath(frameTwoField.getText(), safeId(name) + "_stump", "gathering")
+                    )
                     : List.of(
                             normalizeGeneratedImagePath(frameOneField.getText(), safeId(name) + "_stage_0", "gathering"),
                             normalizeGeneratedImagePath(frameTwoField.getText(), safeId(name) + "_stage_1", "gathering"),
@@ -4190,7 +4224,7 @@ public class AetherConstructionKit extends JFrame {
                                     ? "Fresh " + materialName.toLowerCase(java.util.Locale.ROOT) + " logs. Useful for future crafting."
                                     : "Raw " + materialName.toLowerCase(java.util.Locale.ROOT) + " ore. Smelt it into a bar at a furnace.",
                             null,
-                            false,
+                            tree,
                             false,
                             1,
                             1,
@@ -4233,7 +4267,7 @@ public class AetherConstructionKit extends JFrame {
             }
 
             if (lootEntries.isEmpty()) {
-                setStatus("Gathering node needs at least one loot entry or an auto metal output.");
+                setStatus("Gathering node needs at least one loot entry or an automatic material output.");
                 return;
             }
 
@@ -4262,88 +4296,179 @@ public class AetherConstructionKit extends JFrame {
         }
     }
 
-    private void createCompositeRecipe() {
-        JTextField nameField = new JTextField("Composite Recipe", 24);
-        JComboBox<MapDesignLibrary.CompositeRecipeCategory> categoryBox =
-                new JComboBox<>(MapDesignLibrary.CompositeRecipeCategory.values());
+    private void createCraftingRecipe() {
+        MapDesignLibrary.CraftingRecipe recipe = showCraftingRecipeDialog("Create Crafting Recipe", null);
+        if (recipe == null) {
+            return;
+        }
+        design.craftingRecipes().add(recipe);
+        persistSharedContent("crafting recipe");
+        setStatus("Created crafting recipe " + recipe.displayName() + ".");
+    }
+
+    private MapDesignLibrary.CraftingRecipe showCraftingRecipeDialog(
+            String title,
+            MapDesignLibrary.CraftingRecipe existing
+    ) {
+        JTextField nameField = new JTextField(existing == null ? "Crafting Recipe" : existing.displayName(), 24);
+        JComboBox<MapDesignLibrary.CraftingRecipeCategory> categoryBox =
+                new JComboBox<>(MapDesignLibrary.CraftingRecipeCategory.values());
         JComboBox<DropItemOption> primaryBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
-        JComboBox<DropItemOption> secondaryBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
+        JComboBox<DropItemOption> secondaryBox = new JComboBox<>();
+        secondaryBox.addItem(new DropItemOption("", "None (single ingredient)"));
+        for (DropItemOption option : gatheringOutputItemOptions()) {
+            secondaryBox.addItem(option);
+        }
         JComboBox<DropItemOption> outputBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
         JComboBox<CharacterSkill> skillBox = new JComboBox<>(CharacterSkill.values());
-        JSpinner requiredLevelSpinner = new JSpinner(new SpinnerNumberModel(1, 1, 100, 1));
-        JSpinner xpSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100000, 1));
-        JCheckBox consumePrimaryBox = new JCheckBox("Consume primary", true);
-        JCheckBox consumeSecondaryBox = new JCheckBox("Consume secondary", true);
-        JCheckBox smeltingBox = new JCheckBox("Output can be smelted");
+        JSpinner primaryQuantitySpinner = new JSpinner(new SpinnerNumberModel(
+                existing == null ? 1 : existing.primaryQuantity(), 1, 1000, 1));
+        JSpinner secondaryQuantitySpinner = new JSpinner(new SpinnerNumberModel(
+                existing == null ? 1 : Math.max(1, existing.secondaryQuantity()), 1, 1000, 1));
+        JSpinner requiredLevelSpinner = new JSpinner(new SpinnerNumberModel(
+                existing == null ? 1 : existing.requiredLevel(), 1, 100, 1));
+        JSpinner xpSpinner = new JSpinner(new SpinnerNumberModel(
+                existing == null ? 0 : existing.xpReward(), 0, 100000, 1));
+        JCheckBox consumePrimaryBox = new JCheckBox("Consume primary", existing == null || existing.consumePrimary());
+        JCheckBox consumeSecondaryBox = new JCheckBox("Consume secondary", existing == null || existing.consumeSecondary());
+        JComboBox<MapDesignLibrary.CraftingOutputType> outputTypeBox =
+                new JComboBox<>(MapDesignLibrary.CraftingOutputType.values());
+        JComboBox<CraftingStationType> stationBox = new JComboBox<>(CraftingStationType.values());
+        JSpinner stationLifetimeSpinner = new JSpinner(new SpinnerNumberModel(
+                existing == null ? 300 : Math.max(1, existing.stationLifetimeMs() / 1000),
+                1, 86400, 1));
+        JCheckBox smeltingBox = new JCheckBox(
+                "Output can be smelted",
+                existing != null && !existing.smeltOutputItemId().isBlank()
+        );
         JComboBox<DropItemOption> smeltOutputBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
-        JSpinner smeltingLevelSpinner = new JSpinner(new SpinnerNumberModel(1, 1, 100, 1));
-        JSpinner smeltingXpSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100000, 1));
-        skillBox.setSelectedItem(CharacterSkill.SMITHING);
+        JSpinner smeltingLevelSpinner = new JSpinner(new SpinnerNumberModel(
+                existing == null ? 1 : existing.smeltRequiredLevel(), 1, 100, 1));
+        JSpinner smeltingXpSpinner = new JSpinner(new SpinnerNumberModel(
+                existing == null ? 0 : existing.smeltXpReward(), 0, 100000, 1));
+        skillBox.setSelectedItem(existing == null ? CharacterSkill.CRAFTING : existing.requiredSkill());
+        if (existing != null) {
+            categoryBox.setSelectedItem(existing.category());
+            selectDropItem(primaryBox, existing.primaryItemId());
+            selectDropItem(secondaryBox, existing.secondaryItemId());
+            selectDropItem(outputBox, existing.outputItemId());
+            selectDropItem(smeltOutputBox, existing.smeltOutputItemId());
+            outputTypeBox.setSelectedItem(existing.outputType());
+            if (existing.outputStationType() != null) {
+                stationBox.setSelectedItem(existing.outputStationType());
+            }
+        }
 
         JPanel fields = new JPanel();
         fields.setLayout(new BoxLayout(fields, BoxLayout.Y_AXIS));
+        JPanel secondaryQuantityRow = formRow("Secondary Quantity", secondaryQuantitySpinner);
+        JPanel consumeSecondaryRow = formRow("Secondary", consumeSecondaryBox);
+        JPanel outputItemRow = formRow("Output Item", outputBox);
+        JPanel stationRow = formRow("Output Station", stationBox);
+        JPanel stationLifetimeRow = formRow("Lifetime Seconds", stationLifetimeSpinner);
+        JPanel smeltingRow = formRow("Smelting", smeltingBox);
         JPanel smeltOutputRow = formRow("Smelt Output", smeltOutputBox);
         JPanel smeltingLevelRow = formRow("Smelting Level", smeltingLevelSpinner);
         JPanel smeltingXpRow = formRow("Smelting XP", smeltingXpSpinner);
         fields.add(formRow("Name", nameField));
         fields.add(formRow("Category", categoryBox));
         fields.add(formRow("Primary Item", primaryBox));
+        fields.add(formRow("Primary Quantity", primaryQuantitySpinner));
         fields.add(formRow("Secondary Item", secondaryBox));
-        fields.add(formRow("Output Item", outputBox));
+        fields.add(secondaryQuantityRow);
+        fields.add(formRow("Output Type", outputTypeBox));
+        fields.add(outputItemRow);
+        fields.add(stationRow);
+        fields.add(stationLifetimeRow);
         fields.add(formRow("Skill", skillBox));
         fields.add(formRow("Required Level", requiredLevelSpinner));
         fields.add(formRow("XP Reward", xpSpinner));
         fields.add(formRow("Primary", consumePrimaryBox));
-        fields.add(formRow("Secondary", consumeSecondaryBox));
-        fields.add(formRow("Smelting", smeltingBox));
+        fields.add(consumeSecondaryRow);
+        fields.add(smeltingRow);
         fields.add(smeltOutputRow);
         fields.add(smeltingLevelRow);
         fields.add(smeltingXpRow);
-        Runnable updateCompositeSmeltingRows = () -> {
-            boolean smelting = smeltingBox.isSelected();
+        Runnable updateRows = () -> {
+            DropItemOption secondary = (DropItemOption) secondaryBox.getSelectedItem();
+            boolean hasSecondary = secondary != null && !secondary.itemId().isBlank();
+            boolean stationOutput = outputTypeBox.getSelectedItem()
+                    == MapDesignLibrary.CraftingOutputType.CRAFTING_STATION;
+            boolean smelting = !stationOutput && smeltingBox.isSelected();
+            secondaryQuantityRow.setVisible(hasSecondary);
+            consumeSecondaryRow.setVisible(hasSecondary);
+            outputItemRow.setVisible(!stationOutput);
+            stationRow.setVisible(stationOutput);
+            stationLifetimeRow.setVisible(stationOutput);
+            smeltingRow.setVisible(!stationOutput);
             smeltOutputRow.setVisible(smelting);
             smeltingLevelRow.setVisible(smelting);
             smeltingXpRow.setVisible(smelting);
             fields.revalidate();
             fields.repaint();
         };
-        smeltingBox.addActionListener(event -> updateCompositeSmeltingRows.run());
-        updateCompositeSmeltingRows.run();
+        smeltingBox.addActionListener(event -> updateRows.run());
+        secondaryBox.addActionListener(event -> updateRows.run());
+        outputTypeBox.addActionListener(event -> updateRows.run());
+        updateRows.run();
 
-        if (showScrollableFormDialog(fields, "Create Composite Recipe") != JOptionPane.OK_OPTION) {
-            return;
+        if (showScrollableFormDialog(fields, title) != JOptionPane.OK_OPTION) {
+            return null;
         }
 
         String name = nameField.getText() == null ? "" : nameField.getText().trim();
         DropItemOption primary = (DropItemOption) primaryBox.getSelectedItem();
         DropItemOption secondary = (DropItemOption) secondaryBox.getSelectedItem();
         DropItemOption output = (DropItemOption) outputBox.getSelectedItem();
-        if (name.isBlank() || primary == null || secondary == null || output == null) {
-            setStatus("Composite recipe needs a name, two ingredients, and an output.");
-            return;
+        MapDesignLibrary.CraftingOutputType outputType =
+                (MapDesignLibrary.CraftingOutputType) outputTypeBox.getSelectedItem();
+        if (name.isBlank() || primary == null || primary.itemId().isBlank()) {
+            setStatus("Crafting recipe needs a name and primary ingredient.");
+            return null;
+        }
+        boolean hasSecondary = secondary != null && !secondary.itemId().isBlank();
+        if (hasSecondary && primary.itemId().equalsIgnoreCase(secondary.itemId())) {
+            setStatus("Use one ingredient entry with a larger quantity instead of duplicate ingredients.");
+            return null;
+        }
+        if (outputType == MapDesignLibrary.CraftingOutputType.ITEM && output == null) {
+            setStatus("Choose an authored output item.");
+            return null;
         }
 
-        MapDesignLibrary.CustomCompositeRecipe recipe = new MapDesignLibrary.CustomCompositeRecipe(
-                nextCompositeRecipeId(name),
+        return new MapDesignLibrary.CraftingRecipe(
+                existing == null ? nextCraftingRecipeId(name) : existing.recipeId(),
                 name,
-                (MapDesignLibrary.CompositeRecipeCategory) categoryBox.getSelectedItem(),
+                (MapDesignLibrary.CraftingRecipeCategory) categoryBox.getSelectedItem(),
                 primary.itemId(),
-                secondary.itemId(),
-                output.itemId(),
+                hasSecondary ? secondary.itemId() : "",
+                outputType == MapDesignLibrary.CraftingOutputType.ITEM ? output.itemId() : "",
                 (CharacterSkill) skillBox.getSelectedItem(),
                 ((Number) requiredLevelSpinner.getValue()).intValue(),
                 ((Number) xpSpinner.getValue()).intValue(),
                 consumePrimaryBox.isSelected(),
-                consumeSecondaryBox.isSelected(),
-                smeltingBox.isSelected() && smeltOutputBox.getSelectedItem() instanceof DropItemOption smeltOutput
+                hasSecondary && consumeSecondaryBox.isSelected(),
+                outputType == MapDesignLibrary.CraftingOutputType.ITEM
+                        && smeltingBox.isSelected()
+                        && smeltOutputBox.getSelectedItem() instanceof DropItemOption smeltOutput
                         ? smeltOutput.itemId()
                         : "",
-                smeltingBox.isSelected() ? ((Number) smeltingLevelSpinner.getValue()).intValue() : 1,
-                smeltingBox.isSelected() ? ((Number) smeltingXpSpinner.getValue()).intValue() : 0
+                outputType == MapDesignLibrary.CraftingOutputType.ITEM && smeltingBox.isSelected()
+                        ? ((Number) smeltingLevelSpinner.getValue()).intValue()
+                        : 1,
+                outputType == MapDesignLibrary.CraftingOutputType.ITEM && smeltingBox.isSelected()
+                        ? ((Number) smeltingXpSpinner.getValue()).intValue()
+                        : 0,
+                ((Number) primaryQuantitySpinner.getValue()).intValue(),
+                hasSecondary ? ((Number) secondaryQuantitySpinner.getValue()).intValue() : 0,
+                outputType,
+                outputType == MapDesignLibrary.CraftingOutputType.CRAFTING_STATION
+                        ? (CraftingStationType) stationBox.getSelectedItem()
+                        : null,
+                outputType == MapDesignLibrary.CraftingOutputType.CRAFTING_STATION
+                        ? ((Number) stationLifetimeSpinner.getValue()).intValue() * 1000
+                        : 0
         );
-        design.customCompositeRecipes().add(recipe);
-        persistSharedContent("composite recipe");
-        setStatus("Created composite recipe " + recipe.displayName() + ".");
     }
 
     private void createCookingRecipe() {
@@ -4921,6 +5046,7 @@ public class AetherConstructionKit extends JFrame {
             MapDesignLibrary.GatheringNodeType type = (MapDesignLibrary.GatheringNodeType) typeBox.getSelectedItem();
             boolean fishing = type == MapDesignLibrary.GatheringNodeType.FISHING_SPOT;
             boolean mining = type == MapDesignLibrary.GatheringNodeType.MINING_ROCK;
+            boolean tree = type == MapDesignLibrary.GatheringNodeType.TREE;
             frameDurationRow.setVisible(false);
             smeltingRow.setVisible(mining);
             smeltOutputRow.setVisible(mining && smeltingBox.isSelected());
@@ -4928,7 +5054,9 @@ public class AetherConstructionKit extends JFrame {
             smeltingXpRow.setVisible(mining && smeltingBox.isSelected());
             frameOneRow.setVisible(!fishing);
             frameTwoRow.setVisible(!fishing);
-            frameThreeRow.setVisible(!fishing);
+            frameThreeRow.setVisible(!fishing && !tree);
+            setFormRowLabel(frameOneRow, tree ? "Full Tree" : "Stage / Frame 0");
+            setFormRowLabel(frameTwoRow, tree ? "Stump" : "Stage / Frame 1");
             fields.revalidate();
             fields.repaint();
         };
@@ -4954,6 +5082,7 @@ public class AetherConstructionKit extends JFrame {
             MapDesignLibrary.GatheringNodeType nodeType = (MapDesignLibrary.GatheringNodeType) typeBox.getSelectedItem();
             boolean fishing = nodeType == MapDesignLibrary.GatheringNodeType.FISHING_SPOT;
             boolean mining = nodeType == MapDesignLibrary.GatheringNodeType.MINING_ROCK;
+            boolean tree = nodeType == MapDesignLibrary.GatheringNodeType.TREE;
             DropItemOption smeltOutput = (DropItemOption) smeltOutputBox.getSelectedItem();
             if (mining && smeltingBox.isSelected() && smeltOutput == null) {
                 setStatus("Choose an authored item for the smelting output.");
@@ -4961,6 +5090,11 @@ public class AetherConstructionKit extends JFrame {
             }
             List<String> frames = fishing
                     ? defaultFishingFramePaths()
+                    : tree
+                    ? List.of(
+                            normalizeGeneratedImagePath(frameOneField.getText(), safeId(name) + "_full", "gathering"),
+                            normalizeGeneratedImagePath(frameTwoField.getText(), safeId(name) + "_stump", "gathering")
+                    )
                     : List.of(
                             normalizeGeneratedImagePath(frameOneField.getText(), safeId(name) + "_stage_0", "gathering"),
                             normalizeGeneratedImagePath(frameTwoField.getText(), safeId(name) + "_stage_1", "gathering"),
@@ -4996,14 +5130,14 @@ public class AetherConstructionKit extends JFrame {
         }
     }
 
-    private void deleteCompositeRecipe(MapDesignLibrary.CustomCompositeRecipe selected) {
-        if (!confirmDelete("composite recipe", selected.displayName(), ContentCategory.COMPOSITES, selected.recipeId(), selected)) {
+    private void deleteCraftingRecipe(MapDesignLibrary.CraftingRecipe selected) {
+        if (!confirmDelete("crafting recipe", selected.displayName(), ContentCategory.CRAFTING_RECIPES, selected.recipeId(), selected)) {
             return;
         }
 
-        design.customCompositeRecipes().remove(selected);
-        persistSharedContent("composite recipe");
-        setStatus("Deleted composite recipe " + selected.displayName() + ".");
+        design.craftingRecipes().remove(selected);
+        persistSharedContent("crafting recipe");
+        setStatus("Deleted crafting recipe " + selected.displayName() + ".");
     }
 
     private void editCookingRecipe(MapDesignLibrary.CustomCookingRecipe selected) {
@@ -5030,96 +5164,16 @@ public class AetherConstructionKit extends JFrame {
         setStatus("Deleted cooking recipe " + selected.displayName() + ".");
     }
 
-    private void editCompositeRecipe(MapDesignLibrary.CustomCompositeRecipe selected) {
-        JTextField nameField = new JTextField(selected.displayName(), 24);
-        JComboBox<MapDesignLibrary.CompositeRecipeCategory> categoryBox =
-                new JComboBox<>(MapDesignLibrary.CompositeRecipeCategory.values());
-        JComboBox<DropItemOption> primaryBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
-        JComboBox<DropItemOption> secondaryBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
-        JComboBox<DropItemOption> outputBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
-        JComboBox<CharacterSkill> skillBox = new JComboBox<>(CharacterSkill.values());
-        JSpinner requiredLevelSpinner = new JSpinner(new SpinnerNumberModel(selected.requiredLevel(), 1, 100, 1));
-        JSpinner xpSpinner = new JSpinner(new SpinnerNumberModel(selected.xpReward(), 0, 100000, 1));
-        JCheckBox consumePrimaryBox = new JCheckBox("Consume primary", selected.consumePrimary());
-        JCheckBox consumeSecondaryBox = new JCheckBox("Consume secondary", selected.consumeSecondary());
-        JCheckBox smeltingBox = new JCheckBox("Output can be smelted", !selected.smeltOutputItemId().isBlank());
-        JComboBox<DropItemOption> smeltOutputBox = new JComboBox<>(gatheringOutputItemOptions().toArray(new DropItemOption[0]));
-        JSpinner smeltingLevelSpinner = new JSpinner(new SpinnerNumberModel(selected.smeltRequiredLevel(), 1, 100, 1));
-        JSpinner smeltingXpSpinner = new JSpinner(new SpinnerNumberModel(selected.smeltXpReward(), 0, 100000, 1));
-
-        categoryBox.setSelectedItem(selected.category());
-        skillBox.setSelectedItem(selected.requiredSkill());
-        selectDropItem(primaryBox, selected.primaryItemId());
-        selectDropItem(secondaryBox, selected.secondaryItemId());
-        selectDropItem(outputBox, selected.outputItemId());
-        selectDropItem(smeltOutputBox, selected.smeltOutputItemId());
-
-        JPanel fields = new JPanel();
-        fields.setLayout(new BoxLayout(fields, BoxLayout.Y_AXIS));
-        JPanel smeltOutputRow = formRow("Smelt Output", smeltOutputBox);
-        JPanel smeltingLevelRow = formRow("Smelting Level", smeltingLevelSpinner);
-        JPanel smeltingXpRow = formRow("Smelting XP", smeltingXpSpinner);
-        fields.add(formRow("Name", nameField));
-        fields.add(formRow("Category", categoryBox));
-        fields.add(formRow("Primary Item", primaryBox));
-        fields.add(formRow("Secondary Item", secondaryBox));
-        fields.add(formRow("Output Item", outputBox));
-        fields.add(formRow("Skill", skillBox));
-        fields.add(formRow("Required Level", requiredLevelSpinner));
-        fields.add(formRow("XP Reward", xpSpinner));
-        fields.add(formRow("Primary", consumePrimaryBox));
-        fields.add(formRow("Secondary", consumeSecondaryBox));
-        fields.add(formRow("Smelting", smeltingBox));
-        fields.add(smeltOutputRow);
-        fields.add(smeltingLevelRow);
-        fields.add(smeltingXpRow);
-        Runnable updateCompositeSmeltingRows = () -> {
-            boolean smelting = smeltingBox.isSelected();
-            smeltOutputRow.setVisible(smelting);
-            smeltingLevelRow.setVisible(smelting);
-            smeltingXpRow.setVisible(smelting);
-            fields.revalidate();
-            fields.repaint();
-        };
-        smeltingBox.addActionListener(event -> updateCompositeSmeltingRows.run());
-        updateCompositeSmeltingRows.run();
-
-        if (showScrollableFormDialog(fields, "Edit Composite Recipe") != JOptionPane.OK_OPTION) {
+    private void editCraftingRecipe(MapDesignLibrary.CraftingRecipe selected) {
+        MapDesignLibrary.CraftingRecipe edited = showCraftingRecipeDialog("Edit Crafting Recipe", selected);
+        if (edited == null) {
             return;
         }
-
-        String name = nameField.getText() == null ? "" : nameField.getText().trim();
-        DropItemOption primary = (DropItemOption) primaryBox.getSelectedItem();
-        DropItemOption secondary = (DropItemOption) secondaryBox.getSelectedItem();
-        DropItemOption output = (DropItemOption) outputBox.getSelectedItem();
-        if (name.isBlank() || primary == null || secondary == null || output == null) {
-            setStatus("Composite recipe needs a name, two ingredients, and an output.");
-            return;
-        }
-
-        MapDesignLibrary.CustomCompositeRecipe edited = new MapDesignLibrary.CustomCompositeRecipe(
-                selected.recipeId(),
-                name,
-                (MapDesignLibrary.CompositeRecipeCategory) categoryBox.getSelectedItem(),
-                primary.itemId(),
-                secondary.itemId(),
-                output.itemId(),
-                (CharacterSkill) skillBox.getSelectedItem(),
-                ((Number) requiredLevelSpinner.getValue()).intValue(),
-                ((Number) xpSpinner.getValue()).intValue(),
-                consumePrimaryBox.isSelected(),
-                consumeSecondaryBox.isSelected(),
-                smeltingBox.isSelected() && smeltOutputBox.getSelectedItem() instanceof DropItemOption smeltOutput
-                        ? smeltOutput.itemId()
-                        : "",
-                smeltingBox.isSelected() ? ((Number) smeltingLevelSpinner.getValue()).intValue() : 1,
-                smeltingBox.isSelected() ? ((Number) smeltingXpSpinner.getValue()).intValue() : 0
-        );
-        int index = design.customCompositeRecipes().indexOf(selected);
+        int index = design.craftingRecipes().indexOf(selected);
         if (index >= 0) {
-            design.customCompositeRecipes().set(index, edited);
-            persistSharedContent("composite recipe");
-            setStatus("Updated composite recipe " + edited.displayName() + ".");
+            design.craftingRecipes().set(index, edited);
+            persistSharedContent("crafting recipe");
+            setStatus("Updated crafting recipe " + edited.displayName() + ".");
         }
     }
 
@@ -7931,24 +7985,24 @@ public class AetherConstructionKit extends JFrame {
         return false;
     }
 
-    private String nextCompositeRecipeId(String recipeName) {
+    private String nextCraftingRecipeId(String recipeName) {
         String base = safeId(recipeName);
         if (base.isBlank()) {
-            base = "composite_recipe";
+            base = "crafting_recipe";
         }
 
         String prefix = "recipe_" + base;
         String candidate = prefix;
         int suffix = 2;
-        while (hasCompositeRecipeId(candidate)) {
+        while (hasCraftingRecipeId(candidate)) {
             candidate = prefix + "_" + suffix;
             suffix++;
         }
         return candidate;
     }
 
-    private boolean hasCompositeRecipeId(String recipeId) {
-        for (MapDesignLibrary.CustomCompositeRecipe recipe : design.customCompositeRecipes()) {
+    private boolean hasCraftingRecipeId(String recipeId) {
+        for (MapDesignLibrary.CraftingRecipe recipe : design.craftingRecipes()) {
             if (recipe.recipeId().equals(recipeId)) {
                 return true;
             }
@@ -8518,7 +8572,7 @@ public class AetherConstructionKit extends JFrame {
                 blank.mapPaint(), blank.mapGeometry(), blank.mobAreas(), blank.placements(), blank.authoredDialogues(),
                 blank.authoredQuests(), blank.customItems(), blank.customMobs(), blank.customLimbs(),
                 blank.customNpcs(), blank.customGatheringNodes(), blank.customCookingRecipes(),
-                blank.customCompositeRecipes(), blank.triggers(), 1, 1
+                blank.craftingRecipes(), blank.triggers(), 1, 1
         );
     }
 
@@ -8564,7 +8618,7 @@ public class AetherConstructionKit extends JFrame {
                 blank.customNpcs(),
                 blank.customGatheringNodes(),
                 blank.customCookingRecipes(),
-                blank.customCompositeRecipes(),
+                blank.craftingRecipes(),
                 blank.triggers(),
                 blank.spawnX(),
                 blank.spawnY()
@@ -8698,7 +8752,7 @@ public class AetherConstructionKit extends JFrame {
                 design.customNpcs(),
                 design.customGatheringNodes(),
                 design.customCookingRecipes(),
-                design.customCompositeRecipes(),
+                design.craftingRecipes(),
                 triggers,
                 spawnX,
                 spawnY
@@ -8875,7 +8929,7 @@ public class AetherConstructionKit extends JFrame {
                 design.customNpcs(),
                 design.customGatheringNodes(),
                 design.customCookingRecipes(),
-                design.customCompositeRecipes(),
+                design.craftingRecipes(),
                 design.triggers(),
                 design.spawnX(),
                 design.spawnY()
@@ -8939,7 +8993,7 @@ public class AetherConstructionKit extends JFrame {
                 design.customNpcs(),
                 design.customGatheringNodes(),
                 design.customCookingRecipes(),
-                design.customCompositeRecipes(),
+                design.craftingRecipes(),
                 design.triggers(),
                 design.spawnX(),
                 design.spawnY()
@@ -9008,7 +9062,7 @@ public class AetherConstructionKit extends JFrame {
         mergeSharedEntries(design.customNpcs(), content.customNpcs(), MapDesignLibrary.CustomNpc::npcId);
         mergeSharedEntries(design.customGatheringNodes(), content.customGatheringNodes(), MapDesignLibrary.CustomGatheringNode::nodeId);
         mergeSharedEntries(design.customCookingRecipes(), content.customCookingRecipes(), MapDesignLibrary.CustomCookingRecipe::recipeId);
-        mergeSharedEntries(design.customCompositeRecipes(), content.customCompositeRecipes(), MapDesignLibrary.CustomCompositeRecipe::recipeId);
+        mergeSharedEntries(design.craftingRecipes(), content.craftingRecipes(), MapDesignLibrary.CraftingRecipe::recipeId);
     }
 
     private <T> void mergeSharedEntries(List<T> target, List<T> sharedEntries, Function<T, String> idFunction) {
@@ -9034,7 +9088,7 @@ public class AetherConstructionKit extends JFrame {
                     design.customNpcs(),
                     design.customGatheringNodes(),
                     design.customCookingRecipes(),
-                    design.customCompositeRecipes()
+                    design.craftingRecipes()
             );
             MapDesignLibrary.AuthoredContent latest = MapDesignLibrary.loadSharedContent();
             MapDesignLibrary.AuthoredContent merged = mergeSharedContentChanges(
@@ -9111,10 +9165,10 @@ public class AetherConstructionKit extends JFrame {
                         MapDesignLibrary.CustomCookingRecipe::recipeId
                 ),
                 mergeChangedEntries(
-                        safeLatest.customCompositeRecipes(),
-                        safeBaseline.customCompositeRecipes(),
-                        safeDesired.customCompositeRecipes(),
-                        MapDesignLibrary.CustomCompositeRecipe::recipeId
+                        safeLatest.craftingRecipes(),
+                        safeBaseline.craftingRecipes(),
+                        safeDesired.craftingRecipes(),
+                        MapDesignLibrary.CraftingRecipe::recipeId
                 )
         );
     }
@@ -10063,7 +10117,7 @@ public class AetherConstructionKit extends JFrame {
                     design.customNpcs(),
                     design.customGatheringNodes(),
                     design.customCookingRecipes(),
-                    design.customCompositeRecipes(),
+                    design.craftingRecipes(),
                     design.triggers(),
                     x,
                     y
