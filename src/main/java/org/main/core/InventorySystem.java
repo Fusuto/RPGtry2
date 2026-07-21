@@ -1145,7 +1145,7 @@ public final class InventorySystem {
             return weapon != null && weapon.isTwoHanded();
         }
 
-        private EquipmentSlot getPreferredEquipmentSlot(Item item) {
+        public EquipmentSlot getPreferredEquipmentSlot(Item item) {
             if (item == null) {
                 return null;
             }

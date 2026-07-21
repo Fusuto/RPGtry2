@@ -27,7 +27,7 @@ import static org.lwjgl.assimp.Assimp.aiProcess_SortByPType;
 import static org.lwjgl.assimp.Assimp.aiProcess_Triangulate;
 import static org.lwjgl.assimp.Assimp.aiReleaseImport;
 
-final class LwjglStaticModel {
+public final class LwjglStaticModel {
     private final List<Mesh> meshes;
     private final BufferedImage texture;
     private final float minX;
@@ -57,7 +57,7 @@ final class LwjglStaticModel {
         this.maxZ = maxZ;
     }
 
-    static LwjglStaticModel load(String assetPath) throws IOException {
+    public static LwjglStaticModel load(String assetPath) throws IOException {
         byte[] assetBytes;
         try (InputStream stream = AssetLoader.openAssetStream(assetPath)) {
             assetBytes = stream.readAllBytes();
@@ -167,30 +167,42 @@ final class LwjglStaticModel {
         return ImageIO.read(new ByteArrayInputStream(imageBytes));
     }
 
-    List<Mesh> meshes() {
+    public List<Mesh> meshes() {
         return meshes;
     }
 
-    BufferedImage texture() {
+    public BufferedImage texture() {
         return texture;
     }
 
-    double normalizedScaleForHeight(double targetHeight) {
+    public double normalizedScaleForHeight(double targetHeight) {
         return targetHeight / Math.max(0.0001, maxY - minY);
     }
 
-    double centerX() {
+    public double centerX() {
         return (minX + maxX) * 0.5;
     }
 
-    double baseY() {
+    public double baseY() {
         return minY;
     }
 
-    double centerZ() {
+    public double centerZ() {
         return (minZ + maxZ) * 0.5;
     }
 
-    record Mesh(float[] positions, float[] texCoords, int[] indices) {
+    public record Mesh(
+            float[] positions,
+            float[] texCoords,
+            int[] indices,
+            BufferedImage texture,
+            float red,
+            float green,
+            float blue,
+            float alpha
+    ) {
+        public Mesh(float[] positions, float[] texCoords, int[] indices) {
+            this(positions, texCoords, indices, null, 1.0f, 1.0f, 1.0f, 1.0f);
+        }
     }
 }

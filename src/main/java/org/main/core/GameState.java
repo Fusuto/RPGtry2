@@ -49,6 +49,12 @@ public class GameState {
     private final Set<String> firedMapTriggerIds = new HashSet<>();
     private final Map<String, Integer> questStages = new HashMap<>();
     private final InputBindings inputBindings = new InputBindings();
+    private final WorldMessageLog worldMessageLog = new WorldMessageLog();
+
+    private final NavigationState navigationState = new NavigationState();
+    private final MiniMapState miniMapState = new MiniMapState();
+    private final QuestState questState = new QuestState();
+    private final SkillingState skillingState = new SkillingState();
 
     private GameMode gameMode = GameMode.START_MENU;
 
@@ -195,6 +201,26 @@ public class GameState {
         activeInteraction = null;
         suspendedInteraction = null;
         stopSkillingActivities();
+    }
+
+    public WorldMessageLog getWorldMessageLog() {
+        return worldMessageLog;
+    }
+
+    public NavigationState getNavigationState() {
+        return navigationState;
+    }
+
+    public MiniMapState getMiniMapState() {
+        return miniMapState;
+    }
+
+    public QuestState getQuestState() {
+        return questState;
+    }
+
+    public SkillingState getSkillingState() {
+        return skillingState;
     }
 
     private void clearInteractionsAndStopActivities() {
@@ -3256,7 +3282,7 @@ public class GameState {
         return count;
     }
 
-    private static class ResourceNodeState {
+    public static class ResourceNodeState {
         private int exhaustionLevel = 0;
         private int attemptsSinceLastExhaustionRoll = 0;
         private int respawnRemainingMs = 0;
@@ -3567,7 +3593,7 @@ public class GameState {
         }
     }
 
-    private static final class EnemyRespawnState {
+    public static final class EnemyRespawnState {
         private final String spawnId;
         private final Monster monster;
         private final int spawnX;
@@ -3578,7 +3604,7 @@ public class GameState {
         private final int respawnDelayMs;
         private int remainingMs;
 
-        private EnemyRespawnState(
+        public EnemyRespawnState(
                 String spawnId,
                 Monster monster,
                 int spawnX,

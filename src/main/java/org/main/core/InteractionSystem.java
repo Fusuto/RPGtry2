@@ -485,19 +485,19 @@ public final class InteractionSystem {
             return gameplayPaused;
         }
 
-        private boolean handleKeyPressed(KeyEvent e) {
+        public boolean handleKeyPressed(KeyEvent e) {
             return content.handleKeyPressed(e, this);
         }
 
-        private boolean handleMousePressed(MouseEvent e, Rectangle windowBounds) {
+        public boolean handleMousePressed(MouseEvent e, Rectangle windowBounds) {
             return content.handleMousePressed(e, this, windowBounds);
         }
 
-        private boolean handleMouseMoved(Point point, Rectangle windowBounds) {
+        public boolean handleMouseMoved(Point point, Rectangle windowBounds) {
             return content.handleMouseMoved(point, this, windowBounds);
         }
 
-        private void drawCustom(Graphics2D g, Rectangle windowBounds) {
+        public void drawCustom(Graphics2D g, Rectangle windowBounds) {
             content.drawCustom(g, this, windowBounds);
         }
 
