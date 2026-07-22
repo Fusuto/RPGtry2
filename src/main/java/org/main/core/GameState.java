@@ -92,12 +92,23 @@ public class GameState {
     private int fishingElapsedMs = 0;
     private String fishingInteractionId = "";
     private String fishingMessage = "Cast your line.";
+    private MiningAttemptOutcome fishingPendingOutcome = MiningAttemptOutcome.NONE;
+    private InventorySystem.Item fishingPendingItem;
+    private int fishingRecoveryElapsedMs = -1;
+    private MiningAttemptOutcome fishingRecoveryOutcome = MiningAttemptOutcome.NONE;
     private boolean miningActive = false;
     private int miningX = -1;
     private int miningY = -1;
     private int miningElapsedMs = 0;
     private String miningInteractionId = "";
     private String miningMessage = "Strike the rock.";
+    private GatheringToolType miningToolType = GatheringToolType.MINING;
+    private MiningAttemptOutcome miningPendingOutcome = MiningAttemptOutcome.NONE;
+    private InventorySystem.Item miningPendingItem;
+    private int miningRecoveryElapsedMs = -1;
+    private MiningAttemptOutcome miningRecoveryOutcome = MiningAttemptOutcome.NONE;
+    private GatheringImpactEvent pendingGatheringImpactEvent;
+    private boolean gatheringSuspendedByPauseOverlay = false;
     private final Map<String, ResourceNodeState> resourceNodeStates = new HashMap<>();
     private final Map<String, EnemyRespawnState> enemyRespawnStates = new HashMap<>();
     private boolean cookingActive = false;
@@ -121,6 +132,59 @@ public class GameState {
     private InteractionSystem.Interaction activeInteraction;
     private InteractionSystem.Interaction suspendedInteraction;
     private ShopSystem.ShopSession activeShop;
+
+    public enum GatheringToolType {
+        MINING("mining"),
+        FISHING("fishing"),
+        WOODCUTTING("woodcutting");
+
+        private final String configurationPrefix;
+
+        GatheringToolType(String configurationPrefix) {
+            this.configurationPrefix = configurationPrefix;
+        }
+
+        public String configurationPrefix() {
+            return configurationPrefix;
+        }
+    }
+
+    public enum MiningAttemptOutcome {
+        NONE,
+        SUCCESS,
+        FAILURE
+    }
+
+    public enum MiningViewMotion {
+        REST,
+        WINDUP,
+        SUCCESS_STRIKE,
+        FAILURE_STRIKE,
+        SUCCESS_RECOVERY,
+        FAILURE_RECOVERY
+    }
+
+    public record MiningViewModelState(
+            GatheringToolType toolType,
+            boolean visible,
+            MiningViewMotion motion,
+            double progress
+    ) {
+        public MiningViewModelState {
+            toolType = toolType == null ? GatheringToolType.MINING : toolType;
+            progress = Math.max(0.0, Math.min(1.0, progress));
+        }
+
+        public static MiningViewModelState hidden() {
+            return new MiningViewModelState(GatheringToolType.MINING, false, MiningViewMotion.REST, 0.0);
+        }
+    }
+
+    public record GatheringImpactEvent(
+            GatheringToolType toolType,
+            MiningAttemptOutcome outcome
+    ) {
+    }
 
     public enum GameMode {
         START_MENU,
@@ -156,6 +220,9 @@ public class GameState {
         }
 
         InteractionSystem.Interaction current = getActiveInteraction();
+        if (current == null && interaction.pausesGameplay() && isFirstPersonGatheringActive()) {
+            gatheringSuspendedByPauseOverlay = true;
+        }
         if (current != null && current != interaction) {
             if (interaction.pausesGameplay()
                     && current.isCharacterMenuOverlayAllowed()
@@ -198,9 +265,78 @@ public class GameState {
             return;
         }
 
+        if (activeInteraction != null
+                && activeInteraction.pausesGameplay()
+                && gatheringSuspendedByPauseOverlay
+                && isFirstPersonGatheringActive()) {
+            activeInteraction = null;
+            suspendedInteraction = null;
+            gatheringSuspendedByPauseOverlay = false;
+            return;
+        }
+
         activeInteraction = null;
         suspendedInteraction = null;
+        gatheringSuspendedByPauseOverlay = false;
         stopSkillingActivities();
+    }
+
+    public boolean isFirstPersonGatheringActive() {
+        return miningActive || fishingActive || miningRecoveryElapsedMs >= 0 || fishingRecoveryElapsedMs >= 0;
+    }
+
+    public boolean isFirstPersonGatheringAt(int x, int y) {
+        return (miningActive && miningX == x && miningY == y)
+                || (fishingActive && fishingX == x && fishingY == y);
+    }
+
+    public void cancelFirstPersonGathering() {
+        stopFishing();
+        stopMining();
+        fishingRecoveryElapsedMs = -1;
+        fishingRecoveryOutcome = MiningAttemptOutcome.NONE;
+        miningRecoveryElapsedMs = -1;
+        miningRecoveryOutcome = MiningAttemptOutcome.NONE;
+        pendingGatheringImpactEvent = null;
+    }
+
+    public MiningViewModelState getGatheringViewModelState() {
+        if (!isFirstPersonGatheringActive()) {
+            return MiningViewModelState.hidden();
+        }
+        if (miningRecoveryElapsedMs >= 0) {
+            MiningViewMotion motion = miningRecoveryOutcome == MiningAttemptOutcome.SUCCESS
+                    ? MiningViewMotion.SUCCESS_RECOVERY : MiningViewMotion.FAILURE_RECOVERY;
+            return new MiningViewModelState(miningToolType, true, motion,
+                    miningRecoveryElapsedMs / (double) gatheringRecoveryDurationMs());
+        }
+        if (fishingRecoveryElapsedMs >= 0) {
+            MiningViewMotion motion = fishingRecoveryOutcome == MiningAttemptOutcome.SUCCESS
+                    ? MiningViewMotion.SUCCESS_RECOVERY : MiningViewMotion.FAILURE_RECOVERY;
+            return new MiningViewModelState(GatheringToolType.FISHING, true, motion,
+                    fishingRecoveryElapsedMs / (double) gatheringRecoveryDurationMs());
+        }
+
+        boolean fishing = fishingActive;
+        int elapsedMs = fishing ? fishingElapsedMs : miningElapsedMs;
+        MiningAttemptOutcome pendingOutcome = fishing ? fishingPendingOutcome : miningPendingOutcome;
+        GatheringToolType toolType = fishing ? GatheringToolType.FISHING : miningToolType;
+        int intervalMs = gatheringAttemptIntervalMs();
+        int strikeDurationMs = gatheringStrikeDurationMs();
+        int strikeStartMs = Math.max(0, intervalMs - strikeDurationMs);
+        if (elapsedMs < strikeStartMs || pendingOutcome == MiningAttemptOutcome.NONE) {
+            return new MiningViewModelState(toolType, true, MiningViewMotion.REST, 0.0);
+        }
+        double strikeProgress = (elapsedMs - strikeStartMs) / (double) Math.max(1, strikeDurationMs);
+        MiningViewMotion motion = pendingOutcome == MiningAttemptOutcome.SUCCESS
+                ? MiningViewMotion.SUCCESS_STRIKE : MiningViewMotion.FAILURE_STRIKE;
+        return new MiningViewModelState(toolType, true, motion, strikeProgress);
+    }
+
+    public GatheringImpactEvent consumeGatheringImpactEvent() {
+        GatheringImpactEvent event = pendingGatheringImpactEvent;
+        pendingGatheringImpactEvent = null;
+        return event;
     }
 
     public WorldMessageLog getWorldMessageLog() {
@@ -233,6 +369,7 @@ public class GameState {
 
         activeInteraction = null;
         suspendedInteraction = null;
+        gatheringSuspendedByPauseOverlay = false;
         stopSkillingActivities();
     }
 
@@ -246,9 +383,8 @@ public class GameState {
     }
 
     private void stopSkillingActivities() {
-        stopFishing();
+        cancelFirstPersonGathering();
         stopCooking();
-        stopMining();
         stopSmelting();
     }
 
@@ -295,12 +431,14 @@ public class GameState {
 
     public boolean isInventoryOverlayAllowed() {
         InteractionSystem.Interaction interaction = getActiveInteraction();
-        return interaction != null && interaction.isInventoryOverlayAllowed();
+        return isFirstPersonGatheringActive()
+                || interaction != null && interaction.isInventoryOverlayAllowed();
     }
 
     public boolean isCharacterMenuOverlayAllowed() {
         InteractionSystem.Interaction interaction = getActiveInteraction();
-        return interaction != null && interaction.isCharacterMenuOverlayAllowed();
+        return isFirstPersonGatheringActive()
+                || interaction != null && interaction.isCharacterMenuOverlayAllowed();
     }
 
     public boolean isGameplayPaused() {
@@ -1751,6 +1889,11 @@ public class GameState {
     }
 
     public boolean startFishing(int x, int y) {
+        if (isFishingAt(x, y)) {
+            stopFishing();
+            fishingMessage = "You reel in your line.";
+            return false;
+        }
         stopCooking();
         stopMining();
         MapDesignLibrary.CustomGatheringNode node = getCustomGatheringNodeAt(x, y);
@@ -1772,6 +1915,10 @@ public class GameState {
         fishingElapsedMs = 0;
         fishingInteractionId = node == null ? "" : node.interactionId();
         fishingMessage = "You cast your line into the " + (node == null ? "shoal" : node.displayName()) + ".";
+        fishingPendingOutcome = MiningAttemptOutcome.NONE;
+        fishingPendingItem = null;
+        fishingRecoveryElapsedMs = -1;
+        fishingRecoveryOutcome = MiningAttemptOutcome.NONE;
         return true;
     }
 
@@ -1781,6 +1928,8 @@ public class GameState {
         fishingY = -1;
         fishingElapsedMs = 0;
         fishingInteractionId = "";
+        fishingPendingOutcome = MiningAttemptOutcome.NONE;
+        fishingPendingItem = null;
     }
 
     public boolean isFishingActive() {
@@ -1792,48 +1941,56 @@ public class GameState {
     }
 
     public void updateFishing(int deltaMs) {
+        if (fishingRecoveryElapsedMs >= 0) {
+            fishingRecoveryElapsedMs += Math.max(0, deltaMs);
+            if (fishingRecoveryElapsedMs >= gatheringRecoveryDurationMs()) {
+                fishingRecoveryElapsedMs = -1;
+                fishingRecoveryOutcome = MiningAttemptOutcome.NONE;
+                if (!fishingActive) {
+                    stopFishing();
+                    return;
+                }
+                if (isResourceExhausted(fishingX, fishingY)) {
+                    fishingMessage = "The shoal goes still. It needs time to recover.";
+                    worldMessageLog.post(WorldMessageLog.Category.WARNING, fishingMessage);
+                    stopFishing();
+                    return;
+                }
+            }
+            return;
+        }
+
         if (!fishingActive || playerCharacter == null) {
             return;
         }
 
         fishingElapsedMs += Math.max(0, deltaMs);
 
-        if (fishingElapsedMs < gatheringAttemptIntervalMs()) {
+        int intervalMs = gatheringAttemptIntervalMs();
+        int strikeStartMs = Math.max(0, intervalMs - gatheringStrikeDurationMs());
+        if (fishingPendingOutcome == MiningAttemptOutcome.NONE && fishingElapsedMs >= strikeStartMs) {
+            prepareFishingAttempt();
+            if (!fishingActive) {
+                return;
+            }
+        }
+
+        if (fishingElapsedMs < intervalMs) {
             return;
         }
 
         fishingElapsedMs = 0;
-
-        if (isResourceExhausted(fishingX, fishingY)) {
-            fishingMessage = "The shoal is quiet. Give it time to recover.";
-            stopFishing();
-            return;
-        }
-
-        recordResourceAttempt(fishingX, fishingY);
-
-        if (isResourceExhausted(fishingX, fishingY)) {
-            fishingMessage = "The shoal goes still. It needs time to recover.";
-            stopFishing();
-            return;
-        }
-
         MapDesignLibrary.CustomGatheringNode node = customGatheringNodes.get(fishingInteractionId);
         CharacterSkill gatheringSkill = node == null ? CharacterSkill.FISHING : node.gatheringSkill();
-        int fishingLevel = Math.max(1, playerCharacter.getSkillLevel(gatheringSkill));
-        double successChance = Math.min(
-                maxFishingSuccessChance(),
-                baseFishingSuccessChance() + fishingLevel * fishingSuccessChancePerLevel()
-        );
-
-        InventorySystem.Item gatheredItem = node == null
-                ? createItemByNameOrId(RAW_FISH_ITEM_ID)
-                : createGatheredItem(node);
         int xpReward = node == null ? fishingXpReward() : node.gatherXpReward();
-        String outputName = gatheredItem == null ? "fish" : gatheredItem.getName();
+        MiningAttemptOutcome outcome = fishingPendingOutcome;
+        InventorySystem.Item gatheredItem = fishingPendingItem;
+        fishingPendingOutcome = MiningAttemptOutcome.NONE;
+        fishingPendingItem = null;
 
-        if (Math.random() <= successChance && gatheredItem != null && getInventory().addItem(gatheredItem)) {
+        if (outcome == MiningAttemptOutcome.SUCCESS && gatheredItem != null && getInventory().addItem(gatheredItem)) {
             int levelsGained = playerCharacter.addSkillExperience(gatheringSkill, xpReward);
+            String outputName = gatheredItem.getName();
             fishingMessage = levelsGained > 0
                     ? "You catch " + outputName + ". " + gatheringSkill.getDisplayName() + " level " + playerCharacter.getSkillLevel(gatheringSkill) + "!"
                     : "You catch " + outputName + ". " + gatheringSkill.getDisplayName() + " XP "
@@ -1841,15 +1998,56 @@ public class GameState {
                     + "/"
                     + playerCharacter.getSkillExperienceRequired(gatheringSkill)
                     + ".";
-            return;
-        }
-
-        if (!getInventory().hasFreeSlot()) {
+            worldMessageLog.post(WorldMessageLog.Category.SUCCESS, fishingMessage);
+        } else if (outcome == MiningAttemptOutcome.SUCCESS) {
             fishingMessage = "Your inventory is too full to hold any fish.";
+            worldMessageLog.post(WorldMessageLog.Category.WARNING, fishingMessage);
+            stopFishing();
             return;
+        } else {
+            fishingMessage = "The fish slip away.";
+            outcome = MiningAttemptOutcome.FAILURE;
+            worldMessageLog.post(WorldMessageLog.Category.FAILURE, fishingMessage);
         }
 
-        fishingMessage = "The fish slip away.";
+        recordResourceAttempt(fishingX, fishingY);
+        fishingRecoveryElapsedMs = 0;
+        fishingRecoveryOutcome = outcome;
+        pendingGatheringImpactEvent = new GatheringImpactEvent(GatheringToolType.FISHING, outcome);
+
+        if (isResourceExhausted(fishingX, fishingY)) {
+            fishingMessage = "The shoal goes still. It needs time to recover.";
+            worldMessageLog.post(WorldMessageLog.Category.WARNING, fishingMessage);
+            fishingActive = false;
+        }
+    }
+
+    private void prepareFishingAttempt() {
+        if (isResourceExhausted(fishingX, fishingY)) {
+            fishingMessage = "The shoal is quiet. Give it time to recover.";
+            worldMessageLog.post(WorldMessageLog.Category.WARNING, fishingMessage);
+            stopFishing();
+            return;
+        }
+        MapDesignLibrary.CustomGatheringNode node = customGatheringNodes.get(fishingInteractionId);
+        InventorySystem.Item item = node == null ? createItemByNameOrId(RAW_FISH_ITEM_ID) : createGatheredItem(node);
+        if (item == null) {
+            fishingMessage = "This fishing spot has no usable catch configured.";
+            worldMessageLog.post(WorldMessageLog.Category.WARNING, fishingMessage);
+            stopFishing();
+            return;
+        }
+        if (!getInventory().canAddItem(item)) {
+            fishingMessage = "Your inventory is too full to hold any fish.";
+            worldMessageLog.post(WorldMessageLog.Category.WARNING, fishingMessage);
+            stopFishing();
+            return;
+        }
+        CharacterSkill skill = node == null ? CharacterSkill.FISHING : node.gatheringSkill();
+        int level = Math.max(1, playerCharacter.getSkillLevel(skill));
+        double chance = Math.min(maxFishingSuccessChance(), baseFishingSuccessChance() + level * fishingSuccessChancePerLevel());
+        fishingPendingOutcome = Math.random() <= chance ? MiningAttemptOutcome.SUCCESS : MiningAttemptOutcome.FAILURE;
+        fishingPendingItem = item;
     }
 
     public String getFishingMessage() {
@@ -1857,6 +2055,11 @@ public class GameState {
     }
 
     public boolean startMining(int x, int y) {
+        if (isMiningAt(x, y)) {
+            stopMining();
+            miningMessage = "You stop gathering.";
+            return false;
+        }
         stopFishing();
         stopCooking();
         stopSmelting();
@@ -1876,6 +2079,7 @@ public class GameState {
             return false;
         }
 
+        GatheringToolType toolType = tree ? GatheringToolType.WOODCUTTING : GatheringToolType.MINING;
         miningActive = true;
         miningX = x;
         miningY = y;
@@ -1884,6 +2088,11 @@ public class GameState {
         miningMessage = tree
                 ? "You begin cutting the " + node.displayName() + "."
                 : "You swing at the " + (node == null ? "mineral rock" : node.displayName()) + ".";
+        miningToolType = toolType;
+        miningPendingOutcome = MiningAttemptOutcome.NONE;
+        miningPendingItem = null;
+        miningRecoveryElapsedMs = -1;
+        miningRecoveryOutcome = MiningAttemptOutcome.NONE;
         return true;
     }
 
@@ -1893,6 +2102,8 @@ public class GameState {
         miningY = -1;
         miningElapsedMs = 0;
         miningInteractionId = "";
+        miningPendingOutcome = MiningAttemptOutcome.NONE;
+        miningPendingItem = null;
     }
 
     public boolean isMiningActive() {
@@ -1904,55 +2115,62 @@ public class GameState {
     }
 
     public void updateMining(int deltaMs) {
+        if (miningRecoveryElapsedMs >= 0) {
+            miningRecoveryElapsedMs += Math.max(0, deltaMs);
+            if (miningRecoveryElapsedMs >= gatheringRecoveryDurationMs()) {
+                miningRecoveryElapsedMs = -1;
+                miningRecoveryOutcome = MiningAttemptOutcome.NONE;
+                if (!miningActive) {
+                    stopMining();
+                    return;
+                }
+                if (isResourceExhausted(miningX, miningY)) {
+                    MapDesignLibrary.CustomGatheringNode exhaustedNode = customGatheringNodes.get(miningInteractionId);
+                    boolean exhaustedTree = exhaustedNode != null && exhaustedNode.nodeType() == MapDesignLibrary.GatheringNodeType.TREE;
+                    miningMessage = exhaustedTree
+                            ? "The tree falls, leaving only a stump. It needs time to regrow."
+                            : "The rock crumbles down to bare stone. It needs time to recover.";
+                    worldMessageLog.post(WorldMessageLog.Category.WARNING, miningMessage);
+                    stopMining();
+                    return;
+                }
+            }
+            return;
+        }
+
         if (!miningActive || playerCharacter == null) {
             return;
         }
 
         miningElapsedMs += Math.max(0, deltaMs);
 
-        if (miningElapsedMs < gatheringAttemptIntervalMs()) {
+        int intervalMs = gatheringAttemptIntervalMs();
+        int strikeStartMs = Math.max(0, intervalMs - gatheringStrikeDurationMs());
+        if (miningPendingOutcome == MiningAttemptOutcome.NONE && miningElapsedMs >= strikeStartMs) {
+            prepareMiningAttempt();
+            if (!miningActive) {
+                return;
+            }
+        }
+
+        if (miningElapsedMs < intervalMs) {
             return;
         }
 
         miningElapsedMs = 0;
-
-        if (isResourceExhausted(miningX, miningY)) {
-            MapDesignLibrary.CustomGatheringNode exhaustedNode = customGatheringNodes.get(miningInteractionId);
-            miningMessage = exhaustedNode != null && exhaustedNode.nodeType() == MapDesignLibrary.GatheringNodeType.TREE
-                    ? "Only a stump remains. Give the tree time to regrow."
-                    : "The rock is depleted. Give it time to recover.";
-            stopMining();
-            return;
-        }
-
-        recordResourceAttempt(miningX, miningY);
-
         MapDesignLibrary.CustomGatheringNode node = customGatheringNodes.get(miningInteractionId);
         boolean tree = node != null && node.nodeType() == MapDesignLibrary.GatheringNodeType.TREE;
-        if (isResourceExhausted(miningX, miningY)) {
-            miningMessage = tree
-                    ? "The tree falls, leaving only a stump. It needs time to regrow."
-                    : "The rock crumbles down to bare stone. It needs time to recover.";
-            stopMining();
-            return;
-        }
-
+        GatheringToolType toolType = tree ? GatheringToolType.WOODCUTTING : GatheringToolType.MINING;
         CharacterSkill gatheringSkill = node == null ? CharacterSkill.MINING : node.gatheringSkill();
-        int miningLevel = Math.max(1, playerCharacter.getSkillLevel(gatheringSkill));
-        double successChance = Math.min(
-                tree ? maxWoodcuttingSuccessChance() : maxMiningSuccessChance(),
-                (tree ? baseWoodcuttingSuccessChance() : baseMiningSuccessChance())
-                        + miningLevel * (tree ? woodcuttingSuccessChancePerLevel() : miningSuccessChancePerLevel())
-        );
-
-        InventorySystem.Item gatheredItem = node == null
-                ? createItemByNameOrId(COPPER_ORE_ITEM_ID)
-                : createGatheredItem(node);
         int xpReward = node == null ? miningXpReward() : node.gatherXpReward();
-        String outputName = gatheredItem == null ? (tree ? "wood" : "ore") : gatheredItem.getName();
+        MiningAttemptOutcome outcome = miningPendingOutcome;
+        InventorySystem.Item gatheredItem = miningPendingItem;
+        miningPendingOutcome = MiningAttemptOutcome.NONE;
+        miningPendingItem = null;
 
-        if (Math.random() <= successChance && gatheredItem != null && getInventory().addItem(gatheredItem)) {
+        if (outcome == MiningAttemptOutcome.SUCCESS && gatheredItem != null && getInventory().addItem(gatheredItem)) {
             int levelsGained = playerCharacter.addSkillExperience(gatheringSkill, xpReward);
+            String outputName = gatheredItem.getName();
             miningMessage = levelsGained > 0
                     ? "You " + (tree ? "cut" : "gather") + " " + outputName + ". " + gatheringSkill.getDisplayName() + " level " + playerCharacter.getSkillLevel(gatheringSkill) + "!"
                     : "You " + (tree ? "cut" : "gather") + " " + outputName + ". " + gatheringSkill.getDisplayName() + " XP "
@@ -1960,17 +2178,66 @@ public class GameState {
                     + "/"
                     + playerCharacter.getSkillExperienceRequired(gatheringSkill)
                     + ".";
-            return;
-        }
-
-        if (!getInventory().hasFreeSlot()) {
+            worldMessageLog.post(WorldMessageLog.Category.SUCCESS, miningMessage);
+        } else if (outcome == MiningAttemptOutcome.SUCCESS) {
             miningMessage = "Your inventory is too full to hold any " + (tree ? "wood." : "ore.");
+            worldMessageLog.post(WorldMessageLog.Category.WARNING, miningMessage);
+            stopMining();
             return;
+        } else {
+            miningMessage = tree
+                    ? "Your cuts fail to produce usable wood."
+                    : "You chip the rock, but no usable ore breaks free.";
+            outcome = MiningAttemptOutcome.FAILURE;
+            worldMessageLog.post(WorldMessageLog.Category.FAILURE, miningMessage);
         }
 
-        miningMessage = tree
-                ? "Your cuts fail to produce usable wood."
-                : "You chip the rock, but no usable ore breaks free.";
+        recordResourceAttempt(miningX, miningY);
+        miningRecoveryElapsedMs = 0;
+        miningRecoveryOutcome = outcome;
+        pendingGatheringImpactEvent = new GatheringImpactEvent(toolType, outcome);
+
+        if (isResourceExhausted(miningX, miningY)) {
+            miningMessage = tree
+                    ? "The tree falls, leaving only a stump. It needs time to regrow."
+                    : "The rock crumbles down to bare stone. It needs time to recover.";
+            worldMessageLog.post(WorldMessageLog.Category.WARNING, miningMessage);
+            miningActive = false;
+        }
+    }
+
+    private void prepareMiningAttempt() {
+        MapDesignLibrary.CustomGatheringNode node = customGatheringNodes.get(miningInteractionId);
+        boolean tree = node != null && node.nodeType() == MapDesignLibrary.GatheringNodeType.TREE;
+        if (isResourceExhausted(miningX, miningY)) {
+            miningMessage = tree ? "Only a stump remains. Give the tree time to regrow."
+                    : "The rock is depleted. Give it time to recover.";
+            worldMessageLog.post(WorldMessageLog.Category.WARNING, miningMessage);
+            stopMining();
+            return;
+        }
+        InventorySystem.Item item = node == null ? createItemByNameOrId(COPPER_ORE_ITEM_ID) : createGatheredItem(node);
+        if (item == null) {
+            miningMessage = tree ? "This tree has no usable wood configured."
+                    : "This rock has no usable ore configured.";
+            worldMessageLog.post(WorldMessageLog.Category.WARNING, miningMessage);
+            stopMining();
+            return;
+        }
+        if (!getInventory().canAddItem(item)) {
+            miningMessage = "Your inventory is too full to hold any " + (tree ? "wood." : "ore.");
+            worldMessageLog.post(WorldMessageLog.Category.WARNING, miningMessage);
+            stopMining();
+            return;
+        }
+        CharacterSkill skill = node == null ? CharacterSkill.MINING : node.gatheringSkill();
+        int level = Math.max(1, playerCharacter.getSkillLevel(skill));
+        double chance = Math.min(
+                tree ? maxWoodcuttingSuccessChance() : maxMiningSuccessChance(),
+                (tree ? baseWoodcuttingSuccessChance() : baseMiningSuccessChance())
+                        + level * (tree ? woodcuttingSuccessChancePerLevel() : miningSuccessChancePerLevel()));
+        miningPendingOutcome = Math.random() <= chance ? MiningAttemptOutcome.SUCCESS : MiningAttemptOutcome.FAILURE;
+        miningPendingItem = item;
     }
 
     public String getMiningMessage() {
@@ -3450,6 +3717,14 @@ public class GameState {
 
     private int gatheringAttemptIntervalMs() {
         return Math.max(1, GameConfiguration.intValue("resource.gatheringAttemptIntervalMs", 2500));
+    }
+
+    private int gatheringStrikeDurationMs() {
+        return Math.min(450, gatheringAttemptIntervalMs());
+    }
+
+    private int gatheringRecoveryDurationMs() {
+        return 350;
     }
 
     private int resourceAttemptsPerExhaustionRoll() {

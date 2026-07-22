@@ -88,6 +88,10 @@ public final class InteractionSystem {
         return new Interaction(new ConversationInteractionContent(conversation));
     }
 
+    private static Interaction handledWithoutOverlay() {
+        return prompt("", "", closeOption("Close")).withoutOverlay();
+    }
+
     public static Interaction configMenu(SoundSystem soundSystem, Runnable exitAction) {
         return configMenu(soundSystem, null, exitAction, null, null, null);
     }
@@ -200,53 +204,7 @@ public final class InteractionSystem {
         return new Interaction(new LevelUpInteractionContent(gameState));
     }
 
-    public static Interaction fishingMenu(GameState gameState) {
-        return new Interaction(new SkillingInteractionContent(
-                gameState,
-                "Fishing Shoal",
-                CharacterSkill.FISHING,
-                () -> gameState == null ? "No fishing spot found." : gameState.getFishingMessage(),
-                "Wait a few seconds for each catch attempt.",
-                "Stop Fishing",
-                () -> {
-                    if (gameState != null) {
-                        gameState.stopFishing();
-                    }
-                }
-        )).allowCharacterMenuOverlay();
-    }
 
-    public static Interaction miningMenu(GameState gameState) {
-        return new Interaction(new SkillingInteractionContent(
-                gameState,
-                "Mineral Rock",
-                CharacterSkill.MINING,
-                () -> gameState == null ? "No mineral rock found." : gameState.getMiningMessage(),
-                "Wait a few seconds for each mining attempt.",
-                "Stop Mining",
-                () -> {
-                    if (gameState != null) {
-                        gameState.stopMining();
-                    }
-                }
-        )).allowCharacterMenuOverlay();
-    }
-
-    public static Interaction woodcuttingMenu(GameState gameState) {
-        return new Interaction(new SkillingInteractionContent(
-                gameState,
-                "Tree",
-                CharacterSkill.WOODCUTTING,
-                () -> gameState == null ? "No tree found." : gameState.getMiningMessage(),
-                "Wait a few seconds for each woodcutting attempt.",
-                "Stop Woodcutting",
-                () -> {
-                    if (gameState != null) {
-                        gameState.stopMining();
-                    }
-                }
-        )).allowCharacterMenuOverlay();
-    }
 
     public static Interaction cookingMenu(GameState gameState) {
         return new Interaction(new SkillingInteractionContent(
@@ -427,6 +385,7 @@ public final class InteractionSystem {
         private boolean inventoryOverlayAllowed = false;
         private boolean characterMenuOverlayAllowed = false;
         private boolean gameplayPaused = false;
+        private boolean opensOverlay = true;
 
         private Interaction(InteractionContent content) {
             this.content = content;
@@ -483,6 +442,15 @@ public final class InteractionSystem {
 
         public boolean pausesGameplay() {
             return gameplayPaused;
+        }
+
+        private Interaction withoutOverlay() {
+            opensOverlay = false;
+            return this;
+        }
+
+        public boolean opensOverlay() {
+            return opensOverlay;
         }
 
         public boolean handleKeyPressed(KeyEvent e) {
@@ -1569,7 +1537,7 @@ public final class InteractionSystem {
                 if (interactionId != null && interactionId.startsWith("custom_fishing_")) {
                     int interactionX = tileX >= 0 ? tileX : entity == null ? tileX : entity.getX();
                     int interactionY = tileY >= 0 ? tileY : entity == null ? tileY : entity.getY();
-                    return createFishingInteraction(gameState, interactionX, interactionY);
+                    return createGatheringInteraction(gameState, interactionX, interactionY, GameState.GatheringToolType.FISHING);
                 }
 
                 if (interactionId != null && interactionId.startsWith("custom_mining_")) {
@@ -1579,15 +1547,15 @@ public final class InteractionSystem {
                             ? null
                             : gameState.getCustomGatheringNodeAtPosition(interactionX, interactionY);
                     if (node != null && node.nodeType() == MapDesignLibrary.GatheringNodeType.TREE) {
-                        return createWoodcuttingInteraction(gameState, interactionX, interactionY);
+                        return createGatheringInteraction(gameState, interactionX, interactionY, GameState.GatheringToolType.WOODCUTTING);
                     }
-                    return createMiningInteraction(gameState, interactionX, interactionY);
+                    return createGatheringInteraction(gameState, interactionX, interactionY, GameState.GatheringToolType.MINING);
                 }
 
                 if (interactionId != null && interactionId.startsWith("custom_woodcutting_")) {
                     int interactionX = tileX >= 0 ? tileX : entity == null ? tileX : entity.getX();
                     int interactionY = tileY >= 0 ? tileY : entity == null ? tileY : entity.getY();
-                    return createWoodcuttingInteraction(gameState, interactionX, interactionY);
+                    return createGatheringInteraction(gameState, interactionX, interactionY, GameState.GatheringToolType.WOODCUTTING);
                 }
 
                 Interaction authoredInteraction = createAuthoredInteraction(interactionId, gameState, entity, tileX, tileY);
@@ -2132,11 +2100,11 @@ public final class InteractionSystem {
             ));
 
             registry.register("fishing_shoal", context -> {
-                return createFishingInteraction(context.getGameState(), context.getTileX(), context.getTileY());
+                return createGatheringInteraction(context.getGameState(), context.getTileX(), context.getTileY(), GameState.GatheringToolType.FISHING);
             });
 
             registry.register("mineral_rock_basic", context -> {
-                return createMiningInteraction(context.getGameState(), context.getTileX(), context.getTileY());
+                return createGatheringInteraction(context.getGameState(), context.getTileX(), context.getTileY(), GameState.GatheringToolType.MINING);
             });
 
             registry.register("campfire_basic", context -> {
@@ -2178,39 +2146,27 @@ public final class InteractionSystem {
             return registry;
         }
 
-        private static Interaction createFishingInteraction(GameState gameState, int tileX, int tileY) {
-            if (!gameState.startFishing(tileX, tileY)) {
-                return prompt(
-                        "Fishing",
-                        gameState.getFishingMessage(),
-                        closeOption("Close")
-                );
+        private static Interaction createGatheringInteraction(
+                GameState gameState, int tileX, int tileY,
+                GameState.GatheringToolType toolType) {
+            if (toolType == GameState.GatheringToolType.FISHING) {
+                if (!gameState.startFishing(tileX, tileY)) {
+                    gameState.getWorldMessageLog().post(
+                            WorldMessageLog.Category.WARNING, gameState.getFishingMessage());
+                    return handledWithoutOverlay();
+                }
+                gameState.getWorldMessageLog().post(
+                        WorldMessageLog.Category.SYSTEM, gameState.getFishingMessage());
+            } else {
+                if (!gameState.startMining(tileX, tileY)) {
+                    gameState.getWorldMessageLog().post(
+                            WorldMessageLog.Category.WARNING, gameState.getMiningMessage());
+                    return handledWithoutOverlay();
+                }
+                gameState.getWorldMessageLog().post(
+                        WorldMessageLog.Category.SYSTEM, gameState.getMiningMessage());
             }
-
-            return fishingMenu(gameState);
-        }
-
-        private static Interaction createMiningInteraction(GameState gameState, int tileX, int tileY) {
-            if (!gameState.startMining(tileX, tileY)) {
-                return prompt(
-                        "Mining",
-                        gameState.getMiningMessage(),
-                        closeOption("Close")
-                );
-            }
-
-            return miningMenu(gameState);
-        }
-
-        private static Interaction createWoodcuttingInteraction(GameState gameState, int tileX, int tileY) {
-            if (!gameState.startMining(tileX, tileY)) {
-                return prompt(
-                        "Woodcutting",
-                        gameState.getMiningMessage(),
-                        closeOption("Close")
-                );
-            }
-            return woodcuttingMenu(gameState);
+            return handledWithoutOverlay();
         }
     }
 

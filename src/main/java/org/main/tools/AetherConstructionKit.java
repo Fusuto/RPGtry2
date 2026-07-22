@@ -516,6 +516,7 @@ public class AetherConstructionKit extends JFrame {
         addMenuItem(menu, "Asset Browser", () -> showAssetBrowser(null));
         addMenuItem(menu, "Ability Cooldowns", this::manageAbilityConfiguration);
         addMenuItem(menu, "Level Gates", this::manageLevelGates);
+        addMenuItem(menu, "Gathering Tool Animations", this::manageAnimations);
         addMenuItem(menu, "Trigger Manager", this::manageTriggers);
         addMenuItem(menu, "Sound Designer", () -> openToolWindow(new SoundDesignerTool()));
         addMenuItem(menu, "Song Designer", () -> openToolWindow(new SongDesignerTool()));
@@ -950,6 +951,8 @@ public class AetherConstructionKit extends JFrame {
             type = AssetBrowserType.IMAGES;
         } else if (lowerName.endsWith(".wav") || lowerName.endsWith(".aiff") || lowerName.endsWith(".au")) {
             type = AssetBrowserType.SOUNDS;
+        } else if (lowerName.endsWith(".glb") || lowerName.endsWith(".fbx")) {
+            type = AssetBrowserType.MODELS;
         } else if (lowerName.endsWith(".properties")) {
             type = AssetBrowserType.DATA;
         } else {
@@ -1167,7 +1170,127 @@ public class AetherConstructionKit extends JFrame {
         }
     }
 
+    private void manageAnimations() {
+        String[] toolPrefixes = { "mining", "woodcutting", "fishing" };
+        String[] toolNames = { "Pickaxe", "Axe", "Fishing Rod" };
+        String[] toolModels = {
+                "assets/3D/gatheringTool/toReplace_pickaxe.glb",
+                "assets/3D/gatheringTool/toReplace_axe.glb",
+                "assets/3D/gatheringTool/toReplace_fishing_rod_stick.glb"
+        };
+
+        Map<String, JSpinner> allSpinners = new LinkedHashMap<>();
+        Map<String, JTextField> allSoundFields = new LinkedHashMap<>();
+        JTabbedPane tabs = new JTabbedPane();
+        List<GatheringToolPreviewPanel> previews = new ArrayList<>();
+
+        for (int i = 0; i < toolPrefixes.length; i++) {
+            String prefix = toolPrefixes[i];
+            JPanel controls = configGridPanel();
+
+            controls.add(new JLabel("— Orientation —"));
+            controls.add(new JLabel(""));
+            controls.add(new JLabel(""));
+            addDoubleConfigRow(controls, allSpinners, "Rotation X (°)", prefix + ".viewModel.rotationX", GameConfiguration.doubleValue(prefix + ".viewModel.rotationX", -18.0), -360.0, 360.0, 1.0);
+            addDoubleConfigRow(controls, allSpinners, "Rotation Y (°)", prefix + ".viewModel.rotationY", GameConfiguration.doubleValue(prefix + ".viewModel.rotationY", 0.0), -360.0, 360.0, 1.0);
+            addDoubleConfigRow(controls, allSpinners, "Rotation Z (°)", prefix + ".viewModel.rotationZ", GameConfiguration.doubleValue(prefix + ".viewModel.rotationZ", -24.0), -360.0, 360.0, 1.0);
+
+            controls.add(new JLabel("— Position —"));
+            controls.add(new JLabel(""));
+            controls.add(new JLabel(""));
+            addDoubleConfigRow(controls, allSpinners, "Position X", prefix + ".viewModel.positionX", GameConfiguration.doubleValue(prefix + ".viewModel.positionX", 0.42), -5.0, 5.0, 0.02);
+            addDoubleConfigRow(controls, allSpinners, "Position Y", prefix + ".viewModel.positionY", GameConfiguration.doubleValue(prefix + ".viewModel.positionY", -0.46), -5.0, 5.0, 0.02);
+            addDoubleConfigRow(controls, allSpinners, "Position Z", prefix + ".viewModel.positionZ", GameConfiguration.doubleValue(prefix + ".viewModel.positionZ", -0.92), -5.0, 5.0, 0.02);
+
+            controls.add(new JLabel("— Swing Axis —"));
+            controls.add(new JLabel(""));
+            controls.add(new JLabel(""));
+            addDoubleConfigRow(controls, allSpinners, "Swing Axis X", prefix + ".viewModel.swingAxisX", GameConfiguration.doubleValue(prefix + ".viewModel.swingAxisX", 0.0), -1.0, 1.0, 0.1);
+            addDoubleConfigRow(controls, allSpinners, "Swing Axis Y", prefix + ".viewModel.swingAxisY", GameConfiguration.doubleValue(prefix + ".viewModel.swingAxisY", 0.0), -1.0, 1.0, 0.1);
+            addDoubleConfigRow(controls, allSpinners, "Swing Axis Z", prefix + ".viewModel.swingAxisZ", GameConfiguration.doubleValue(prefix + ".viewModel.swingAxisZ", 1.0), -1.0, 1.0, 0.1);
+
+            controls.add(new JLabel("— Animation —"));
+            controls.add(new JLabel(""));
+            controls.add(new JLabel(""));
+            addDoubleConfigRow(controls, allSpinners, "Windup Degrees", prefix + ".viewModel.windupDegrees", GameConfiguration.doubleValue(prefix + ".viewModel.windupDegrees", 25.0), -180.0, 180.0, 1.0);
+            addDoubleConfigRow(controls, allSpinners, "Success Strike Deg", prefix + ".viewModel.successDegrees", GameConfiguration.doubleValue(prefix + ".viewModel.successDegrees", -55.0), -180.0, 180.0, 1.0);
+            addDoubleConfigRow(controls, allSpinners, "Failure Strike Deg", prefix + ".viewModel.failureDegrees", GameConfiguration.doubleValue(prefix + ".viewModel.failureDegrees", -20.0), -180.0, 180.0, 1.0);
+            addDoubleConfigRow(controls, allSpinners, "Success Penetration", prefix + ".viewModel.successPenetration", GameConfiguration.doubleValue(prefix + ".viewModel.successPenetration", 0.32), 0.0, 2.0, 0.02);
+            addDoubleConfigRow(controls, allSpinners, "Failure Penetration", prefix + ".viewModel.failurePenetration", GameConfiguration.doubleValue(prefix + ".viewModel.failurePenetration", 0.10), 0.0, 2.0, 0.02);
+
+            controls.add(new JLabel("— Scale —"));
+            controls.add(new JLabel(""));
+            controls.add(new JLabel(""));
+            addDoubleConfigRow(controls, allSpinners, "Scale Height", prefix + ".viewModel.height", GameConfiguration.doubleValue(prefix + ".viewModel.height", 0.76), 0.05, 5.0, 0.05);
+
+            controls.add(new JLabel("— Sounds —"));
+            controls.add(new JLabel(""));
+            controls.add(new JLabel(""));
+            JTextField successSound = new JTextField(GameConfiguration.stringValue(prefix + ".success.soundPath", ""), 22);
+            JTextField failureSound = new JTextField(GameConfiguration.stringValue(prefix + ".failure.soundPath", ""), 22);
+            allSoundFields.put(prefix + ".success.soundPath", successSound);
+            allSoundFields.put(prefix + ".failure.soundPath", failureSound);
+            addSoundPathRow(controls, "Success", successSound);
+            addSoundPathRow(controls, "Failure", failureSound);
+
+            GatheringToolPreviewPanel preview = new GatheringToolPreviewPanel(
+                    toolNames[i], toolModels[i], prefix, allSpinners
+            );
+            previews.add(preview);
+
+            JPanel toolTab = new JPanel(new BorderLayout(10, 10));
+            toolTab.add(new JScrollPane(controls), BorderLayout.WEST);
+            toolTab.add(preview, BorderLayout.CENTER);
+            tabs.addTab(toolNames[i], toolTab);
+        }
+
+        JTextArea note = new JTextArea(
+                "Adjust orientation, position, and animation parameters for each gathering tool."
+                        + " Changes are saved to the packaged configuration and take effect at runtime."
+        );
+        note.setEditable(false);
+        note.setOpaque(false);
+        note.setLineWrap(true);
+        note.setWrapStyleWord(true);
+
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.add(tabs, BorderLayout.CENTER);
+        panel.add(note, BorderLayout.SOUTH);
+
+        int result = showScrollableFormDialog(panel, "Gathering Tool Animations");
+
+        previews.forEach(GatheringToolPreviewPanel::stopPreview);
+
+        if (result != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        Properties properties = loadPackagedConfigurationProperties();
+        for (Map.Entry<String, JSpinner> entry : allSpinners.entrySet()) {
+            String key = entry.getKey();
+            String value = formatSignedConfigNumber(((Number) entry.getValue().getValue()).doubleValue());
+            properties.setProperty(key, value);
+            GameConfiguration.setValue(key, value);
+        }
+        for (Map.Entry<String, JTextField> entry : allSoundFields.entrySet()) {
+            String value = entry.getValue().getText().trim();
+            properties.setProperty(entry.getKey(), value);
+            GameConfiguration.setValue(entry.getKey(), value);
+        }
+
+        try {
+            Files.createDirectories(CONFIG_RESOURCE_PATH.getParent());
+            try (OutputStream outputStream = Files.newOutputStream(CONFIG_RESOURCE_PATH)) {
+                properties.store(outputStream, "Aether packaged gameplay configuration");
+            }
+            setStatus("Updated animation configuration.");
+        } catch (IOException exception) {
+            setStatus("Animation configuration save failed: " + exception.getMessage());
+        }
+    }
+
     private JPanel configGridPanel() {
+
         return new JPanel(new java.awt.GridLayout(0, 3, 8, 6));
     }
 
@@ -1228,6 +1351,18 @@ public class AetherConstructionKit extends JFrame {
             return String.valueOf((long) safeValue);
         }
         return String.format(java.util.Locale.US, "%.2f", safeValue).replaceAll("0+$", "").replaceAll("\\.$", "");
+    }
+
+    private static String formatSignedConfigNumber(double value) {
+        if (!Double.isFinite(value)) {
+            return "0";
+        }
+        if (Math.rint(value) == value) {
+            return String.valueOf((long) value);
+        }
+        return String.format(java.util.Locale.US, "%.4f", value)
+                .replaceAll("0+$", "")
+                .replaceAll("\\.$", "");
     }
 
     private JPanel createFooter() {

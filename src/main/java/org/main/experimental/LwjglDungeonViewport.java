@@ -2,6 +2,7 @@ package org.main.experimental;
 
 import org.main.battle.DifficultyResolver;
 import org.main.core.GameConfiguration;
+import org.main.core.GameState;
 import org.main.core.Library;
 import org.main.engine.AssetLoader;
 import org.main.engine.DungeonRenderContext;
@@ -170,6 +171,9 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             }
             for (LwjglDungeonSceneBuilder.ModelInstance model : scene.models()) {
                 drawStaticModel(model);
+            }
+            if (runtime != null && runtime.gameState() != null) {
+                renderGatheringToolViewModel(runtime.gameState().getGatheringViewModelState(), framebufferWidth, framebufferHeight);
             }
         } else {
             visibleTiles = 0;
@@ -595,8 +599,6 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             return;
         }
 
-        textureCache.bind(model.texture());
-        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
         glPushMatrix();
         glTranslated(instance.centerX(), instance.baseY(), instance.centerZ());
         double scale = model.normalizedScaleForHeight(instance.height());
@@ -604,22 +606,134 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         glTranslated(-model.centerX(), -model.baseY(), -model.centerZ());
 
         for (LwjglStaticModel.Mesh mesh : model.meshes()) {
-            float[] positions = mesh.positions();
-            float[] texCoords = mesh.texCoords();
-            glBegin(GL_TRIANGLES);
-            for (int index : mesh.indices()) {
-                int textureOffset = index * 2;
-                int positionOffset = index * 3;
-                glTexCoord2f(texCoords[textureOffset], texCoords[textureOffset + 1]);
-                glVertex3f(
-                        positions[positionOffset],
-                        positions[positionOffset + 1],
-                        positions[positionOffset + 2]
-                );
-            }
-            glEnd();
+            drawModelMesh(mesh);
         }
         glPopMatrix();
+        glEnable(GL_TEXTURE_2D);
+        glColor4f(1f, 1f, 1f, 1f);
+    }
+
+    private void renderGatheringToolViewModel(GameState.MiningViewModelState viewModelState, int framebufferWidth, int framebufferHeight) {
+        if (viewModelState == null || !viewModelState.visible()) {
+            return;
+        }
+
+        String assetPath = switch (viewModelState.toolType()) {
+            case WOODCUTTING -> "assets/3D/gatheringTool/toReplace_axe.glb";
+            case FISHING -> "assets/3D/gatheringTool/toReplace_fishing_rod_stick.glb";
+            default -> "assets/3D/gatheringTool/toReplace_pickaxe.glb";
+        };
+
+        LwjglStaticModel model = getStaticModel(assetPath);
+        if (model == null) {
+            return;
+        }
+
+        String prefix = viewModelState.toolType().configurationPrefix();
+        double progress = smoothStep(viewModelState.progress());
+        double windup = GameConfiguration.doubleValue(prefix + ".viewModel.windupDegrees", 25.0);
+        double successDegrees = GameConfiguration.doubleValue(prefix + ".viewModel.successDegrees", -55.0);
+        double failureDegrees = GameConfiguration.doubleValue(prefix + ".viewModel.failureDegrees", -20.0);
+        double successPenetration = GameConfiguration.doubleValue(prefix + ".viewModel.successPenetration", 0.32);
+        double failurePenetration = GameConfiguration.doubleValue(prefix + ".viewModel.failurePenetration", 0.10);
+        double angleDegrees = 0.0;
+        double penetration = 0.0;
+
+        switch (viewModelState.motion()) {
+            case WINDUP -> {
+                angleDegrees = windup * progress;
+            }
+            case SUCCESS_STRIKE -> {
+                angleDegrees = windup + (successDegrees - windup) * progress;
+                penetration = successPenetration * progress;
+            }
+            case FAILURE_STRIKE -> {
+                angleDegrees = windup + (failureDegrees - windup) * progress;
+                penetration = failurePenetration * progress;
+            }
+            case SUCCESS_RECOVERY -> {
+                angleDegrees = successDegrees * (1.0 - progress);
+                penetration = successPenetration * (1.0 - progress);
+            }
+            case FAILURE_RECOVERY -> {
+                angleDegrees = failureDegrees * (1.0 - progress);
+                penetration = failurePenetration * (1.0 - progress);
+            }
+            default -> {}
+        }
+
+        glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
+        glLoadIdentity();
+        double aspect = Math.max(1.0, framebufferWidth) / (double) Math.max(1, framebufferHeight);
+        double tanHalfFov = Math.tan(Math.toRadians(fovDegrees) / 2.0);
+        double top = nearPlane * tanHalfFov;
+        double right = top * aspect;
+        glFrustum(-right, right, -top, top, nearPlane, farPlane);
+
+        glMatrixMode(GL_MODELVIEW);
+        glPushMatrix();
+        glLoadIdentity();
+
+        glClear(GL_DEPTH_BUFFER_BIT);
+
+        glTranslated(
+                GameConfiguration.doubleValue(prefix + ".viewModel.positionX", 0.42),
+                GameConfiguration.doubleValue(prefix + ".viewModel.positionY", -0.46),
+                GameConfiguration.doubleValue(prefix + ".viewModel.positionZ", -0.92) - penetration);
+        glRotated(GameConfiguration.doubleValue(prefix + ".viewModel.rotationX", -18.0), 1.0, 0.0, 0.0);
+        glRotated(GameConfiguration.doubleValue(prefix + ".viewModel.rotationY", 0.0), 0.0, 1.0, 0.0);
+        glRotated(GameConfiguration.doubleValue(prefix + ".viewModel.rotationZ", -24.0), 0.0, 0.0, 1.0);
+        double axisX = GameConfiguration.doubleValue(prefix + ".viewModel.swingAxisX", 0.0);
+        double axisY = GameConfiguration.doubleValue(prefix + ".viewModel.swingAxisY", 0.0);
+        double axisZ = GameConfiguration.doubleValue(prefix + ".viewModel.swingAxisZ", 1.0);
+        if (Math.abs(axisX) + Math.abs(axisY) + Math.abs(axisZ) < 0.0001) {
+            axisZ = 1.0;
+        }
+        glRotated(angleDegrees, axisX, axisY, axisZ);
+
+        double scale = model.normalizedScaleForHeight(Math.max(0.05,
+                GameConfiguration.doubleValue(prefix + ".viewModel.height", 0.76)));
+        glScaled(scale, scale, scale);
+        glTranslated(-model.centerX(), -model.baseY(), -model.centerZ());
+
+        for (LwjglStaticModel.Mesh mesh : model.meshes()) {
+            drawModelMesh(mesh);
+        }
+
+        glPopMatrix();
+        glMatrixMode(GL_PROJECTION);
+        glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
+        glEnable(GL_TEXTURE_2D);
+        glColor4f(1f, 1f, 1f, 1f);
+    }
+
+    private void drawModelMesh(LwjglStaticModel.Mesh mesh) {
+        if (mesh.texture() == null) {
+            glDisable(GL_TEXTURE_2D);
+        } else {
+            glEnable(GL_TEXTURE_2D);
+            textureCache.bind(mesh.texture());
+        }
+        glColor4f(mesh.red(), mesh.green(), mesh.blue(), mesh.alpha());
+        float[] positions = mesh.positions();
+        float[] texCoords = mesh.texCoords();
+        glBegin(GL_TRIANGLES);
+        for (int index : mesh.indices()) {
+            int textureOffset = index * 2;
+            int positionOffset = index * 3;
+            if (mesh.texture() != null && texCoords != null && textureOffset + 1 < texCoords.length) {
+                glTexCoord2f(texCoords[textureOffset], texCoords[textureOffset + 1]);
+            }
+            glVertex3f(positions[positionOffset], positions[positionOffset + 1], positions[positionOffset + 2]);
+        }
+        glEnd();
+    }
+
+    private static double smoothStep(double value) {
+        double clamped = Math.max(0.0, Math.min(1.0, value));
+        return clamped * clamped * (3.0 - 2.0 * clamped);
     }
 
     private LwjglStaticModel getStaticModel(String assetPath) {

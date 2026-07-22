@@ -73,7 +73,7 @@ final class GatheringToolPreviewPanel extends JPanel {
             drawBackdrop(g);
             if (model == null) {
                 g.setColor(new Color(255, 150, 150));
-                g.drawString("Unable to load pickaxe preview: " + loadError, 20, 34);
+                g.drawString("Unable to load " + displayName + " preview: " + loadError, 20, 34);
                 return;
             }
             AnimationFrame frame = animationFrame();

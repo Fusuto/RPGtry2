@@ -90,6 +90,7 @@ public class DungeonController {
     }
 
     public void turnLeft() {
+        gameState.cancelFirstPersonGathering();
         int previousDirection = gameState.getDirection();
         int nextDirection = movementEngine.turnLeft(previousDirection);
         gameState.setDirection(nextDirection);
@@ -97,6 +98,7 @@ public class DungeonController {
     }
 
     public void turnRight() {
+        gameState.cancelFirstPersonGathering();
         int previousDirection = gameState.getDirection();
         int nextDirection = movementEngine.turnRight(previousDirection);
         gameState.setDirection(nextDirection);
@@ -110,6 +112,10 @@ public class DungeonController {
     }
 
     public void interactAt(int targetX, int targetY) {
+        if (gameState.isFirstPersonGatheringActive()
+                && !gameState.isFirstPersonGatheringAt(targetX, targetY)) {
+            gameState.cancelFirstPersonGathering();
+        }
         MapEntity targetEntity = getEntityAt(targetX, targetY);
 
         /*
@@ -152,6 +158,7 @@ public class DungeonController {
     }
 
     private void move(int dx, int dy) {
+        gameState.cancelFirstPersonGathering();
         int previousX = gameState.getPlayerX();
         int previousY = gameState.getPlayerY();
         Point nextPosition = movementEngine.move(
@@ -324,6 +331,10 @@ public class DungeonController {
             return false;
         }
 
+        if (!interaction.opensOverlay()) {
+            return true;
+        }
+
         gameState.openInteraction(interaction.withSelectionSoundPath(entity.getTalkSoundPath()));
         return true;
     }
@@ -347,6 +358,10 @@ public class DungeonController {
 
         if (interaction == null) {
             return false;
+        }
+
+        if (!interaction.opensOverlay()) {
+            return true;
         }
 
         gameState.openInteraction(interaction);

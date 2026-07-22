@@ -54,6 +54,10 @@ public class OverworldHud {
     private static final int HELD_ITEM_SLOT_SIZE = 48;
     private static final int HELD_ITEM_ICON_PADDING = 7;
     private static final int HELD_ITEM_CLUSTER_GAP = 24;
+    private static final int MESSAGE_FEED_WIDTH = 470;
+    private static final int MESSAGE_PANEL_WIDTH = 540;
+    private static final int MESSAGE_PANEL_HEIGHT = 310;
+    private static final int MESSAGE_ROW_HEIGHT = 22;
 
     private final BufferedImage bottomPanel = AssetLoader.loadImage(FOOZLE_PATH + "Panel_2.png");
     private final BufferedImage corner = AssetLoader.loadImage(FOOZLE_PATH + "Corner.png");
@@ -80,9 +84,14 @@ public class OverworldHud {
     private final Map<CharacterSkill, Rectangle> skillCellBounds = new EnumMap<>(CharacterSkill.class);
     private final Rectangle statsPanelBounds = new Rectangle();
     private final Rectangle statsClipBounds = new Rectangle();
+    private final Rectangle messageFeedBounds = new Rectangle();
+    private final Rectangle messagePanelBounds = new Rectangle();
+    private final Rectangle messageCloseBounds = new Rectangle();
     private Point mousePoint = new Point(-1, -1);
     private int statsScrollOffset = 0;
     private int statsContentHeight = 0;
+    private boolean messageLogExpanded;
+    private int messageLogScroll;
 
     public OverworldHud() {
         skillIcons.put(CharacterSkill.MINING, AssetLoader.loadImage(SKILL_ICON_PATH + "mining.png"));
@@ -113,6 +122,7 @@ public class OverworldHud {
         drawBottomBar(g, width, height);
         drawCorners(g, width);
         drawHeldWorldUseItem(g, gameState, width, height);
+        drawWorldMessages(g, gameState, width, height);
 
         if (gameState.isSkillsOpen()) {
             drawSkillsPanel(g, gameState, width, height);
@@ -149,6 +159,20 @@ public class OverworldHud {
         }
 
         calculateButtonBounds(width, height);
+
+        if (messageLogExpanded) {
+            if (messageCloseBounds.contains(point)) {
+                messageLogExpanded = false;
+                return true;
+            }
+            if (messagePanelBounds.contains(point)) {
+                return true;
+            }
+        } else if (messageFeedBounds.contains(point)) {
+            messageLogExpanded = true;
+            messageLogScroll = 0;
+            return true;
+        }
 
         if (inventoryButtonBounds.contains(point)) {
             gameState.toggleInventory();
@@ -215,6 +239,12 @@ public class OverworldHud {
     }
 
     public boolean handleMouseWheelMoved(MouseWheelEvent e, GameState gameState, int width, int height) {
+        if (e != null && gameState != null && messageLogExpanded && messagePanelBounds.contains(e.getPoint())) {
+            int visibleRows = Math.max(1, (messagePanelBounds.height - 58) / MESSAGE_ROW_HEIGHT);
+            int maximum = Math.max(0, gameState.getWorldMessageLog().entries().size() - visibleRows);
+            messageLogScroll = Math.max(0, Math.min(maximum, messageLogScroll + e.getWheelRotation()));
+            return true;
+        }
         if (e == null || gameState == null || !gameState.isStatsOpen()) {
             return false;
         }
@@ -235,6 +265,114 @@ public class OverworldHud {
 
         statsScrollOffset = clamp(statsScrollOffset + e.getWheelRotation() * STATS_SCROLL_STEP, 0, maxScroll);
         return true;
+    }
+
+    private void drawWorldMessages(Graphics2D g, GameState gameState, int width, int height) {
+        if (gameState.getWorldMessageLog().entries().isEmpty()) {
+            messageLogExpanded = false;
+            messageFeedBounds.setBounds(0, 0, 0, 0);
+            messagePanelBounds.setBounds(0, 0, 0, 0);
+            return;
+        }
+        if (messageLogExpanded) {
+            drawExpandedWorldMessages(g, gameState, width, height);
+            messageFeedBounds.setBounds(0, 0, 0, 0);
+            return;
+        }
+
+        List<WorldMessageLog.Message> messages = gameState.getWorldMessageLog().recent(4);
+        int feedWidth = Math.min(MESSAGE_FEED_WIDTH, Math.max(240, width - 36));
+        int feedHeight = messages.size() * MESSAGE_ROW_HEIGHT + 32;
+        int x = 18;
+        int y = Math.max(18, height - BOTTOM_BAR_HEIGHT - feedHeight - 12);
+        messageFeedBounds.setBounds(x, y, feedWidth, feedHeight);
+
+        Composite previousComposite = g.getComposite();
+        Font previousFont = g.getFont();
+        g.setComposite(AlphaComposite.SrcOver.derive(0.82f));
+        g.setColor(new Color(0, 0, 0, 165));
+        g.fillRoundRect(x, y, 126, 22, 8, 8);
+        g.setColor(new Color(205, 215, 232));
+        g.setFont(previousFont.deriveFont(Font.BOLD, 12f));
+        g.drawString("Messages (" + gameState.getWorldMessageLog().entries().size() + ")", x + 8, y + 15);
+        g.setFont(previousFont.deriveFont(Font.PLAIN, 13f));
+        for (int index = 0; index < messages.size(); index++) {
+            WorldMessageLog.Message message = messages.get(index);
+            long ageMs = gameState.getWorldMessageLog().ageMs(message);
+            float alpha = ageMs <= 6_000L
+                    ? 1.0f
+                    : Math.max(0.0f, 1.0f - (ageMs - 6_000L) / 2_000.0f);
+            g.setComposite(AlphaComposite.SrcOver.derive(alpha));
+            int rowY = y + 28 + index * MESSAGE_ROW_HEIGHT;
+            g.setColor(new Color(0, 0, 0, 165));
+            g.fillRoundRect(x, rowY, feedWidth, MESSAGE_ROW_HEIGHT - 2, 8, 8);
+            g.setColor(messageColor(message.category()));
+            g.drawString(fitMessage(g, message.displayText(), feedWidth - 18), x + 9, rowY + 15);
+        }
+        g.setComposite(previousComposite);
+        g.setFont(previousFont);
+    }
+
+    private void drawExpandedWorldMessages(Graphics2D g, GameState gameState, int width, int height) {
+        int panelWidth = Math.min(MESSAGE_PANEL_WIDTH, Math.max(300, width - 36));
+        int panelHeight = Math.min(MESSAGE_PANEL_HEIGHT, Math.max(180, height - BOTTOM_BAR_HEIGHT - 36));
+        int x = 18;
+        int y = Math.max(18, height - BOTTOM_BAR_HEIGHT - panelHeight - 12);
+        messagePanelBounds.setBounds(x, y, panelWidth, panelHeight);
+        messageCloseBounds.setBounds(x + panelWidth - 34, y + 10, 22, 22);
+
+        g.setColor(new Color(12, 16, 23, 230));
+        g.fillRoundRect(x, y, panelWidth, panelHeight, 12, 12);
+        g.setColor(new Color(180, 196, 220, 210));
+        g.drawRoundRect(x, y, panelWidth, panelHeight, 12, 12);
+        Font previousFont = g.getFont();
+        g.setFont(previousFont.deriveFont(Font.BOLD, 15f));
+        g.setColor(Color.WHITE);
+        g.drawString("World Messages", x + 14, y + 27);
+        g.drawString("X", messageCloseBounds.x + 5, messageCloseBounds.y + 16);
+
+        List<WorldMessageLog.Message> entries = gameState.getWorldMessageLog().entries();
+        int visibleRows = Math.max(1, (panelHeight - 58) / MESSAGE_ROW_HEIGHT);
+        int maximumScroll = Math.max(0, entries.size() - visibleRows);
+        messageLogScroll = Math.max(0, Math.min(maximumScroll, messageLogScroll));
+        int end = Math.max(0, entries.size() - messageLogScroll);
+        int start = Math.max(0, end - visibleRows);
+
+        g.setFont(previousFont.deriveFont(Font.PLAIN, 13f));
+        int rowY = y + 50;
+        for (int index = start; index < end; index++) {
+            WorldMessageLog.Message message = entries.get(index);
+            g.setColor(messageColor(message.category()));
+            g.drawString(fitMessage(g, message.displayText(), panelWidth - 30), x + 14, rowY + 15);
+            rowY += MESSAGE_ROW_HEIGHT;
+        }
+        g.setFont(previousFont);
+    }
+
+    private Color messageColor(WorldMessageLog.Category category) {
+        if (category == null) {
+            return new Color(225, 230, 238);
+        }
+        return switch (category) {
+            case SUCCESS -> new Color(132, 235, 142);
+            case FAILURE -> new Color(218, 193, 132);
+            case WARNING -> new Color(255, 130, 120);
+            case SPEECH -> new Color(255, 220, 126);
+            case SYSTEM -> new Color(215, 225, 242);
+        };
+    }
+
+    private String fitMessage(Graphics2D g, String text, int width) {
+        String safeText = text == null ? "" : text;
+        if (g.getFontMetrics().stringWidth(safeText) <= width) {
+            return safeText;
+        }
+        String ellipsis = "...";
+        int end = safeText.length();
+        while (end > 0 && g.getFontMetrics().stringWidth(safeText.substring(0, end) + ellipsis) > width) {
+            end--;
+        }
+        return safeText.substring(0, end) + ellipsis;
     }
 
     private void calculateButtonBounds(int width, int height) {

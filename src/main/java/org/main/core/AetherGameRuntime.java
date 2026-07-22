@@ -99,6 +99,7 @@ public final class AetherGameRuntime {
     }
 
     public void startNewGame(String characterName, PlayerRegionLibrary playerRegion) {
+        gameState.getWorldMessageLog().clear();
         String safeName = characterName == null || characterName.isBlank() ? "Player" : characterName.trim();
         PlayerRegionLibrary safeRegion = playerRegion == null ? PlayerRegionLibrary.MIDLANDS : playerRegion;
         gameState.setPlayerCharacter(GameBootstrap.createPlayerCharacter(safeName, safeRegion));
@@ -163,6 +164,7 @@ public final class AetherGameRuntime {
             throw new IOException("No map selected.");
         }
 
+        gameState.getWorldMessageLog().clear();
         gameState.setPlayerCharacter(GameBootstrap.createDefaultPlayerCharacter());
         loadAuthoredMap(mapPath);
     }
@@ -188,6 +190,7 @@ public final class AetherGameRuntime {
     }
 
     public void loadGame() throws IOException {
+        gameState.getWorldMessageLog().clear();
         SaveSystem.load(gameState);
         gameOverMusicStarted = false;
         soundSystem.stopAll();
@@ -200,6 +203,7 @@ public final class AetherGameRuntime {
     }
 
     public void returnToMainMenu() {
+        gameState.getWorldMessageLog().clear();
         soundSystem.stopAll();
         gameOverMusicStarted = false;
         gameState.setGameMode(GameState.GameMode.START_MENU);
@@ -212,6 +216,8 @@ public final class AetherGameRuntime {
             gameOverMusicStarted = true;
         }
 
+        gameState.getWorldMessageLog().advance(deltaMs);
+
         if (gameState.isGameplayPaused()) {
             return;
         }
@@ -221,6 +227,7 @@ public final class AetherGameRuntime {
         gameState.updateEnemyRespawns(deltaMs);
         gameState.updateFishing(deltaMs);
         gameState.updateMining(deltaMs);
+        playPendingGatheringImpactSound();
         gameState.updateCooking(deltaMs);
         gameState.updateSmelting(deltaMs);
         gameState.updateTemporaryStations(deltaMs);
@@ -231,6 +238,18 @@ public final class AetherGameRuntime {
         for (MapEntity entity : gameState.getEntities()) {
             entity.update(deltaMs);
         }
+    }
+
+    private void playPendingGatheringImpactSound() {
+        GameState.GatheringImpactEvent event = gameState.consumeGatheringImpactEvent();
+        if (event == null || event.outcome() == GameState.MiningAttemptOutcome.NONE) {
+            return;
+        }
+        String outcome = event.outcome() == GameState.MiningAttemptOutcome.SUCCESS ? "success" : "failure";
+        soundSystem.playSound(GameConfiguration.stringValue(
+                event.toolType().configurationPrefix() + "." + outcome + ".soundPath",
+                ""
+        ));
     }
 
     public DungeonRenderContext renderContext(int viewportWidth, int viewportHeight) {

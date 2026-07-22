@@ -228,6 +228,9 @@ public final class GameConfiguration {
         put("woodcutting.baseSuccessChance", "0.40");
         put("woodcutting.successChancePerLevel", "0.03");
         put("woodcutting.maxSuccessChance", "0.88");
+        addGatheringToolDefaults("mining", -0.09, -0.55, -0.90, -14.0, 78.0, -14.0);
+        addGatheringToolDefaults("woodcutting", 0.42, -0.46, -0.92, -18.0, 0.0, -24.0);
+        addGatheringToolDefaults("fishing", 0.42, -0.46, -0.92, -18.0, 0.0, -24.0);
         put("cooking.baseSuccessChance", "0.45");
         put("cooking.successChancePerLevel", "0.035");
         put("cooking.maxSuccessChance", "0.90");
@@ -281,5 +284,33 @@ public final class GameConfiguration {
         put("butchery.weight.willpowerBody", "0.35");
         put("butchery.weight.vitalityBody", "0.80");
         put("butchery.weight.vitalityLegs", "0.20");
+    }
+
+    private static void addGatheringToolDefaults(
+            String prefix,
+            double x,
+            double y,
+            double z,
+            double rotationX,
+            double rotationY,
+            double rotationZ
+    ) {
+        put(prefix + ".viewModel.positionX", String.valueOf(x));
+        put(prefix + ".viewModel.positionY", String.valueOf(y));
+        put(prefix + ".viewModel.positionZ", String.valueOf(z));
+        put(prefix + ".viewModel.rotationX", String.valueOf(rotationX));
+        put(prefix + ".viewModel.rotationY", String.valueOf(rotationY));
+        put(prefix + ".viewModel.rotationZ", String.valueOf(rotationZ));
+        put(prefix + ".viewModel.swingAxisX", "0");
+        put(prefix + ".viewModel.swingAxisY", "0");
+        put(prefix + ".viewModel.swingAxisZ", "1");
+        put(prefix + ".viewModel.height", "0.76");
+        put(prefix + ".viewModel.windupDegrees", "25");
+        put(prefix + ".viewModel.successDegrees", "-55");
+        put(prefix + ".viewModel.failureDegrees", "-20");
+        put(prefix + ".viewModel.successPenetration", "0.32");
+        put(prefix + ".viewModel.failurePenetration", "0.10");
+        put(prefix + ".success.soundPath", "");
+        put(prefix + ".failure.soundPath", "");
     }
 }

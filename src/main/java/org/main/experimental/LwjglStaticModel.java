@@ -3,9 +3,13 @@ package org.main.experimental;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.assimp.AIFace;
+import org.lwjgl.assimp.AIColor4D;
+import org.lwjgl.assimp.AIMaterial;
 import org.lwjgl.assimp.AIMesh;
 import org.lwjgl.assimp.AIScene;
+import org.lwjgl.assimp.AIString;
 import org.lwjgl.assimp.AITexture;
+import org.lwjgl.assimp.AITexel;
 import org.lwjgl.assimp.AIVector3D;
 import org.main.engine.AssetLoader;
 
@@ -15,12 +19,20 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import static org.lwjgl.assimp.Assimp.aiImportFileFromMemory;
-import static org.lwjgl.assimp.Assimp.aiProcess_FlipUVs;
+import static org.lwjgl.assimp.Assimp.AI_MATKEY_BASE_COLOR;
+import static org.lwjgl.assimp.Assimp.AI_MATKEY_COLOR_DIFFUSE;
+import static org.lwjgl.assimp.Assimp.aiGetMaterialColor;
+import static org.lwjgl.assimp.Assimp.aiGetMaterialTexture;
+import static org.lwjgl.assimp.Assimp.aiReturn_SUCCESS;
+import static org.lwjgl.assimp.Assimp.aiTextureType_BASE_COLOR;
+import static org.lwjgl.assimp.Assimp.aiTextureType_DIFFUSE;
 import static org.lwjgl.assimp.Assimp.aiProcess_JoinIdenticalVertices;
 import static org.lwjgl.assimp.Assimp.aiProcess_PreTransformVertices;
 import static org.lwjgl.assimp.Assimp.aiProcess_SortByPType;
@@ -29,7 +41,6 @@ import static org.lwjgl.assimp.Assimp.aiReleaseImport;
 
 public final class LwjglStaticModel {
     private final List<Mesh> meshes;
-    private final BufferedImage texture;
     private final float minX;
     private final float minY;
     private final float minZ;
@@ -39,7 +50,6 @@ public final class LwjglStaticModel {
 
     private LwjglStaticModel(
             List<Mesh> meshes,
-            BufferedImage texture,
             float minX,
             float minY,
             float minZ,
@@ -48,7 +58,6 @@ public final class LwjglStaticModel {
             float maxZ
     ) {
         this.meshes = List.copyOf(meshes);
-        this.texture = texture;
         this.minX = minX;
         this.minY = minY;
         this.minZ = minZ;
@@ -58,6 +67,7 @@ public final class LwjglStaticModel {
     }
 
     public static LwjglStaticModel load(String assetPath) throws IOException {
+        String formatHint = formatHint(assetPath);
         byte[] assetBytes;
         try (InputStream stream = AssetLoader.openAssetStream(assetPath)) {
             assetBytes = stream.readAllBytes();
@@ -70,9 +80,8 @@ public final class LwjglStaticModel {
                 aiProcess_Triangulate
                         | aiProcess_JoinIdenticalVertices
                         | aiProcess_PreTransformVertices
-                        | aiProcess_SortByPType
-                        | aiProcess_FlipUVs,
-                "glb"
+                        | aiProcess_SortByPType,
+                formatHint
         );
         if (scene == null || scene.mRootNode() == null || scene.mNumMeshes() == 0) {
             throw new IOException("Assimp could not import model: " + assetPath);
@@ -87,6 +96,7 @@ public final class LwjglStaticModel {
             float maxY = Float.NEGATIVE_INFINITY;
             float maxZ = Float.NEGATIVE_INFINITY;
             PointerBuffer sceneMeshes = scene.mMeshes();
+            List<BufferedImage> embeddedTextures = loadEmbeddedTextures(scene);
 
             for (int meshIndex = 0; meshIndex < scene.mNumMeshes(); meshIndex++) {
                 AIMesh sourceMesh = AIMesh.create(sceneMeshes.get(meshIndex));
@@ -128,7 +138,18 @@ public final class LwjglStaticModel {
                     indices.add(faceIndices.get(2));
                 }
                 int[] triangleIndices = indices.stream().mapToInt(Integer::intValue).toArray();
-                meshes.add(new Mesh(positions, texCoords, triangleIndices));
+                MaterialAppearance appearance = resolveMaterialAppearance(
+                        scene, sourceMesh, embeddedTextures, assetPath);
+                meshes.add(new Mesh(
+                        positions,
+                        texCoords,
+                        triangleIndices,
+                        appearance.texture(),
+                        appearance.red(),
+                        appearance.green(),
+                        appearance.blue(),
+                        appearance.alpha()
+                ));
             }
 
             if (meshes.isEmpty() || !Float.isFinite(minY) || maxY <= minY) {
@@ -136,7 +157,6 @@ public final class LwjglStaticModel {
             }
             return new LwjglStaticModel(
                     meshes,
-                    loadFirstEmbeddedTexture(scene),
                     minX,
                     minY,
                     minZ,
@@ -149,30 +169,163 @@ public final class LwjglStaticModel {
         }
     }
 
-    private static BufferedImage loadFirstEmbeddedTexture(AIScene scene) throws IOException {
+    private static List<BufferedImage> loadEmbeddedTextures(AIScene scene) throws IOException {
+        List<BufferedImage> textures = new ArrayList<>();
         if (scene.mNumTextures() == 0 || scene.mTextures() == null) {
-            return null;
+            return textures;
         }
-        AITexture sourceTexture = AITexture.create(scene.mTextures().get(0));
-        if (sourceTexture.mHeight() != 0) {
-            return null;
+        for (int index = 0; index < scene.mNumTextures(); index++) {
+            AITexture sourceTexture = AITexture.create(scene.mTextures().get(index));
+            BufferedImage image = null;
+            if (sourceTexture.mHeight() == 0 && sourceTexture.mWidth() > 0) {
+                ByteBuffer compressed = sourceTexture.pcDataCompressed();
+                if (compressed != null) {
+                    byte[] imageBytes = new byte[sourceTexture.mWidth()];
+                    compressed.get(0, imageBytes);
+                    image = ImageIO.read(new ByteArrayInputStream(imageBytes));
+                }
+            } else if (sourceTexture.mWidth() > 0 && sourceTexture.mHeight() > 0) {
+                int width = sourceTexture.mWidth();
+                int height = sourceTexture.mHeight();
+                AITexel.Buffer pixels = sourceTexture.pcData();
+                if (pixels != null) {
+                    image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+                    for (int y = 0; y < height; y++) {
+                        for (int x = 0; x < width; x++) {
+                            AITexel pixel = pixels.get(y * width + x);
+                            int argb = Byte.toUnsignedInt(pixel.a()) << 24
+                                    | Byte.toUnsignedInt(pixel.r()) << 16
+                                    | Byte.toUnsignedInt(pixel.g()) << 8
+                                    | Byte.toUnsignedInt(pixel.b());
+                            image.setRGB(x, y, argb);
+                        }
+                    }
+                }
+            }
+            textures.add(image);
         }
+        return textures;
+    }
 
-        ByteBuffer compressed = sourceTexture.pcDataCompressed();
-        if (compressed == null || sourceTexture.mWidth() <= 0) {
+    private static MaterialAppearance resolveMaterialAppearance(
+            AIScene scene,
+            AIMesh mesh,
+            List<BufferedImage> embeddedTextures,
+            String assetPath
+    ) {
+        AIMaterial material = null;
+        if (scene.mMaterials() != null
+                && mesh.mMaterialIndex() >= 0
+                && mesh.mMaterialIndex() < scene.mNumMaterials()) {
+            material = AIMaterial.create(scene.mMaterials().get(mesh.mMaterialIndex()));
+        }
+        float[] color = resolveBaseColor(material);
+        BufferedImage texture = resolveMaterialTexture(
+                material, aiTextureType_BASE_COLOR, embeddedTextures, assetPath);
+        if (texture == null) {
+            texture = resolveMaterialTexture(
+                    material, aiTextureType_DIFFUSE, embeddedTextures, assetPath);
+        }
+        if (texture == null && embeddedTextures.size() == 1) {
+            texture = embeddedTextures.get(0);
+        }
+        return new MaterialAppearance(texture, color[0], color[1], color[2], color[3]);
+    }
+
+    private static float[] resolveBaseColor(AIMaterial material) {
+        if (material == null) {
+            return new float[]{1f, 1f, 1f, 1f};
+        }
+        try (AIColor4D color = AIColor4D.calloc()) {
+            int result = aiGetMaterialColor(material, AI_MATKEY_BASE_COLOR, 0, 0, color);
+            if (result != aiReturn_SUCCESS) {
+                result = aiGetMaterialColor(material, AI_MATKEY_COLOR_DIFFUSE, 0, 0, color);
+            }
+            if (result == aiReturn_SUCCESS) {
+                return new float[]{color.r(), color.g(), color.b(), color.a()};
+            }
+        }
+        return new float[]{1f, 1f, 1f, 1f};
+    }
+
+    private static BufferedImage resolveMaterialTexture(
+            AIMaterial material,
+            int textureType,
+            List<BufferedImage> embeddedTextures,
+            String assetPath
+    ) {
+        if (material == null || embeddedTextures.isEmpty()) {
             return null;
         }
-        byte[] imageBytes = new byte[sourceTexture.mWidth()];
-        compressed.get(0, imageBytes);
-        return ImageIO.read(new ByteArrayInputStream(imageBytes));
+        try (AIString path = AIString.calloc()) {
+            if (aiGetMaterialTexture(
+                    material,
+                    textureType,
+                    0,
+                    path,
+                    (IntBuffer) null,
+                    (IntBuffer) null,
+                    (FloatBuffer) null,
+                    (IntBuffer) null,
+                    (IntBuffer) null,
+                    (IntBuffer) null)
+                    != aiReturn_SUCCESS) {
+                return null;
+            }
+            String value = path.dataString();
+            if (value.startsWith("*")) {
+                try {
+                    int index = Integer.parseInt(value.substring(1));
+                    return index >= 0 && index < embeddedTextures.size() ? embeddedTextures.get(index) : null;
+                } catch (NumberFormatException ignored) {
+                    return null;
+                }
+            }
+            BufferedImage externalTexture = loadExternalMaterialTexture(assetPath, value);
+            if (externalTexture != null) {
+                return externalTexture;
+            }
+        }
+        return embeddedTextures.size() == 1 ? embeddedTextures.get(0) : null;
+    }
+
+    private static BufferedImage loadExternalMaterialTexture(String modelPath, String texturePath) {
+        if (texturePath == null || texturePath.isBlank()) {
+            return null;
+        }
+        String normalizedTexture = texturePath.trim().replace('\\', '/');
+        String normalizedModel = modelPath == null ? "" : modelPath.replace('\\', '/');
+        int slash = normalizedModel.lastIndexOf('/');
+        String modelFolder = slash < 0 ? "" : normalizedModel.substring(0, slash + 1);
+        String fileName = normalizedTexture.substring(normalizedTexture.lastIndexOf('/') + 1);
+
+        BufferedImage image = AssetLoader.loadImage(modelFolder + fileName);
+        if (image != null) {
+            return image;
+        }
+        if (!normalizedTexture.equals(fileName)) {
+            return AssetLoader.loadImage(modelFolder + normalizedTexture);
+        }
+        return null;
+    }
+
+    private static String formatHint(String assetPath) throws IOException {
+        String normalized = assetPath == null ? "" : assetPath.trim().toLowerCase(Locale.ROOT);
+        int queryIndex = normalized.indexOf('?');
+        if (queryIndex >= 0) {
+            normalized = normalized.substring(0, queryIndex);
+        }
+        if (normalized.endsWith(".glb")) {
+            return "glb";
+        }
+        if (normalized.endsWith(".fbx")) {
+            return "fbx";
+        }
+        throw new IOException("Unsupported 3D model format (expected .glb or .fbx): " + assetPath);
     }
 
     public List<Mesh> meshes() {
         return meshes;
-    }
-
-    public BufferedImage texture() {
-        return texture;
     }
 
     public double normalizedScaleForHeight(double targetHeight) {
@@ -201,8 +354,8 @@ public final class LwjglStaticModel {
             float blue,
             float alpha
     ) {
-        public Mesh(float[] positions, float[] texCoords, int[] indices) {
-            this(positions, texCoords, indices, null, 1.0f, 1.0f, 1.0f, 1.0f);
-        }
+    }
+
+    private record MaterialAppearance(BufferedImage texture, float red, float green, float blue, float alpha) {
     }
 }
