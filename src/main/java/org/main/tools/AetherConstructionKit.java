@@ -203,7 +203,7 @@ public class AetherConstructionKit extends JFrame {
     public AetherConstructionKit() {
         super("Aether Construction Kit");
 
-        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(8, 8));
         setMinimumSize(new Dimension(980, 720));
 
@@ -667,13 +667,13 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void manageSoundEffectConfiguration() {
-        JTextField doorOpenField = new JTextField(GameConfiguration.stringValue("sound.doorOpen.path", ""), 34);
-        JTextField doorCloseField = new JTextField(GameConfiguration.stringValue("sound.doorClose.path", ""), 34);
+        JTextField doorOpenField = new JTextField(GameConfiguration.stringValue("sound.doorOpen.path", ""), 28);
+        JTextField doorCloseField = new JTextField(GameConfiguration.stringValue("sound.doorClose.path", ""), 28);
         JTextField autoAttackField = new JTextField(
                 GameConfiguration.stringValue("battle.playerAutoAttack.soundPath", ""),
-                34);
+                28);
 
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 3, 8, 6));
+        JPanel fields = createFormPanel();
         addSoundPathRow(fields, "Door Open", doorOpenField);
         addSoundPathRow(fields, "Door Close", doorCloseField);
         addSoundPathRow(fields, "Player Auto Attack", autoAttackField);
@@ -699,13 +699,11 @@ public class AetherConstructionKit extends JFrame {
         values.put("sound.doorOpen.path", doorOpenField.getText().trim());
         values.put("sound.doorClose.path", doorCloseField.getText().trim());
         values.put("battle.playerAutoAttack.soundPath", autoAttackField.getText().trim());
-
         Properties properties = loadPackagedConfigurationProperties();
         for (Map.Entry<String, String> entry : values.entrySet()) {
             properties.setProperty(entry.getKey(), entry.getValue());
             GameConfiguration.setValue(entry.getKey(), entry.getValue());
         }
-
         try {
             Files.createDirectories(CONFIG_RESOURCE_PATH.getParent());
             try (OutputStream outputStream = Files.newOutputStream(CONFIG_RESOURCE_PATH)) {
@@ -720,9 +718,7 @@ public class AetherConstructionKit extends JFrame {
     private void addSoundPathRow(JPanel fields, String label, JTextField pathField) {
         JButton browseButton = new JButton("Browse");
         browseButton.addActionListener(event -> showAssetBrowser(pathField, AssetBrowserType.SOUNDS));
-        fields.add(new JLabel(label));
-        fields.add(pathField);
-        fields.add(browseButton);
+        addFormRow(fields, label, pathFieldPanel(pathField, browseButton));
     }
 
     private void showContentBackupManager() {
@@ -1021,22 +1017,15 @@ public class AetherConstructionKit extends JFrame {
 
     private void manageAbilityConfiguration() {
         JPanel panel = new JPanel(new BorderLayout(8, 8));
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 3, 8, 6));
+        JPanel fields = createFormPanel();
         Map<SkillLibrary, JSpinner> cooldownSpinners = new EnumMap<>(SkillLibrary.class);
-
-        fields.add(new JLabel("Ability"));
-        fields.add(new JLabel("Cooldown"));
-        fields.add(new JLabel("Key"));
 
         for (SkillLibrary skill : SkillLibrary.values()) {
             String key = abilityCooldownKey(skill);
             double currentCooldown = GameConfiguration.doubleValue(key, 0.0);
             JSpinner cooldownSpinner = new JSpinner(new SpinnerNumberModel(currentCooldown, 0.0, 3600.0, 0.5));
             cooldownSpinners.put(skill, cooldownSpinner);
-
-            fields.add(new JLabel(skill.getDisplayName()));
-            fields.add(cooldownSpinner);
-            fields.add(new JLabel(key));
+            addFormRow(fields, skill.getDisplayName(), cooldownSpinner);
         }
 
         JTextArea note = new JTextArea(
@@ -1391,7 +1380,7 @@ public class AetherConstructionKit extends JFrame {
 
     private void managePlayerBattleModel() {
         CharacterModelEditorFields editor = new CharacterModelEditorFields(PlayerCharacterModelConfiguration.load());
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 8, 6));
+        JPanel fields = createFormPanel();
         addCharacterModelRows(fields, editor);
         if (showScrollableFormDialog(fields, "Player Battle Model") != JOptionPane.OK_OPTION)
             return;
@@ -3325,15 +3314,11 @@ public class AetherConstructionKit extends JFrame {
         categoryBox.addActionListener(event -> refreshOptions.run());
         refreshOptions.run();
 
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        fields.add(new JLabel("Category"));
-        fields.add(categoryBox);
-        fields.add(new JLabel("Object"));
-        fields.add(optionBox);
-        fields.add(new JLabel("X"));
-        fields.add(xSpinner);
-        fields.add(new JLabel("Y"));
-        fields.add(ySpinner);
+        JPanel fields = createFormPanel();
+        addFormRow(fields, "Category", categoryBox);
+        addFormRow(fields, "Object", optionBox);
+        addFormRow(fields, "X Position", xSpinner);
+        addFormRow(fields, "Y Position", ySpinner);
 
         int result = showScrollableFormDialog(fields, "Edit Placement");
         if (result != JOptionPane.OK_OPTION) {
@@ -3672,14 +3657,6 @@ public class AetherConstructionKit extends JFrame {
             examineArea.setText(item.examineText());
             updateSmithingRecipeControls.run();
         });
-        updateSmithingRecipeControls.run();
-
-        JPanel panel = new JPanel(new BorderLayout(6, 6));
-        JPanel fields = new JPanel();
-        fields.setLayout(new BoxLayout(fields, BoxLayout.Y_AXIS));
-        if (existing == null) {
-            fields.add(formRow("Template", templateBox));
-        }
         JPanel imagePanel = new JPanel(new BorderLayout(4, 4));
         imagePanel.add(iconPathField, BorderLayout.CENTER);
         imagePanel.add(browseButton, BorderLayout.EAST);
@@ -3702,7 +3679,18 @@ public class AetherConstructionKit extends JFrame {
                 firstPersonModelField::getText,
                 () -> new EquipmentViewModelProfile(number(viewX), number(viewY), number(viewZ),
                         number(viewRotX), number(viewRotY), number(viewRotZ), number(viewHeight),
-                        number(swingX), number(swingY), number(swingZ), pairedHands.isSelected()));
+                        number(swingX), number(swingY), number(swingZ), pairedHands.isSelected()),
+                () -> (InventorySystem.ItemType) typeBox.getSelectedItem(),
+                twoHandedBox::isSelected);
+        for (JSpinner poseSpinner : new JSpinner[] {
+                viewX, viewY, viewZ, viewRotX, viewRotY, viewRotZ,
+                viewHeight, swingX, swingY, swingZ
+        }) {
+            poseSpinner.addChangeListener(event -> equipmentPreview.refreshPose());
+        }
+        pairedHands.addActionListener(event -> equipmentPreview.refreshPose());
+        twoHandedBox.addActionListener(event -> equipmentPreview.refreshPose());
+        typeBox.addActionListener(event -> equipmentPreview.refreshPose());
         JPanel equipmentPreviewRow = formRow("Equipment Preview", equipmentPreview);
         JPanel typeRow = formRow("Type", typeBox);
         JPanel materialRow = formRow("Material", materialBox);
@@ -3719,32 +3707,58 @@ public class AetherConstructionKit extends JFrame {
         JPanel smithingBarsRow = formRow("Bars Required", smithingBarsSpinner);
         JPanel smithingLevelRow = formRow("Smithing Level", smithingLevelSpinner);
         JPanel smithingXpRow = formRow("Smithing XP", smithingXpSpinner);
-        fields.add(nameRow);
-        fields.add(imageRow);
-        fields.add(paperDollRow);
-        fields.add(firstPersonModelRow);
-        fields.add(viewPositionRow);
-        fields.add(viewRotationRow);
-        fields.add(viewHeightRow);
-        fields.add(swingAxisRow);
-        fields.add(pairedHandsRow);
-        fields.add(equipmentPreviewRow);
-        fields.add(useSoundRow);
-        fields.add(typeRow);
-        fields.add(materialRow);
-        fields.add(weaponTypeRow);
-        fields.add(twoHandedRow);
-        fields.add(magicAccuracyRow);
-        fields.add(magicPowerRow);
-        fields.add(ringStatRow);
-        fields.add(healRow);
-        fields.add(valueRow);
-        fields.add(stackableRow);
-        fields.add(smithingRecipeRow);
-        fields.add(smithingMaterialRow);
-        fields.add(smithingBarsRow);
-        fields.add(smithingLevelRow);
-        fields.add(smithingXpRow);
+
+        JTabbedPane itemTabs = new JTabbedPane();
+
+        JPanel basicFields = createFormPanel();
+        if (existing == null) {
+            basicFields.add(formRow("Template", templateBox));
+        }
+        basicFields.add(nameRow);
+        basicFields.add(typeRow);
+        basicFields.add(imageRow);
+        basicFields.add(valueRow);
+        basicFields.add(stackableRow);
+        JPanel examineBox = new JPanel(new BorderLayout(4, 4));
+        examineBox.setBorder(BorderFactory.createTitledBorder("Examine Description"));
+        examineBox.add(new JScrollPane(examineArea), BorderLayout.CENTER);
+
+        JPanel basicPanel = new JPanel(new BorderLayout(6, 6));
+        basicPanel.add(basicFields, BorderLayout.NORTH);
+        basicPanel.add(examineBox, BorderLayout.CENTER);
+
+        JPanel equipmentFields = createFormPanel();
+        equipmentFields.add(materialRow);
+        equipmentFields.add(weaponTypeRow);
+        equipmentFields.add(twoHandedRow);
+        equipmentFields.add(magicAccuracyRow);
+        equipmentFields.add(magicPowerRow);
+        equipmentFields.add(ringStatRow);
+        equipmentFields.add(healRow);
+
+        JPanel visualFields = createFormPanel();
+        visualFields.add(paperDollRow);
+        visualFields.add(useSoundRow);
+        visualFields.add(firstPersonModelRow);
+        visualFields.add(viewPositionRow);
+        visualFields.add(viewRotationRow);
+        visualFields.add(viewHeightRow);
+        visualFields.add(swingAxisRow);
+        visualFields.add(pairedHandsRow);
+        visualFields.add(equipmentPreviewRow);
+
+        JPanel smithingFields = createFormPanel();
+        smithingFields.add(smithingRecipeRow);
+        smithingFields.add(smithingMaterialRow);
+        smithingFields.add(smithingBarsRow);
+        smithingFields.add(smithingLevelRow);
+        smithingFields.add(smithingXpRow);
+
+        itemTabs.addTab("Basic Info", basicPanel);
+        itemTabs.addTab("Equipment & Stats", new JScrollPane(topAlignedForm(equipmentFields)));
+        itemTabs.addTab("Visuals & Sound", new JScrollPane(topAlignedForm(visualFields)));
+        itemTabs.addTab("Smithing Recipe", new JScrollPane(topAlignedForm(smithingFields)));
+
         Runnable updateItemTypeRows = () -> {
             InventorySystem.ItemType itemType = (InventorySystem.ItemType) typeBox.getSelectedItem();
             boolean weapon = itemType == InventorySystem.ItemType.WEAPON;
@@ -3794,8 +3808,8 @@ public class AetherConstructionKit extends JFrame {
             if (!ring) {
                 selectStatTargetOption(statTargetBox, null);
             }
-            fields.revalidate();
-            fields.repaint();
+            itemTabs.revalidate();
+            itemTabs.repaint();
         };
         typeBox.addActionListener(event -> {
             updateSmithingRecipeControls.run();
@@ -3810,11 +3824,10 @@ public class AetherConstructionKit extends JFrame {
             updateItemTypeRows.run();
         });
         templateBox.addActionListener(event -> updateItemTypeRows.run());
+        updateSmithingRecipeControls.run();
         updateItemTypeRows.run();
-        panel.add(fields, BorderLayout.NORTH);
-        panel.add(new JScrollPane(examineArea), BorderLayout.CENTER);
 
-        int result = showScrollableFormDialog(panel, title);
+        int result = showScrollableFormDialog(itemTabs, title);
         if (result != JOptionPane.OK_OPTION) {
             return null;
         }
@@ -3907,12 +3920,100 @@ public class AetherConstructionKit extends JFrame {
         return ((Number) spinner.getValue()).doubleValue();
     }
 
+    private Component buildMobTabbedForm(
+            JTextField nameField,
+            JTextField imagePathField,
+            JButton browseButton,
+            JTextField paperDollSourceField,
+            JButton paperDollBrowseButton,
+            JSpinner xpSpinner,
+            JTextArea descriptionArea,
+            JList<SkillLibrary> skillList,
+            Map<PlayerStat, JSpinner> statSpinners,
+            JLabel hpLabel,
+            JLabel difficultyPreviewLabel,
+            JLabel meleeMaxDamageLabel,
+            JSpinner spellBaseDamageSpinner,
+            JLabel spellMaxDamageLabel,
+            JSpinner combatAiSpinner,
+            JSpinner awarenessRadiusSpinner,
+            JSpinner movementIntervalSpinner,
+            JSpinner respawnDelaySpinner,
+            CharacterModelEditorFields characterModelFields,
+            JTextField attackSoundField,
+            JButton attackSoundBrowseButton,
+            JTextField damageSoundField,
+            JButton damageSoundBrowseButton,
+            JButton dropsButton,
+            JButton generateLimbsButton,
+            JTextArea limbDescriptionArea
+    ) {
+        JTabbedPane tabs = new JTabbedPane();
+
+        JPanel generalPanel = new JPanel(new BorderLayout(6, 6));
+        JPanel generalFields = createFormPanel();
+        addFormRow(generalFields, "Name", nameField);
+        addFormRow(generalFields, "Fallback Sprite PNG", pathFieldPanel(imagePathField, browseButton));
+        addFormRow(generalFields, "Paper-Doll Source", pathFieldPanel(paperDollSourceField, paperDollBrowseButton));
+        addFormRow(generalFields, "XP Reward", xpSpinner);
+        generalPanel.add(generalFields, BorderLayout.NORTH);
+
+        JPanel centerPanel = new JPanel(new BorderLayout(6, 6));
+        centerPanel.setBorder(BorderFactory.createTitledBorder("Description & Abilities"));
+        centerPanel.add(new JScrollPane(descriptionArea), BorderLayout.CENTER);
+        JScrollPane skillScroll = new JScrollPane(skillList);
+        skillScroll.setPreferredSize(new Dimension(180, 120));
+        skillScroll.setBorder(BorderFactory.createTitledBorder("Skills"));
+        centerPanel.add(skillScroll, BorderLayout.EAST);
+        generalPanel.add(centerPanel, BorderLayout.CENTER);
+
+        JPanel combatFields = createFormPanel();
+        for (PlayerStat stat : PlayerStat.values()) {
+            addFormRow(combatFields, stat.getDisplayName(), statSpinners.get(stat));
+        }
+        addFormRow(combatFields, "Derived HP", hpLabel);
+        addFormRow(combatFields, "Difficulty Rating", difficultyPreviewLabel);
+        addFormRow(combatFields, "Melee Max Hit", meleeMaxDamageLabel);
+        addFormRow(combatFields, "Spell Base Damage", spellBaseDamageSpinner);
+        addFormRow(combatFields, "Spell Max Hit", spellMaxDamageLabel);
+        addFormRow(combatFields, "Combat AI Level", combatAiSpinner);
+        addFormRow(combatFields, "Awareness Radius (tiles)", awarenessRadiusSpinner);
+        addFormRow(combatFields, "Movement Interval (sec)", movementIntervalSpinner);
+        addFormRow(combatFields, "Respawn Delay (sec)", respawnDelaySpinner);
+
+        JPanel modelFields = createFormPanel();
+        addCharacterModelRows(modelFields, characterModelFields);
+
+        JPanel audioLootFields = createFormPanel();
+        addFormRow(audioLootFields, "Attack Sound", pathFieldPanel(attackSoundField, attackSoundBrowseButton));
+        addFormRow(audioLootFields, "Hit Sound", pathFieldPanel(damageSoundField, damageSoundBrowseButton));
+        addFormRow(audioLootFields, "Loot Table", dropsButton);
+        if (generateLimbsButton != null) {
+            addFormRow(audioLootFields, "Limbs Generator", generateLimbsButton);
+        }
+        if (limbDescriptionArea != null) {
+            JPanel limbBox = new JPanel(new BorderLayout(4, 4));
+            limbBox.setBorder(BorderFactory.createTitledBorder("Limb Description"));
+            limbBox.add(new JScrollPane(limbDescriptionArea), BorderLayout.CENTER);
+            audioLootFields.add(limbBox);
+        }
+
+        JPanel audioLootPanel = new JPanel(new BorderLayout(6, 6));
+        audioLootPanel.add(audioLootFields, BorderLayout.NORTH);
+
+        tabs.addTab("General & Identity", generalPanel);
+        tabs.addTab("Combat Stats & AI", new JScrollPane(topAlignedForm(combatFields)));
+        tabs.addTab("3D Model & Rig", new JScrollPane(topAlignedForm(modelFields)));
+        tabs.addTab("Audio & Loot", audioLootPanel);
+
+        return tabs;
+    }
+
     private void createCustomMob() {
         JTextField nameField = new JTextField("Custom Enemy", 24);
         JTextField imagePathField = new JTextField("assets/images/generated/mobs/custom_enemy.png", 28);
         JTextField paperDollSourceField = new JTextField("", 28);
-        JButton browseButton = new JButton("Browse");
-        JButton paperDollBrowseButton = new JButton("Browse");
+        CharacterModelEditorFields characterModelFields = new CharacterModelEditorFields(CharacterModelDefinition.empty());
         Map<PlayerStat, JSpinner> statSpinners = enemyStatSpinners();
         JLabel hpLabel = new JLabel();
         JSpinner combatAiSpinner = new JSpinner(new SpinnerNumberModel(1, 0, 10, 1));
@@ -3920,13 +4021,13 @@ public class AetherConstructionKit extends JFrame {
         JSpinner movementIntervalSpinner = new JSpinner(new SpinnerNumberModel(3, 1, 3600, 1));
         JSpinner respawnDelaySpinner = new JSpinner(new SpinnerNumberModel(300, 0, 86400, 1));
         JSpinner xpSpinner = new JSpinner(new SpinnerNumberModel(10, 0, 100000, 1));
+        JButton browseButton = new JButton("Browse");
+        JButton paperDollBrowseButton = new JButton("Browse");
+        JButton generateLimbsButton = new JButton("Generate Default Limbs");
         JTextField attackSoundField = new JTextField("", 24);
         JTextField damageSoundField = new JTextField("", 24);
-        CharacterModelEditorFields characterModelFields = new CharacterModelEditorFields(
-                CharacterModelDefinition.empty());
         JButton attackSoundBrowseButton = new JButton("Browse");
         JButton damageSoundBrowseButton = new JButton("Browse");
-        JButton generateLimbsButton = new JButton("Generate Limbs");
         JButton dropsButton = new JButton("Drops");
         JLabel meleeMaxDamageLabel = new JLabel();
         JSpinner spellBaseDamageSpinner = new JSpinner(new SpinnerNumberModel(5, 0, 1000, 1));
@@ -3989,55 +4090,16 @@ public class AetherConstructionKit extends JFrame {
             editGeneratedLimbs(generatedLimbs);
         });
 
-        JPanel panel = new JPanel(new BorderLayout(6, 6));
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        fields.add(new JLabel("Name"));
-        fields.add(nameField);
-        fields.add(new JLabel("Fallback Sprite PNG"));
-        fields.add(pathFieldPanel(imagePathField, browseButton));
-        fields.add(new JLabel("Paper-Doll Source"));
-        fields.add(pathFieldPanel(paperDollSourceField, paperDollBrowseButton));
-        addCharacterModelRows(fields, characterModelFields);
-        for (PlayerStat stat : PlayerStat.values()) {
-            fields.add(new JLabel(stat.getDisplayName()));
-            fields.add(statSpinners.get(stat));
-        }
-        fields.add(new JLabel("Derived HP"));
-        fields.add(hpLabel);
-        fields.add(new JLabel("Difficulty"));
-        fields.add(difficultyPreviewLabel);
-        fields.add(new JLabel("Melee Max Hit"));
-        fields.add(meleeMaxDamageLabel);
-        fields.add(new JLabel("Spell Base Damage"));
-        fields.add(spellBaseDamageSpinner);
-        fields.add(new JLabel("Spell Max Hit"));
-        fields.add(spellMaxDamageLabel);
-        fields.add(new JLabel("Combat AI Intelligence"));
-        fields.add(combatAiSpinner);
-        fields.add(new JLabel("Awareness Radius (tiles)"));
-        fields.add(awarenessRadiusSpinner);
-        fields.add(new JLabel("Movement Interval (seconds)"));
-        fields.add(movementIntervalSpinner);
-        fields.add(new JLabel("Respawn Delay (seconds; 0 disables)"));
-        fields.add(respawnDelaySpinner);
-        fields.add(new JLabel("XP Reward"));
-        fields.add(xpSpinner);
-        fields.add(new JLabel("Attack Sound"));
-        fields.add(pathFieldPanel(attackSoundField, attackSoundBrowseButton));
-        fields.add(new JLabel("Hit Sound"));
-        fields.add(pathFieldPanel(damageSoundField, damageSoundBrowseButton));
-        fields.add(new JLabel("Limbs"));
-        fields.add(generateLimbsButton);
-        fields.add(new JLabel("Loot Table"));
-        fields.add(dropsButton);
-        panel.add(fields, BorderLayout.NORTH);
-        JPanel textPanel = new JPanel(new BorderLayout(6, 6));
-        textPanel.add(new JScrollPane(descriptionArea), BorderLayout.CENTER);
-        textPanel.add(new JScrollPane(limbDescriptionArea), BorderLayout.SOUTH);
-        panel.add(textPanel, BorderLayout.CENTER);
-        panel.add(new JScrollPane(skillList), BorderLayout.EAST);
+        Component formTabs = buildMobTabbedForm(
+                nameField, imagePathField, browseButton, paperDollSourceField, paperDollBrowseButton,
+                xpSpinner, descriptionArea, skillList, statSpinners, hpLabel, difficultyPreviewLabel,
+                meleeMaxDamageLabel, spellBaseDamageSpinner, spellMaxDamageLabel, combatAiSpinner,
+                awarenessRadiusSpinner, movementIntervalSpinner, respawnDelaySpinner, characterModelFields,
+                attackSoundField, attackSoundBrowseButton, damageSoundField, damageSoundBrowseButton,
+                dropsButton, generateLimbsButton, limbDescriptionArea
+        );
 
-        int result = showScrollableFormDialog(panel, "Create Enemy");
+        int result = showScrollableFormDialog(formTabs, "Create Enemy");
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -4186,19 +4248,16 @@ public class AetherConstructionKit extends JFrame {
         });
 
         JPanel identityPanel = new JPanel(new BorderLayout(6, 6));
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        fields.add(new JLabel("Base NPC"));
-        fields.add(baseBox);
-        fields.add(new JLabel("Name"));
-        fields.add(nameField);
-        fields.add(new JLabel("Fallback Sprite PNG"));
-        fields.add(pathFieldPanel(imagePathField, imageBrowseButton));
-        addCharacterModelRows(fields, characterModelFields);
-        fields.add(new JLabel("Talk Sound"));
-        fields.add(pathFieldPanel(talkSoundField, talkSoundBrowseButton));
-        fields.add(new JLabel("Dialogue"));
-        fields.add(dialogueBox);
-        identityPanel.add(fields, BorderLayout.NORTH);
+        JPanel identityFields = createFormPanel();
+        addFormRow(identityFields, "Base NPC", baseBox);
+        addFormRow(identityFields, "Name", nameField);
+        addFormRow(identityFields, "Fallback Sprite PNG", pathFieldPanel(imagePathField, imageBrowseButton));
+        addFormRow(identityFields, "Talk Sound", pathFieldPanel(talkSoundField, talkSoundBrowseButton));
+        addFormRow(identityFields, "Dialogue", dialogueBox);
+        identityPanel.add(identityFields, BorderLayout.NORTH);
+
+        JPanel modelFields = createFormPanel();
+        addCharacterModelRows(modelFields, characterModelFields);
 
         JButton addStockButton = new JButton("Add");
         JButton editStockButton = new JButton("Edit");
@@ -4227,13 +4286,10 @@ public class AetherConstructionKit extends JFrame {
         });
 
         JPanel shopPanel = new JPanel(new BorderLayout(6, 6));
-        JPanel shopFields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        shopFields.add(shopkeeperBox);
-        shopFields.add(new JLabel("Stock quantities: -1 means infinite"));
-        shopFields.add(new JLabel("Shop Name"));
-        shopFields.add(shopNameField);
-        shopFields.add(new JLabel("Greeting"));
-        shopFields.add(new JScrollPane(greetingArea));
+        JPanel shopFields = createFormPanel();
+        addFormRow(shopFields, "", shopkeeperBox);
+        addFormRow(shopFields, "Shop Name", shopNameField);
+        addFormRow(shopFields, "Greeting", new JScrollPane(greetingArea));
         shopPanel.add(shopFields, BorderLayout.NORTH);
         shopPanel.add(new JScrollPane(stockList), BorderLayout.CENTER);
         JPanel stockButtons = new JPanel(new java.awt.GridLayout(1, 0, 4, 0));
@@ -4257,7 +4313,8 @@ public class AetherConstructionKit extends JFrame {
 
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Identity", identityPanel);
-        tabs.addTab("Shop", shopPanel);
+        tabs.addTab("3D Model & Rig", new JScrollPane(topAlignedForm(modelFields)));
+        tabs.addTab("Shop & Stock", shopPanel);
 
         int result = showScrollableFormDialog(tabs, title);
         if (result != JOptionPane.OK_OPTION) {
@@ -5038,25 +5095,16 @@ public class AetherConstructionKit extends JFrame {
         frameThreeBrowse.addActionListener(event -> browsePathInto(frameThreeField));
         barBrowse.addActionListener(event -> browsePathInto(barImageField));
 
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        fields.add(new JLabel("Name"));
-        fields.add(nameField);
-        fields.add(new JLabel("Metal"));
-        fields.add(materialBox);
-        fields.add(new JLabel("Mining Level"));
-        fields.add(requiredLevelSpinner);
-        fields.add(new JLabel("Mining XP"));
-        fields.add(miningXpSpinner);
-        fields.add(new JLabel("Smelting XP"));
-        fields.add(smeltingXpSpinner);
-        fields.add(new JLabel("Rock Stage 0 / Ore Icon"));
-        fields.add(pathFieldPanel(frameOneField, frameOneBrowse));
-        fields.add(new JLabel("Rock Stage 1"));
-        fields.add(pathFieldPanel(frameTwoField, frameTwoBrowse));
-        fields.add(new JLabel("Rock Stage 2"));
-        fields.add(pathFieldPanel(frameThreeField, frameThreeBrowse));
-        fields.add(new JLabel("Bar Icon"));
-        fields.add(pathFieldPanel(barImageField, barBrowse));
+        JPanel fields = createFormPanel();
+        addFormRow(fields, "Name", nameField);
+        addFormRow(fields, "Metal", materialBox);
+        addFormRow(fields, "Mining Level", requiredLevelSpinner);
+        addFormRow(fields, "Mining XP", miningXpSpinner);
+        addFormRow(fields, "Smelting XP", smeltingXpSpinner);
+        addFormRow(fields, "Rock Stage 0 / Ore Icon", pathFieldPanel(frameOneField, frameOneBrowse));
+        addFormRow(fields, "Rock Stage 1", pathFieldPanel(frameTwoField, frameTwoBrowse));
+        addFormRow(fields, "Rock Stage 2", pathFieldPanel(frameThreeField, frameThreeBrowse));
+        addFormRow(fields, "Bar Icon", pathFieldPanel(barImageField, barBrowse));
 
         if (showScrollableFormDialog(fields, "Create Mining Rock") != JOptionPane.OK_OPTION) {
             return;
@@ -5170,21 +5218,14 @@ public class AetherConstructionKit extends JFrame {
         frameTwoBrowse.addActionListener(event -> browsePathInto(frameTwoField));
         frameThreeBrowse.addActionListener(event -> browsePathInto(frameThreeField));
 
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        fields.add(new JLabel("Name"));
-        fields.add(nameField);
-        fields.add(new JLabel("Output Item"));
-        fields.add(outputBox);
-        fields.add(new JLabel("Fishing Level"));
-        fields.add(requiredLevelSpinner);
-        fields.add(new JLabel("Fishing XP"));
-        fields.add(fishingXpSpinner);
-        fields.add(new JLabel("Frame 1"));
-        fields.add(pathFieldPanel(frameOneField, frameOneBrowse));
-        fields.add(new JLabel("Frame 2"));
-        fields.add(pathFieldPanel(frameTwoField, frameTwoBrowse));
-        fields.add(new JLabel("Frame 3"));
-        fields.add(pathFieldPanel(frameThreeField, frameThreeBrowse));
+        JPanel fields = createFormPanel();
+        addFormRow(fields, "Name", nameField);
+        addFormRow(fields, "Output Item", outputBox);
+        addFormRow(fields, "Fishing Level", requiredLevelSpinner);
+        addFormRow(fields, "Fishing XP", fishingXpSpinner);
+        addFormRow(fields, "Frame 1", pathFieldPanel(frameOneField, frameOneBrowse));
+        addFormRow(fields, "Frame 2", pathFieldPanel(frameTwoField, frameTwoBrowse));
+        addFormRow(fields, "Frame 3", pathFieldPanel(frameThreeField, frameThreeBrowse));
 
         if (showScrollableFormDialog(fields, "Create Fishing Spot") != JOptionPane.OK_OPTION) {
             return;
@@ -5564,50 +5605,16 @@ public class AetherConstructionKit extends JFrame {
         });
         updatePreview.run();
 
-        JPanel panel = new JPanel(new BorderLayout(6, 6));
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        fields.add(new JLabel("Name"));
-        fields.add(nameField);
-        fields.add(new JLabel("Fallback Sprite PNG"));
-        fields.add(pathFieldPanel(imagePathField, browseButton));
-        fields.add(new JLabel("Paper-Doll Source"));
-        fields.add(pathFieldPanel(paperDollSourceField, paperDollBrowseButton));
-        addCharacterModelRows(fields, characterModelFields);
-        for (PlayerStat stat : PlayerStat.values()) {
-            fields.add(new JLabel(stat.getDisplayName()));
-            fields.add(statSpinners.get(stat));
-        }
-        fields.add(new JLabel("Derived HP"));
-        fields.add(hpLabel);
-        fields.add(new JLabel("Difficulty"));
-        fields.add(difficultyPreviewLabel);
-        fields.add(new JLabel("Melee Max Hit"));
-        fields.add(meleeMaxDamageLabel);
-        fields.add(new JLabel("Spell Base Damage"));
-        fields.add(spellBaseDamageSpinner);
-        fields.add(new JLabel("Spell Max Hit"));
-        fields.add(spellMaxDamageLabel);
-        fields.add(new JLabel("Combat AI Intelligence"));
-        fields.add(combatAiSpinner);
-        fields.add(new JLabel("Awareness Radius (tiles)"));
-        fields.add(awarenessRadiusSpinner);
-        fields.add(new JLabel("Movement Interval (seconds)"));
-        fields.add(movementIntervalSpinner);
-        fields.add(new JLabel("Respawn Delay (seconds; 0 disables)"));
-        fields.add(respawnDelaySpinner);
-        fields.add(new JLabel("XP Reward"));
-        fields.add(xpSpinner);
-        fields.add(new JLabel("Attack Sound"));
-        fields.add(pathFieldPanel(attackSoundField, attackSoundBrowseButton));
-        fields.add(new JLabel("Hit Sound"));
-        fields.add(pathFieldPanel(damageSoundField, damageSoundBrowseButton));
-        fields.add(new JLabel("Loot Table"));
-        fields.add(dropsButton);
-        panel.add(fields, BorderLayout.NORTH);
-        panel.add(new JScrollPane(descriptionArea), BorderLayout.CENTER);
-        panel.add(new JScrollPane(skillList), BorderLayout.EAST);
+        Component formTabs = buildMobTabbedForm(
+                nameField, imagePathField, browseButton, paperDollSourceField, paperDollBrowseButton,
+                xpSpinner, descriptionArea, skillList, statSpinners, hpLabel, difficultyPreviewLabel,
+                meleeMaxDamageLabel, spellBaseDamageSpinner, spellMaxDamageLabel, combatAiSpinner,
+                awarenessRadiusSpinner, movementIntervalSpinner, respawnDelaySpinner, characterModelFields,
+                attackSoundField, attackSoundBrowseButton, damageSoundField, damageSoundBrowseButton,
+                dropsButton, null, null
+        );
 
-        int result = showScrollableFormDialog(panel, "Edit Enemy");
+        int result = showScrollableFormDialog(formTabs, "Edit Enemy");
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -5881,13 +5888,13 @@ public class AetherConstructionKit extends JFrame {
             }
         });
 
-        JPanel controls = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        controls.add(new JLabel("Item"));
-        controls.add(itemBox);
-        controls.add(new JLabel("Chance %"));
-        controls.add(chanceSpinner);
-        controls.add(addButton);
-        controls.add(removeButton);
+        JPanel controls = createFormPanel();
+        addFormRow(controls, "Item", itemBox);
+        addFormRow(controls, "Chance %", chanceSpinner);
+        JPanel buttonRow = new JPanel(new java.awt.GridLayout(1, 0, 4, 0));
+        buttonRow.add(addButton);
+        buttonRow.add(removeButton);
+        controls.add(buttonRow);
 
         JPanel panel = new JPanel(new BorderLayout(6, 6));
         panel.add(new JScrollPane(dropList), BorderLayout.CENTER);
@@ -5937,13 +5944,13 @@ public class AetherConstructionKit extends JFrame {
             }
         });
 
-        JPanel controls = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        controls.add(new JLabel("Item"));
-        controls.add(itemBox);
-        controls.add(new JLabel("Weight"));
-        controls.add(weightSpinner);
-        controls.add(addButton);
-        controls.add(removeButton);
+        JPanel controls = createFormPanel();
+        addFormRow(controls, "Item", itemBox);
+        addFormRow(controls, "Weight", weightSpinner);
+        JPanel lootButtonRow = new JPanel(new java.awt.GridLayout(1, 0, 4, 0));
+        lootButtonRow.add(addButton);
+        lootButtonRow.add(removeButton);
+        controls.add(lootButtonRow);
 
         JPanel panel = new JPanel(new BorderLayout(6, 6));
         panel.add(new JScrollPane(dropList), BorderLayout.CENTER);
@@ -6134,10 +6141,16 @@ public class AetherConstructionKit extends JFrame {
                     CharacterModelDefinition.AnimationSlot.class);
             for (CharacterModelDefinition.AnimationSlot slot : CharacterModelDefinition.AnimationSlot.values()) {
                 String path = animationFields.get(slot).getText();
+                String clipName = clipNameFields.get(slot).getText();
+                if ((path == null || path.isBlank())
+                        && clipName != null
+                        && !clipName.isBlank()) {
+                    path = modelPathField.getText();
+                }
                 if (path != null && !path.isBlank()) {
                     animations.put(slot, new CharacterModelDefinition.AnimationBinding(
                             path,
-                            clipNameFields.get(slot).getText(),
+                            clipName,
                             ((Number) speedSpinners.get(slot).getValue()).doubleValue(),
                             ((Number) impactSpinners.get(slot).getValue()).doubleValue()));
                 }
@@ -6164,7 +6177,12 @@ public class AetherConstructionKit extends JFrame {
         }
 
         private void setSelectedClipName(String value) {
-            clipNameFields.get(previewPanel.selectedSlot()).setText(value == null ? "" : value);
+            CharacterModelDefinition.AnimationSlot slot = previewPanel.selectedSlot();
+            String clipName = value == null ? "" : value;
+            clipNameFields.get(slot).setText(clipName);
+            if (!clipName.isBlank() && animationFields.get(slot).getText().isBlank()) {
+                animationFields.get(slot).setText(modelPathField.getText());
+            }
         }
     }
 
@@ -6371,11 +6389,11 @@ public class AetherConstructionKit extends JFrame {
         fields.add(pathFieldPanel(editor.modelPathField, modelBrowse));
         fields.add(new JLabel("Skeleton / Rig ID"));
         fields.add(editor.rigIdField);
-        fields.add(new JLabel("3D Model Scale"));
+        fields.add(new JLabel("Character Size (1.0 = standard eye-level)"));
         fields.add(editor.scaleSpinner);
         fields.add(new JLabel("Model Facing Rotation"));
         fields.add(editor.facingSpinner);
-        fields.add(new JLabel("Vertical Offset"));
+        fields.add(new JLabel("Ground Offset"));
         fields.add(editor.verticalOffsetSpinner);
         fields.add(new JLabel("Empty Animation Slots"));
         fields.add(new JLabel("Use procedural placeholders"));
@@ -6383,7 +6401,8 @@ public class AetherConstructionKit extends JFrame {
             JTextField pathField = editor.animationFields.get(slot);
             JButton browse = new JButton("Browse");
             browse.addActionListener(event -> showAssetBrowser(pathField, AssetBrowserType.MODELS));
-            fields.add(new JLabel(animationSlotLabel(slot) + " Animation (.glb/.fbx)"));
+            fields.add(new JLabel(animationSlotLabel(slot)
+                    + " Animation Source (.glb/.fbx; blank uses base model)"));
             fields.add(pathFieldPanel(pathField, browse));
             fields.add(new JLabel(animationSlotLabel(slot) + " Named Clip (blank = first)"));
             fields.add(editor.clipNameFields.get(slot));
@@ -6447,13 +6466,23 @@ public class AetherConstructionKit extends JFrame {
         return imagePanel;
     }
 
+    private JPanel createFormPanel() {
+        JPanel fields = new JPanel();
+        fields.setLayout(new BoxLayout(fields, BoxLayout.Y_AXIS));
+        return fields;
+    }
+
     private JPanel formRow(String label, Component component) {
         JPanel row = new JPanel(new BorderLayout(6, 6));
         JLabel rowLabel = new JLabel(label);
-        rowLabel.setPreferredSize(new Dimension(140, rowLabel.getPreferredSize().height));
+        rowLabel.setPreferredSize(new Dimension(170, 24));
         row.add(rowLabel, BorderLayout.WEST);
         row.add(component, BorderLayout.CENTER);
         return row;
+    }
+
+    private void addFormRow(java.awt.Container container, String label, Component component) {
+        container.add(formRow(label, component));
     }
 
     private int showScrollableFormDialog(Component form, String title) {
@@ -6470,18 +6499,31 @@ public class AetherConstructionKit extends JFrame {
                 JOptionPane.PLAIN_MESSAGE);
     }
 
+    private Component topAlignedForm(Component fields) {
+        if (fields == null) {
+            return new JPanel();
+        }
+        if (fields instanceof JScrollPane || fields instanceof JTabbedPane || fields instanceof JSplitPane) {
+            return fields;
+        }
+        JPanel wrapper = new JPanel(new BorderLayout(6, 6));
+        wrapper.add(fields, BorderLayout.NORTH);
+        return wrapper;
+    }
+
     private Component screenAwarePopupContent(Component form) {
         Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
-        Dimension preferred = form == null ? new Dimension(600, 500) : form.getPreferredSize();
-        int availableWidth = Math.max(420, screen.width - 180);
-        int availableHeight = Math.max(240, screen.height - 200);
-        int viewportWidth = Math.min(720, Math.min(availableWidth, Math.max(420, preferred.width + 24)));
-        int viewportHeight = Math.min(680, Math.min(availableHeight, Math.max(240, preferred.height + 24)));
+        Dimension preferred = form == null ? new Dimension(600, 460) : form.getPreferredSize();
+        int availableWidth = Math.max(480, screen.width - 180);
+        int availableHeight = Math.max(280, screen.height - 200);
+        int viewportWidth = Math.min(680, Math.min(availableWidth, Math.max(540, preferred.width + 28)));
+        int viewportHeight = Math.min(520, Math.min(availableHeight, Math.max(380, preferred.height + 28)));
 
+        Component viewContent = topAlignedForm(form);
         JScrollPane scrollPane = form instanceof JScrollPane existing
                 ? existing
                 : new JScrollPane(
-                        form,
+                        viewContent,
                         JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
                         JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
         scrollPane.setPreferredSize(new Dimension(viewportWidth, viewportHeight));
@@ -8666,15 +8708,11 @@ public class AetherConstructionKit extends JFrame {
                 MIN_DIMENSION,
                 MAX_DIMENSION,
                 1));
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        fields.add(new JLabel("World Name"));
-        fields.add(nameField);
-        fields.add(new JLabel("World ID"));
-        fields.add(idField);
-        fields.add(new JLabel("Chunk Width"));
-        fields.add(chunkWidthField);
-        fields.add(new JLabel("Chunk Height"));
-        fields.add(chunkHeightField);
+        JPanel fields = createFormPanel();
+        addFormRow(fields, "World Name", nameField);
+        addFormRow(fields, "World ID", idField);
+        addFormRow(fields, "Chunk Width", chunkWidthField);
+        addFormRow(fields, "Chunk Height", chunkHeightField);
 
         if (showScrollableFormDialog(fields, "New Open World") != JOptionPane.OK_OPTION) {
             return;
@@ -8938,13 +8976,10 @@ public class AetherConstructionKit extends JFrame {
         JTextArea descriptionArea = new JTextArea(activeWorld.description(), 5, 28);
         descriptionArea.setLineWrap(true);
         descriptionArea.setWrapStyleWord(true);
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        fields.add(new JLabel("World Name"));
-        fields.add(nameField);
-        fields.add(new JLabel("Global Start X"));
-        fields.add(startXField);
-        fields.add(new JLabel("Global Start Y"));
-        fields.add(startYField);
+        JPanel fields = createFormPanel();
+        addFormRow(fields, "World Name", nameField);
+        addFormRow(fields, "Global Start X", startXField);
+        addFormRow(fields, "Global Start Y", startYField);
         JPanel panel = new JPanel(new BorderLayout(6, 6));
         panel.add(fields, BorderLayout.NORTH);
         panel.add(new JScrollPane(descriptionArea), BorderLayout.CENTER);
@@ -8995,11 +9030,9 @@ public class AetherConstructionKit extends JFrame {
     private ChunkCoordinate promptChunkCoordinate(String title, ChunkCoordinate initial) {
         JSpinner xField = new JSpinner(new SpinnerNumberModel(initial.x(), -10_000, 10_000, 1));
         JSpinner yField = new JSpinner(new SpinnerNumberModel(initial.y(), -10_000, 10_000, 1));
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        fields.add(new JLabel("Chunk X"));
-        fields.add(xField);
-        fields.add(new JLabel("Chunk Y"));
-        fields.add(yField);
+        JPanel fields = createFormPanel();
+        addFormRow(fields, "Chunk X", xField);
+        addFormRow(fields, "Chunk Y", yField);
         if (showScrollableFormDialog(fields, title) != JOptionPane.OK_OPTION) {
             return null;
         }
@@ -9221,13 +9254,10 @@ public class AetherConstructionKit extends JFrame {
                 MIN_DIMENSION,
                 MAX_DIMENSION,
                 1));
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        fields.add(new JLabel("Name"));
-        fields.add(nameField);
-        fields.add(new JLabel("Width"));
-        fields.add(widthField);
-        fields.add(new JLabel("Height"));
-        fields.add(heightField);
+        JPanel fields = createFormPanel();
+        addFormRow(fields, "Name", nameField);
+        addFormRow(fields, "Width", widthField);
+        addFormRow(fields, "Height", heightField);
 
         int result = showScrollableFormDialog(fields, "New Map");
         if (result != JOptionPane.OK_OPTION) {
@@ -9253,11 +9283,9 @@ public class AetherConstructionKit extends JFrame {
                 MIN_DIMENSION,
                 MAX_DIMENSION,
                 1));
-        JPanel fields = new JPanel(new java.awt.GridLayout(0, 2, 6, 6));
-        fields.add(new JLabel("Width"));
-        fields.add(widthField);
-        fields.add(new JLabel("Height"));
-        fields.add(heightField);
+        JPanel fields = createFormPanel();
+        addFormRow(fields, "Width", widthField);
+        addFormRow(fields, "Height", heightField);
 
         int result = showScrollableFormDialog(fields, "Resize Map");
         if (result != JOptionPane.OK_OPTION) {

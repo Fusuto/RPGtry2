@@ -48,6 +48,8 @@ public class BattleEncounter {
         this.soundSystem = soundSystem;
 
         assignFormations();
+        compactBattleLanes(allies);
+        compactBattleLanes(enemies);
         resetAllAttackCooldowns();
     }
 
@@ -116,6 +118,70 @@ public class BattleEncounter {
 
             actor.setBattlePosition(row, slot);
         }
+    }
+
+    /**
+     * Removes empty lateral lanes once, when the encounter is created. Actor
+     * order and front/back rows are preserved, and persistent party formation
+     * data is never modified because BattleActors are encounter-local copies.
+     */
+    private static void compactBattleLanes(List<BattleActor> actors) {
+        if (actors == null || actors.isEmpty()) {
+            return;
+        }
+        boolean[] occupiedLanes = new boolean[BATTLE_SLOT_COUNT];
+        for (BattleActor actor : actors) {
+            if (actor != null && actor.hasBattlePositionAssignment()
+                    && actor.getSlot() >= 0 && actor.getSlot() < BATTLE_SLOT_COUNT) {
+                occupiedLanes[actor.getSlot()] = true;
+            }
+        }
+
+        int[] compactedLane = new int[BATTLE_SLOT_COUNT];
+        int nextLane = 0;
+        for (int lane = 0; lane < BATTLE_SLOT_COUNT; lane++) {
+            compactedLane[lane] = occupiedLanes[lane] ? nextLane++ : -1;
+        }
+        for (BattleActor actor : actors) {
+            if (actor == null || !actor.hasBattlePositionAssignment()
+                    || actor.getSlot() < 0 || actor.getSlot() >= BATTLE_SLOT_COUNT) {
+                continue;
+            }
+            int lane = compactedLane[actor.getSlot()];
+            if (lane >= 0 && lane != actor.getSlot()) {
+                actor.setBattlePosition(actor.getRow(), lane);
+            }
+        }
+    }
+
+    private static boolean assignSummonedActorToOpenPosition(
+            BattleActor summoned,
+            List<BattleActor> existingActors
+    ) {
+        if (summoned == null) {
+            return false;
+        }
+        boolean[] occupied = new boolean[FRONT_ROW_ACTOR_COUNT * 2];
+        if (existingActors != null) {
+            for (BattleActor actor : existingActors) {
+                if (actor == null || !actor.hasBattlePositionAssignment()) {
+                    continue;
+                }
+                int index = (actor.getRow() == Library.BattleRow.FRONT ? 0 : FRONT_ROW_ACTOR_COUNT)
+                        + actor.getSlot();
+                if (index >= 0 && index < occupied.length) {
+                    occupied[index] = true;
+                }
+            }
+        }
+        int index = firstLegalFormationIndex(occupied);
+        if (index < 0) {
+            return false;
+        }
+        summoned.setBattlePosition(
+                index < FRONT_ROW_ACTOR_COUNT ? Library.BattleRow.FRONT : Library.BattleRow.BACK,
+                index % BATTLE_SLOT_COUNT);
+        return true;
     }
 
     private void resetAllAttackCooldowns() {
@@ -1152,12 +1218,11 @@ public class BattleEncounter {
             return "Nothing answers.";
         }
 
-        getActorsOnSameSide(caster).add(summoned);
-        if (caster.isEnemy()) {
-            assignFormation(getActorsOnSameSide(caster));
-        } else {
-            assignAlliedFormation();
+        List<BattleActor> sameSide = getActorsOnSameSide(caster);
+        if (!assignSummonedActorToOpenPosition(summoned, sameSide)) {
+            return caster.getName() + " calls out, but there is no room.";
         }
+        sameSide.add(summoned);
         playSound(skill.getUseSoundPath());
         return caster.getName() + " uses " + skill.getName() + ". " + summoned.getName() + " joins the battle!";
     }

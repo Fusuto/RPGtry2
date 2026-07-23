@@ -68,6 +68,7 @@ public final class LwjglSkinnedModel {
     private final List<SkinnedMesh> meshes;
     private final List<Bone> bones;
     private final Map<CharacterModelDefinition.AnimationSlot, ClipBinding> bindings;
+    private final Map<String, AnimationClip> embeddedClipsByName;
     private final String skeletonSignature;
     private final List<String> diagnostics;
     private final Set<String> availableClipNames;
@@ -86,6 +87,11 @@ public final class LwjglSkinnedModel {
         this.meshes = base.meshes();
         this.bones = base.bones();
         this.bindings = Map.copyOf(bindings);
+        Map<String, AnimationClip> embeddedClips = new LinkedHashMap<>();
+        for (AnimationClip clip : base.clips()) {
+            embeddedClips.putIfAbsent(clip.name().toLowerCase(Locale.ROOT), clip);
+        }
+        this.embeddedClipsByName = Map.copyOf(embeddedClips);
         this.skeletonSignature = base.signature();
         this.diagnostics = List.copyOf(diagnostics);
         this.availableClipNames = Set.copyOf(availableClipNames);
@@ -185,6 +191,10 @@ public final class LwjglSkinnedModel {
         if (binding == null) {
             return new Frame(meshes.stream().map(mesh -> mesh.bindPositions().clone()).toList(), 0.0);
         }
+        return skin(binding, elapsedSeconds);
+    }
+
+    private Frame skin(ClipBinding binding, double elapsedSeconds) {
         AnimationClip clip = binding.clip();
         double duration = Math.max(0.0001, clip.durationTicks());
         double ticks = Math.max(0.0, elapsedSeconds) * Math.max(0.0001, clip.ticksPerSecond()) * binding.speed();
@@ -237,7 +247,32 @@ public final class LwjglSkinnedModel {
         ClipBinding binding = bindings.get(slot);
         if (binding == null) return skin(slot, 0.0);
         double progress = Math.max(0.0, Math.min(1.0, normalizedProgress));
-        return skin(slot, progress * binding.clip().durationSeconds() / Math.max(0.0001, binding.speed()));
+        return skin(binding, progress * binding.clip().durationSeconds() / Math.max(0.0001, binding.speed()));
+    }
+
+    /**
+     * Previews a clip embedded in the base character file without reimporting the
+     * model. Runtime slot bindings continue to use {@link #skinNormalized}.
+     */
+    public Frame skinEmbeddedClipNormalized(
+            String clipName,
+            CharacterModelDefinition.AnimationSlot fallbackSlot,
+            double normalizedProgress
+    ) {
+        String normalizedName = clipName == null ? "" : clipName.trim().toLowerCase(Locale.ROOT);
+        AnimationClip clip = embeddedClipsByName.get(normalizedName);
+        if (clip == null) {
+            return skinNormalized(fallbackSlot, normalizedProgress);
+        }
+        CharacterModelDefinition.AnimationBinding authored = definition.animationBinding(fallbackSlot);
+        ClipBinding previewBinding = new ClipBinding(
+                clip,
+                authored.playbackSpeed(),
+                authored.impactFraction(),
+                fallbackSlot != null && fallbackSlot.looping());
+        double progress = Math.max(0.0, Math.min(1.0, normalizedProgress));
+        return skin(previewBinding,
+                progress * clip.durationSeconds() / Math.max(0.0001, previewBinding.speed()));
     }
 
     private static Matrix4f evaluateLocal(Node node, NodeChannel channel, double time, boolean stripRootMotion) {

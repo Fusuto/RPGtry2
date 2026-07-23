@@ -33,7 +33,9 @@ public final class LwjglDungeonPrototype {
     private final String startMapName;
     private final String characterName;
     private final String regionName;
+    private final String smokeScreenshotPath;
     private boolean smokeActionsApplied;
+    private boolean smokeScreenshotCaptured;
     private String lastMapThemeKey = "";
 
     private LwjglDungeonPrototype(PrototypeOptions options) {
@@ -47,6 +49,7 @@ public final class LwjglDungeonPrototype {
         this.startMapName = options.startMapName();
         this.characterName = options.characterName();
         this.regionName = options.regionName();
+        this.smokeScreenshotPath = options.smokeScreenshotPath();
 
         TextureManager textureManager = new TextureManager();
         textureManager.loadFromFolder("assets/images/building");
@@ -93,6 +96,7 @@ public final class LwjglDungeonPrototype {
                 viewport.renderFrame(createContext(), inputController.cameraLook(), overlayRenderer, runtime);
                 viewport.pollEvents();
                 renderedFrames++;
+                captureSmokeScreenshotIfReady(renderedFrames);
                 if (now >= smokeDeadline || (smokeFrameLimit > 0 && renderedFrames >= smokeFrameLimit)) {
                     viewport.requestClose();
                 }
@@ -132,6 +136,24 @@ public final class LwjglDungeonPrototype {
         return runtime.renderContext(framebufferSize.width, framebufferSize.height);
     }
 
+    private void captureSmokeScreenshotIfReady(int renderedFrames) {
+        if (smokeScreenshotCaptured || smokeScreenshotPath == null || smokeScreenshotPath.isBlank()) {
+            return;
+        }
+        int targetFrame = smokeFrameLimit > 0 ? Math.min(30, smokeFrameLimit) : 30;
+        if (renderedFrames < targetFrame) {
+            return;
+        }
+        smokeScreenshotCaptured = true;
+        try {
+            Path outputPath = Path.of(smokeScreenshotPath).toAbsolutePath().normalize();
+            viewport.captureFrontBuffer(outputPath);
+            System.out.println("LWJGL smoke screenshot: " + outputPath);
+        } catch (Exception exception) {
+            System.out.println("LWJGL smoke screenshot failed: " + exception.getMessage());
+        }
+    }
+
     private void refreshViewportChunkSettingsIfMapChanged() {
         Path path = runtime.gameState().getCurrentMapDesignPath();
         String key = path == null ? "" : path.toAbsolutePath().normalize().toString();
@@ -155,7 +177,8 @@ public final class LwjglDungeonPrototype {
                 || launchNewGame
                 || launchLoadGame
                 || !smokeActions.isBlank()
-                || !startMapName.isBlank();
+                || !startMapName.isBlank()
+                || !smokeScreenshotPath.isBlank();
     }
 
     private boolean loadGameAtStartup() {
@@ -674,7 +697,8 @@ public final class LwjglDungeonPrototype {
             String smokeActions,
             String startMapName,
             String characterName,
-            String regionName
+            String regionName,
+            String smokeScreenshotPath
     ) {
         private static PrototypeOptions parse(String[] args) {
             int smokeRunMs = 0;
@@ -686,6 +710,7 @@ public final class LwjglDungeonPrototype {
             String startMapName = "";
             String characterName = "";
             String regionName = "";
+            String smokeScreenshotPath = "";
             if (args == null) {
                 return new PrototypeOptions(
                         smokeRunMs,
@@ -696,7 +721,8 @@ public final class LwjglDungeonPrototype {
                         smokeActions,
                         startMapName,
                         characterName,
-                        regionName
+                        regionName,
+                        smokeScreenshotPath
                 );
             }
 
@@ -723,6 +749,8 @@ public final class LwjglDungeonPrototype {
                     characterName = arg.substring("--name=".length()).trim();
                 } else if (arg.startsWith("--region=")) {
                     regionName = arg.substring("--region=".length()).trim();
+                } else if (arg.startsWith("--smoke-screenshot=")) {
+                    smokeScreenshotPath = arg.substring("--smoke-screenshot=".length()).trim();
                 }
             }
             return new PrototypeOptions(
@@ -734,7 +762,8 @@ public final class LwjglDungeonPrototype {
                     smokeActions,
                     startMapName,
                     characterName,
-                    regionName
+                    regionName,
+                    smokeScreenshotPath
             );
         }
 

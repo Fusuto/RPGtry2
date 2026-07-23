@@ -12,10 +12,16 @@ import org.main.engine.EnvironmentTheme;
 import org.main.engine.MapEntity;
 import org.main.engine.RealtimeDungeonViewport;
 import org.main.engine.TextureManager;
+import org.lwjgl.BufferUtils;
 
+import javax.imageio.ImageIO;
 import java.awt.Dimension;
 import java.awt.Point;
 import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -305,6 +311,40 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
 
     public void requestClose() {
         glfwSetWindowShouldClose(window, true);
+    }
+
+    /** Captures the most recently presented frame for automated visual smoke checks. */
+    public void captureFrontBuffer(Path outputPath) throws IOException {
+        if (window == NULL || outputPath == null) {
+            throw new IOException("Cannot capture an unavailable viewport.");
+        }
+        Dimension size = framebufferSize();
+        int width = Math.max(1, size.width);
+        int height = Math.max(1, size.height);
+        ByteBuffer rgba = BufferUtils.createByteBuffer(width * height * 4);
+        glReadBuffer(GL_FRONT);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        for (int sourceY = 0; sourceY < height; sourceY++) {
+            int targetY = height - sourceY - 1;
+            for (int x = 0; x < width; x++) {
+                int offset = (sourceY * width + x) * 4;
+                int red = Byte.toUnsignedInt(rgba.get(offset));
+                int green = Byte.toUnsignedInt(rgba.get(offset + 1));
+                int blue = Byte.toUnsignedInt(rgba.get(offset + 2));
+                int alpha = Byte.toUnsignedInt(rgba.get(offset + 3));
+                image.setRGB(x, targetY, alpha << 24 | red << 16 | green << 8 | blue);
+            }
+        }
+        Path parent = outputPath.toAbsolutePath().normalize().getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+        if (!ImageIO.write(image, "png", outputPath.toFile())) {
+            throw new IOException("No PNG writer is available.");
+        }
     }
 
     public void pollEvents() {

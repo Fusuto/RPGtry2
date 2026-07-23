@@ -12,12 +12,13 @@ import java.util.List;
 public class BattleRenderer {
 
     private static final int PANEL_PADDING = 24;
+    private static final int COMPACT_PANEL_PADDING = 12;
     private static final int BUTTON_GAP = 8;
+    private static final int HUD_MARGIN = 12;
 
     private static final int MESSAGE_BOX_HEIGHT = 44;
     private static final int MESSAGE_BOX_MARGIN = 20;
     private static final int MESSAGE_BOX_MAX_WIDTH = 520;
-    private static final double BATTLE_AREA_HEIGHT_RATIO = 0.70;
     private static final float MODAL_BACKDROP_ALPHA = 0.35f;
     private static final float TARGET_OUTLINE_ALPHA = 0.55f;
     private static final float TARGET_PREVIEW_FILL_ALPHA = 0.28f;
@@ -171,11 +172,9 @@ public class BattleRenderer {
                 RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR
         );
 
-        int battleAreaHeight = (int) (height * BATTLE_AREA_HEIGHT_RATIO);
-        int bottomHeight = height - battleAreaHeight;
-        int menuWidth = width / 2;
+        BattleHudLayout hud = battleHudLayout(width, height, encounter.getAllies().size());
 
-        drawBattleArea(g, encounter, 0, 0, width, battleAreaHeight);
+        drawBattleArea(g, encounter, 0, 0, width, height);
 
         /*
          * Actor bounds are created inside drawBattleArea(...), so skill/target
@@ -187,11 +186,11 @@ public class BattleRenderer {
          * The battle message now floats over the battle area instead of
          * consuming space inside the command panel.
          */
-        drawBattleMessageOverlay(g, encounter, 0, 0, width, battleAreaHeight);
-        drawPausedIndicator(g, width, battleAreaHeight);
+        drawBattleMessageOverlay(g, encounter, 0, 0, width, hud.clearViewBottom());
+        drawPausedIndicator(g, width, hud.clearViewBottom());
 
-        drawCommandMenu(g, 0, battleAreaHeight, menuWidth, bottomHeight);
-        drawPartyStatus(g, encounter, menuWidth, battleAreaHeight, width - menuWidth, bottomHeight);
+        drawCommandMenu(g, hud.command().x, hud.command().y, hud.command().width, hud.command().height);
+        drawPartyStatus(g, encounter, hud.party().x, hud.party().y, hud.party().width, hud.party().height);
 
         if (skillWindowOpen) {
             drawSkillWindow(g, encounter, width, height);
@@ -206,21 +205,53 @@ public class BattleRenderer {
     public void drawLwjglOverlay(Graphics2D g, BattleEncounter encounter, int width, int height) {
         actorBounds.clear(); commandBounds.clear(); skillBounds.clear(); itemBounds.clear();
         if (encounter == null) return;
-        int battleAreaHeight = (int) (height * BATTLE_AREA_HEIGHT_RATIO);
-        int bottomHeight = height - battleAreaHeight;
-        int menuWidth = width / 2;
+        BattleHudLayout hud = battleHudLayout(width, height, encounter.getAllies().size());
         if (!selectableTargets.isEmpty()) {
-            drawTacticalBattleArea(g, encounter, 0, 0, width, battleAreaHeight);
+            drawTacticalBattleArea(g, encounter, 0, 0, width, hud.clearViewBottom());
             drawTargetingPreview(g);
         } else {
             drawProjectedActorMarkers(g, encounter);
         }
-        drawBattleMessageOverlay(g, encounter, 0, 0, width, battleAreaHeight);
-        drawPausedIndicator(g, width, battleAreaHeight);
-        drawCommandMenu(g, 0, battleAreaHeight, menuWidth, bottomHeight);
-        drawPartyStatus(g, encounter, menuWidth, battleAreaHeight, width - menuWidth, bottomHeight);
+        drawBattleMessageOverlay(g, encounter, 0, 0, width, hud.clearViewBottom());
+        drawPausedIndicator(g, width, hud.clearViewBottom());
+        drawCommandMenu(g, hud.command().x, hud.command().y, hud.command().width, hud.command().height);
+        drawPartyStatus(g, encounter, hud.party().x, hud.party().y, hud.party().width, hud.party().height);
         if (skillWindowOpen) drawSkillWindow(g, encounter, width, height);
         if (itemWindowOpen) drawItemWindow(g, width, height);
+    }
+
+    private BattleHudLayout battleHudLayout(int width, int height, int allyCount) {
+        int safeWidth = Math.max(320, width);
+        int safeHeight = Math.max(240, height);
+
+        int commandWidth = clamp((int) Math.round(safeWidth * 0.16), 172, 218);
+        int commandHeight = clamp((int) Math.round(safeHeight * 0.27), 176, 208);
+
+        int partyColumns = Math.max(1, allyCount) > 3 ? 2 : 1;
+        int partyRows = Math.max(1, (Math.max(1, allyCount) + partyColumns - 1) / partyColumns);
+        int partyHeight = COMPACT_PANEL_PADDING * 2 + partyRows * 35 + 8;
+        int desiredPartyWidth = clamp((int) Math.round(safeWidth * 0.38), 300, 520);
+        int availablePartyWidth = safeWidth - HUD_MARGIN * 3 - commandWidth;
+        int partyWidth = Math.min(desiredPartyWidth, Math.max(220, availablePartyWidth));
+
+        Rectangle command = new Rectangle(
+                HUD_MARGIN,
+                Math.max(HUD_MARGIN, height - HUD_MARGIN - commandHeight),
+                commandWidth,
+                commandHeight);
+        Rectangle party = new Rectangle(
+                Math.max(HUD_MARGIN, width - HUD_MARGIN - partyWidth),
+                HUD_MARGIN,
+                partyWidth,
+                partyHeight);
+        int clearViewBottom = Math.max(
+                MESSAGE_BOX_HEIGHT + MESSAGE_BOX_MARGIN * 2,
+                command.y);
+        return new BattleHudLayout(command, party, clearViewBottom);
+    }
+
+    private static int clamp(int value, int minimum, int maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
     }
 
     public void setProjectedActorPositions(Map<BattleActor, Point> positions) {
@@ -1323,10 +1354,10 @@ public class BattleRenderer {
 
         BufferedImage buttonImage = assets != null ? assets.getButtonNormal() : null;
 
-        int contentX = x + PANEL_PADDING;
-        int contentY = y + PANEL_PADDING;
-        int contentWidth = width - PANEL_PADDING * 2;
-        int contentHeight = height - PANEL_PADDING * 2;
+        int contentX = x + COMPACT_PANEL_PADDING;
+        int contentY = y + COMPACT_PANEL_PADDING;
+        int contentWidth = width - COMPACT_PANEL_PADDING * 2;
+        int contentHeight = height - COMPACT_PANEL_PADDING * 2;
 
         Dimension buttonSize = calculateButtonSize(
                 buttonImage,
@@ -1497,27 +1528,37 @@ public class BattleRenderer {
 
         drawPanelBorder(g, x, y, width, height);
 
-        int contentX = x + PANEL_PADDING;
-        int contentY = y + PANEL_PADDING;
-        int contentWidth = width - PANEL_PADDING * 2;
+        int contentX = x + COMPACT_PANEL_PADDING;
+        int contentY = y + COMPACT_PANEL_PADDING;
+        int contentWidth = width - COMPACT_PANEL_PADDING * 2;
+        List<BattleActor> allies = encounter.getAllies();
+        int columns = allies.size() > 3 ? 2 : 1;
+        int rows = Math.max(1, (Math.max(1, allies.size()) + columns - 1) / columns);
+        int columnGap = columns > 1 ? 14 : 0;
+        int columnWidth = Math.max(1, (contentWidth - columnGap * (columns - 1)) / columns);
 
-        int currentY = contentY + 10;
+        for (int index = 0; index < allies.size(); index++) {
+            BattleActor ally = allies.get(index);
+            int column = index / rows;
+            int row = index % rows;
+            int actorX = contentX + column * (columnWidth + columnGap);
+            int currentY = contentY + 10 + row * 35;
+            int nameWidth = Math.min(82, Math.max(54, columnWidth / 3));
+            int barX = actorX + nameWidth;
+            int barWidth = Math.max(28, columnWidth - nameWidth);
 
-        for (BattleActor ally : encounter.getAllies()) {
             g.setColor(Color.WHITE);
-            g.drawString(ally.getName(), contentX, currentY);
+            g.drawString(trimTextToFit(g, ally.getName(), nameWidth - 6), actorX, currentY);
 
             drawHpBar(
                     g,
-                    contentX + 100,
+                    barX,
                     currentY - 12,
-                    contentWidth - 120,
+                    barWidth,
                     12,
                     ally
             );
-            drawStatusIcons(g, ally, contentX + 100, currentY + 4);
-
-            currentY += 35;
+            drawStatusIcons(g, ally, barX, currentY + 4);
         }
     }
 
@@ -1605,6 +1646,9 @@ public class BattleRenderer {
         }
 
         return ellipsis;
+    }
+
+    private record BattleHudLayout(Rectangle command, Rectangle party, int clearViewBottom) {
     }
 
     public record BattleItemEntry(int inventoryIndex, InventorySystem.Item item) {

@@ -9,6 +9,7 @@ import org.main.core.AetherGameRuntime;
 import org.main.core.InventorySystem;
 import org.main.core.Library;
 import org.main.core.EquipmentViewModelProfile;
+import org.main.core.FirstPersonEquipmentRig;
 import org.main.engine.DungeonRenderContext;
 
 import java.awt.Point;
@@ -31,6 +32,9 @@ final class LwjglBattleSceneRenderer {
     private static final double ALLY_BACK_Z = 0.65;
     private static final double ENEMY_FRONT_Z = -3.15;
     private static final double ENEMY_BACK_Z = -4.45;
+    private static final double CAMERA_EYE_HEIGHT = 0.58;
+    private static final double STANDARD_ACTOR_HEIGHT = 0.95;
+    private static final double STANDARD_ACTOR_WIDTH = STANDARD_ACTOR_HEIGHT * 0.74;
 
     private final LwjglTextureCache textureCache;
     private final Map<CharacterModelDefinition, LwjglSkinnedModel> skinnedModels = new HashMap<>();
@@ -63,7 +67,7 @@ final class LwjglBattleSceneRenderer {
         glRotated(look.pitchOffsetDegrees(), 1, 0, 0);
         glRotated(-look.yawOffsetDegrees(), 0, 1, 0);
         double cameraLunge = cameraLunge(encounter, player);
-        glTranslated(0, -0.58, cameraLunge);
+        glTranslated(0, -CAMERA_EYE_HEIGHT, cameraLunge);
         double playerDeath = actions.stream()
                 .filter(action -> action.attacker() == player
                         && action.actionType() == BattlePresentationDirector.ActionType.DEATH)
@@ -103,20 +107,27 @@ final class LwjglBattleSceneRenderer {
                 : definition.facingRotationDegrees(), 0, 1, 0);
         if (skinned == null || !skinned.hasClip(slot)) applyProceduralWholeModel(actor, slot, actions);
         if (skinned != null) {
-            double scale = skinned.normalizedScaleForHeight(1.55) * definition.scale();
+            double scale = skinned.normalizedScaleForHeight(STANDARD_ACTOR_HEIGHT) * definition.scale();
             glScaled(scale, scale, scale);
+            glTranslated(-skinned.centerX(), -skinned.baseY(), -skinned.centerZ());
             drawSkinnedModel(skinned, skinned.skinNormalized(slot, progress));
         } else if (definition.hasModel()) {
             LwjglStaticModel model = getStaticModel(definition.modelPath());
             if (model != null) {
-                double scale = model.normalizedScaleForHeight(1.55) * definition.scale();
+                double scale = model.normalizedScaleForHeight(STANDARD_ACTOR_HEIGHT) * definition.scale();
                 glScaled(scale, scale, scale);
                 glTranslated(-model.centerX(), -model.baseY(), -model.centerZ());
                 for (LwjglStaticModel.Mesh mesh : model.meshes()) drawStaticMesh(mesh);
-            } else drawBillboard(actor.getImage(), 1.15, 1.55);
+            } else {
+                drawBillboard(actor.getImage(),
+                        STANDARD_ACTOR_WIDTH * definition.scale(),
+                        STANDARD_ACTOR_HEIGHT * definition.scale());
+            }
         } else {
             applyProceduralReaction(actor, actions);
-            drawBillboard(actor.getImage(), 1.15, 1.55);
+            drawBillboard(actor.getImage(),
+                    STANDARD_ACTOR_WIDTH * definition.scale(),
+                    STANDARD_ACTOR_HEIGHT * definition.scale());
         }
         glPopMatrix();
     }
@@ -191,64 +202,146 @@ final class LwjglBattleSceneRenderer {
         InventorySystem.Item weapon = inventory.getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
         InventorySystem.Item shield = inventory.getEquippedItem(InventorySystem.EquipmentSlot.SHIELD);
         InventorySystem.Item chest = inventory.getEquippedItem(InventorySystem.EquipmentSlot.CHEST);
-        boolean casting = actions.stream().anyMatch(action -> action.attacker() == player
-                && (action.actionType() == BattlePresentationDirector.ActionType.SPELL
-                || action.actionType() == BattlePresentationDirector.ActionType.HEAL));
-        double swing = actionEnvelope(player, actions);
-        double blockRaise = actions.stream().flatMap(action -> action.targets().stream())
-                .filter(target -> target.target() == player
-                        && target.reaction() == BattlePresentationDirector.Reaction.BLOCK)
-                .findFirst().map(ignored -> 1.0).orElse(0.0);
+        double attackSwing = actions.stream()
+                .filter(action -> action.attacker() == player
+                        && (action.actionType() == BattlePresentationDirector.ActionType.AUTO_ATTACK
+                        || action.actionType() == BattlePresentationDirector.ActionType.PHYSICAL_SKILL))
+                .findFirst().map(LwjglBattleSceneRenderer::actionEnvelope).orElse(0.0);
+        double castLower = actions.stream()
+                .filter(action -> action.attacker() == player
+                        && (action.actionType() == BattlePresentationDirector.ActionType.SPELL
+                        || action.actionType() == BattlePresentationDirector.ActionType.HEAL
+                        || action.actionType() == BattlePresentationDirector.ActionType.SUMMON))
+                .findFirst().map(LwjglBattleSceneRenderer::actionEnvelope).orElse(0.0);
+        double blockRaise = actions.stream()
+                .filter(action -> action.targets().stream().anyMatch(target ->
+                        target.target() == player
+                                && target.reaction() == BattlePresentationDirector.Reaction.BLOCK))
+                .findFirst().map(LwjglBattleSceneRenderer::actionEnvelope).orElse(0.0);
+        boolean twoHanded = weapon != null && weapon.isTwoHanded();
+        EquipmentViewModelProfile motionProfile = weapon == null
+                ? EquipmentViewModelProfile.defaults()
+                : weapon.getViewModelProfile();
         glClear(GL_DEPTH_BUFFER_BIT);
         glMatrixMode(GL_MODELVIEW); glLoadIdentity();
         if (chest != null && chest.hasFirstPersonModel()) {
-            if (chest.getViewModelProfile().pairedHands()) {
-                drawEquipmentModel(chest, 0.0, -0.48, -0.82, 0.52, 0, 0, 0, false);
-            } else if (weapon != null && weapon.isTwoHanded()) {
-                drawEquipmentModel(chest, -0.10, -0.43, -0.76, 0.38, 4, 12, 20, false);
-                drawEquipmentModel(chest, 0.18, -0.34, -0.91, 0.38, -8, -12, -12, true);
-            } else {
-                drawEquipmentModel(chest, -0.34, -0.48, -0.82, 0.38, 0, 18, 15, false);
-                drawEquipmentModel(chest, 0.34, -0.48, -0.82, 0.38, 0, -18, -15, true);
+            for (FirstPersonEquipmentRig.Pose pose
+                    : FirstPersonEquipmentRig.chestHands(chest.getViewModelProfile(), twoHanded)) {
+                drawAttachedEquipmentModel(
+                        chest,
+                        pose,
+                        motionProfile,
+                        FirstPersonEquipmentRig.followsPrimaryMotion(pose, twoHanded)
+                                ? -attackSwing * 58 : 0);
             }
         } else {
-            drawBuiltInHand(-0.30, -0.48, -0.80);
-            drawBuiltInHand(0.30, -0.48 + (weapon == null ? 0.10 * swing : 0),
-                    -0.80 - (weapon == null ? 0.24 * swing : 0));
+            for (FirstPersonEquipmentRig.Pose pose
+                    : FirstPersonEquipmentRig.builtInHands(
+                            twoHanded, weapon == null ? attackSwing : 0)) {
+                drawAttachedBuiltInHand(
+                        pose,
+                        motionProfile,
+                        weapon != null && FirstPersonEquipmentRig.followsPrimaryMotion(pose, twoHanded)
+                                ? -attackSwing * 58 : 0);
+            }
         }
         if (weapon != null && weapon.hasFirstPersonModel()) {
-            double lower = casting ? -0.28 : 0.0;
-            drawEquipmentModel(weapon, weapon.isTwoHanded() ? 0.10 : 0.38, -0.45 + lower, -0.86,
-                    0.72, -16, 8, -28 - swing * 58, false);
+            FirstPersonEquipmentRig.Pose pose = FirstPersonEquipmentRig.weapon(
+                    weapon.getViewModelProfile(), twoHanded, castLower);
+            drawAttachedEquipmentModel(weapon, pose, motionProfile, -attackSwing * 58);
         }
-        if (shield != null && shield.hasFirstPersonModel() && (weapon == null || !weapon.isTwoHanded())) {
-            drawEquipmentModel(shield, -0.43, casting ? -0.72 : -0.38 + blockRaise * 0.22,
-                    -0.92 - blockRaise * 0.12, 0.58, -blockRaise * 12, 12, 8, false);
+        if (shield != null && shield.hasFirstPersonModel() && !twoHanded) {
+            drawEquipmentModel(shield, FirstPersonEquipmentRig.shield(
+                    shield.getViewModelProfile(), castLower, blockRaise));
         }
     }
 
-    private void drawEquipmentModel(InventorySystem.Item item, double x, double y, double z,
-                                    double height, double rx, double ry, double rz, boolean mirror) {
+    private void drawAttachedEquipmentModel(
+            InventorySystem.Item item,
+            FirstPersonEquipmentRig.Pose pose,
+            EquipmentViewModelProfile motionProfile,
+            double motionDegrees
+    ) {
+        glPushMatrix();
+        applyPrimaryHandMotion(motionProfile, motionDegrees);
+        drawEquipmentModel(item, pose);
+        glPopMatrix();
+    }
+
+    private void drawEquipmentModel(InventorySystem.Item item, FirstPersonEquipmentRig.Pose pose) {
         LwjglStaticModel model = getStaticModel(item.getFirstPersonModelPath());
         if (model == null) return;
-        EquipmentViewModelProfile pose = item.getViewModelProfile();
         glPushMatrix();
-        glTranslated(pose.positionX() + (x - 0.38), pose.positionY() + (y + 0.45), pose.positionZ() + (z + 0.86));
-        glRotated(pose.rotationX() + (rx + 16), 1, 0, 0);
-        glRotated(pose.rotationY() + (ry - 8), 0, 1, 0);
-        glRotated(pose.rotationZ() + (rz + 28), pose.swingAxisX(), pose.swingAxisY(), pose.swingAxisZ());
-        double scale = model.normalizedScaleForHeight(height / 0.72 * pose.normalizedHeight());
-        glScaled(mirror ? -scale : scale, scale, scale);
+        glTranslated(pose.x(), pose.y(), pose.z());
+        glRotated(pose.rotationX(), 1, 0, 0);
+        glRotated(pose.rotationY(), 0, 1, 0);
+        glRotated(pose.rotationZ(), 0, 0, 1);
+        double scale = model.normalizedScaleForHeight(pose.normalizedHeight());
+        glScaled(pose.mirrored() ? -scale : scale, scale, scale);
         glTranslated(-model.centerX(), -model.baseY(), -model.centerZ());
         for (LwjglStaticModel.Mesh mesh : model.meshes()) drawStaticMesh(mesh);
         glPopMatrix();
     }
 
-    private void drawBuiltInHand(double x, double y, double z) {
-        glDisable(GL_TEXTURE_2D); glColor4f(0.67f, 0.45f, 0.30f, 1f); glPushMatrix(); glTranslated(x, y, z);
-        glScaled(0.13, 0.18, 0.28); glBegin(GL_QUADS);
-        for (int side = -1; side <= 1; side += 2) { glVertex3d(side, -1, -1); glVertex3d(side, 1, -1); glVertex3d(side, 1, 1); glVertex3d(side, -1, 1); }
-        glEnd(); glPopMatrix();
+    private void drawAttachedBuiltInHand(
+            FirstPersonEquipmentRig.Pose pose,
+            EquipmentViewModelProfile motionProfile,
+            double motionDegrees
+    ) {
+        glPushMatrix();
+        applyPrimaryHandMotion(motionProfile, motionDegrees);
+        drawBuiltInHand(pose);
+        glPopMatrix();
+    }
+
+    private void applyPrimaryHandMotion(EquipmentViewModelProfile profile, double degrees) {
+        if (Math.abs(degrees) < 0.0001) return;
+        glTranslated(FirstPersonEquipmentRig.PRIMARY_HAND_X,
+                FirstPersonEquipmentRig.PRIMARY_HAND_Y,
+                FirstPersonEquipmentRig.PRIMARY_HAND_Z);
+        glRotated(degrees, profile.swingAxisX(), profile.swingAxisY(), profile.swingAxisZ());
+        glTranslated(-FirstPersonEquipmentRig.PRIMARY_HAND_X,
+                -FirstPersonEquipmentRig.PRIMARY_HAND_Y,
+                -FirstPersonEquipmentRig.PRIMARY_HAND_Z);
+    }
+
+    private void drawBuiltInHand(FirstPersonEquipmentRig.Pose pose) {
+        glDisable(GL_TEXTURE_2D);
+        glPushMatrix();
+        glTranslated(pose.x(), pose.y(), pose.z());
+        glRotated(pose.rotationX(), 1, 0, 0);
+        glRotated(pose.rotationY(), 0, 1, 0);
+        glRotated(pose.rotationZ(), 0, 0, 1);
+
+        glColor4f(0.68f, 0.46f, 0.31f, 1f);
+        drawBox(0.075, 0.095, 0.105);
+        glTranslated(0, -0.135, 0.045);
+        glColor4f(0.60f, 0.39f, 0.26f, 1f);
+        drawBox(0.052, 0.075, 0.070);
+        glPopMatrix();
+    }
+
+    private void drawBox(double halfWidth, double halfHeight, double halfDepth) {
+        double left = -halfWidth;
+        double right = halfWidth;
+        double bottom = -halfHeight;
+        double top = halfHeight;
+        double near = halfDepth;
+        double far = -halfDepth;
+        glBegin(GL_QUADS);
+        glVertex3d(left, bottom, near); glVertex3d(right, bottom, near);
+        glVertex3d(right, top, near); glVertex3d(left, top, near);
+        glVertex3d(right, bottom, far); glVertex3d(left, bottom, far);
+        glVertex3d(left, top, far); glVertex3d(right, top, far);
+        glVertex3d(left, bottom, far); glVertex3d(left, bottom, near);
+        glVertex3d(left, top, near); glVertex3d(left, top, far);
+        glVertex3d(right, bottom, near); glVertex3d(right, bottom, far);
+        glVertex3d(right, top, far); glVertex3d(right, top, near);
+        glVertex3d(left, top, near); glVertex3d(right, top, near);
+        glVertex3d(right, top, far); glVertex3d(left, top, far);
+        glVertex3d(left, bottom, far); glVertex3d(right, bottom, far);
+        glVertex3d(right, bottom, near); glVertex3d(left, bottom, near);
+        glEnd();
     }
 
     private void renderEffects(List<BattlePresentationDirector.ActionSnapshot> actions,
@@ -384,13 +477,17 @@ final class LwjglBattleSceneRenderer {
         for (BattleActor actor : actors) {
             if (actor == player || !actor.isAlive()) continue;
             Position p = relative(formationPosition(actor, !actor.isEnemy()), playerCell);
-            Point point = project(p.x(), p.y() + 1.7, p.z(), look, width, height);
+            CharacterModelDefinition definition = actor.getCharacterModel();
+            double actorHeight = STANDARD_ACTOR_HEIGHT * Math.max(0.01, definition.scale());
+            double markerY = p.y() + definition.verticalOffset() + actorHeight + 0.08;
+            Point point = project(p.x(), markerY, p.z(), look, width, height);
             if (point != null) projectedActors.put(actor, point);
         }
     }
 
     private static Point project(double x, double y, double z, CameraLookState look, int width, int height) {
         double yaw = Math.toRadians(-look.yawOffsetDegrees()), pitch = Math.toRadians(look.pitchOffsetDegrees());
+        y -= CAMERA_EYE_HEIGHT;
         double vx = x * Math.cos(yaw) + z * Math.sin(yaw), yz = -x * Math.sin(yaw) + z * Math.cos(yaw);
         double vy = y * Math.cos(pitch) - yz * Math.sin(pitch), vz = y * Math.sin(pitch) + yz * Math.cos(pitch);
         if (vz >= -0.05) return null;
