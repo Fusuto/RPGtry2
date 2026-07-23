@@ -56,6 +56,7 @@ public final class SaveSystem {
         properties.setProperty("player.maxHp", String.valueOf(player.getMaxHp()));
         properties.setProperty("player.currHp", String.valueOf(player.getCurrHp()));
         properties.setProperty("player.portrait", nullToBlank(player.getPortraitPath()));
+        savePartyFormation(properties, player);
 
         for (PlayerStat stat : PlayerStat.values()) {
             properties.setProperty("stat." + stat.name(), String.valueOf(player.getBaseStat(stat)));
@@ -133,6 +134,7 @@ public final class SaveSystem {
 
         loadInventory(properties, player.getInventory());
         loadEquippedLimbs(properties, player);
+        loadPartyFormation(properties, player);
         player.setCurrHp(readInt(properties, "player.currHp", player.getCurrHp()));
 
         int currentFloor = readInt(properties, "world.floor", 1);
@@ -223,6 +225,52 @@ public final class SaveSystem {
 
     private static void saveDungeonMap(Properties properties, DungeonMap dungeonMap) {
         saveDungeonMap(properties, "world.map.", dungeonMap);
+    }
+
+    private static void savePartyFormation(Properties properties, PlayerCharacter player) {
+        if (player == null) {
+            return;
+        }
+        List<PartyRoster.Member> roster = player.getPartyRoster().members();
+        properties.setProperty("party.roster.count", String.valueOf(roster.size()));
+        for (int index = 0; index < roster.size(); index++) {
+            PartyRoster.Member member = roster.get(index);
+            String prefix = "party.roster." + index + ".";
+            properties.setProperty(prefix + "id", member.id());
+            properties.setProperty(prefix + "name", member.displayName());
+            properties.setProperty(prefix + "playerControlled", String.valueOf(member.playerControlled()));
+        }
+        player.getPartyFormation().assignments().forEach((memberId, cell) ->
+                properties.setProperty("party.formation." + memberId, cell.name()));
+    }
+
+    private static void loadPartyFormation(Properties properties, PlayerCharacter player) {
+        if (player == null) {
+            return;
+        }
+        int rosterCount = Math.max(0, readInt(properties, "party.roster.count", 0));
+        for (int index = 0; index < rosterCount; index++) {
+            String prefix = "party.roster." + index + ".";
+            String id = properties.getProperty(prefix + "id", "");
+            if (id.isBlank() || PartyRoster.PLAYER_MEMBER_ID.equals(id)) continue;
+            player.getPartyRoster().add(new PartyRoster.Member(
+                    id,
+                    properties.getProperty(prefix + "name", id),
+                    Boolean.parseBoolean(properties.getProperty(prefix + "playerControlled", "false"))
+            ));
+        }
+        Map<String, PartyFormation.Cell> saved = new HashMap<>();
+        for (String memberId : player.getPartyRoster().memberIds()) {
+            String value = properties.getProperty("party.formation." + memberId, "");
+            if (!value.isBlank()) {
+                try {
+                    saved.put(memberId, PartyFormation.Cell.valueOf(value.trim().toUpperCase()));
+                } catch (IllegalArgumentException ignored) {
+                    // The deterministic repair below handles malformed legacy values.
+                }
+            }
+        }
+        player.getPartyFormation().restore(saved, player.getPartyRoster().memberIds());
     }
 
     private static void saveDungeonMap(Properties properties, String prefix, DungeonMap dungeonMap) {

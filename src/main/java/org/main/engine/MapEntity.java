@@ -1,5 +1,6 @@
 package org.main.engine;
 
+import org.main.content.CharacterModelDefinition;
 import org.main.core.Library;
 import org.main.core.CraftingStationType;
 import org.main.monsters.Monster;
@@ -27,6 +28,7 @@ public class MapEntity {
     private double visualScale = 1.0;
     private String staticModelPath = "";
     private boolean staticModelVisible = true;
+    private CharacterModelDefinition characterModel = CharacterModelDefinition.empty();
     private String enemySpawnId = "";
     private String enemyLocalSpawnId = "";
     private String roamingAreaId = "";
@@ -44,6 +46,10 @@ public class MapEntity {
 
     private int x;
     private int y;
+    private double movementFromX;
+    private double movementFromY;
+    private long movementStartedNanos;
+    private static final long WORLD_MOVE_INTERPOLATION_NANOS = 280_000_000L;
 
     public MapEntity(String name, Library.EntityType type, int x, int y) {
         this.name = name;
@@ -72,6 +78,7 @@ public class MapEntity {
         this.monster = monster;
         this.spawnX = x;
         this.spawnY = y;
+        withCharacterModel(monster.getCharacterModel());
     }
 
     public MapEntity(Monster monster, int x, int y, Library.EntityType type) {
@@ -79,6 +86,7 @@ public class MapEntity {
         this.monster = monster;
         this.spawnX = x;
         this.spawnY = y;
+        withCharacterModel(monster.getCharacterModel());
     }
 
     public BufferedImage getStaticImage() {
@@ -180,6 +188,19 @@ public class MapEntity {
         return this;
     }
 
+    public CharacterModelDefinition getCharacterModel() {
+        return characterModel;
+    }
+
+    public MapEntity withCharacterModel(CharacterModelDefinition definition) {
+        characterModel = definition == null ? CharacterModelDefinition.empty() : definition;
+        if (characterModel.hasModel()) {
+            withStaticModel(characterModel.modelPath());
+            withVisualScale(characterModel.scale());
+        }
+        return this;
+    }
+
     public void setStaticModelVisible(boolean visible) {
         staticModelVisible = visible;
     }
@@ -225,8 +246,34 @@ public class MapEntity {
     }
 
     public void setPosition(int x, int y) {
+        if (this.x != x || this.y != y) {
+            movementFromX = getRenderX();
+            movementFromY = getRenderY();
+            movementStartedNanos = System.nanoTime();
+        }
         this.x = x;
         this.y = y;
+    }
+
+    public double getRenderX() {
+        return interpolateCoordinate(movementFromX, x);
+    }
+
+    public double getRenderY() {
+        return interpolateCoordinate(movementFromY, y);
+    }
+
+    public boolean isVisuallyMoving() {
+        return movementStartedNanos > 0
+                && System.nanoTime() - movementStartedNanos < WORLD_MOVE_INTERPOLATION_NANOS;
+    }
+
+    private double interpolateCoordinate(double from, double to) {
+        if (!isVisuallyMoving()) return to;
+        double t = Math.max(0.0, Math.min(1.0,
+                (System.nanoTime() - movementStartedNanos) / (double) WORLD_MOVE_INTERPOLATION_NANOS));
+        double eased = t * t * (3.0 - 2.0 * t);
+        return from + (to - from) * eased;
     }
 
     public MapEntity configureEnemySpawn(
@@ -387,6 +434,7 @@ public class MapEntity {
         copy.visualScale = visualScale;
         copy.staticModelPath = staticModelPath;
         copy.staticModelVisible = staticModelVisible;
+        copy.characterModel = characterModel;
         copy.enemySpawnId = enemySpawnId;
         copy.enemyLocalSpawnId = enemyLocalSpawnId;
         copy.roamingAreaId = roamingAreaId;

@@ -157,11 +157,15 @@ final class LwjglDungeonSceneBuilder {
         }
         return new ModelInstance(
                 entity.getStaticModelPath(),
-                entity.getX() + 0.5,
+                entity.getRenderX() + 0.5,
                 0.0,
-                entity.getY() + 0.5,
+                entity.getRenderY() + 0.5,
                 spriteHeightFor(entity),
-                fallbackSprite
+                fallbackSprite,
+                entity.getCharacterModel(),
+                entity.isVisuallyMoving()
+                        ? org.main.content.CharacterModelDefinition.AnimationSlot.WALK
+                        : org.main.content.CharacterModelDefinition.AnimationSlot.IDLE
         );
     }
 
@@ -811,7 +815,9 @@ final class LwjglDungeonSceneBuilder {
             double baseY,
             double centerZ,
             double height,
-            TexturedQuad fallbackSprite
+            TexturedQuad fallbackSprite,
+            org.main.content.CharacterModelDefinition characterModel,
+            org.main.content.CharacterModelDefinition.AnimationSlot animationSlot
     ) {
     }
 

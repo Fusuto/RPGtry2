@@ -919,7 +919,7 @@ public final class LwjglTextOverlayRenderer {
             return;
         }
 
-        runtime.battleRenderer().draw(graphics, encounter, width, height);
+        runtime.battleRenderer().drawLwjglOverlay(graphics, encounter, width, height);
     }
 
     private void drawPanel(Graphics2D graphics, int x, int y, int width, int height, String title) {

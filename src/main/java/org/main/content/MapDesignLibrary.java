@@ -13,6 +13,7 @@ import org.main.core.PlayerStat;
 import org.main.core.ShopSystem;
 import org.main.core.WeaponType;
 import org.main.core.GeneratedDungeon;
+import org.main.core.EquipmentViewModelProfile;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 import org.main.engine.MapGeometryData;
@@ -244,6 +245,19 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "smithingXpReward", String.valueOf(customItem.smithingXpReward()));
             properties.setProperty(prefix + "magicAccuracyBonus", String.valueOf(customItem.magicAccuracyBonus()));
             properties.setProperty(prefix + "magicPowerBonus", String.valueOf(customItem.magicPowerBonus()));
+            properties.setProperty(prefix + "firstPersonModelPath", customItem.firstPersonModelPath());
+            EquipmentViewModelProfile pose = customItem.viewModelProfile();
+            properties.setProperty(prefix + "viewModel.positionX", String.valueOf(pose.positionX()));
+            properties.setProperty(prefix + "viewModel.positionY", String.valueOf(pose.positionY()));
+            properties.setProperty(prefix + "viewModel.positionZ", String.valueOf(pose.positionZ()));
+            properties.setProperty(prefix + "viewModel.rotationX", String.valueOf(pose.rotationX()));
+            properties.setProperty(prefix + "viewModel.rotationY", String.valueOf(pose.rotationY()));
+            properties.setProperty(prefix + "viewModel.rotationZ", String.valueOf(pose.rotationZ()));
+            properties.setProperty(prefix + "viewModel.normalizedHeight", String.valueOf(pose.normalizedHeight()));
+            properties.setProperty(prefix + "viewModel.swingAxisX", String.valueOf(pose.swingAxisX()));
+            properties.setProperty(prefix + "viewModel.swingAxisY", String.valueOf(pose.swingAxisY()));
+            properties.setProperty(prefix + "viewModel.swingAxisZ", String.valueOf(pose.swingAxisZ()));
+            properties.setProperty(prefix + "viewModel.pairedHands", String.valueOf(pose.pairedHands()));
         }
 
         properties.setProperty("mob.count", String.valueOf(design.customMobs().size()));
@@ -265,6 +279,7 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "awarenessRadius", String.valueOf(customMob.awarenessRadius()));
             properties.setProperty(prefix + "movementIntervalMs", String.valueOf(customMob.movementIntervalMs()));
             properties.setProperty(prefix + "respawnDelayMs", String.valueOf(customMob.respawnDelayMs()));
+            writeCharacterModel(properties, prefix + "model.", customMob.characterModel());
             properties.setProperty(prefix + "skillIds", joinSkills(customMob.skillIds()));
             properties.setProperty(prefix + "drop.count", String.valueOf(customMob.dropEntries().size()));
             for (int dropIndex = 0; dropIndex < customMob.dropEntries().size(); dropIndex++) {
@@ -302,6 +317,7 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "imagePath", customNpc.imagePath());
             properties.setProperty(prefix + "talkSoundPath", customNpc.talkSoundPath());
             properties.setProperty(prefix + "interactionId", customNpc.interactionId());
+            writeCharacterModel(properties, prefix + "model.", customNpc.characterModel());
             CustomShop customShop = customNpc.shop();
             properties.setProperty(prefix + "shop.enabled", String.valueOf(customShop != null));
             if (customShop != null) {
@@ -596,6 +612,20 @@ public final class MapDesignLibrary {
             int smithingXpReward = readInt(properties, prefix + "smithingXpReward", 25);
             int magicAccuracyBonus = readInt(properties, prefix + "magicAccuracyBonus", 0);
             int magicPowerBonus = readInt(properties, prefix + "magicPowerBonus", 0);
+            String firstPersonModelPath = properties.getProperty(prefix + "firstPersonModelPath", "");
+            EquipmentViewModelProfile viewModelProfile = new EquipmentViewModelProfile(
+                    readDouble(properties, prefix + "viewModel.positionX", 0.38),
+                    readDouble(properties, prefix + "viewModel.positionY", -0.45),
+                    readDouble(properties, prefix + "viewModel.positionZ", -0.86),
+                    readDouble(properties, prefix + "viewModel.rotationX", -16.0),
+                    readDouble(properties, prefix + "viewModel.rotationY", 8.0),
+                    readDouble(properties, prefix + "viewModel.rotationZ", -28.0),
+                    readDouble(properties, prefix + "viewModel.normalizedHeight", 0.72),
+                    readDouble(properties, prefix + "viewModel.swingAxisX", 0.0),
+                    readDouble(properties, prefix + "viewModel.swingAxisY", 0.0),
+                    readDouble(properties, prefix + "viewModel.swingAxisZ", 1.0),
+                    Boolean.parseBoolean(properties.getProperty(prefix + "viewModel.pairedHands", "false"))
+            );
             if (!itemId.isBlank() && !itemName.isBlank()) {
                 customItems.add(new CustomItem(
                         itemId,
@@ -617,7 +647,9 @@ public final class MapDesignLibrary {
                         smithingRequiredLevel,
                         smithingXpReward,
                         magicAccuracyBonus,
-                        magicPowerBonus
+                        magicPowerBonus,
+                        firstPersonModelPath,
+                        viewModelProfile
                 ));
             }
         }
@@ -796,6 +828,7 @@ public final class MapDesignLibrary {
             int awarenessRadius = readInt(properties, prefix + "awarenessRadius", 4);
             int movementIntervalMs = readInt(properties, prefix + "movementIntervalMs", 3000);
             int respawnDelayMs = readInt(properties, prefix + "respawnDelayMs", 300000);
+            CharacterModelDefinition characterModel = readCharacterModel(properties, prefix + "model.");
             List<SkillLibrary> skillIds = readSkillList(properties.getProperty(prefix + "skillIds", ""));
             int dropCount = readInt(properties, prefix + "drop.count", 0);
             List<CustomDropEntry> dropEntries = new ArrayList<>();
@@ -810,7 +843,8 @@ public final class MapDesignLibrary {
             if (!mobId.isBlank() && !mobName.isBlank()) {
                 customMobs.add(new CustomMob(mobId, mobName, imagePath, paperDollSourcePath, statValues,
                         xpReward, mobDescription, attackSoundPath, damageSoundPath, combatAiIntelligence,
-                        awarenessRadius, movementIntervalMs, respawnDelayMs, skillIds, dropEntries));
+                        awarenessRadius, movementIntervalMs, respawnDelayMs, skillIds, dropEntries,
+                        characterModel));
             }
         }
 
@@ -847,6 +881,7 @@ public final class MapDesignLibrary {
             String imagePath = properties.getProperty(prefix + "imagePath", "");
             String talkSoundPath = properties.getProperty(prefix + "talkSoundPath", "");
             String interactionId = properties.getProperty(prefix + "interactionId", "");
+            CharacterModelDefinition characterModel = readCharacterModel(properties, prefix + "model.");
             CustomShop shop = null;
             if (Boolean.parseBoolean(properties.getProperty(prefix + "shop.enabled", "false"))) {
                 int stockCount = Math.max(0, readInt(properties, prefix + "shop.stock.count", 0));
@@ -867,7 +902,8 @@ public final class MapDesignLibrary {
                 );
             }
             if (!npcId.isBlank() && !npcName.isBlank()) {
-                customNpcs.add(new CustomNpc(npcId, npcName, imagePath, talkSoundPath, interactionId, shop));
+                customNpcs.add(new CustomNpc(
+                        npcId, npcName, imagePath, talkSoundPath, interactionId, shop, characterModel));
             }
         }
 
@@ -1484,6 +1520,55 @@ public final class MapDesignLibrary {
                 properties.setProperty(prefix + y, joinPaintRow(rows[y]));
             }
         }
+    }
+
+    private static void writeCharacterModel(
+            Properties properties,
+            String prefix,
+            CharacterModelDefinition definition
+    ) {
+        CharacterModelDefinition safe = definition == null
+                ? CharacterModelDefinition.empty()
+                : definition;
+        properties.setProperty(prefix + "path", safe.modelPath());
+        properties.setProperty(prefix + "rigId", safe.rigId());
+        properties.setProperty(prefix + "scale", String.valueOf(safe.scale()));
+        properties.setProperty(prefix + "facingRotationDegrees", String.valueOf(safe.facingRotationDegrees()));
+        properties.setProperty(prefix + "verticalOffset", String.valueOf(safe.verticalOffset()));
+        for (CharacterModelDefinition.AnimationSlot slot : CharacterModelDefinition.AnimationSlot.values()) {
+            CharacterModelDefinition.AnimationBinding binding = safe.animationBinding(slot);
+            String animationPrefix = prefix + "animation." + slot.name();
+            properties.setProperty(animationPrefix, binding.path());
+            properties.setProperty(animationPrefix + ".clipName", binding.clipName());
+            properties.setProperty(animationPrefix + ".speed", String.valueOf(binding.playbackSpeed()));
+            properties.setProperty(animationPrefix + ".impactFraction", String.valueOf(binding.impactFraction()));
+        }
+    }
+
+    private static CharacterModelDefinition readCharacterModel(Properties properties, String prefix) {
+        EnumMap<CharacterModelDefinition.AnimationSlot, CharacterModelDefinition.AnimationBinding> animationBindings =
+                new EnumMap<>(CharacterModelDefinition.AnimationSlot.class);
+        for (CharacterModelDefinition.AnimationSlot slot : CharacterModelDefinition.AnimationSlot.values()) {
+            String animationPrefix = prefix + "animation." + slot.name();
+            String path = properties.getProperty(animationPrefix, "");
+            if (!path.isBlank()) {
+                animationBindings.put(slot, new CharacterModelDefinition.AnimationBinding(
+                        path,
+                        properties.getProperty(animationPrefix + ".clipName", ""),
+                        readDouble(properties, animationPrefix + ".speed", 1.0),
+                        readDouble(properties, animationPrefix + ".impactFraction",
+                                CharacterModelDefinition.DEFAULT_IMPACT_FRACTION)
+                ));
+            }
+        }
+        return new CharacterModelDefinition(
+                properties.getProperty(prefix + "path", ""),
+                properties.getProperty(prefix + "rigId", ""),
+                readDouble(properties, prefix + "scale", 1.0),
+                readDouble(properties, prefix + "facingRotationDegrees", 0.0),
+                readDouble(properties, prefix + "verticalOffset", 0.0),
+                animationBindings
+        );
     }
 
     private static MapPaintData readMapPaint(Properties properties, int width, int height) {
@@ -2321,7 +2406,9 @@ public final class MapDesignLibrary {
             int smithingRequiredLevel,
             int smithingXpReward,
             int magicAccuracyBonus,
-            int magicPowerBonus
+            int magicPowerBonus,
+            String firstPersonModelPath,
+            EquipmentViewModelProfile viewModelProfile
     ) {
         public CustomItem {
             itemId = itemId == null ? "" : itemId;
@@ -2345,6 +2432,10 @@ public final class MapDesignLibrary {
             smithingXpReward = Math.max(0, smithingXpReward);
             magicAccuracyBonus = itemType == InventorySystem.ItemType.WEAPON ? Math.max(0, magicAccuracyBonus) : 0;
             magicPowerBonus = itemType == InventorySystem.ItemType.WEAPON ? Math.max(0, magicPowerBonus) : 0;
+            firstPersonModelPath = firstPersonModelPath == null
+                    ? ""
+                    : firstPersonModelPath.trim().replace('\\', '/');
+            viewModelProfile = viewModelProfile == null ? EquipmentViewModelProfile.defaults() : viewModelProfile;
         }
 
         public InventorySystem.Item createItem() {
@@ -2364,7 +2455,51 @@ public final class MapDesignLibrary {
                     paperDollOverlayPath,
                     weaponType,
                     twoHanded
-            ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus);
+            ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus)
+                    .withFirstPersonModel(firstPersonModelPath)
+                    .withViewModelProfile(viewModelProfile);
+        }
+
+        public CustomItem(
+                String itemId, String displayName, InventorySystem.ItemType itemType, String iconPath,
+                String paperDollOverlayPath, String useSoundPath, WeaponType weaponType, boolean twoHanded,
+                GearMaterial material, int healAmount, int baseGoldValue, String examineText,
+                PlayerStat statBonusTarget, boolean stackable, boolean smithingRecipeEnabled,
+                int smithingRequiredBars, int smithingRequiredLevel, int smithingXpReward,
+                int magicAccuracyBonus, int magicPowerBonus, String firstPersonModelPath
+        ) {
+            this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath, weaponType,
+                    twoHanded, material, healAmount, baseGoldValue, examineText, statBonusTarget, stackable,
+                    smithingRecipeEnabled, smithingRequiredBars, smithingRequiredLevel, smithingXpReward,
+                    magicAccuracyBonus, magicPowerBonus, firstPersonModelPath, EquipmentViewModelProfile.defaults());
+        }
+
+        public CustomItem(
+                String itemId,
+                String displayName,
+                InventorySystem.ItemType itemType,
+                String iconPath,
+                String paperDollOverlayPath,
+                String useSoundPath,
+                WeaponType weaponType,
+                boolean twoHanded,
+                GearMaterial material,
+                int healAmount,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                boolean stackable,
+                boolean smithingRecipeEnabled,
+                int smithingRequiredBars,
+                int smithingRequiredLevel,
+                int smithingXpReward,
+                int magicAccuracyBonus,
+                int magicPowerBonus
+        ) {
+            this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath,
+                    weaponType, twoHanded, material, healAmount, baseGoldValue, examineText,
+                    statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
+                    smithingRequiredLevel, smithingXpReward, magicAccuracyBonus, magicPowerBonus, "");
         }
 
         public CustomItem(
@@ -2452,7 +2587,8 @@ public final class MapDesignLibrary {
             int movementIntervalMs,
             int respawnDelayMs,
             List<SkillLibrary> skillIds,
-            List<CustomDropEntry> dropEntries
+            List<CustomDropEntry> dropEntries,
+            CharacterModelDefinition characterModel
     ) {
         public CustomMob {
             mobId = mobId == null ? "" : mobId;
@@ -2476,6 +2612,30 @@ public final class MapDesignLibrary {
             respawnDelayMs = Math.max(0, respawnDelayMs);
             skillIds = skillIds == null ? List.of() : List.copyOf(skillIds);
             dropEntries = dropEntries == null ? List.of() : List.copyOf(dropEntries);
+            characterModel = characterModel == null ? CharacterModelDefinition.empty() : characterModel;
+        }
+
+        public CustomMob(
+                String mobId,
+                String displayName,
+                String imagePath,
+                String paperDollSourcePath,
+                Map<PlayerStat, Integer> statValues,
+                int xpReward,
+                String description,
+                String attackSoundPath,
+                String damageSoundPath,
+                int combatAiIntelligence,
+                int awarenessRadius,
+                int movementIntervalMs,
+                int respawnDelayMs,
+                List<SkillLibrary> skillIds,
+                List<CustomDropEntry> dropEntries
+        ) {
+            this(mobId, displayName, imagePath, paperDollSourcePath, statValues, xpReward,
+                    description, attackSoundPath, damageSoundPath, combatAiIntelligence,
+                    awarenessRadius, movementIntervalMs, respawnDelayMs, skillIds, dropEntries,
+                    CharacterModelDefinition.empty());
         }
 
         public CustomMob(
@@ -2494,7 +2654,7 @@ public final class MapDesignLibrary {
         ) {
             this(mobId, displayName, imagePath, paperDollSourcePath, statValues, xpReward,
                     description, attackSoundPath, damageSoundPath, combatAiIntelligence,
-                    4, 3000, 300000, skillIds, dropEntries);
+                    4, 3000, 300000, skillIds, dropEntries, CharacterModelDefinition.empty());
         }
 
         public Monster createMonster() {
@@ -2512,7 +2672,8 @@ public final class MapDesignLibrary {
                     skillIds,
                     dropEntries.stream()
                             .map(drop -> new Monster.DropEntry(drop.itemId(), drop.chance()))
-                            .toList()
+                            .toList(),
+                    characterModel
             );
         }
     }
@@ -2749,7 +2910,8 @@ public final class MapDesignLibrary {
             String imagePath,
             String talkSoundPath,
             String interactionId,
-            CustomShop shop
+            CustomShop shop,
+            CharacterModelDefinition characterModel
     ) {
         public CustomNpc(
                 String npcId,
@@ -2758,7 +2920,20 @@ public final class MapDesignLibrary {
                 String talkSoundPath,
                 String interactionId
         ) {
-            this(npcId, displayName, imagePath, talkSoundPath, interactionId, null);
+            this(npcId, displayName, imagePath, talkSoundPath, interactionId, null,
+                    CharacterModelDefinition.empty());
+        }
+
+        public CustomNpc(
+                String npcId,
+                String displayName,
+                String imagePath,
+                String talkSoundPath,
+                String interactionId,
+                CustomShop shop
+        ) {
+            this(npcId, displayName, imagePath, talkSoundPath, interactionId, shop,
+                    CharacterModelDefinition.empty());
         }
 
         public CustomNpc {
@@ -2767,6 +2942,7 @@ public final class MapDesignLibrary {
             imagePath = imagePath == null ? "" : imagePath;
             talkSoundPath = talkSoundPath == null ? "" : talkSoundPath;
             interactionId = interactionId == null ? "" : interactionId;
+            characterModel = characterModel == null ? CharacterModelDefinition.empty() : characterModel;
         }
 
         public MapEntity createEntity(int x, int y) {
@@ -2777,6 +2953,9 @@ public final class MapDesignLibrary {
                     y,
                     imagePath.isBlank() ? null : AssetLoader.loadImage(imagePath)
             ).withTalkSoundPath(talkSoundPath);
+            if (characterModel.hasModel()) {
+                entity.withCharacterModel(characterModel);
+            }
             if (shop == null) {
                 return entity.withInteractionId(interactionId);
             }

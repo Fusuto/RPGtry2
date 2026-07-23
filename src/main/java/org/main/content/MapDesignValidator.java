@@ -499,8 +499,10 @@ final class MapDesignValidator {
         List<String> dialogueIds = design.authoredDialogues().stream().map(AuthoredDialogue::interactionId).toList();
 
         for (CustomNpc npc : design.customNpcs()) {
-            validateAssetPath(issues, "Custom NPC " + npc.npcId(), "sprite", npc.imagePath(), true);
+            validateAssetPath(issues, "Custom NPC " + npc.npcId(), "sprite", npc.imagePath(),
+                    npc.characterModel() == null || !npc.characterModel().hasModel());
             validateAssetPath(issues, "Custom NPC " + npc.npcId(), "talk sound", npc.talkSoundPath(), false);
+            validateCharacterModel(issues, "Custom NPC " + npc.npcId(), npc.characterModel());
             if (npc.shop() == null && !npc.interactionId().isBlank() && !dialogueIds.contains(npc.interactionId())) {
                 issues.add(new ValidationIssue(
                         ValidationSeverity.ERROR,
@@ -562,10 +564,12 @@ final class MapDesignValidator {
                         "Enemy " + mob.mobId() + " has an invalid respawn delay."
                 ));
             }
-            validateAssetPath(issues, "Enemy " + mob.mobId(), "sprite", mob.imagePath(), true);
+            validateAssetPath(issues, "Enemy " + mob.mobId(), "sprite", mob.imagePath(),
+                    mob.characterModel() == null || !mob.characterModel().hasModel());
             validateAssetPath(issues, "Enemy " + mob.mobId(), "paper-doll source", mob.paperDollSourcePath(), false);
             validateAssetPath(issues, "Enemy " + mob.mobId(), "attack sound", mob.attackSoundPath(), false);
             validateAssetPath(issues, "Enemy " + mob.mobId(), "hit sound", mob.damageSoundPath(), false);
+            validateCharacterModel(issues, "Enemy " + mob.mobId(), mob.characterModel());
             for (CustomDropEntry drop : mob.dropEntries()) {
                 if (!containsIgnoreCase(knownItems, drop.itemId())) {
                     issues.add(new ValidationIssue(
@@ -580,6 +584,8 @@ final class MapDesignValidator {
             validateAssetPath(issues, "Item " + item.itemId(), "icon", item.iconPath(), true);
             validateAssetPath(issues, "Item " + item.itemId(), "paper-doll overlay", item.paperDollOverlayPath(), false);
             validateAssetPath(issues, "Item " + item.itemId(), "use sound", item.useSoundPath(), false);
+            validateModelAssetPath(issues, "Item " + item.itemId(), "first-person model",
+                    item.firstPersonModelPath(), false);
         }
 
         for (CustomLimb limb : design.customLimbs()) {
@@ -696,6 +702,49 @@ final class MapDesignValidator {
             issues.add(new ValidationIssue(
                     ValidationSeverity.WARNING,
                     owner + " " + role + " asset may be missing: " + assetPath + "."
+            ));
+        }
+    }
+
+    private static void validateCharacterModel(
+            List<ValidationIssue> issues,
+            String owner,
+            CharacterModelDefinition definition
+    ) {
+        if (definition == null) {
+            return;
+        }
+        validateModelAssetPath(issues, owner, "3D character model", definition.modelPath(), false);
+        boolean hasAnimation = false;
+        for (CharacterModelDefinition.AnimationSlot slot : CharacterModelDefinition.AnimationSlot.values()) {
+            String path = definition.animationPath(slot);
+            hasAnimation |= !path.isBlank();
+            validateModelAssetPath(issues, owner, slot.name().toLowerCase() + " animation", path, false);
+        }
+        if (hasAnimation && definition.modelPath().isBlank()) {
+            issues.add(new ValidationIssue(
+                    ValidationSeverity.ERROR,
+                    owner + " has animation clips but no base 3D character model."
+            ));
+        }
+    }
+
+    private static void validateModelAssetPath(
+            List<ValidationIssue> issues,
+            String owner,
+            String role,
+            String assetPath,
+            boolean required
+    ) {
+        validateAssetPath(issues, owner, role, assetPath, required);
+        if (assetPath == null || assetPath.isBlank()) {
+            return;
+        }
+        String normalized = assetPath.trim().toLowerCase();
+        if (!normalized.endsWith(".glb") && !normalized.endsWith(".fbx")) {
+            issues.add(new ValidationIssue(
+                    ValidationSeverity.ERROR,
+                    owner + " " + role + " must use a .glb or .fbx asset."
             ));
         }
     }

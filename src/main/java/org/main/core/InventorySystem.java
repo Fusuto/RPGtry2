@@ -69,6 +69,8 @@ public final class InventorySystem {
         private final boolean materialTintApplied;
         private int magicAccuracyBonus;
         private int magicPowerBonus;
+        private String firstPersonModelPath = "";
+        private EquipmentViewModelProfile viewModelProfile = EquipmentViewModelProfile.defaults();
         private int quantity;
 
         public Item(String name, ItemType itemType, BufferedImage icon) {
@@ -274,6 +276,17 @@ public final class InventorySystem {
         public Item withMagicBonuses(int accuracyBonus, int powerBonus) {
             this.magicAccuracyBonus = Math.max(0, accuracyBonus);
             this.magicPowerBonus = Math.max(0, powerBonus);
+            return this;
+        }
+
+        public Item withFirstPersonModel(String modelPath) {
+            String normalized = modelPath == null ? "" : modelPath.trim().replace('\\', '/');
+            firstPersonModelPath = normalized;
+            return this;
+        }
+
+        public Item withViewModelProfile(EquipmentViewModelProfile profile) {
+            viewModelProfile = profile == null ? EquipmentViewModelProfile.defaults() : profile;
             return this;
         }
 
@@ -594,6 +607,18 @@ public final class InventorySystem {
             return itemType == ItemType.WEAPON ? magicPowerBonus : 0;
         }
 
+        public String getFirstPersonModelPath() {
+            return firstPersonModelPath;
+        }
+
+        public boolean hasFirstPersonModel() {
+            return !firstPersonModelPath.isBlank();
+        }
+
+        public EquipmentViewModelProfile getViewModelProfile() {
+            return viewModelProfile;
+        }
+
         public double getWeaponSpeedMultiplier() {
             return itemType == ItemType.WEAPON ? weaponType.getSpeedMultiplier() : 1.0;
         }
@@ -637,7 +662,9 @@ public final class InventorySystem {
                     paperDollOverlayPath,
                     weaponType,
                     twoHanded
-            ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus);
+            ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus)
+                    .withFirstPersonModel(firstPersonModelPath)
+                    .withViewModelProfile(viewModelProfile);
         }
     }
 
@@ -1221,6 +1248,13 @@ public final class InventorySystem {
         private String examineTooltipText;
         private Point examineTooltipPoint;
         private final Rectangle examineTooltipBounds = new Rectangle();
+        private final Rectangle inventoryTabBounds = new Rectangle();
+        private final Rectangle formationTabBounds = new Rectangle();
+        private final Rectangle autoArrangeBounds = new Rectangle();
+        private final Map<PartyFormation.Cell, Rectangle> formationCellBounds =
+                new EnumMap<>(PartyFormation.Cell.class);
+        private boolean formationTabSelected;
+        private String draggedFormationMember;
 
         private Item draggedItem;
         private int draggedInventoryIndex = -1;
@@ -1242,6 +1276,11 @@ public final class InventorySystem {
         }
 
         public void draw(Graphics2D g, int panelWidth, int panelHeight) {
+            if (formationTabSelected) {
+                drawCharacterTabs(g, panelWidth);
+                drawFormationEditor(g, panelWidth, panelHeight);
+                return;
+            }
             calculateBounds(panelWidth, panelHeight);
 
             drawStatPreview(g);
@@ -1253,10 +1292,19 @@ public final class InventorySystem {
             drawHoverTooltip(g, panelWidth, panelHeight);
             drawExamineTooltip(g, panelWidth, panelHeight);
             drawDraggedItem(g);
+            drawCharacterTabs(g, panelWidth);
         }
 
         public boolean handleMousePressed(MouseEvent e) {
             mousePoint = e.getPoint();
+
+            if (inventoryTabBounds.contains(mousePoint)) {
+                formationTabSelected = false; clearDrag(); return true;
+            }
+            if (formationTabBounds.contains(mousePoint)) {
+                formationTabSelected = true; clearDrag(); return true;
+            }
+            if (formationTabSelected) return handleFormationPressed(mousePoint);
 
             if (handleExamineTooltipClick(mousePoint)) {
                 return true;
@@ -1547,6 +1595,7 @@ public final class InventorySystem {
         }
 
         public boolean handleMouseDragged(MouseEvent e) {
+            if (draggedFormationMember != null) { mousePoint = e.getPoint(); return true; }
             if (draggedItem == null) {
                 return false;
             }
@@ -1565,6 +1614,15 @@ public final class InventorySystem {
         }
 
         public boolean handleMouseReleased(MouseEvent e) {
+            if (draggedFormationMember != null) {
+                mousePoint = e.getPoint();
+                PartyFormation.Cell target = formationCellAt(mousePoint);
+                if (target != null && gameState != null && !gameState.isBattleMode()) {
+                    gameState.getPlayerCharacter().getPartyFormation().move(draggedFormationMember, target);
+                }
+                draggedFormationMember = null;
+                return true;
+            }
             if (draggedItem == null) {
                 return false;
             }
@@ -1662,6 +1720,86 @@ public final class InventorySystem {
             int paperDollX = 24;
             int paperDollY = 24 + STAT_PREVIEW_HEIGHT + 12;
             paperDollBounds.setBounds(paperDollX, paperDollY, PAPER_DOLL_PANEL_SIZE, PAPER_DOLL_PANEL_SIZE);
+        }
+
+        private void drawCharacterTabs(Graphics2D g, int panelWidth) {
+            int width = 126, height = 30, y = 10;
+            inventoryTabBounds.setBounds(panelWidth / 2 - width - 3, y, width, height);
+            formationTabBounds.setBounds(panelWidth / 2 + 3, y, width, height);
+            drawTab(g, inventoryTabBounds, "Inventory", !formationTabSelected);
+            drawTab(g, formationTabBounds, "Formation", formationTabSelected);
+        }
+
+        private void drawTab(Graphics2D g, Rectangle bounds, String label, boolean selected) {
+            g.setColor(selected ? new Color(73, 80, 94, 235) : new Color(28, 31, 38, 220));
+            g.fillRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 8, 8);
+            g.setColor(selected ? new Color(225, 198, 120) : new Color(125, 132, 146));
+            g.drawRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 8, 8);
+            FontMetrics metrics = g.getFontMetrics();
+            g.drawString(label, bounds.x + (bounds.width - metrics.stringWidth(label)) / 2,
+                    bounds.y + (bounds.height + metrics.getAscent()) / 2 - 2);
+        }
+
+        private void drawFormationEditor(Graphics2D g, int panelWidth, int panelHeight) {
+            formationCellBounds.clear();
+            if (gameState == null || gameState.getPlayerCharacter() == null) return;
+            PlayerCharacter player = gameState.getPlayerCharacter();
+            PartyFormation formation = player.getPartyFormation();
+            int cellWidth = 142, cellHeight = 86, gap = 14;
+            int totalWidth = cellWidth * 3 + gap * 2;
+            int startX = (panelWidth - totalWidth) / 2;
+            int startY = Math.max(70, panelHeight / 2 - cellHeight - gap / 2);
+            for (PartyFormation.Cell cell : PartyFormation.Cell.values()) {
+                int row = cell.isBack() ? 0 : 1;
+                int x = startX + cell.column() * (cellWidth + gap);
+                int y = startY + row * (cellHeight + gap);
+                Rectangle bounds = new Rectangle(x, y, cellWidth, cellHeight);
+                formationCellBounds.put(cell, bounds);
+                boolean supported = !cell.isBack() || formation.memberAt(cell.supportingFrontCell()) != null;
+                String memberId = formation.memberAt(cell);
+                g.setColor(supported ? new Color(34, 39, 48, 225) : new Color(20, 22, 27, 205));
+                g.fillRoundRect(x, y, cellWidth, cellHeight, 10, 10);
+                g.setColor(supported ? new Color(130, 144, 165) : new Color(70, 74, 82));
+                g.drawRoundRect(x, y, cellWidth, cellHeight, 10, 10);
+                g.setColor(new Color(155, 160, 170));
+                g.drawString((cell.isBack() ? "Back " : "Front ") + (cell.column() + 1), x + 9, y + 18);
+                if (!supported) {
+                    g.setColor(new Color(115, 116, 120)); g.drawString("Locked: fill front", x + 9, y + 48);
+                } else if (memberId != null) {
+                    PartyRoster.Member member = player.getPartyRoster().get(memberId);
+                    String name = member == null ? memberId : member.displayName();
+                    g.setColor(new Color(235, 225, 195));
+                    g.setFont(g.getFont().deriveFont(Font.BOLD)); g.drawString(name, x + 12, y + 51);
+                    g.setFont(g.getFont().deriveFont(Font.PLAIN));
+                }
+            }
+            autoArrangeBounds.setBounds(panelWidth / 2 - 75, startY + cellHeight * 2 + gap + 24, 150, 34);
+            g.setColor(new Color(45, 52, 64, 235)); g.fillRoundRect(autoArrangeBounds.x, autoArrangeBounds.y,
+                    autoArrangeBounds.width, autoArrangeBounds.height, 8, 8);
+            g.setColor(new Color(205, 184, 116)); g.drawRoundRect(autoArrangeBounds.x, autoArrangeBounds.y,
+                    autoArrangeBounds.width, autoArrangeBounds.height, 8, 8);
+            g.drawString("Auto Arrange", autoArrangeBounds.x + 31, autoArrangeBounds.y + 22);
+            g.setColor(new Color(180, 184, 192));
+            g.drawString("Drag or swap members. Back cells require the matching front cell.",
+                    Math.max(20, panelWidth / 2 - 235), startY - 18);
+        }
+
+        private boolean handleFormationPressed(Point point) {
+            if (gameState == null || gameState.getPlayerCharacter() == null || gameState.isBattleMode()) return true;
+            PlayerCharacter player = gameState.getPlayerCharacter();
+            if (autoArrangeBounds.contains(point)) {
+                player.getPartyFormation().autoArrange(player.getPartyRoster().memberIds()); return true;
+            }
+            PartyFormation.Cell cell = formationCellAt(point);
+            if (cell != null) draggedFormationMember = player.getPartyFormation().memberAt(cell);
+            return true;
+        }
+
+        private PartyFormation.Cell formationCellAt(Point point) {
+            if (point == null) return null;
+            return formationCellBounds.entrySet().stream()
+                    .filter(entry -> entry.getValue().contains(point))
+                    .map(Map.Entry::getKey).findFirst().orElse(null);
         }
 
         private void calculateEquipmentBounds(int panelWidth, int gridY) {

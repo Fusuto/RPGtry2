@@ -5,6 +5,8 @@ import org.main.core.CharacterSkill;
 import org.main.core.GameConfiguration;
 import org.main.core.PlayerCharacter;
 import org.main.core.PlayerStat;
+import org.main.core.PartyRoster;
+import org.main.content.CharacterModelDefinition;
 
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -22,6 +24,7 @@ public class BattleActor {
     private int currentHp;
     private int slot = 0;
     private Library.BattleRow row = Library.BattleRow.FRONT;
+    private boolean battlePositionAssigned;
     private final Library.EntityType EntityType;
     private final int attackDamage;
     private final int defense;
@@ -47,6 +50,9 @@ public class BattleActor {
     private final EnumMap<CharacterSkill, Integer> combatSkills = new EnumMap<>(CharacterSkill.class);
     private final Map<String, Double> skillCooldowns = new HashMap<>();
     private PlayerCharacter sourcePlayer;
+    private PlayerCharacter formationOwner;
+    private CharacterModelDefinition characterModel = CharacterModelDefinition.empty();
+    private String partyMemberId = "";
 
     private final List<BattleSkill> skills = new ArrayList<>();
     private final Map<BattleStatusType, BattleStatus> statuses = new EnumMap<>(BattleStatusType.class);
@@ -113,6 +119,15 @@ public class BattleActor {
     public void setBattlePosition(Library.BattleRow row, int slot) {
         this.row = row;
         this.slot = slot;
+        this.battlePositionAssigned = true;
+    }
+
+    public boolean hasBattlePositionAssignment() {
+        return battlePositionAssigned;
+    }
+
+    public void clearBattlePositionAssignment() {
+        battlePositionAssigned = false;
     }
 
     public String getName() {
@@ -467,6 +482,8 @@ public class BattleActor {
         }
 
         sourcePlayer = player;
+        formationOwner = player;
+        partyMemberId = PartyRoster.PLAYER_MEMBER_ID;
         setAttackStat(player.getCombinedStat(PlayerStat.ATTACK));
         setStrengthStat(player.getCombinedStat(PlayerStat.STRENGTH));
         setDefenseStat(player.getCombinedStat(PlayerStat.DEFENSE));
@@ -483,6 +500,38 @@ public class BattleActor {
         setCombatSkillLevel(CharacterSkill.MAGIC_ACCURACY,
                 player.getSkillLevel(CharacterSkill.MAGIC_ACCURACY) + player.getUsableMagicAccuracyBonus());
         setCombatSkillLevel(CharacterSkill.MAGIC_POWER, player.getSkillLevel(CharacterSkill.MAGIC_POWER));
+    }
+
+    public PlayerCharacter getSourcePlayer() {
+        return sourcePlayer;
+    }
+
+    public String getPartyMemberId() {
+        return partyMemberId;
+    }
+
+    public PlayerCharacter getFormationOwner() {
+        return formationOwner;
+    }
+
+    /** Hook for future permanent companions; it does not make them the XP-receiving player actor. */
+    public void bindPartyFormation(PlayerCharacter owner, String memberId) {
+        formationOwner = owner;
+        setPartyMemberId(memberId);
+    }
+
+    public void setPartyMemberId(String partyMemberId) {
+        this.partyMemberId = partyMemberId == null ? "" : partyMemberId.trim();
+    }
+
+    public CharacterModelDefinition getCharacterModel() {
+        return characterModel;
+    }
+
+    public void setCharacterModel(CharacterModelDefinition characterModel) {
+        this.characterModel = characterModel == null
+                ? CharacterModelDefinition.empty()
+                : characterModel;
     }
 
     public void configureMonsterCombatStats(Map<PlayerStat, Integer> stats) {
@@ -532,6 +581,8 @@ public class BattleActor {
         copy.setArmorBonus(armorBonus);
         copy.setSpeciesId(speciesId);
         copy.setExperienceReward(experienceReward);
+        copy.setCharacterModel(characterModel);
+        copy.setPartyMemberId(partyMemberId);
         for (Map.Entry<CharacterSkill, Integer> entry : combatSkills.entrySet()) {
             copy.setCombatSkillLevel(entry.getKey(), entry.getValue());
         }

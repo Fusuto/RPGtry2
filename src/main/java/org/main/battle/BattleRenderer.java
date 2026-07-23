@@ -2,6 +2,7 @@ package org.main.battle;
 
 import org.main.core.Library;
 import org.main.core.InventorySystem;
+import org.main.core.WeaponType;
 
 import java.awt.*;
 import java.awt.image.BufferedImage;
@@ -26,6 +27,7 @@ public class BattleRenderer {
 
     private final Map<Library.BattleCommand, Rectangle> commandBounds = new EnumMap<>(Library.BattleCommand.class);
     private final Map<BattleActor, Rectangle> actorBounds = new IdentityHashMap<>();
+    private Map<BattleActor, Point> projectedActorPositions = Map.of();
     private final Set<BattleActor> selectableTargets = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Map<BattleSkill, Rectangle> skillBounds = new IdentityHashMap<>();
     private final Map<Integer, Rectangle> itemBounds = new HashMap<>();
@@ -197,6 +199,63 @@ public class BattleRenderer {
 
         if (itemWindowOpen) {
             drawItemWindow(g, width, height);
+        }
+    }
+
+    /** Draws controls over the native 3D scene without repainting its first-person area. */
+    public void drawLwjglOverlay(Graphics2D g, BattleEncounter encounter, int width, int height) {
+        actorBounds.clear(); commandBounds.clear(); skillBounds.clear(); itemBounds.clear();
+        if (encounter == null) return;
+        int battleAreaHeight = (int) (height * BATTLE_AREA_HEIGHT_RATIO);
+        int bottomHeight = height - battleAreaHeight;
+        int menuWidth = width / 2;
+        if (!selectableTargets.isEmpty()) {
+            drawTacticalBattleArea(g, encounter, 0, 0, width, battleAreaHeight);
+            drawTargetingPreview(g);
+        } else {
+            drawProjectedActorMarkers(g, encounter);
+        }
+        drawBattleMessageOverlay(g, encounter, 0, 0, width, battleAreaHeight);
+        drawPausedIndicator(g, width, battleAreaHeight);
+        drawCommandMenu(g, 0, battleAreaHeight, menuWidth, bottomHeight);
+        drawPartyStatus(g, encounter, menuWidth, battleAreaHeight, width - menuWidth, bottomHeight);
+        if (skillWindowOpen) drawSkillWindow(g, encounter, width, height);
+        if (itemWindowOpen) drawItemWindow(g, width, height);
+    }
+
+    public void setProjectedActorPositions(Map<BattleActor, Point> positions) {
+        projectedActorPositions = positions == null ? Map.of() : Map.copyOf(positions);
+    }
+
+    private void drawProjectedActorMarkers(Graphics2D g, BattleEncounter encounter) {
+        Set<BattleActor> activeAttackers = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<BattleActor> activeTargets = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (BattlePresentationDirector.ActionSnapshot action : encounter.getPresentationDirector().snapshots()) {
+            activeAttackers.add(action.attacker());
+            action.targets().forEach(target -> activeTargets.add(target.target()));
+        }
+        BattleActor focusedTarget = encounter.getFirstLivingAlly() == null
+                ? null : encounter.getFirstLivingAlly().getPreferredAutoAttackTarget();
+        for (Map.Entry<BattleActor, Point> entry : projectedActorPositions.entrySet()) {
+            BattleActor actor = entry.getKey(); Point point = entry.getValue();
+            if (actor == null || point == null || !actor.isAlive()) continue;
+            int width = 96, x = point.x - width / 2, y = point.y - 24;
+            drawHpBar(g, x, y, width, 9, actor);
+            drawAttackChargeBar(g, x, y + 11, width, 4, actor);
+            g.setFont(g.getFont().deriveFont(Font.BOLD, 12f));
+            g.setColor(actor.isEnemy() ? new Color(255, 215, 205) : new Color(205, 235, 255));
+            FontMetrics metrics = g.getFontMetrics();
+            g.drawString(actor.getName(), point.x - metrics.stringWidth(actor.getName()) / 2, y - 4);
+            if (activeAttackers.contains(actor)) {
+                g.setColor(new Color(255, 207, 78, 220));
+                g.drawOval(point.x - 19, point.y - 19, 38, 38);
+            }
+            if (activeTargets.contains(actor) || actor == focusedTarget) {
+                g.setColor(actor == focusedTarget ? new Color(255, 92, 82, 235) : new Color(255, 235, 135, 220));
+                int markerY = point.y + 10;
+                g.fillPolygon(new int[]{point.x - 7, point.x + 7, point.x},
+                        new int[]{markerY, markerY, markerY + 10}, 3);
+            }
         }
     }
 
@@ -478,6 +537,14 @@ public class BattleRenderer {
     }
 
     private void drawBattleArea(Graphics2D g, BattleEncounter encounter, int x, int y, int width, int height) {
+        if (selectableTargets.isEmpty()) {
+            drawFirstPersonBattleArea(g, encounter, x, y, width, height);
+            return;
+        }
+        drawTacticalBattleArea(g, encounter, x, y, width, height);
+    }
+
+    private void drawTacticalBattleArea(Graphics2D g, BattleEncounter encounter, int x, int y, int width, int height) {
         BufferedImage background = assets != null ? assets.getBattleBackground() : null;
 
         drawImageOrFill(
@@ -513,6 +580,455 @@ public class BattleRenderer {
                 width - halfWidth,
                 height
         );
+    }
+
+    private void drawFirstPersonBattleArea(
+            Graphics2D g,
+            BattleEncounter encounter,
+            int x,
+            int y,
+            int width,
+            int height
+    ) {
+        BufferedImage background = assets != null ? assets.getBattleBackground() : null;
+        drawImageOrFill(g, background, x, y, width, height, new Color(42, 47, 55));
+        drawPanelBorder(g, x, y, width, height);
+
+        List<BattlePresentationDirector.ActionSnapshot> actions =
+                encounter.getPresentationDirector().snapshots();
+        Graphics2D scene = (Graphics2D) g.create();
+        BattleActor pointOfViewActor = encounter.getFirstLivingAlly();
+        BattlePresentationDirector.TargetReaction pointOfViewReaction =
+                targetReaction(pointOfViewActor, actions);
+        double pointOfViewAmount = targetReactionAmount(pointOfViewActor, actions);
+        if (pointOfViewReaction != null) {
+            if (pointOfViewReaction.reaction() == BattlePresentationDirector.Reaction.DODGE) {
+                scene.translate(Math.round(16 * pointOfViewAmount), 0);
+            } else if (pointOfViewReaction.reaction() == BattlePresentationDirector.Reaction.HIT) {
+                scene.translate(0, Math.round(10 * pointOfViewAmount));
+            }
+        }
+        drawFirstPersonEnemyFormation(scene, encounter, actions, x, y, width, height);
+        drawPeripheralAllies(scene, encounter, actions, x, y, width, height);
+        drawProceduralActionEffects(scene, encounter, actions, x, y, width, height);
+        drawFirstPersonEquipment(scene, encounter, actions, x, y, width, height);
+        scene.dispose();
+        drawPresentationCue(g, actions, x, y, width);
+    }
+
+    private void drawFirstPersonEnemyFormation(
+            Graphics2D g,
+            BattleEncounter encounter,
+            List<BattlePresentationDirector.ActionSnapshot> actions,
+            int x,
+            int y,
+            int width,
+            int height
+    ) {
+        for (BattleActor actor : encounter.getEnemies()) {
+            if (!actor.isAlive()) {
+                continue;
+            }
+            boolean front = actor.getRow() == Library.BattleRow.FRONT;
+            int spriteSize = front ? Math.max(74, height / 4) : Math.max(56, height / 6);
+            int laneWidth = Math.max(1, width / 4);
+            int centerX = x + width / 2 + (actor.getSlot() - 1) * laneWidth;
+            int baseY = front ? y + (int) (height * 0.72) : y + (int) (height * 0.43);
+            int drawX = centerX - spriteSize / 2;
+            int drawY = baseY - spriteSize;
+
+            double lunge = attackerLunge(actor, actions);
+            drawY += (int) Math.round(lunge * Math.max(18, height * 0.08));
+            BattlePresentationDirector.TargetReaction reaction = targetReaction(actor, actions);
+            if (reaction != null) {
+                double reactionAmount = targetReactionAmount(actor, actions);
+                if (reaction.reaction() == BattlePresentationDirector.Reaction.DODGE) {
+                    drawX += (actor.getSlot() % 2 == 0 ? -1 : 1) * (int) Math.round(28 * reactionAmount);
+                } else if (reaction.reaction() == BattlePresentationDirector.Reaction.HIT) {
+                    drawY += (int) Math.round(14 * reactionAmount);
+                }
+            }
+
+            drawHpBar(g, drawX, drawY - 18, spriteSize, 10, actor);
+            drawAttackChargeBar(g, drawX, drawY - 5, spriteSize, 5, actor);
+            drawActorSprite(g, actor, drawX, drawY, spriteSize, spriteSize);
+            drawActorNameTag(g, actor, drawX, drawY + spriteSize + 17, spriteSize);
+            if (reaction != null && reaction.reaction() == BattlePresentationDirector.Reaction.BLOCK) {
+                drawBlockPlaceholder(g, drawX, drawY, spriteSize);
+            }
+        }
+    }
+
+    private void drawPeripheralAllies(
+            Graphics2D g,
+            BattleEncounter encounter,
+            List<BattlePresentationDirector.ActionSnapshot> actions,
+            int x,
+            int y,
+            int width,
+            int height
+    ) {
+        int index = 0;
+        List<BattleActor> allies = encounter.getAllies();
+        for (int i = 1; i < allies.size(); i++) {
+            BattleActor actor = allies.get(i);
+            if (!actor.isAlive()) {
+                continue;
+            }
+            int size = 46;
+            int drawX = i % 2 == 0 ? x + 18 : x + width - size - 18;
+            int drawY = y + 58 + index * 58;
+            drawActorSprite(g, actor, drawX, drawY, size, size);
+            drawHpBar(g, drawX, drawY - 10, size, 6, actor);
+            if (targetReaction(actor, actions) != null) {
+                g.setColor(new Color(255, 226, 120, 210));
+                g.drawRoundRect(drawX - 3, drawY - 3, size + 6, size + 6, 8, 8);
+            }
+            index++;
+        }
+    }
+
+    private void drawFirstPersonEquipment(
+            Graphics2D g,
+            BattleEncounter encounter,
+            List<BattlePresentationDirector.ActionSnapshot> actions,
+            int x,
+            int y,
+            int width,
+            int height
+    ) {
+        BattleActor player = encounter.getFirstLivingAlly();
+        if (player == null || player.getSourcePlayer() == null
+                || player.getSourcePlayer().getInventory() == null) {
+            drawPlaceholderHands(g, x, y, width, height, new Color(170, 119, 82));
+            return;
+        }
+        InventorySystem.Inventory inventory = player.getSourcePlayer().getInventory();
+        InventorySystem.Item weapon = inventory.getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
+        InventorySystem.Item shield = inventory.getEquippedItem(InventorySystem.EquipmentSlot.SHIELD);
+        InventorySystem.Item armor = inventory.getEquippedItem(InventorySystem.EquipmentSlot.CHEST);
+        Color gloveColor = armor == null ? new Color(170, 119, 82) : materialColor(armor);
+
+        double swing = attackerSwing(player, actions);
+        BattlePresentationDirector.TargetReaction playerReaction = targetReaction(player, actions);
+        double blockRaise = playerReaction != null
+                && playerReaction.reaction() == BattlePresentationDirector.Reaction.BLOCK
+                ? targetReactionAmount(player, actions)
+                : 0.0;
+        Graphics2D equipment = (Graphics2D) g.create();
+        equipment.rotate(Math.toRadians(-48.0 * swing), x + width * 0.79, y + height * 0.84);
+        drawPlaceholderHands(equipment, x, y, width, height, gloveColor);
+        drawWeaponPlaceholder(equipment, weapon, x, y, width, height);
+        equipment.dispose();
+        if (shield != null) {
+            drawShieldPlaceholder(g, shield, x, y, width, height, blockRaise);
+        }
+    }
+
+    private void drawProceduralActionEffects(
+            Graphics2D g,
+            BattleEncounter encounter,
+            List<BattlePresentationDirector.ActionSnapshot> actions,
+            int x,
+            int y,
+            int width,
+            int height
+    ) {
+        for (BattlePresentationDirector.ActionSnapshot action : actions) {
+            if (action.phase() == BattlePresentationDirector.Phase.WINDUP) {
+                continue;
+            }
+            double intensity = action.phase() == BattlePresentationDirector.Phase.IMPACT
+                    ? 1.0 - Math.abs(action.progress() * 2.0 - 1.0)
+                    : 1.0 - action.progress();
+            if (intensity <= 0.0) {
+                continue;
+            }
+            boolean spellLike = action.actionType() == BattlePresentationDirector.ActionType.SPELL
+                    || action.actionType() == BattlePresentationDirector.ActionType.HEAL
+                    || action.actionType() == BattlePresentationDirector.ActionType.SUMMON
+                    || action.actionType() == BattlePresentationDirector.ActionType.DEFEND;
+            for (BattlePresentationDirector.TargetReaction targetReaction : action.targets()) {
+                Point anchor = firstPersonActorAnchor(
+                        encounter, targetReaction.target(), x, y, width, height);
+                if (anchor == null) {
+                    continue;
+                }
+                if (spellLike) {
+                    drawSpellPlaceholder(g, anchor, action.actionType(), intensity);
+                }
+                if (targetReaction.damage() > 0 && intensity > 0.35) {
+                    drawDamageNumber(g, anchor, targetReaction.damage(), intensity);
+                } else if (targetReaction.reaction() == BattlePresentationDirector.Reaction.DODGE
+                        && intensity > 0.35) {
+                    drawReactionWord(g, anchor, "DODGE", new Color(190, 235, 255), intensity);
+                } else if (targetReaction.reaction() == BattlePresentationDirector.Reaction.BLOCK
+                        && intensity > 0.35) {
+                    drawReactionWord(g, anchor, "BLOCK", new Color(170, 215, 255), intensity);
+                }
+            }
+        }
+    }
+
+    private Point firstPersonActorAnchor(
+            BattleEncounter encounter,
+            BattleActor actor,
+            int x,
+            int y,
+            int width,
+            int height
+    ) {
+        if (actor == null) {
+            return null;
+        }
+        if (actor.isEnemy()) {
+            boolean front = actor.getRow() == Library.BattleRow.FRONT;
+            int laneWidth = Math.max(1, width / 4);
+            int centerX = x + width / 2 + (actor.getSlot() - 1) * laneWidth;
+            int centerY = front ? y + (int) (height * 0.58) : y + (int) (height * 0.34);
+            return new Point(centerX, centerY);
+        }
+        int allyIndex = encounter.getAllies().indexOf(actor);
+        if (allyIndex <= 0) {
+            return new Point(x + width / 2, y + (int) (height * 0.82));
+        }
+        int drawX = allyIndex % 2 == 0 ? x + 41 : x + width - 41;
+        int drawY = y + 81 + (allyIndex - 1) * 58;
+        return new Point(drawX, drawY);
+    }
+
+    private void drawSpellPlaceholder(
+            Graphics2D g,
+            Point anchor,
+            BattlePresentationDirector.ActionType actionType,
+            double intensity
+    ) {
+        Color color = switch (actionType) {
+            case HEAL -> new Color(110, 255, 155);
+            case DEFEND -> new Color(120, 190, 255);
+            case SUMMON -> new Color(205, 135, 255);
+            default -> new Color(255, 135, 80);
+        };
+        int radius = 18 + (int) Math.round(46 * intensity);
+        g.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(),
+                Math.max(0, Math.min(210, (int) Math.round(190 * intensity)))));
+        g.setStroke(new BasicStroke(2.0f));
+        g.drawOval(anchor.x - radius, anchor.y - radius, radius * 2, radius * 2);
+        g.drawLine(anchor.x - radius, anchor.y, anchor.x + radius, anchor.y);
+        g.drawLine(anchor.x, anchor.y - radius, anchor.x, anchor.y + radius);
+        g.setStroke(new BasicStroke(1.0f));
+    }
+
+    private void drawDamageNumber(Graphics2D g, Point anchor, int damage, double intensity) {
+        drawReactionWord(g, new Point(anchor.x, anchor.y - 18), "-" + damage,
+                new Color(255, 115, 92), intensity);
+    }
+
+    private void drawReactionWord(Graphics2D g, Point anchor, String text, Color color, double intensity) {
+        Font oldFont = g.getFont();
+        g.setFont(oldFont.deriveFont(Font.BOLD, Math.max(14f, oldFont.getSize2D() + 3f)));
+        FontMetrics metrics = g.getFontMetrics();
+        int drawX = anchor.x - metrics.stringWidth(text) / 2;
+        int drawY = anchor.y - (int) Math.round(22 * intensity);
+        g.setColor(new Color(0, 0, 0, 180));
+        g.drawString(text, drawX + 1, drawY + 1);
+        g.setColor(color);
+        g.drawString(text, drawX, drawY);
+        g.setFont(oldFont);
+    }
+
+    private void drawPlaceholderHands(Graphics2D g, int x, int y, int width, int height, Color color) {
+        g.setColor(color.darker());
+        g.fillRoundRect(x + (int) (width * 0.68), y + (int) (height * 0.78),
+                Math.max(32, width / 11), Math.max(45, height / 7), 18, 18);
+        g.setColor(color);
+        g.fillOval(x + (int) (width * 0.72), y + (int) (height * 0.71),
+                Math.max(34, width / 12), Math.max(34, width / 12));
+    }
+
+    private void drawWeaponPlaceholder(
+            Graphics2D g,
+            InventorySystem.Item weapon,
+            int x,
+            int y,
+            int width,
+            int height
+    ) {
+        if (weapon == null) {
+            return;
+        }
+        Color material = materialColor(weapon);
+        int gripX = x + (int) (width * 0.76);
+        int gripY = y + (int) (height * 0.76);
+        int tipX = x + (int) (width * 0.90);
+        int tipY = y + (int) (height * 0.20);
+        if (weapon.getWeaponType() == WeaponType.DAGGER) {
+            tipX = x + (int) (width * 0.84);
+            tipY = y + (int) (height * 0.48);
+        } else if (weapon.getWeaponType() == WeaponType.GREATSWORD) {
+            tipX = x + (int) (width * 0.94);
+            tipY = y + (int) (height * 0.10);
+        }
+        g.setStroke(new BasicStroke(Math.max(8f, width / 90f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setColor(new Color(91, 58, 37));
+        g.drawLine(gripX, gripY, gripX + 18, gripY - 72);
+        int bladeStartX = gripX + 18;
+        int bladeStartY = gripY - 72;
+        if (weapon.getWeaponType() == WeaponType.MACE) {
+            g.setStroke(new BasicStroke(Math.max(10f, width / 80f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.setColor(material.darker());
+            g.drawLine(bladeStartX, bladeStartY, tipX, tipY);
+            int headSize = Math.max(24, width / 30);
+            g.setColor(material);
+            g.fillOval(tipX - headSize / 2, tipY - headSize / 2, headSize, headSize);
+        } else if (weapon.getWeaponType() == WeaponType.STAFF) {
+            g.setStroke(new BasicStroke(Math.max(10f, width / 78f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.setColor(material);
+            g.drawLine(gripX, gripY, tipX, tipY);
+            int focusSize = Math.max(18, width / 38);
+            g.setColor(new Color(125, 185, 255));
+            g.fillOval(tipX - focusSize / 2, tipY - focusSize / 2, focusSize, focusSize);
+        } else {
+            float bladeWidth = weapon.getWeaponType() == WeaponType.GREATSWORD
+                    ? Math.max(18f, width / 55f)
+                    : Math.max(12f, width / 70f);
+            g.setStroke(new BasicStroke(bladeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.setColor(material);
+            g.drawLine(bladeStartX, bladeStartY, tipX, tipY);
+        }
+        g.setStroke(new BasicStroke(1f));
+    }
+
+    private void drawShieldPlaceholder(
+            Graphics2D g,
+            InventorySystem.Item shield,
+            int x,
+            int y,
+            int width,
+            int height,
+            double blockRaise
+    ) {
+        int shieldWidth = Math.max(86, width / 8);
+        int shieldHeight = Math.max(112, height / 3);
+        int shieldX = x + width / 12;
+        int shieldY = y + height - shieldHeight - 14
+                - (int) Math.round(blockRaise * height * 0.18);
+        Polygon polygon = new Polygon(
+                new int[]{shieldX, shieldX + shieldWidth, shieldX + shieldWidth - 12, shieldX + shieldWidth / 2, shieldX + 12},
+                new int[]{shieldY, shieldY, shieldY + shieldHeight * 2 / 3, shieldY + shieldHeight, shieldY + shieldHeight * 2 / 3},
+                5);
+        g.setColor(materialColor(shield));
+        g.fillPolygon(polygon);
+        g.setColor(new Color(238, 226, 185, 210));
+        g.drawPolygon(polygon);
+    }
+
+    private void drawBlockPlaceholder(Graphics2D g, int drawX, int drawY, int spriteSize) {
+        g.setColor(new Color(155, 205, 255, 150));
+        g.fillArc(drawX - 8, drawY - 8, spriteSize + 16, spriteSize + 16, 65, 230);
+        g.setColor(new Color(225, 245, 255));
+        g.drawArc(drawX - 8, drawY - 8, spriteSize + 16, spriteSize + 16, 65, 230);
+    }
+
+    private void drawActorNameTag(Graphics2D g, BattleActor actor, int drawX, int baselineY, int width) {
+        String name = actor.getName();
+        FontMetrics metrics = g.getFontMetrics();
+        int labelX = drawX + Math.max(0, (width - metrics.stringWidth(name)) / 2);
+        g.setColor(new Color(0, 0, 0, 180));
+        g.fillRoundRect(labelX - 5, baselineY - metrics.getAscent(), metrics.stringWidth(name) + 10,
+                metrics.getHeight(), 6, 6);
+        g.setColor(Color.WHITE);
+        g.drawString(name, labelX, baselineY);
+    }
+
+    private void drawPresentationCue(
+            Graphics2D g,
+            List<BattlePresentationDirector.ActionSnapshot> actions,
+            int x,
+            int y,
+            int width
+    ) {
+        if (actions.isEmpty()) {
+            return;
+        }
+        BattlePresentationDirector.ActionSnapshot primary = actions.getFirst();
+        String target = primary.targets().isEmpty() ? "" : " → " + primary.targets().getFirst().target().getName();
+        String text = primary.attacker().getName() + ": " + primary.actionName() + target;
+        FontMetrics metrics = g.getFontMetrics();
+        int labelWidth = metrics.stringWidth(text) + 24;
+        int labelX = x + (width - labelWidth) / 2;
+        g.setColor(new Color(0, 0, 0, 175));
+        g.fillRoundRect(labelX, y + 52, labelWidth, 28, 10, 10);
+        g.setColor(new Color(255, 232, 146));
+        g.drawRoundRect(labelX, y + 52, labelWidth, 28, 10, 10);
+        g.drawString(text, labelX + 12, y + 71);
+    }
+
+    private double attackerLunge(
+            BattleActor actor,
+            List<BattlePresentationDirector.ActionSnapshot> actions
+    ) {
+        return actions.stream()
+                .filter(action -> action.attacker() == actor)
+                .mapToDouble(action -> action.phase() == BattlePresentationDirector.Phase.WINDUP
+                        ? action.progress() * -0.35
+                        : action.phase() == BattlePresentationDirector.Phase.IMPACT
+                        ? 1.0 - Math.abs(action.progress() * 2.0 - 1.0)
+                        : (1.0 - action.progress()) * 0.35)
+                .findFirst().orElse(0.0);
+    }
+
+    private double attackerSwing(BattleActor actor, List<BattlePresentationDirector.ActionSnapshot> actions) {
+        return actions.stream()
+                .filter(action -> action.attacker() == actor)
+                .mapToDouble(action -> action.phase() == BattlePresentationDirector.Phase.WINDUP
+                        ? -0.35 * action.progress()
+                        : action.phase() == BattlePresentationDirector.Phase.IMPACT
+                        ? action.progress()
+                        : 1.0 - action.progress())
+                .findFirst().orElse(0.0);
+    }
+
+    private BattlePresentationDirector.TargetReaction targetReaction(
+            BattleActor actor,
+            List<BattlePresentationDirector.ActionSnapshot> actions
+    ) {
+        return actions.stream()
+                .filter(action -> action.phase() != BattlePresentationDirector.Phase.WINDUP)
+                .flatMap(action -> action.targets().stream())
+                .filter(target -> target.target() == actor)
+                .findFirst().orElse(null);
+    }
+
+    private double targetReactionAmount(
+            BattleActor actor,
+            List<BattlePresentationDirector.ActionSnapshot> actions
+    ) {
+        return actions.stream()
+                .filter(action -> action.targets().stream().anyMatch(target -> target.target() == actor))
+                .mapToDouble(action -> action.phase() == BattlePresentationDirector.Phase.IMPACT
+                        ? 1.0 - Math.abs(action.progress() * 2.0 - 1.0)
+                        : action.phase() == BattlePresentationDirector.Phase.RECOVERY
+                        ? 1.0 - action.progress() : 0.0)
+                .findFirst().orElse(0.0);
+    }
+
+    private Color materialColor(InventorySystem.Item item) {
+        if (item == null || item.getMaterial() == null) {
+            return new Color(165, 165, 172);
+        }
+        return switch (item.getMaterial()) {
+            case COPPER -> new Color(184, 103, 66);
+            case TIN, SILVER -> new Color(205, 212, 220);
+            case BRONZE -> new Color(160, 112, 56);
+            case IRON -> new Color(130, 137, 145);
+            case STEEL -> new Color(175, 185, 195);
+            case OAK -> new Color(132, 87, 48);
+            case YEW -> new Color(104, 62, 37);
+            case IRONWOOD -> new Color(73, 48, 34);
+            case LEATHER -> new Color(111, 72, 45);
+            case NONE -> new Color(165, 165, 172);
+        };
     }
 
     private void drawFormation(

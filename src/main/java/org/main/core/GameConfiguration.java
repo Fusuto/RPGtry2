@@ -151,6 +151,17 @@ public final class GameConfiguration {
         put("battle.lowHpWarning.threshold", "0.10");
         put("battle.lowHpWarning.soundPath", "assets/sounds/generated/kurt_sample_2.wav");
         put("battle.playerAutoAttack.soundPath", "");
+        put("battle.playerModel.path", "");
+        put("battle.playerModel.rigId", "");
+        put("battle.playerModel.scale", "1.0");
+        put("battle.playerModel.facingRotationDegrees", "0.0");
+        put("battle.playerModel.verticalOffset", "0.0");
+        for (String slot : new String[]{"IDLE", "WALK", "ATTACK", "HIT", "BLOCK", "DODGE", "CAST", "DEATH"}) {
+            put("battle.playerModel.animation." + slot + ".path", "");
+            put("battle.playerModel.animation." + slot + ".clipName", "");
+            put("battle.playerModel.animation." + slot + ".speed", "1.0");
+            put("battle.playerModel.animation." + slot + ".impactFraction", "0.55");
+        }
         put("battle.debug.criticalHpPercent", "0.10");
         put("battle.debug.invulnerableTurns", "1");
         put("battle.debug.damageReduction", "1.0");

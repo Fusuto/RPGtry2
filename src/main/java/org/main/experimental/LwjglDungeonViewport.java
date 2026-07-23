@@ -1,6 +1,7 @@
 package org.main.experimental;
 
 import org.main.battle.DifficultyResolver;
+import org.main.content.CharacterModelDefinition;
 import org.main.core.GameConfiguration;
 import org.main.core.GameState;
 import org.main.core.Library;
@@ -34,7 +35,10 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     private static final Logger LOGGER = Logger.getLogger(LwjglDungeonViewport.class.getName());
 
     private final LwjglTextureCache textureCache = new LwjglTextureCache();
+    private final LwjglBattleSceneRenderer battleSceneRenderer = new LwjglBattleSceneRenderer(textureCache);
     private final Map<String, LwjglStaticModel> staticModelCache = new HashMap<>();
+    private final Map<CharacterModelDefinition, LwjglSkinnedModel> worldSkinnedModelCache = new HashMap<>();
+    private final Set<CharacterModelDefinition> failedWorldSkinnedModels = new HashSet<>();
     private final Set<String> failedStaticModels = new HashSet<>();
     private final LwjglDungeonSceneBuilder sceneBuilder;
     private final int windowWidth;
@@ -146,8 +150,9 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             configureCamera(context, safeLookState);
 
             double cameraYawDegrees = animatedYawDegrees(context) + safeLookState.yawOffsetDegrees();
+            DungeonRenderContext sceneContext = battleBackdropContext(context, runtime);
             LwjglDungeonSceneBuilder.Scene scene = sceneBuilder.build(
-                    context,
+                    sceneContext,
                     maxDepth,
                     wallHeight,
                     roofPitchHeight,
@@ -159,8 +164,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             roofQuads = scene.roofQuads();
             spriteQuads = scene.spriteQuads();
             staticModels = scene.models().size();
-            enemyLabels = projectEnemyLabels(
-                    context,
+            enemyLabels = runtime != null && runtime.gameState().isBattleMode() ? List.of() : projectEnemyLabels(
+                    sceneContext,
                     safeLookState,
                     framebufferWidth,
                     framebufferHeight
@@ -172,7 +177,10 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             for (LwjglDungeonSceneBuilder.ModelInstance model : scene.models()) {
                 drawStaticModel(model);
             }
-            if (runtime != null && runtime.gameState() != null) {
+            if (runtime != null && runtime.gameState() != null && runtime.gameState().isBattleMode()) {
+                runtime.battleRenderer().setProjectedActorPositions(
+                        battleSceneRenderer.render(context, safeLookState, runtime, framebufferWidth, framebufferHeight));
+            } else if (runtime != null && runtime.gameState() != null) {
                 renderGatheringToolViewModel(runtime.gameState().getGatheringViewModelState(), framebufferWidth, framebufferHeight);
             }
         } else {
@@ -200,12 +208,33 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     }
 
     private boolean shouldRenderDungeon(org.main.core.AetherGameRuntime runtime) {
-        return runtime == null || runtime.gameState().isDungeonMode();
+        return runtime == null || runtime.gameState().isDungeonMode() || runtime.gameState().isBattleMode();
+    }
+
+    private DungeonRenderContext battleBackdropContext(
+            DungeonRenderContext context,
+            org.main.core.AetherGameRuntime runtime
+    ) {
+        if (context == null || runtime == null || runtime.gameState() == null || !runtime.gameState().isBattleMode()) {
+            return context;
+        }
+        List<MapEntity> backdropEntities = context.entities().stream()
+                .filter(entity -> entity.getType() != Library.EntityType.ENEMY
+                        && entity.getType() != Library.EntityType.ALLY
+                        && entity.getType() != Library.EntityType.NPC)
+                .toList();
+        return new DungeonRenderContext(context.map(), backdropEntities, context.playerCharacter(),
+                context.playerX(), context.playerY(), context.direction(), context.viewportWidth(),
+                context.viewportHeight(), context.cameraOffsetForward(), context.cameraOffsetSide(),
+                context.cameraRotationRadians());
     }
 
     @Override
     public void shutdown() {
+        battleSceneRenderer.shutdown();
         staticModelCache.clear();
+        worldSkinnedModelCache.clear();
+        failedWorldSkinnedModels.clear();
         failedStaticModels.clear();
         textureCache.shutdown();
         if (window != NULL) {
@@ -591,6 +620,13 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     }
 
     private void drawStaticModel(LwjglDungeonSceneBuilder.ModelInstance instance) {
+        if (instance.characterModel() != null && instance.characterModel().hasModel()) {
+            LwjglSkinnedModel skinned = getWorldSkinnedModel(instance.characterModel());
+            if (skinned != null && skinned.hasClip(instance.animationSlot())) {
+                drawWorldSkinnedModel(instance, skinned);
+                return;
+            }
+        }
         LwjglStaticModel model = getStaticModel(instance.assetPath());
         if (model == null) {
             if (instance.fallbackSprite() != null) {
@@ -707,6 +743,46 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         glMatrixMode(GL_MODELVIEW);
         glEnable(GL_TEXTURE_2D);
         glColor4f(1f, 1f, 1f, 1f);
+    }
+
+    private void drawWorldSkinnedModel(LwjglDungeonSceneBuilder.ModelInstance instance, LwjglSkinnedModel model) {
+        double elapsed = System.nanoTime() / 1_000_000_000.0;
+        LwjglSkinnedModel.Frame frame = model.skin(instance.animationSlot(), elapsed);
+        glPushMatrix();
+        glTranslated(instance.centerX(), instance.baseY() + instance.characterModel().verticalOffset(), instance.centerZ());
+        glRotated(instance.characterModel().facingRotationDegrees(), 0, 1, 0);
+        double scale = model.normalizedScaleForHeight(instance.height());
+        glScaled(scale, scale, scale);
+        glTranslated(-model.centerX(), -model.baseY(), -model.centerZ());
+        for (int meshIndex = 0; meshIndex < model.meshes().size(); meshIndex++) {
+            LwjglSkinnedModel.SkinnedMesh mesh = model.meshes().get(meshIndex);
+            float[] positions = frame.meshPositions().get(meshIndex);
+            if (mesh.material().texture() == null) glDisable(GL_TEXTURE_2D);
+            else { glEnable(GL_TEXTURE_2D); textureCache.bind(mesh.material().texture()); }
+            glColor4f(mesh.material().red(), mesh.material().green(), mesh.material().blue(), mesh.material().alpha());
+            glBegin(GL_TRIANGLES);
+            for (int index : mesh.indices()) {
+                if (mesh.material().texture() != null) glTexCoord2f(mesh.texCoords()[index * 2], mesh.texCoords()[index * 2 + 1]);
+                glVertex3f(positions[index * 3], positions[index * 3 + 1], positions[index * 3 + 2]);
+            }
+            glEnd();
+        }
+        glPopMatrix(); glEnable(GL_TEXTURE_2D); glColor4f(1, 1, 1, 1);
+    }
+
+    private LwjglSkinnedModel getWorldSkinnedModel(CharacterModelDefinition definition) {
+        if (definition == null || failedWorldSkinnedModels.contains(definition)) return null;
+        LwjglSkinnedModel cached = worldSkinnedModelCache.get(definition);
+        if (cached != null) return cached;
+        try {
+            LwjglSkinnedModel loaded = LwjglSkinnedModel.load(definition);
+            worldSkinnedModelCache.put(definition, loaded);
+            return loaded;
+        } catch (Exception exception) {
+            failedWorldSkinnedModels.add(definition);
+            LOGGER.log(Level.WARNING, "Failed to load animated world model " + definition.modelPath(), exception);
+            return null;
+        }
     }
 
     private void drawModelMesh(LwjglStaticModel.Mesh mesh) {

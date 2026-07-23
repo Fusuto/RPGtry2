@@ -71,6 +71,10 @@ public class BattleController {
         }
 
         boolean paused = isAutoCombatPaused();
+        if (!paused) {
+            gameState.getCurrentEncounter().getPresentationDirector().update(deltaMs);
+        }
+        paused = paused || gameState.getCurrentEncounter().getPresentationDirector().pausesCombatTimers();
         battleRenderer.setAutoCombatPaused(paused);
         Library.BattleResult result = gameState.getCurrentEncounter().updateAutoCombat(deltaMs, paused);
         handleBattleResult(result);

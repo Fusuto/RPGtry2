@@ -23,6 +23,7 @@ import static org.lwjgl.glfw.GLFW.*;
 public final class LwjglInputController {
     private static final int DEFAULT_ACTION_COOLDOWN_MS = 150;
     private static final double FORWARD_LOOK_MAX_YAW_DEGREES = 90.0;
+    private static final double BATTLE_LOOK_MAX_YAW_DEGREES = 165.0;
 
     private final Set<Integer> pressedKeys = new HashSet<>();
     private final Set<Integer> consumedKeys = new HashSet<>();
@@ -40,6 +41,8 @@ public final class LwjglInputController {
     private boolean rightMouseHeld;
     private boolean battleMouseClickArmed;
     private boolean skipNextMouseDelta;
+    private boolean battleMouseLook;
+    private boolean recenteringMouseLook;
     private double previousMouseX;
     private double previousMouseY;
     private double yawOffsetDegrees;
@@ -121,7 +124,7 @@ public final class LwjglInputController {
             }
 
             if (runtime != null && runtime.gameState().isBattleMode()) {
-                handleBattleMouseButton(action, framebufferPoint, runtime);
+                handleBattleMouseButton(button, action, framebufferPoint, runtime);
                 return;
             }
 
@@ -145,14 +148,7 @@ public final class LwjglInputController {
                 if (!canUseMouseLook(runtime)) {
                     return;
                 }
-                rightMouseHeld = true;
-                skipNextMouseDelta = true;
-                double[] cursorX = new double[1];
-                double[] cursorY = new double[1];
-                glfwGetCursorPos(handle, cursorX, cursorY);
-                previousMouseX = cursorX[0];
-                previousMouseY = cursorY[0];
-                glfwSetInputMode(handle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                beginMouseLook(handle, false);
             } else if (action == GLFW_RELEASE) {
                 releaseMouseLook();
             }
@@ -201,11 +197,17 @@ public final class LwjglInputController {
             leftMouseHeld = false;
             battleMouseClickArmed = false;
             actionCooldownRemainingMs = 0;
-            releaseMouseLook();
+            resetMouseLookImmediately();
         });
     }
 
-    private void handleBattleMouseButton(int action, Point framebufferPoint, AetherGameRuntime runtime) {
+    private void handleBattleMouseButton(int button, int action, Point framebufferPoint, AetherGameRuntime runtime) {
+        if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+            if (action == GLFW_PRESS && canUseMouseLook(runtime)) beginMouseLook(window, true);
+            else if (action == GLFW_RELEASE) releaseMouseLook();
+            return;
+        }
+        if (button != GLFW_MOUSE_BUTTON_LEFT) return;
         if (action == GLFW_PRESS) {
             battleMouseClickArmed = true;
             return;
@@ -233,7 +235,8 @@ public final class LwjglInputController {
         previousMouseY = y;
         double yawDelta = deltaX * sensitivity * (invertMouseLookX ? -1.0 : 1.0);
         double pitchDelta = deltaY * sensitivity * (invertMouseLookY ? -1.0 : 1.0);
-        yawOffsetDegrees = clamp(yawOffsetDegrees + yawDelta, -maxYawDegrees, maxYawDegrees);
+        double yawLimit = battleMouseLook ? BATTLE_LOOK_MAX_YAW_DEGREES : maxYawDegrees;
+        yawOffsetDegrees = clamp(yawOffsetDegrees + yawDelta, -yawLimit, yawLimit);
         pitchOffsetDegrees = clamp(pitchOffsetDegrees + pitchDelta, -maxPitchDegrees, maxPitchDegrees);
     }
 
@@ -246,8 +249,9 @@ public final class LwjglInputController {
         actionCooldownRemainingMs = Math.max(0, actionCooldownRemainingMs - Math.max(0, deltaMs));
         GameState gameState = runtime.gameState();
         handleGameModeTransition(gameState);
+        updateMouseRecentering(deltaMs);
         if (!canUseMouseLook(runtime)) {
-            releaseMouseLook();
+            resetMouseLookImmediately();
         }
 
         if (handleStartOrGameOverInput(runtime, gameState)) {
@@ -732,7 +736,7 @@ public final class LwjglInputController {
         consumedKeys.addAll(pressedKeys);
         actionCooldownRemainingMs = actionCooldownMs;
         battleMouseClickArmed = false;
-        releaseMouseLook();
+        resetMouseLookImmediately();
     }
 
     private boolean canUseMouseLook(AetherGameRuntime runtime) {
@@ -741,9 +745,8 @@ public final class LwjglInputController {
         }
 
         GameState gameState = runtime.gameState();
-        return gameState.isDungeonMode()
-                && !gameState.isCameraAnimating()
-                && !hasBlockingOverlay(gameState);
+        if (gameState.isBattleMode()) return true;
+        return gameState.isDungeonMode() && !gameState.isCameraAnimating() && !hasBlockingOverlay(gameState);
     }
 
     private Integer pressedDungeonActionKey(GameState gameState) {
@@ -825,8 +828,34 @@ public final class LwjglInputController {
 
         rightMouseHeld = false;
         skipNextMouseDelta = false;
-        yawOffsetDegrees = 0.0;
-        pitchOffsetDegrees = 0.0;
+        recenteringMouseLook = Math.abs(yawOffsetDegrees) > 0.01 || Math.abs(pitchOffsetDegrees) > 0.01;
+    }
+
+    private void beginMouseLook(long handle, boolean battle) {
+        rightMouseHeld = true;
+        battleMouseLook = battle;
+        recenteringMouseLook = false;
+        skipNextMouseDelta = true;
+        double[] cursorX = new double[1], cursorY = new double[1];
+        glfwGetCursorPos(handle, cursorX, cursorY);
+        previousMouseX = cursorX[0]; previousMouseY = cursorY[0];
+        glfwSetInputMode(handle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    }
+
+    private void updateMouseRecentering(int deltaMs) {
+        if (!recenteringMouseLook || rightMouseHeld) return;
+        double amount = 1.0 - Math.exp(-Math.max(0, deltaMs) / 140.0);
+        yawOffsetDegrees += (0.0 - yawOffsetDegrees) * amount;
+        pitchOffsetDegrees += (0.0 - pitchOffsetDegrees) * amount;
+        if (Math.abs(yawOffsetDegrees) < 0.05 && Math.abs(pitchOffsetDegrees) < 0.05) {
+            yawOffsetDegrees = 0.0; pitchOffsetDegrees = 0.0; recenteringMouseLook = false; battleMouseLook = false;
+        }
+    }
+
+    private void resetMouseLookImmediately() {
+        if (rightMouseHeld && window != 0L) glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        rightMouseHeld = false; skipNextMouseDelta = false; recenteringMouseLook = false; battleMouseLook = false;
+        yawOffsetDegrees = 0.0; pitchOffsetDegrees = 0.0;
     }
 
     private boolean pressed(int key) {

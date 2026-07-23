@@ -254,7 +254,7 @@ public final class LwjglStaticModel {
             List<BufferedImage> embeddedTextures,
             String assetPath
     ) {
-        if (material == null || embeddedTextures.isEmpty()) {
+        if (material == null) {
             return null;
         }
         try (AIString path = AIString.calloc()) {

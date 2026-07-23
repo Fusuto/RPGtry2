@@ -1,5 +1,6 @@
 package org.main.monsters;
 
+import org.main.content.CharacterModelDefinition;
 import org.main.content.SkillLibrary;
 import org.main.core.PlayerStat;
 import org.main.engine.AssetLoader;
@@ -23,6 +24,7 @@ public class Monster {
     private final List<SkillLibrary> customSkills;
     private final String customPaperDollSourcePath;
     private final List<DropEntry> customDrops;
+    private final CharacterModelDefinition characterModel;
 
     private int currentHp;
 
@@ -38,7 +40,8 @@ public class Monster {
             String damageSoundPath,
             int combatAiIntelligence,
             List<SkillLibrary> skills,
-            List<DropEntry> drops
+            List<DropEntry> drops,
+            CharacterModelDefinition characterModel
     ) {
         this.customId = customId == null ? "" : customId;
         this.customName = name == null || name.isBlank() ? "Custom Enemy" : name;
@@ -53,7 +56,29 @@ public class Monster {
         this.customCombatAiIntelligence = Math.max(0, combatAiIntelligence);
         this.customSkills = skills == null ? List.of() : List.copyOf(skills);
         this.customDrops = drops == null ? List.of() : List.copyOf(drops);
+        this.characterModel = characterModel == null
+                ? CharacterModelDefinition.empty()
+                : characterModel;
         this.currentHp = getMaxHp();
+    }
+
+    public Monster(
+            String customId,
+            String name,
+            Map<PlayerStat, Integer> stats,
+            int xpReward,
+            String description,
+            String imagePath,
+            String paperDollSourcePath,
+            String attackSoundPath,
+            String damageSoundPath,
+            int combatAiIntelligence,
+            List<SkillLibrary> skills,
+            List<DropEntry> drops
+    ) {
+        this(customId, name, stats, xpReward, description, imagePath, paperDollSourcePath,
+                attackSoundPath, damageSoundPath, combatAiIntelligence, skills, drops,
+                CharacterModelDefinition.empty());
     }
 
     public String getCustomId() {
@@ -128,6 +153,10 @@ public class Monster {
         return customDrops;
     }
 
+    public CharacterModelDefinition getCharacterModel() {
+        return characterModel;
+    }
+
     public boolean isAlive() {
         return currentHp > 0;
     }
@@ -145,7 +174,8 @@ public class Monster {
                 customDamageSoundPath,
                 customCombatAiIntelligence,
                 customSkills,
-                customDrops
+                customDrops,
+                characterModel
         );
     }
 

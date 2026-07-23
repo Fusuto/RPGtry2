@@ -30,6 +30,8 @@ public class PlayerCharacter {
     private boolean debugSkillsLoaded = false;
     private final InventorySystem.Inventory inventory;
     private final String portraitPath;
+    private final PartyRoster partyRoster;
+    private final PartyFormation partyFormation;
 
     public PlayerCharacter(String name, int maxHp, int currHp) {
         this(name, maxHp, currHp, new InventorySystem.Inventory(), createDefaultSkills(), null);
@@ -68,6 +70,8 @@ public class PlayerCharacter {
             List<BattleSkill> battleSkills
     ) {
         this.name = name == null || name.isBlank() ? "Player" : name.trim();
+        this.partyRoster = new PartyRoster(this.name);
+        this.partyFormation = new PartyFormation(PartyRoster.PLAYER_MEMBER_ID);
         this.maxHp = Math.max(1, maxHp);
         this.currHp = clampHp(currHp);
         this.inventory = inventory == null ? new InventorySystem.Inventory() : inventory;
@@ -113,6 +117,14 @@ public class PlayerCharacter {
 
     public String getName() {
         return name;
+    }
+
+    public PartyRoster getPartyRoster() {
+        return partyRoster;
+    }
+
+    public PartyFormation getPartyFormation() {
+        return partyFormation;
     }
 
     public HashMap<CharacterSkill, Integer> getSkills() {

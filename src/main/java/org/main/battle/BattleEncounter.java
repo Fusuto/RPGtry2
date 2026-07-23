@@ -2,6 +2,7 @@ package org.main.battle;
 
 import org.main.core.GameEnvironment;
 import org.main.content.MapDesignLibrary;
+import org.main.content.CharacterModelDefinition;
 import org.main.core.GameBootstrap;
 import org.main.core.CharacterSkill;
 import org.main.core.GameConfiguration;
@@ -10,6 +11,8 @@ import org.main.core.Library;
 import org.main.core.PaperDollRenderer;
 import org.main.core.PlayerCharacter;
 import org.main.core.PlayerStat;
+import org.main.core.PartyFormation;
+import org.main.core.PlayerCharacterModelConfiguration;
 import org.main.engine.SoundSystem;
 import org.main.monsters.Monster;
 
@@ -18,6 +21,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.Set;
+import java.util.HashSet;
 
 public class BattleEncounter {
     private static final int FRONT_ROW_ACTOR_COUNT = 3;
@@ -27,8 +32,11 @@ public class BattleEncounter {
     private final List<BattleActor> allies;
     private final List<BattleActor> enemies;
     private final SoundSystem soundSystem;
+    private final BattlePresentationDirector presentationDirector = new BattlePresentationDirector();
 
     private String battleMessage = "Battle begins!";
+    private Library.BattleResult pendingImpactResult = Library.BattleResult.CONTINUE;
+    private final Set<BattleActor> scheduledDeathPresentations = new HashSet<>();
 
     public BattleEncounter(List<BattleActor> allies, List<BattleActor> enemies) {
         this(allies, enemies, null);
@@ -43,9 +51,60 @@ public class BattleEncounter {
         resetAllAttackCooldowns();
     }
 
+    public BattlePresentationDirector getPresentationDirector() {
+        return presentationDirector;
+    }
+
     private void assignFormations() {
-        assignFormation(allies);
+        assignAlliedFormation();
         assignFormation(enemies);
+    }
+
+    private void assignAlliedFormation() {
+        boolean[] occupied = new boolean[6];
+        for (BattleActor actor : allies) {
+            PlayerCharacter source = actor.getFormationOwner();
+            PartyFormation.Cell cell = source == null
+                    ? null
+                    : source.getPartyFormation().cellOf(actor.getPartyMemberId());
+            if (cell == null) {
+                continue;
+            }
+            actor.setBattlePosition(cell.row(), cell.column());
+            occupied[(cell.row() == Library.BattleRow.FRONT ? 0 : 3) + cell.column()] = true;
+        }
+        for (BattleActor actor : allies) {
+            if (actor.getFormationOwner() != null || !actor.isAlive() || !actor.hasBattlePositionAssignment()) continue;
+            int index = (actor.getRow() == Library.BattleRow.FRONT ? 0 : 3) + actor.getSlot();
+            boolean supported = index < 3 || occupied[index - 3];
+            if (index >= 0 && index < occupied.length && !occupied[index] && supported) {
+                occupied[index] = true;
+            } else {
+                actor.clearBattlePositionAssignment();
+            }
+        }
+        for (BattleActor actor : allies) {
+            if (actor.getFormationOwner() != null || !actor.isAlive() || actor.hasBattlePositionAssignment()) {
+                continue;
+            }
+            int index = firstLegalFormationIndex(occupied);
+            if (index < 0) {
+                break;
+            }
+            occupied[index] = true;
+            actor.setBattlePosition(index < 3 ? Library.BattleRow.FRONT : Library.BattleRow.BACK, index % 3);
+        }
+    }
+
+    private static int firstLegalFormationIndex(boolean[] occupied) {
+        int[] preferred = {1, 0, 2, 4, 3, 5};
+        for (int index : preferred) {
+            boolean supported = index < 3 || occupied[index - 3];
+            if (!occupied[index] && supported) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     private void assignFormation(List<BattleActor> actors) {
@@ -130,6 +189,7 @@ public class BattleEncounter {
                 playerCharacter.getCombinedStat(PlayerStat.DEFENSE) + equipmentDefenseBonus
         );
         playerActor.copyCombatProfileFrom(playerCharacter);
+        playerActor.setCharacterModel(PlayerCharacterModelConfiguration.load());
         playerActor.setHitSoundPath(environment == null ? null : environment.getPlayerHitSoundPath());
         playerActor.setAttackSoundPath(GameConfiguration.stringValue("battle.playerAutoAttack.soundPath", ""));
 
@@ -176,6 +236,7 @@ public class BattleEncounter {
         enemy.setCombatAiIntelligence(monster.getCombatAiIntelligence());
         enemy.setSpeciesId(monster.getCustomId());
         enemy.setExperienceReward(monster.getXpReward());
+        enemy.setCharacterModel(monster.getCharacterModel());
         monster.getSkills().forEach(skill -> enemy.addSkill(skill.createSkill()));
         return enemy;
     }
@@ -285,81 +346,135 @@ public class BattleEncounter {
             return Library.BattleResult.CONTINUE;
         }
 
-        if (skill.isSummonSkill()) {
-            startManualSkillCost(caster, skill);
-            battleMessage = caster.getName() + " uses " + skill.getName() + ".";
-            appendBattleMessage(resolveSummon(caster, skill));
-            return Library.BattleResult.CONTINUE;
-        }
-
-        if (targets == null || targets.isEmpty()) {
+        if (!skill.isSummonSkill() && (targets == null || targets.isEmpty())) {
             battleMessage = "No valid targets.";
             return Library.BattleResult.CONTINUE;
         }
+        List<BattleActor> safeTargets = skill.isSummonSkill() ? List.of() : List.copyOf(targets);
+        BattleActionIntent intent = new BattleActionIntent(
+                caster,
+                skill.getName(),
+                presentationTypeFor(skill),
+                BattleActionIntent.Priority.MANUAL,
+                impactFractionFor(caster, skill),
+                safeTargets,
+                () -> planSkillOutcome(caster, skill, safeTargets, false)
+        );
+        if (!presentationDirector.enqueue(intent)) {
+            battleMessage = caster.getName() + " is already committed to another action.";
+            return Library.BattleResult.CONTINUE;
+        }
+        battleMessage = caster.getName() + " prepares " + skill.getName() + ".";
+        return Library.BattleResult.CONTINUE;
+    }
 
-        startManualSkillCost(caster, skill);
-        battleMessage = caster.getName()
-                + " uses "
-                + skill.getName()
-                + " on "
-                + joinActorNames(targets)
-                + ".";
-
-        int totalDamage = 0;
-
+    private BattleActionIntent.OutcomePlan planSkillOutcome(
+            BattleActor caster,
+            BattleSkill skill,
+            List<BattleActor> targets,
+            boolean enemyControlled
+    ) {
+        if (caster == null || skill == null || !caster.isAlive() || !caster.isSkillReady(skill)) {
+            return null;
+        }
+        if (skill.isSummonSkill()) {
+            if (!canSummon(caster)) {
+                return null;
+            }
+            startManualSkillCost(caster, skill);
+            if (enemyControlled) {
+                caster.resetAttackCooldown();
+                caster.tickStatusDurations();
+            }
+            return new BattleActionIntent.OutcomePlan(List.of(), () -> {
+                battleMessage = caster.getName() + " uses " + skill.getName() + ".";
+                appendBattleMessage(resolveSummon(caster, skill));
+                playSound(skill.getUseSoundPath());
+            });
+        }
+        List<PlannedSkillOutcome> outcomes = new ArrayList<>();
+        List<BattlePresentationDirector.TargetReaction> reactions = new ArrayList<>();
         for (BattleActor target : targets) {
+            if (target == null || !target.isAlive()) continue;
             if (isDamageSkill(skill)) {
-                CombatResolver.CombatResult combatResult = skill.getTargetingMode() == Library.BattleTargetingMode.MAGIC
+                CombatResolver.CombatResult result = skill.getTargetingMode() == Library.BattleTargetingMode.MAGIC
                         ? CombatResolver.resolveSpell(caster, target, skill)
                         : CombatResolver.resolvePhysicalSkill(caster, target, skill);
-                int damage = target.takeDamage(combatResult.damage());
+                int projectedDamage = Math.max(0, result.damage());
+                outcomes.add(new PlannedSkillOutcome(target, result, projectedDamage, 0));
+                reactions.add(new BattlePresentationDirector.TargetReaction(
+                        target, reactionFor(result.hit(), projectedDamage, target), projectedDamage));
+            } else if (skill.getEffectType() == Library.EffectType.HEAL) {
+                int heal = CombatResolver.resolveHealingAmount(caster, skill);
+                outcomes.add(new PlannedSkillOutcome(target, null, 0, heal));
+                reactions.add(new BattlePresentationDirector.TargetReaction(target,
+                        BattlePresentationDirector.Reaction.NONE, 0));
+            } else {
+                outcomes.add(new PlannedSkillOutcome(target, null, 0, 0));
+                reactions.add(new BattlePresentationDirector.TargetReaction(target,
+                        BattlePresentationDirector.Reaction.BLOCK, 0));
+            }
+        }
+        if (outcomes.isEmpty()) return null;
+        startManualSkillCost(caster, skill);
+        if (enemyControlled) {
+            caster.resetAttackCooldown();
+            caster.tickStatusDurations();
+        }
+        return new BattleActionIntent.OutcomePlan(reactions,
+                () -> commitSkillOutcome(caster, skill, outcomes, enemyControlled));
+    }
+
+    private void commitSkillOutcome(
+            BattleActor caster,
+            BattleSkill skill,
+            List<PlannedSkillOutcome> outcomes,
+            boolean enemyControlled
+    ) {
+        int totalDamage = 0;
+        battleMessage = caster.getName() + " uses " + skill.getName() + " on "
+                + joinActorNames(outcomes.stream().map(PlannedSkillOutcome::target).toList()) + ".";
+        for (PlannedSkillOutcome outcome : outcomes) {
+            BattleActor target = outcome.target();
+            if (!target.isAlive() && outcome.combatResult() != null) continue;
+            if (outcome.combatResult() != null) {
+                CombatResolver.CombatResult result = outcome.combatResult();
+                int damage = target.takeDamage(outcome.projectedDamage());
                 totalDamage += damage;
-                appendBattleMessage(target.getName() + " " + combatResult.text() + ".");
-                awardOffensiveSkillExperience(caster, skill, combatResult, damage);
-                target.addCombatSkillExperience(
-                        CharacterSkill.DEFENSE,
-                        Math.max(defenseXpMinimum(), damage * defenseXpPerDamage())
-                );
-
-                if (combatResult.hit()) {
+                appendBattleMessage(target.getName() + " " + result.text() + ".");
+                awardOffensiveSkillExperience(caster, skill, result, damage);
+                target.addCombatSkillExperience(CharacterSkill.DEFENSE,
+                        Math.max(defenseXpMinimum(), damage * defenseXpPerDamage()));
+                if (result.hit()) {
                     playSound(target.getHitSoundPath());
+                    String status = applyOnHitStatus(target, skill,
+                            enemyControlled && caster.getCombatAiIntelligence() >= smartEnemyDebuffIntelligence());
+                    appendBattleMessage(status);
                 }
-
-                if (combatResult.hit()) {
-                    String statusMessage = applyOnHitStatus(target, skill);
-                    if (!statusMessage.isBlank()) {
-                        appendBattleMessage(statusMessage);
-                    }
-                }
-            } else if (skill.getEffectType().equals(Library.EffectType.HEAL)) {
-                int healAmount = CombatResolver.resolveHealingAmount(caster, skill);
+            } else if (skill.getEffectType() == Library.EffectType.HEAL) {
                 int before = target.getCurrentHp();
-                target.healDamage(healAmount);
-                int healed = Math.max(0, target.getCurrentHp() - before);
-                totalDamage += 0;
-                caster.addCombatSkillExperience(
-                        CharacterSkill.MAGIC_POWER,
-                        Math.max(magicHealingXpMinimum(), healed * magicHealingXpPerHp())
-                );
+                target.healDamage(outcome.healAmount());
+                int healed = target.getCurrentHp() - before;
+                caster.addCombatSkillExperience(CharacterSkill.MAGIC_POWER,
+                        Math.max(magicHealingXpMinimum(), healed * magicHealingXpPerHp()));
                 appendBattleMessage(target.getName() + " recovers " + healed + " HP.");
-            } else if (skill.getEffectType().equals(Library.EffectType.DEFEND)) {
+            } else if (skill.getEffectType() == Library.EffectType.DEFEND) {
                 target.applyDefend(skill.getDefendTurns(), skill.getDamageReduction());
             }
         }
-
         if (skill.healsCasterFromDamage() && totalDamage > 0) {
             caster.healDamage((int) Math.ceil(totalDamage * skill.getSelfHealPercent()));
         }
-
         playSound(skill.getUseSoundPath());
-
-        if (allEnemiesDefeated()) {
-            battleMessage = "Victory!";
-            return Library.BattleResult.VICTORY;
-        }
-
-        return Library.BattleResult.CONTINUE;
+        updatePendingBattleResult();
     }
+
+    private record PlannedSkillOutcome(
+            BattleActor target,
+            CombatResolver.CombatResult combatResult,
+            int projectedDamage,
+            int healAmount
+    ) { }
 
     private void startManualSkillCost(BattleActor caster, BattleSkill skill) {
         if (caster == null || skill == null) {
@@ -370,6 +485,15 @@ public class BattleEncounter {
         if (skill.consumesAutoAction()) {
             caster.resetAttackCooldown();
         }
+    }
+
+    private double impactFractionFor(BattleActor actor, BattleSkill skill) {
+        CharacterModelDefinition.AnimationSlot slot = skill != null
+                && skill.getTargetingMode() == Library.BattleTargetingMode.MAGIC
+                ? CharacterModelDefinition.AnimationSlot.CAST
+                : CharacterModelDefinition.AnimationSlot.ATTACK;
+        return actor == null ? CharacterModelDefinition.DEFAULT_IMPACT_FRACTION
+                : actor.getCharacterModel().animationBinding(slot).impactFraction();
     }
 
     private String joinActorNames(List<BattleActor> actors) {
@@ -678,13 +802,17 @@ public class BattleEncounter {
     }
 
     public Library.BattleResult updateAutoCombat(int deltaMs, boolean paused) {
+        if (pendingImpactResult != Library.BattleResult.CONTINUE
+                && !presentationDirector.hasPresentations()) {
+            Library.BattleResult result = pendingImpactResult;
+            pendingImpactResult = Library.BattleResult.CONTINUE;
+            return result;
+        }
         if (paused) {
             return Library.BattleResult.CONTINUE;
         }
 
         double deltaSeconds = Math.max(0, deltaMs) / 1000.0;
-        StringBuilder turnSummary = new StringBuilder();
-
         for (BattleActor attacker : allActors()) {
             if (!attacker.isAlive()) {
                 continue;
@@ -697,27 +825,22 @@ public class BattleEncounter {
                 continue;
             }
 
+            if (presentationDirector.hasActionFor(attacker)) {
+                continue;
+            }
+
             if (attacker.isStunned()) {
-                appendSummary(turnSummary, attacker.getName() + " is stunned!");
+                battleMessage = attacker.getName() + " is stunned!";
                 attacker.tickStatusDurations();
                 attacker.resetAttackCooldown();
                 continue;
             }
 
-            Library.BattleResult result = attacker.isEnemy()
-                    ? resolveEnemyAutoAction(attacker, turnSummary)
-                    : resolveAllyAutoAction(attacker, turnSummary);
-
-            attacker.tickStatusDurations();
-            attacker.resetAttackCooldown();
-
-            if (result != Library.BattleResult.CONTINUE) {
-                return result;
+            if (attacker.isEnemy()) {
+                resolveEnemyAutoAction(attacker, new StringBuilder());
+            } else {
+                resolveAllyAutoAction(attacker, new StringBuilder());
             }
-        }
-
-        if (!turnSummary.isEmpty()) {
-            battleMessage = turnSummary.toString();
         }
         return Library.BattleResult.CONTINUE;
     }
@@ -739,10 +862,6 @@ public class BattleEncounter {
         }
 
         appendSummary(turnSummary, resolveMeleeAutoAction(attacker, target));
-        if (allEnemiesDefeated()) {
-            battleMessage = "Victory!";
-            return Library.BattleResult.VICTORY;
-        }
         return Library.BattleResult.CONTINUE;
     }
 
@@ -768,31 +887,103 @@ public class BattleEncounter {
             appendSummary(turnSummary, resolveMeleeAutoAction(attacker, target));
         }
 
-        if (getFirstLivingAlly() == null) {
-            battleMessage = "Defeat!";
-            return Library.BattleResult.DEFEAT;
-        }
         return Library.BattleResult.CONTINUE;
     }
 
     private String resolveMeleeAutoAction(BattleActor attacker, BattleActor target) {
-        CombatResolver.CombatResult combatResult = CombatResolver.resolveMelee(attacker, target);
-        int damage = target.takeDamage(combatResult.damage());
-        playSound(attacker.getAttackSoundPath());
-        if (combatResult.hit()) {
-            playSound(target.getHitSoundPath());
-        }
-        awardMeleeExperience(attacker, damage);
-        target.addCombatSkillExperience(
-                CharacterSkill.DEFENSE,
-                Math.max(defenseXpMinimum(), damage * defenseXpPerDamage())
+        BattleActionIntent intent = new BattleActionIntent(
+                attacker,
+                "Auto Attack",
+                BattlePresentationDirector.ActionType.AUTO_ATTACK,
+                BattleActionIntent.Priority.AUTOMATIC,
+                impactFractionFor(attacker, null),
+                List.of(target),
+                () -> planMeleeOutcome(attacker, target)
         );
-        return attacker.getName()
-                + " attacks "
-                + target.getName()
-                + " and "
-                + combatResult.text()
-                + "!";
+        if (!presentationDirector.enqueue(intent)) {
+            return "";
+        }
+        return attacker.getName() + " prepares to attack " + target.getName() + ".";
+    }
+
+    private BattleActionIntent.OutcomePlan planMeleeOutcome(BattleActor attacker, BattleActor suggestedTarget) {
+        if (attacker == null || !attacker.isAlive()) return null;
+        BattleActor target = suggestedTarget;
+        if (target == null || !target.isAlive()
+                || !canTarget(attacker, target, Library.BattleTargetingMode.NORMAL_MELEE)) {
+            target = attacker.isEnemy() ? getFirstLivingAlly() : validPreferredTarget(attacker);
+            if (target == null && !attacker.isEnemy()) target = getFirstLivingEnemy();
+        }
+        if (target == null || !canTarget(attacker, target, Library.BattleTargetingMode.NORMAL_MELEE)) {
+            updatePendingBattleResult();
+            return null;
+        }
+        BattleActor resolvedTarget = target;
+        CombatResolver.CombatResult result = CombatResolver.resolveMelee(attacker, resolvedTarget);
+        int projectedDamage = Math.max(0, result.damage());
+        attacker.resetAttackCooldown();
+        attacker.tickStatusDurations();
+        BattlePresentationDirector.TargetReaction reaction = new BattlePresentationDirector.TargetReaction(
+                resolvedTarget, reactionFor(result.hit(), projectedDamage, resolvedTarget), projectedDamage);
+        return new BattleActionIntent.OutcomePlan(List.of(reaction), () -> {
+            if (!resolvedTarget.isAlive()) {
+                updatePendingBattleResult();
+                return;
+            }
+            int damage = resolvedTarget.takeDamage(projectedDamage);
+            playSound(attacker.getAttackSoundPath());
+            if (result.hit()) playSound(resolvedTarget.getHitSoundPath());
+            awardMeleeExperience(attacker, damage);
+            resolvedTarget.addCombatSkillExperience(CharacterSkill.DEFENSE,
+                    Math.max(defenseXpMinimum(), damage * defenseXpPerDamage()));
+            battleMessage = attacker.getName() + " attacks " + resolvedTarget.getName()
+                    + " and " + result.text() + "!";
+            updatePendingBattleResult();
+        });
+    }
+
+    private void updatePendingBattleResult() {
+        for (BattleActor actor : allActors()) {
+            if (!actor.isAlive() && scheduledDeathPresentations.add(actor)) {
+                presentationDirector.enqueue(new BattleActionIntent(
+                        actor, "Death", BattlePresentationDirector.ActionType.DEATH,
+                        BattleActionIntent.Priority.DEATH, 0.60, List.of(),
+                        () -> new BattleActionIntent.OutcomePlan(List.of(), () -> { })
+                ));
+            }
+        }
+        if (allEnemiesDefeated()) {
+            battleMessage = "Victory!";
+            pendingImpactResult = Library.BattleResult.VICTORY;
+        } else if (getFirstLivingAlly() == null) {
+            battleMessage = "Defeat!";
+            pendingImpactResult = Library.BattleResult.DEFEAT;
+        }
+    }
+
+    private BattlePresentationDirector.Reaction reactionFor(boolean hit, int damage, BattleActor target) {
+        if (!hit) {
+            return BattlePresentationDirector.Reaction.DODGE;
+        }
+        return damage <= 0 && target != null && target.getDefendingTurns() > 0
+                ? BattlePresentationDirector.Reaction.BLOCK
+                : BattlePresentationDirector.Reaction.HIT;
+    }
+
+    private BattlePresentationDirector.ActionType presentationTypeFor(BattleSkill skill) {
+        if (skill == null) {
+            return BattlePresentationDirector.ActionType.PHYSICAL_SKILL;
+        }
+        return switch (skill.getEffectType()) {
+            case HEAL -> BattlePresentationDirector.ActionType.HEAL;
+            case DEFEND -> BattlePresentationDirector.ActionType.DEFEND;
+            case SUMMON -> BattlePresentationDirector.ActionType.SUMMON;
+            default -> switch (skill.getTargetingMode()) {
+                case MAGIC -> BattlePresentationDirector.ActionType.SPELL;
+                case RANGED -> BattlePresentationDirector.ActionType.RANGED;
+                default -> BattlePresentationDirector.ActionType.PHYSICAL_SKILL;
+            };
+        };
     }
 
     private void appendSummary(StringBuilder builder, String message) {
@@ -883,52 +1074,12 @@ public class BattleEncounter {
             return attacker.getName() + " hesitates.";
         }
 
-        attacker.startSkillCooldown(skill);
-        int totalDamage = 0;
-        StringBuilder effectSummary = new StringBuilder();
-
-        for (BattleActor resolvedTarget : resolvedTargets) {
-            if (isDamageSkill(skill)) {
-                CombatResolver.CombatResult combatResult = skill.getTargetingMode() == Library.BattleTargetingMode.MAGIC
-                        ? CombatResolver.resolveSpell(attacker, resolvedTarget, skill)
-                        : CombatResolver.resolvePhysicalSkill(attacker, resolvedTarget, skill);
-                int damage = resolvedTarget.takeDamage(combatResult.damage());
-                totalDamage += damage;
-                resolvedTarget.addCombatSkillExperience(
-                        CharacterSkill.DEFENSE,
-                        Math.max(defenseXpMinimum(), damage * defenseXpPerDamage())
-                );
-                if (combatResult.hit()) {
-                    playSound(resolvedTarget.getHitSoundPath());
-                    appendSummary(effectSummary, applyOnHitStatus(
-                            resolvedTarget,
-                            skill,
-                            attacker.getCombatAiIntelligence() >= smartEnemyDebuffIntelligence()
-                    ));
-                }
-            } else if (skill.getEffectType().equals(Library.EffectType.HEAL)) {
-                resolvedTarget.healDamage(CombatResolver.resolveHealingAmount(attacker, skill));
-            } else if (skill.getEffectType().equals(Library.EffectType.DEFEND)) {
-                resolvedTarget.applyDefend(skill.getDefendTurns(), skill.getDamageReduction());
-            } else if (skill.getEffectType().equals(Library.EffectType.SUMMON)) {
-                return resolveSummon(attacker, skill);
-            }
-        }
-
-        if (skill.healsCasterFromDamage() && totalDamage > 0) {
-            attacker.healDamage((int) Math.ceil(totalDamage * skill.getSelfHealPercent()));
-        }
-
-        playSound(skill.getUseSoundPath());
-        return attacker.getName()
-                + " uses "
-                + skill.getName()
-                + " on "
-                + joinActorNames(resolvedTargets)
-                + " for "
-                + totalDamage
-                + " total damage!"
-                + (effectSummary.isEmpty() ? "" : " " + effectSummary);
+        BattleActionIntent intent = new BattleActionIntent(
+                attacker, skill.getName(), presentationTypeFor(skill),
+                BattleActionIntent.Priority.AUTOMATIC, impactFractionFor(attacker, skill),
+                resolvedTargets, () -> planSkillOutcome(attacker, skill, resolvedTargets, true));
+        if (!presentationDirector.enqueue(intent)) return "";
+        return attacker.getName() + " prepares " + skill.getName() + ".";
     }
 
     private String applyOnHitStatus(BattleActor target, BattleSkill skill) {
@@ -1002,7 +1153,11 @@ public class BattleEncounter {
         }
 
         getActorsOnSameSide(caster).add(summoned);
-        assignFormation(getActorsOnSameSide(caster));
+        if (caster.isEnemy()) {
+            assignFormation(getActorsOnSameSide(caster));
+        } else {
+            assignAlliedFormation();
+        }
         playSound(skill.getUseSoundPath());
         return caster.getName() + " uses " + skill.getName() + ". " + summoned.getName() + " joins the battle!";
     }
