@@ -1,15 +1,19 @@
 package org.main.experimental;
 
 import org.lwjgl.BufferUtils;
+import org.joml.Matrix4f;
 import org.main.battle.BattleActor;
 import org.main.battle.BattleEncounter;
 import org.main.battle.BattlePresentationDirector;
 import org.main.content.CharacterModelDefinition;
+import org.main.content.FirstPersonCombatLibrary;
 import org.main.core.AetherGameRuntime;
 import org.main.core.InventorySystem;
 import org.main.core.Library;
 import org.main.core.EquipmentViewModelProfile;
 import org.main.core.FirstPersonEquipmentRig;
+import org.main.core.LimbItem;
+import org.main.core.LimbSlot;
 import org.main.engine.DungeonRenderContext;
 
 import java.awt.Point;
@@ -20,6 +24,7 @@ import java.nio.IntBuffer;
 import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.function.Predicate;
 
 import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL15.*;
@@ -41,8 +46,11 @@ final class LwjglBattleSceneRenderer {
     private final Set<CharacterModelDefinition> failedSkinnedModels = new HashSet<>();
     private final Map<String, LwjglStaticModel> staticModels = new HashMap<>();
     private final Set<String> failedStaticModels = new HashSet<>();
+    private final Set<String> warnedFirstPersonFallbacks = new HashSet<>();
     private final IdentityHashMap<LwjglSkinnedModel.SkinnedMesh, MeshBuffers> buffers = new IdentityHashMap<>();
     private final Map<BattleActor, Point> projectedActors = new IdentityHashMap<>();
+    private final Map<BattleActor, FirstPersonTransition> firstPersonTransitions =
+            new IdentityHashMap<>();
 
     LwjglBattleSceneRenderer(LwjglTextureCache textureCache) {
         this.textureCache = textureCache;
@@ -133,8 +141,17 @@ final class LwjglBattleSceneRenderer {
     }
 
     private void drawSkinnedModel(LwjglSkinnedModel model, LwjglSkinnedModel.Frame frame) {
+        drawSkinnedModel(model, frame, ignored -> true);
+    }
+
+    private void drawSkinnedModel(
+            LwjglSkinnedModel model,
+            LwjglSkinnedModel.Frame frame,
+            Predicate<LwjglSkinnedModel.SkinnedMesh> visible
+    ) {
         for (int meshIndex = 0; meshIndex < model.meshes().size(); meshIndex++) {
             LwjglSkinnedModel.SkinnedMesh mesh = model.meshes().get(meshIndex);
+            if (!visible.test(mesh)) continue;
             MeshBuffers gpu = buffers.computeIfAbsent(mesh, this::createBuffers);
             FloatBuffer positions = BufferUtils.createFloatBuffer(frame.meshPositions().get(meshIndex).length);
             positions.put(frame.meshPositions().get(meshIndex)).flip();
@@ -196,8 +213,285 @@ final class LwjglBattleSceneRenderer {
         glEnd();
     }
 
+    private boolean renderSkeletalEquipment(
+            BattleActor player,
+            List<BattlePresentationDirector.ActionSnapshot> actions
+    ) {
+        FirstPersonAnimationRuntime.ResolvedRig resolved =
+                FirstPersonAnimationRuntime.resolve(player);
+        if (!resolved.usable()) return false;
+        FirstPersonCombatLibrary.RigDefinition rig = resolved.content().rig();
+        InventorySystem.Inventory inventory = player.getSourcePlayer().getInventory();
+        InventorySystem.Item weapon = inventory.getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
+        InventorySystem.Item shield = inventory.getEquippedItem(InventorySystem.EquipmentSlot.SHIELD);
+        InventorySystem.Item chest = inventory.getEquippedItem(InventorySystem.EquipmentSlot.CHEST);
+        FirstPersonCombatLibrary.ItemProfile weaponProfile = resolved.itemProfile();
+        FirstPersonCombatLibrary.ItemProfile shieldProfile = resolved.content().itemProfile(shield);
+        FirstPersonCombatLibrary.ItemProfile armorProfile = resolved.content().itemProfile(chest);
+
+        // Authored legacy camera-space models stay on the proven fallback path
+        // until a socket/attachment profile is created for them.
+        if (weapon != null && weapon.hasFirstPersonModel() && weaponProfile == null) return false;
+        if (shield != null && shield.hasFirstPersonModel() && shieldProfile == null) return false;
+        if (chest != null && chest.hasFirstPersonModel()
+                && (armorProfile == null
+                || (armorProfile.leftArmorPath().isBlank()
+                && armorProfile.rightArmorPath().isBlank()))) return false;
+
+        CharacterModelDefinition.AnimationSlot slot = firstPersonSlot(player, actions);
+        if (!resolved.model().hasClip(slot)) {
+            warnFirstPersonFallback("clip:" + slot,
+                    "First-person " + slot.displayName()
+                            + " clip is unavailable; using procedural equipment animation.");
+            return false;
+        }
+        double progress = firstPersonProgress(player, actions, slot);
+        FirstPersonAnimationView animation = firstPersonAnimationView(player, slot, progress);
+
+        LimbItem leftLimb = player.getSourcePlayer().getEquippedLimb(LimbSlot.LEFT_ARM);
+        LimbItem rightLimb = player.getSourcePlayer().getEquippedLimb(LimbSlot.RIGHT_ARM);
+        String leftPath = leftLimb != null && leftLimb.hasFirstPersonModel()
+                ? leftLimb.getFirstPersonModelPath() : rig.defaultLeftArmPath();
+        String rightPath = rightLimb != null && rightLimb.hasFirstPersonModel()
+                ? rightLimb.getFirstPersonModelPath() : rig.defaultRightArmPath();
+        if (leftPath.isBlank() && rightPath.isBlank()) {
+            warnFirstPersonFallback("arms",
+                    "First-person rig has no default or grafted arm attachments; using procedural hands.");
+            return false;
+        }
+
+        LwjglSkinnedModel leftArm = attachmentModel(resolved, leftPath);
+        LwjglSkinnedModel rightArm = attachmentModel(resolved, rightPath);
+        LwjglSkinnedModel leftArmor = attachmentModel(
+                resolved, armorProfile == null ? "" : armorProfile.leftArmorPath());
+        LwjglSkinnedModel rightArmor = attachmentModel(
+                resolved, armorProfile == null ? "" : armorProfile.rightArmorPath());
+        if ((leftArm == null && !leftPath.isBlank()) || (rightArm == null && !rightPath.isBlank())) {
+            warnFirstPersonFallback("arm-signature",
+                    "A first-person arm attachment is missing or has an incompatible skeleton; "
+                            + "using procedural hands.");
+            return false;
+        }
+
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        applyRigRoot(rig);
+
+        FirstPersonCombatLibrary.ArmCoverage leftCoverage = armorProfile == null
+                ? FirstPersonCombatLibrary.ArmCoverage.OVERLAY : armorProfile.leftCoverage();
+        FirstPersonCombatLibrary.ArmCoverage rightCoverage = armorProfile == null
+                ? FirstPersonCombatLibrary.ArmCoverage.OVERLAY : armorProfile.rightCoverage();
+        drawArmAttachment(leftArm, animation, FirstPersonCombatLibrary.WieldHand.LEFT, leftCoverage);
+        drawArmAttachment(rightArm, animation, FirstPersonCombatLibrary.WieldHand.RIGHT, rightCoverage);
+        drawArmAttachment(leftArmor, animation, FirstPersonCombatLibrary.WieldHand.LEFT,
+                FirstPersonCombatLibrary.ArmCoverage.OVERLAY);
+        drawArmAttachment(rightArmor, animation, FirstPersonCombatLibrary.WieldHand.RIGHT,
+                FirstPersonCombatLibrary.ArmCoverage.OVERLAY);
+
+        FirstPersonCombatLibrary.WieldHand weaponHand = resolved.wieldHand();
+        if (weapon != null && weapon.hasFirstPersonModel()) {
+            drawSocketEquipment(weapon, weaponProfile.socketTransform(), resolved.model(),
+                    rig.handBone(weaponHand), animation);
+        }
+        if (shield != null && shield.hasFirstPersonModel()
+                && (weapon == null || !weapon.isTwoHanded())) {
+            FirstPersonCombatLibrary.WieldHand shieldHand = weaponHand.opposite();
+            drawSocketEquipment(shield, shieldProfile.socketTransform(), resolved.model(),
+                    rig.handBone(shieldHand), animation);
+        }
+        glEnable(GL_TEXTURE_2D);
+        glEnable(GL_DEPTH_TEST);
+        glColor4f(1, 1, 1, 1);
+        return true;
+    }
+
+    private LwjglSkinnedModel attachmentModel(
+            FirstPersonAnimationRuntime.ResolvedRig resolved,
+            String path
+    ) {
+        if (path == null || path.isBlank()) return null;
+        CharacterModelDefinition attachmentDefinition = new CharacterModelDefinition(
+                path,
+                resolved.content().rig().rigId(),
+                1.0,
+                0.0,
+                0.0,
+                resolved.modelDefinition().animationBindings());
+        LwjglSkinnedModel attachment = getSkinnedModel(attachmentDefinition);
+        if (attachment == null
+                || !attachment.skeletonSignature().equals(resolved.model().skeletonSignature())) {
+            return null;
+        }
+        return attachment;
+    }
+
+    private void warnFirstPersonFallback(String key, String message) {
+        if (warnedFirstPersonFallbacks.add(key)) LOGGER.warning(message);
+    }
+
+    private void applyRigRoot(FirstPersonCombatLibrary.RigDefinition rig) {
+        glTranslated(rig.positionX(), rig.positionY(), rig.positionZ());
+        glRotated(rig.rotationX(), 1, 0, 0);
+        glRotated(rig.rotationY(), 0, 1, 0);
+        glRotated(rig.rotationZ(), 0, 0, 1);
+        glScaled(rig.scale(), rig.scale(), rig.scale());
+    }
+
+    private void drawArmAttachment(
+            LwjglSkinnedModel model,
+            FirstPersonAnimationView animation,
+            FirstPersonCombatLibrary.WieldHand side,
+            FirstPersonCombatLibrary.ArmCoverage coverage
+    ) {
+        if (model == null || coverage == FirstPersonCombatLibrary.ArmCoverage.HIDE_FULL_ARM) return;
+        LwjglSkinnedModel.Frame frame = model.skinNormalized(animation.slot(), animation.progress());
+        if (animation.blend() < 1.0 && animation.fromSlot() != null) {
+            LwjglSkinnedModel.Frame from = model.skinNormalized(
+                    animation.fromSlot(), animation.fromProgress());
+            frame = blendFrames(from, frame, animation.blend());
+        }
+        drawSkinnedModel(model, frame, mesh -> regionVisible(mesh.name(), side, coverage));
+    }
+
+    private LwjglSkinnedModel.Frame blendFrames(
+            LwjglSkinnedModel.Frame from,
+            LwjglSkinnedModel.Frame to,
+            double amount
+    ) {
+        float blend = (float) smooth(amount);
+        List<float[]> positions = new ArrayList<>(to.meshPositions().size());
+        for (int mesh = 0; mesh < to.meshPositions().size(); mesh++) {
+            float[] target = to.meshPositions().get(mesh);
+            float[] source = mesh < from.meshPositions().size()
+                    ? from.meshPositions().get(mesh) : target;
+            float[] output = target.clone();
+            for (int index = 0; index < output.length && index < source.length; index++) {
+                output[index] = source[index] + (target[index] - source[index]) * blend;
+            }
+            positions.add(output);
+        }
+        return new LwjglSkinnedModel.Frame(List.copyOf(positions), to.normalizedProgress());
+    }
+
+    private boolean regionVisible(
+            String meshName,
+            FirstPersonCombatLibrary.WieldHand side,
+            FirstPersonCombatLibrary.ArmCoverage coverage
+    ) {
+        if (coverage == null || coverage == FirstPersonCombatLibrary.ArmCoverage.OVERLAY) return true;
+        String name = meshName == null ? "" : meshName.toLowerCase(Locale.ROOT);
+        String suffix = side == FirstPersonCombatLibrary.WieldHand.LEFT ? "l" : "r";
+        boolean correctSide = name.contains("." + suffix) || name.contains("_" + suffix)
+                || name.endsWith(suffix);
+        if (!correctSide) return true;
+        boolean hand = name.contains("hand");
+        boolean forearm = name.contains("forearm");
+        return switch (coverage) {
+            case OVERLAY -> true;
+            case HIDE_HAND -> !hand;
+            case HIDE_FOREARM -> !hand && !forearm;
+            case HIDE_FULL_ARM -> false;
+        };
+    }
+
+    private void drawSocketEquipment(
+            InventorySystem.Item item,
+            EquipmentViewModelProfile transform,
+            LwjglSkinnedModel rigModel,
+            String handBone,
+            FirstPersonAnimationView animation
+    ) {
+        if (item == null || transform == null || rigModel == null) return;
+        LwjglStaticModel model = getStaticModel(item.getFirstPersonModelPath());
+        Matrix4f socket = rigModel.nodeTransformNormalized(
+                animation.slot(), animation.progress(), handBone);
+        if (socket != null && animation.blend() < 1.0 && animation.fromSlot() != null) {
+            Matrix4f from = rigModel.nodeTransformNormalized(
+                    animation.fromSlot(), animation.fromProgress(), handBone);
+            if (from != null) socket = from.lerp(socket, (float) smooth(animation.blend()),
+                    new Matrix4f());
+        }
+        if (model == null || socket == null) return;
+        FloatBuffer matrix = BufferUtils.createFloatBuffer(16);
+        socket.get(matrix);
+        glPushMatrix();
+        glMultMatrixf(matrix);
+        glTranslated(transform.positionX(), transform.positionY(), transform.positionZ());
+        glRotated(transform.rotationX(), 1, 0, 0);
+        glRotated(transform.rotationY(), 0, 1, 0);
+        glRotated(transform.rotationZ(), 0, 0, 1);
+        double scale = transform.normalizedHeight();
+        glScaled(scale, scale, scale);
+        for (LwjglStaticModel.Mesh mesh : model.meshes()) drawStaticMesh(mesh);
+        glPopMatrix();
+    }
+
+    private CharacterModelDefinition.AnimationSlot firstPersonSlot(
+            BattleActor player,
+            List<BattlePresentationDirector.ActionSnapshot> actions
+    ) {
+        for (BattlePresentationDirector.ActionSnapshot action : actions) {
+            if (action.attacker() == player) {
+                return FirstPersonAnimationRuntime.characterSlot(action.actionType());
+            }
+            for (BattlePresentationDirector.TargetReaction target : action.targets()) {
+                if (target.target() != player) continue;
+                return switch (target.reaction()) {
+                    case BLOCK -> CharacterModelDefinition.AnimationSlot.BLOCK;
+                    case DODGE -> CharacterModelDefinition.AnimationSlot.DODGE;
+                    case HIT -> CharacterModelDefinition.AnimationSlot.HIT;
+                    case NONE -> CharacterModelDefinition.AnimationSlot.IDLE;
+                };
+            }
+        }
+        return CharacterModelDefinition.AnimationSlot.IDLE;
+    }
+
+    private double firstPersonProgress(
+            BattleActor player,
+            List<BattlePresentationDirector.ActionSnapshot> actions,
+            CharacterModelDefinition.AnimationSlot slot
+    ) {
+        for (BattlePresentationDirector.ActionSnapshot action : actions) {
+            if (action.attacker() == player
+                    || action.targets().stream().anyMatch(target -> target.target() == player)) {
+                return action.overallProgress();
+            }
+        }
+        return slot == CharacterModelDefinition.AnimationSlot.IDLE
+                ? (System.nanoTime() / 1_000_000_000.0) % 1.0 : 0.0;
+    }
+
+    private FirstPersonAnimationView firstPersonAnimationView(
+            BattleActor player,
+            CharacterModelDefinition.AnimationSlot requestedSlot,
+            double requestedProgress
+    ) {
+        long now = System.nanoTime();
+        FirstPersonTransition state = firstPersonTransitions.computeIfAbsent(
+                player, ignored -> new FirstPersonTransition(requestedSlot, requestedProgress));
+        if (state.slot != requestedSlot) {
+            state.fromSlot = state.slot;
+            state.fromProgress = state.progress;
+            state.slot = requestedSlot;
+            state.startedNanos = now;
+        }
+        state.progress = requestedProgress;
+        double blend = state.startedNanos == 0
+                ? 1.0
+                : Math.min(1.0, (now - state.startedNanos) / 120_000_000.0);
+        if (blend >= 1.0) {
+            state.fromSlot = null;
+            state.startedNanos = 0;
+        }
+        return new FirstPersonAnimationView(
+                state.slot, state.progress, state.fromSlot, state.fromProgress, blend);
+    }
+
     private void renderEquipment(BattleActor player, List<BattlePresentationDirector.ActionSnapshot> actions) {
         if (player == null || player.getSourcePlayer() == null) return;
+        if (renderSkeletalEquipment(player, actions)) return;
         InventorySystem.Inventory inventory = player.getSourcePlayer().getInventory();
         InventorySystem.Item weapon = inventory.getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
         InventorySystem.Item shield = inventory.getEquippedItem(InventorySystem.EquipmentSlot.SHIELD);
@@ -455,11 +749,7 @@ final class LwjglBattleSceneRenderer {
     private static double animationProgress(BattleActor actor, List<BattlePresentationDirector.ActionSnapshot> actions) {
         for (BattlePresentationDirector.ActionSnapshot action : actions) {
             if (action.attacker() == actor || action.targets().stream().anyMatch(target -> target.target() == actor)) {
-                return switch (action.phase()) {
-                    case WINDUP -> action.progress() * 0.55;
-                    case IMPACT -> 0.55 + action.progress() * 0.15;
-                    case RECOVERY -> 0.70 + action.progress() * 0.30;
-                };
+                return action.overallProgress();
             }
         }
         return (System.nanoTime() / 1_000_000_000.0) % 1.0;
@@ -523,8 +813,33 @@ final class LwjglBattleSceneRenderer {
 
     void shutdown() {
         for (MeshBuffers mesh : buffers.values()) { glDeleteBuffers(mesh.positionVbo()); glDeleteBuffers(mesh.uvVbo()); glDeleteBuffers(mesh.indexBuffer()); }
-        buffers.clear(); skinnedModels.clear(); staticModels.clear();
+        buffers.clear(); skinnedModels.clear(); staticModels.clear(); firstPersonTransitions.clear();
+        warnedFirstPersonFallbacks.clear();
     }
+
+    private static final class FirstPersonTransition {
+        private CharacterModelDefinition.AnimationSlot slot;
+        private double progress;
+        private CharacterModelDefinition.AnimationSlot fromSlot;
+        private double fromProgress;
+        private long startedNanos;
+
+        private FirstPersonTransition(
+                CharacterModelDefinition.AnimationSlot slot,
+                double progress
+        ) {
+            this.slot = slot;
+            this.progress = progress;
+        }
+    }
+
+    private record FirstPersonAnimationView(
+            CharacterModelDefinition.AnimationSlot slot,
+            double progress,
+            CharacterModelDefinition.AnimationSlot fromSlot,
+            double fromProgress,
+            double blend
+    ) { }
 
     private record Position(double x, double y, double z) { }
     private record MeshBuffers(int positionVbo, int uvVbo, int indexBuffer) { }

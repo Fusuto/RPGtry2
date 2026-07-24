@@ -8,6 +8,8 @@ import org.main.engine.DungeonRenderContext;
 import org.main.engine.EnvironmentTheme;
 import org.main.engine.MapEntity;
 import org.main.engine.MapPaintData;
+import org.main.engine.TerrainEdgeKind;
+import org.main.engine.TerrainGeometry;
 import org.main.engine.TextureManager;
 
 import java.awt.image.BufferedImage;
@@ -42,6 +44,8 @@ final class LwjglDungeonSceneBuilder {
     };
     private final TextureManager textureManager;
     private List<EnvironmentTheme> environmentThemes;
+    private String cachedCliffTexturePath = "";
+    private BufferedImage cachedCliffTexture;
 
     LwjglDungeonSceneBuilder(TextureManager textureManager, List<EnvironmentTheme> environmentThemes) {
         this.textureManager = textureManager;
@@ -87,18 +91,21 @@ final class LwjglDungeonSceneBuilder {
                 }
 
                 Library.TileType tileType = map.getTile(x, y);
-                double tileHeight = tileHeightFor(map, x, y, wallHeight);
+                double baseY = tileType.isWallLike()
+                        ? wallBaseYForTile(map, x, y)
+                        : TerrainGeometry.groundYAtWorld(map, x + 0.5, y + 0.5);
+                double topY = baseY + visualHeightForTile(map, tileType, x, y, wallHeight);
                 visibleTiles++;
+                wallQuads += addCliffFaces(quads, context, x, y);
                 if (!tileType.isWallLike()) {
-                    quads.add(floorQuad(context, tileType, x, y));
-                    floorQuads++;
-                    TexturedQuad roof = roofQuad(context, x, y, tileHeight);
+                    floorQuads += addFloorQuads(quads, context, tileType, x, y);
+                    TexturedQuad roof = roofQuad(context, x, y, topY);
                     if (roof != null) {
                         quads.add(roof);
-                        roofTiles.add(roofTile(context, x, y, tileHeight, roof.texture()));
+                        roofTiles.add(roofTile(context, x, y, topY, roof.texture()));
                         roofQuads++;
                     }
-                    TexturedQuad openDoor = openDoorQuad(context, tileType, x, y, tileHeight);
+                    TexturedQuad openDoor = openDoorQuad(context, tileType, x, y, baseY, wallHeight);
                     if (openDoor != null) {
                         quads.add(openDoor);
                         wallQuads++;
@@ -106,14 +113,14 @@ final class LwjglDungeonSceneBuilder {
                     continue;
                 }
 
-                wallQuads += addWallFace(quads, context, tileType, x, y, Face.NORTH, tileHeight, neighborWallHeight(map, x, y - 1, wallHeight));
-                wallQuads += addWallFace(quads, context, tileType, x, y, Face.EAST, tileHeight, neighborWallHeight(map, x + 1, y, wallHeight));
-                wallQuads += addWallFace(quads, context, tileType, x, y, Face.SOUTH, tileHeight, neighborWallHeight(map, x, y + 1, wallHeight));
-                wallQuads += addWallFace(quads, context, tileType, x, y, Face.WEST, tileHeight, neighborWallHeight(map, x - 1, y, wallHeight));
-                TexturedQuad roof = roofQuad(context, x, y, tileHeight);
+                wallQuads += addWallFace(quads, context, tileType, x, y, Face.NORTH, baseY, topY, neighborWallTopY(map, x, y - 1, wallHeight), exposedFaceBottomY(map, x, y, Face.NORTH));
+                wallQuads += addWallFace(quads, context, tileType, x, y, Face.EAST, baseY, topY, neighborWallTopY(map, x + 1, y, wallHeight), exposedFaceBottomY(map, x, y, Face.EAST));
+                wallQuads += addWallFace(quads, context, tileType, x, y, Face.SOUTH, baseY, topY, neighborWallTopY(map, x, y + 1, wallHeight), exposedFaceBottomY(map, x, y, Face.SOUTH));
+                wallQuads += addWallFace(quads, context, tileType, x, y, Face.WEST, baseY, topY, neighborWallTopY(map, x - 1, y, wallHeight), exposedFaceBottomY(map, x, y, Face.WEST));
+                TexturedQuad roof = roofQuad(context, x, y, topY);
                 if (roof != null) {
                     quads.add(roof);
-                    roofTiles.add(roofTile(context, x, y, tileHeight, roof.texture()));
+                    roofTiles.add(roofTile(context, x, y, topY, roof.texture()));
                     roofQuads++;
                 }
             }
@@ -158,7 +165,7 @@ final class LwjglDungeonSceneBuilder {
         return new ModelInstance(
                 entity.getStaticModelPath(),
                 entity.getRenderX() + 0.5,
-                0.0,
+                TerrainGeometry.groundYAtWorld(context.map(), entity.getRenderX() + 0.5, entity.getRenderY() + 0.5),
                 entity.getRenderY() + 0.5,
                 spriteHeightFor(entity),
                 fallbackSprite,
@@ -316,15 +323,57 @@ final class LwjglDungeonSceneBuilder {
     }
 
     private TexturedQuad triangleQuad(BufferedImage texture, Vertex apex, Vertex baseA, Vertex baseB) {
-        return new TexturedQuad(texture, QuadKind.ROOF, apex, baseA, baseB, baseB);
+        return triangleQuad(texture, QuadKind.ROOF, apex, baseA, baseB);
     }
 
-    private double tileHeightFor(DungeonMap map, int x, int y, double wallHeight) {
-        return Math.max(0.1, wallHeight * map.getHeightMultiplier(x, y));
+    private TexturedQuad triangleQuad(BufferedImage texture, QuadKind kind, Vertex apex, Vertex baseA, Vertex baseB) {
+        return new TexturedQuad(texture, kind, apex, baseA, baseB, baseB);
     }
 
-    private double neighborWallHeight(DungeonMap map, int x, int y, double wallHeight) {
-        return map.isWallLike(x, y) ? tileHeightFor(map, x, y, wallHeight) : 0.0;
+    private double visualHeightForTile(DungeonMap map, Library.TileType tileType, int x, int y, double wallHeight) {
+        if (tileType != null && tileType.isWallLike()) {
+            return Math.max(0.1, wallHeight * map.getHeightMultiplier(x, y));
+        }
+        return wallHeight;
+    }
+
+    private double wallBaseYForTile(DungeonMap map, int x, int y) {
+        double baseY = TerrainGeometry.groundY(map, x, y);
+        baseY = Math.min(baseY, exposedNeighborGroundY(map, x, y, x, y - 1));
+        baseY = Math.min(baseY, exposedNeighborGroundY(map, x, y, x + 1, y));
+        baseY = Math.min(baseY, exposedNeighborGroundY(map, x, y, x, y + 1));
+        baseY = Math.min(baseY, exposedNeighborGroundY(map, x, y, x - 1, y));
+        return baseY;
+    }
+
+    private double exposedNeighborGroundY(DungeonMap map, int wallX, int wallY, int neighborX, int neighborY) {
+        if (map.isOutOfBounds(neighborX, neighborY) || map.isWallLike(neighborX, neighborY)) {
+            return TerrainGeometry.groundY(map, wallX, wallY);
+        }
+        return TerrainGeometry.groundYAtWorld(map, neighborX + 0.5, neighborY + 0.5);
+    }
+
+    private double neighborWallTopY(DungeonMap map, int x, int y, double wallHeight) {
+        return map.isWallLike(x, y)
+                ? wallBaseYForTile(map, x, y) + visualHeightForTile(map, map.getTile(x, y), x, y, wallHeight)
+                : Double.NaN;
+    }
+
+    private double exposedFaceBottomY(DungeonMap map, int x, int y, Face face) {
+        int neighborX = switch (face) {
+            case EAST -> x + 1;
+            case WEST -> x - 1;
+            default -> x;
+        };
+        int neighborY = switch (face) {
+            case NORTH -> y - 1;
+            case SOUTH -> y + 1;
+            default -> y;
+        };
+        if (map.isOutOfBounds(neighborX, neighborY) || map.isWallLike(neighborX, neighborY)) {
+            return wallBaseYForTile(map, x, y);
+        }
+        return Math.min(wallBaseYForTile(map, x, y), TerrainGeometry.groundYAtWorld(map, neighborX + 0.5, neighborY + 0.5));
     }
 
     private int addWallFace(
@@ -334,18 +383,20 @@ final class LwjglDungeonSceneBuilder {
             int x,
             int y,
             Face face,
+            double baseY,
             double topY,
-            double neighborTopY
+            double neighborTopY,
+            double exposedBottomY
     ) {
-        double bottomY = Math.max(0.0, neighborTopY);
+        double bottomY = Double.isNaN(neighborTopY) ? exposedBottomY : Math.max(baseY, neighborTopY);
         if (topY <= bottomY + 0.001) {
             return 0;
         }
 
         quads.add(wallQuad(context, tileType, x, y, face, bottomY, topY));
         int added = 1;
-        TexturedQuad doorOverlay = bottomY <= 0.001
-                ? doorOverlayQuad(context, tileType, x, y, face, topY)
+        TexturedQuad doorOverlay = Math.abs(bottomY - baseY) <= 0.001
+                ? doorOverlayQuad(context, tileType, x, y, face, baseY, topY - baseY)
                 : null;
         if (doorOverlay != null) {
             quads.add(doorOverlay);
@@ -354,15 +405,89 @@ final class LwjglDungeonSceneBuilder {
         return added;
     }
 
-    private TexturedQuad floorQuad(DungeonRenderContext context, Library.TileType tileType, int x, int y) {
-        return new TexturedQuad(
-                floorTextureFor(context, tileType, x, y),
-                QuadKind.FLOOR,
-                new Vertex(x, 0.0, y, 0.0, 1.0),
-                new Vertex(x + 1.0, 0.0, y, 1.0, 1.0),
-                new Vertex(x + 1.0, 0.0, y + 1.0, 1.0, 0.0),
-                new Vertex(x, 0.0, y + 1.0, 0.0, 0.0)
-        );
+    private int addCliffFaces(List<TexturedQuad> quads, DungeonRenderContext context, int x, int y) {
+        if (context.map().isWallLike(x, y)) {
+            return 0;
+        }
+        int added = 0;
+        added += addCliffFace(quads, context, x, y, Face.NORTH, x, y - 1);
+        added += addCliffFace(quads, context, x, y, Face.EAST, x + 1, y);
+        added += addCliffFace(quads, context, x, y, Face.SOUTH, x, y + 1);
+        added += addCliffFace(quads, context, x, y, Face.WEST, x - 1, y);
+        return added;
+    }
+
+    private int addCliffFace(
+            List<TexturedQuad> quads,
+            DungeonRenderContext context,
+            int x,
+            int y,
+            Face face,
+            int neighborX,
+            int neighborY
+    ) {
+        DungeonMap map = context.map();
+        if (map.isOutOfBounds(neighborX, neighborY)
+                || map.isWallLike(neighborX, neighborY)
+                || TerrainGeometry.edgeKind(map, x, y, neighborX, neighborY) != TerrainEdgeKind.CLIFF
+                || map.getHeightLevel(x, y) <= map.getHeightLevel(neighborX, neighborY)) {
+            return 0;
+        }
+
+        BufferedImage texture = cliffTextureFor(context, face, x, y);
+        TexturedQuad cliff = switch (face) {
+            case NORTH -> new TexturedQuad(
+                    texture,
+                    QuadKind.CLIFF,
+                    new Vertex(x, TerrainGeometry.cornerGroundY(map, x, y, TerrainGeometry.Corner.NORTH_WEST), y, 0.0, 1.0),
+                    new Vertex(x + 1.0, TerrainGeometry.cornerGroundY(map, x, y, TerrainGeometry.Corner.NORTH_EAST), y, 1.0, 1.0),
+                    new Vertex(x + 1.0, TerrainGeometry.cornerGroundY(map, neighborX, neighborY, TerrainGeometry.Corner.SOUTH_EAST), y, 1.0, 0.0),
+                    new Vertex(x, TerrainGeometry.cornerGroundY(map, neighborX, neighborY, TerrainGeometry.Corner.SOUTH_WEST), y, 0.0, 0.0)
+            );
+            case EAST -> new TexturedQuad(
+                    texture,
+                    QuadKind.CLIFF,
+                    new Vertex(x + 1.0, TerrainGeometry.cornerGroundY(map, x, y, TerrainGeometry.Corner.NORTH_EAST), y, 0.0, 1.0),
+                    new Vertex(x + 1.0, TerrainGeometry.cornerGroundY(map, x, y, TerrainGeometry.Corner.SOUTH_EAST), y + 1.0, 1.0, 1.0),
+                    new Vertex(x + 1.0, TerrainGeometry.cornerGroundY(map, neighborX, neighborY, TerrainGeometry.Corner.SOUTH_WEST), y + 1.0, 1.0, 0.0),
+                    new Vertex(x + 1.0, TerrainGeometry.cornerGroundY(map, neighborX, neighborY, TerrainGeometry.Corner.NORTH_WEST), y, 0.0, 0.0)
+            );
+            case SOUTH -> new TexturedQuad(
+                    texture,
+                    QuadKind.CLIFF,
+                    new Vertex(x + 1.0, TerrainGeometry.cornerGroundY(map, x, y, TerrainGeometry.Corner.SOUTH_EAST), y + 1.0, 0.0, 1.0),
+                    new Vertex(x, TerrainGeometry.cornerGroundY(map, x, y, TerrainGeometry.Corner.SOUTH_WEST), y + 1.0, 1.0, 1.0),
+                    new Vertex(x, TerrainGeometry.cornerGroundY(map, neighborX, neighborY, TerrainGeometry.Corner.NORTH_WEST), y + 1.0, 1.0, 0.0),
+                    new Vertex(x + 1.0, TerrainGeometry.cornerGroundY(map, neighborX, neighborY, TerrainGeometry.Corner.NORTH_EAST), y + 1.0, 0.0, 0.0)
+            );
+            case WEST -> new TexturedQuad(
+                    texture,
+                    QuadKind.CLIFF,
+                    new Vertex(x, TerrainGeometry.cornerGroundY(map, x, y, TerrainGeometry.Corner.SOUTH_WEST), y + 1.0, 0.0, 1.0),
+                    new Vertex(x, TerrainGeometry.cornerGroundY(map, x, y, TerrainGeometry.Corner.NORTH_WEST), y, 1.0, 1.0),
+                    new Vertex(x, TerrainGeometry.cornerGroundY(map, neighborX, neighborY, TerrainGeometry.Corner.NORTH_EAST), y, 1.0, 0.0),
+                    new Vertex(x, TerrainGeometry.cornerGroundY(map, neighborX, neighborY, TerrainGeometry.Corner.SOUTH_EAST), y + 1.0, 0.0, 0.0)
+            );
+            default -> null;
+        };
+
+        if (cliff != null) {
+            quads.add(cliff);
+            return 1;
+        }
+        return 0;
+    }
+
+    private int addFloorQuads(List<TexturedQuad> quads, DungeonRenderContext context, Library.TileType tileType, int x, int y) {
+        BufferedImage texture = floorTextureFor(context, tileType, x, y);
+        Vertex northWest = new Vertex(x, TerrainGeometry.cornerGroundY(context.map(), x, y, TerrainGeometry.Corner.NORTH_WEST), y, 0.0, 1.0);
+        Vertex northEast = new Vertex(x + 1.0, TerrainGeometry.cornerGroundY(context.map(), x, y, TerrainGeometry.Corner.NORTH_EAST), y, 1.0, 1.0);
+        Vertex southEast = new Vertex(x + 1.0, TerrainGeometry.cornerGroundY(context.map(), x, y, TerrainGeometry.Corner.SOUTH_EAST), y + 1.0, 1.0, 0.0);
+        Vertex southWest = new Vertex(x, TerrainGeometry.cornerGroundY(context.map(), x, y, TerrainGeometry.Corner.SOUTH_WEST), y + 1.0, 0.0, 0.0);
+
+        quads.add(triangleQuad(texture, QuadKind.FLOOR, northWest, northEast, southEast));
+        quads.add(triangleQuad(texture, QuadKind.FLOOR, northWest, southEast, southWest));
+        return 2;
     }
 
     private BufferedImage floorTextureFor(DungeonRenderContext context, Library.TileType tileType, int x, int y) {
@@ -464,6 +589,7 @@ final class LwjglDungeonSceneBuilder {
             int x,
             int y,
             Face face,
+            double baseY,
             double wallHeight
     ) {
         if (!isClosedDoor(tileType)) {
@@ -477,8 +603,8 @@ final class LwjglDungeonSceneBuilder {
 
         double left = DOOR_OVERLAY_LEFT;
         double right = DOOR_OVERLAY_RIGHT;
-        double topY = wallHeight * (1.0 - DOOR_OVERLAY_TOP);
-        double bottomY = wallHeight * (1.0 - DOOR_OVERLAY_BOTTOM);
+        double topY = baseY + wallHeight * (1.0 - DOOR_OVERLAY_TOP);
+        double bottomY = baseY + wallHeight * (1.0 - DOOR_OVERLAY_BOTTOM);
 
         return switch (face) {
             case NORTH -> new TexturedQuad(
@@ -522,6 +648,7 @@ final class LwjglDungeonSceneBuilder {
             Library.TileType tileType,
             int x,
             int y,
+            double baseY,
             double wallHeight
     ) {
         if (!isOpenDoor(tileType)) {
@@ -533,8 +660,8 @@ final class LwjglDungeonSceneBuilder {
             return null;
         }
 
-        double bottomY = wallHeight * OPEN_DOOR_BOTTOM;
-        double topY = wallHeight * OPEN_DOOR_TOP;
+        double bottomY = baseY + wallHeight * OPEN_DOOR_BOTTOM;
+        double topY = baseY + wallHeight * OPEN_DOOR_TOP;
         boolean eastWestDoorway = context.map().isWallLike(x, y - 1) || context.map().isWallLike(x, y + 1);
         if (eastWestDoorway) {
             double z = y + OPEN_DOOR_EDGE_OFFSET;
@@ -591,15 +718,17 @@ final class LwjglDungeonSceneBuilder {
         RightVector right = rightVector(cameraYawDegrees);
         double centerX = entity.getX() + 0.5;
         double centerZ = entity.getY() + 0.5;
+        double baseY = TerrainGeometry.groundYAtWorld(context.map(), centerX, centerZ);
+        double topY = baseY + height;
         double halfWidth = width / 2.0;
 
         return new TexturedQuad(
                 image,
                 QuadKind.SPRITE,
-                new Vertex(centerX - right.x() * halfWidth, height, centerZ - right.z() * halfWidth, 0.0, 1.0),
-                new Vertex(centerX + right.x() * halfWidth, height, centerZ + right.z() * halfWidth, 1.0, 1.0),
-                new Vertex(centerX + right.x() * halfWidth, 0.0, centerZ + right.z() * halfWidth, 1.0, 0.0),
-                new Vertex(centerX - right.x() * halfWidth, 0.0, centerZ - right.z() * halfWidth, 0.0, 0.0)
+                new Vertex(centerX - right.x() * halfWidth, topY, centerZ - right.z() * halfWidth, 0.0, 1.0),
+                new Vertex(centerX + right.x() * halfWidth, topY, centerZ + right.z() * halfWidth, 1.0, 1.0),
+                new Vertex(centerX + right.x() * halfWidth, baseY, centerZ + right.z() * halfWidth, 1.0, 0.0),
+                new Vertex(centerX - right.x() * halfWidth, baseY, centerZ - right.z() * halfWidth, 0.0, 0.0)
         );
     }
 
@@ -670,6 +799,32 @@ final class LwjglDungeonSceneBuilder {
 
     private BufferedImage roofTextureFor(DungeonRenderContext context, int worldX, int worldY) {
         return brushTextureFor(context.map(), MapPaintData.Layer.ROOF, Face.FLOOR, worldX, worldY);
+    }
+
+    private BufferedImage cliffTextureFor(DungeonRenderContext context, Face face, int worldX, int worldY) {
+        BufferedImage brushTexture = brushTextureFor(context.map(), MapPaintData.Layer.WALL, face, worldX, worldY);
+        if (brushTexture != null) {
+            return brushTexture;
+        }
+
+        BufferedImage cliffTexture = defaultCliffTexture();
+        if (cliffTexture != null) {
+            return cliffTexture;
+        }
+
+        return textureFor(context, Library.TileType.WALL, face, worldX, worldY);
+    }
+
+    private BufferedImage defaultCliffTexture() {
+        String path = TerrainGeometry.cliffTexturePath();
+        if (path.isBlank()) {
+            return null;
+        }
+        if (!path.equals(cachedCliffTexturePath)) {
+            cachedCliffTexturePath = path;
+            cachedCliffTexture = AssetLoader.loadImage(path);
+        }
+        return cachedCliffTexture;
     }
 
     private boolean isClosedDoor(Library.TileType tileType) {
@@ -785,6 +940,7 @@ final class LwjglDungeonSceneBuilder {
 
     enum QuadKind {
         FLOOR,
+        CLIFF,
         WALL,
         ROOF,
         SPRITE

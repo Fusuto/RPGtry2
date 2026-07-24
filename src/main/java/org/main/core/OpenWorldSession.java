@@ -8,6 +8,8 @@ import org.main.content.WorldManifestLibrary.WorldManifest;
 import org.main.engine.DungeonMap;
 import org.main.engine.EnvironmentTheme;
 import org.main.engine.MapEntity;
+import org.main.engine.MapLight;
+import org.main.engine.MapLightingSettings;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapPaintData;
 import org.main.engine.MobAreaData;
@@ -391,8 +393,10 @@ public final class OpenWorldSession {
         Set<String> discovered = new HashSet<>();
         Set<String> removed = new HashSet<>();
         List<MapDesignLibrary.MapTrigger> triggers = new ArrayList<>();
+        List<MapLight> lights = new ArrayList<>();
         Set<String> fired = new HashSet<>();
         ContentAccumulator content = new ContentAccumulator();
+        MapLightingSettings lightingSettings = MapLightingSettings.defaultSettings();
         loadedCoordinates.clear();
 
         for (int dy = -WINDOW_RADIUS; dy <= WINDOW_RADIUS; dy++) {
@@ -407,6 +411,9 @@ public final class OpenWorldSession {
                 int offsetY = (dy + WINDOW_RADIUS) * manifest.chunkHeight();
                 int primaryIndex = themeIndex(environmentThemes, chunk.design.primaryTheme());
                 int alternateIndex = themeIndex(environmentThemes, chunk.design.alternateTheme());
+                if (coordinate.equals(center)) {
+                    lightingSettings = chunk.map.getLightingSettings();
+                }
 
                 for (int y = 0; y < manifest.chunkHeight(); y++) {
                     for (int x = 0; x < manifest.chunkWidth(); x++) {
@@ -439,6 +446,12 @@ public final class OpenWorldSession {
                 translateEnemyRespawns(coordinate, chunk.enemyRespawns, offsetX, offsetY, enemyRespawns);
                 translateCoordinateSet(chunk.discoveredTiles, offsetX, offsetY, discovered);
                 translateCoordinateSet(chunk.removedEntityKeys, offsetX, offsetY, removed);
+                for (MapLight light : chunk.map.getLightsView()) {
+                    lights.add(light.translated(
+                            offsetX,
+                            offsetY,
+                            "chunk[" + coordinate.x() + "," + coordinate.y() + "]::"));
+                }
                 for (MapDesignLibrary.MapTrigger trigger : chunk.triggers) {
                     String runtimeId = runtimeTriggerId(coordinate, trigger.id());
                     List<MapDesignLibrary.TriggerAction> actions = trigger.actions().stream()
@@ -479,7 +492,9 @@ public final class OpenWorldSession {
                 themes,
                 paint,
                 MapGeometryData.of(width, height, heights),
-                MobAreaData.of(width, height, mobAreas)
+                MobAreaData.of(width, height, mobAreas),
+                lightingSettings,
+                lights
         );
         currentEnvironmentThemes = List.copyOf(environmentThemes);
         windowMaterialized = true;
@@ -806,7 +821,9 @@ public final class OpenWorldSession {
                 themes,
                 source.getPaintData().copy(),
                 source.getGeometryData().copy(),
-                source.getMobAreaData().copy()
+                source.getMobAreaData().copy(),
+                source.getLightingSettings(),
+                source.getLightsView()
         );
     }
 

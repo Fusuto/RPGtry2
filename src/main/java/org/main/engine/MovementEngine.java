@@ -8,7 +8,7 @@ public class MovementEngine {
         int nx = playerX + dx;
         int ny = playerY + dy;
 
-        if (map.isWalkable(nx, ny)) {
+        if (TerrainGeometry.canTraverse(map, playerX, playerY, nx, ny)) {
             return new Point(nx, ny);
         }
 

@@ -2,6 +2,7 @@ package org.main.content;
 
 import org.main.core.Library;
 import org.main.core.CraftingStationType;
+import org.main.engine.MapLight;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MobAreaData;
 import org.main.engine.MapPaintData;
@@ -90,6 +91,7 @@ final class MapDesignValidator {
             validatePlacement(design, issues, authoredIds, placement);
         }
         validateTriggers(design, issues);
+        validateLights(design, issues);
         validateAuthoredDialogueActions(issues, authoredDialogues, design.authoredQuests(), design.customItems(), design.customLimbs());
         validateCustomContent(issues, design);
 
@@ -337,6 +339,32 @@ final class MapDesignValidator {
                             "Trigger " + trigger.id() + " targets " + action.targetX() + "," + action.targetY() + ", which is not a door tile."
                     ));
                 }
+            }
+        }
+    }
+
+    private static void validateLights(MapDesign design, List<ValidationIssue> issues) {
+        List<MapLight> lights = design.lights() == null ? List.of() : design.lights();
+        List<String> ids = new ArrayList<>();
+
+        for (MapLight light : lights) {
+            if (light == null || light.id().isBlank()) {
+                issues.add(new ValidationIssue(ValidationSeverity.ERROR, "A light is missing an id."));
+                continue;
+            }
+            if (ids.contains(light.id())) {
+                issues.add(new ValidationIssue(ValidationSeverity.ERROR, "Light id " + light.id() + " is duplicated."));
+            }
+            ids.add(light.id());
+
+            if (!isInside(design, light.x(), light.y())) {
+                issues.add(new ValidationIssue(ValidationSeverity.ERROR, "Light " + light.id() + " is outside the map."));
+            }
+            if (light.radius() <= 0.0) {
+                issues.add(new ValidationIssue(ValidationSeverity.WARNING, "Light " + light.id() + " has no visible radius."));
+            }
+            if (light.enabled() && light.intensity() <= 0.0) {
+                issues.add(new ValidationIssue(ValidationSeverity.WARNING, "Light " + light.id() + " is enabled but has no intensity."));
             }
         }
     }
@@ -591,6 +619,8 @@ final class MapDesignValidator {
         for (CustomLimb limb : design.customLimbs()) {
             validateAssetPath(issues, "Limb " + limb.limbId(), "icon", limb.iconPath(), true);
             validateAssetPath(issues, "Limb " + limb.limbId(), "paper-doll source", limb.paperDollSourcePath(), false);
+            validateModelAssetPath(issues, "Limb " + limb.limbId(), "first-person arm model",
+                    limb.firstPersonModelPath(), false);
         }
 
         for (CustomGatheringNode node : design.customGatheringNodes()) {

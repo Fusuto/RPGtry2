@@ -159,6 +159,18 @@ public final class InteractionSystem {
                 .pauseGameplay();
     }
 
+    private static Interaction viewMenu(
+            SoundSystem soundSystem,
+            GameState gameState,
+            Runnable exitAction,
+            Runnable controlsAction,
+            Runnable saveAction,
+            Runnable loadAction
+    ) {
+        return new Interaction(new ViewInteractionContent(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction))
+                .pauseGameplay();
+    }
+
     private static Interaction debugMenu(
             SoundSystem soundSystem,
             GameState gameState,
@@ -2233,6 +2245,10 @@ public final class InteractionSystem {
             return option("Volume", () -> openInteraction(volumeMenu(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction)));
         }
 
+        protected InteractionOption viewOption() {
+            return option("View", () -> openInteraction(viewMenu(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction)));
+        }
+
         protected InteractionOption debugOption() {
             return option("Debug", () -> openInteraction(debugMenu(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction)));
         }
@@ -2649,6 +2665,7 @@ public final class InteractionSystem {
                             stayOpenOption(miniMapLabel(), this::toggleMiniMap),
                             stayOpenOption(cameraMovementLabel(), this::toggleCameraMovement),
                             option("Controls", controlsAction()),
+                            viewOption(),
                             volumeOption(),
                             debugOption(),
                             backToConfigOption(),
@@ -3000,6 +3017,133 @@ public final class InteractionSystem {
                     saveAction(),
                     loadAction()
             )));
+        }
+    }
+
+    private static class ViewInteractionContent extends SettingsMenuContent {
+        private static final int FOV_STEP = 5;
+        private static final int MIN_FOV = 45;
+        private static final int MAX_FOV = 100;
+        private static final int DEPTH_STEP = 1;
+        private static final int MIN_DEPTH = 4;
+        private static final int MAX_DEPTH = 32;
+        private static final int DEFAULT_FOV = 70;
+        private static final int DEFAULT_DEPTH = 12;
+        private static final boolean DEFAULT_LIGHTING_ENABLED = true;
+        private static final boolean DEFAULT_FOG_ENABLED = true;
+
+        private ViewInteractionContent(
+                SoundSystem soundSystem,
+                GameState gameState,
+                Runnable exitAction,
+                Runnable controlsAction,
+                Runnable saveAction,
+                Runnable loadAction
+        ) {
+            super(soundSystem, gameState, exitAction, controlsAction, saveAction, loadAction);
+        }
+
+        @Override
+        public InteractionModel getModel() {
+            int fov = fovValue();
+            int depth = depthValue();
+
+            return new InteractionModel(
+                    "View",
+                    "Left click a view bar to raise it. Right click to lower it.",
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    true,
+                    List.of(
+                            stayOpenOption(
+                                    rangeLabel("FOV", fov, MIN_FOV, MAX_FOV, " deg"),
+                                    () -> adjustFov(FOV_STEP),
+                                    () -> adjustFov(-FOV_STEP)
+                            ),
+                            stayOpenOption(
+                                    rangeLabel("Render Distance", depth, MIN_DEPTH, MAX_DEPTH, ""),
+                                    () -> adjustDepth(DEPTH_STEP),
+                                    () -> adjustDepth(-DEPTH_STEP)
+                            ),
+                            stayOpenOption(toggleLabel("Lighting", lightingEnabled()), this::toggleLighting),
+                            stayOpenOption(toggleLabel("Fog", fogEnabled()), this::toggleFog),
+                            stayOpenOption("Reset View Defaults", this::resetDefaults),
+                            backToSettingsOption(),
+                            closeOption("Close")
+                    )
+            );
+        }
+
+        private InteractionOption backToSettingsOption() {
+            return option("Back", () -> openInteraction(settingsMenu(
+                    soundSystem(),
+                    gameState(),
+                    exitAction(),
+                    controlsAction(),
+                    saveAction(),
+                    loadAction()
+            )));
+        }
+
+        private int fovValue() {
+            return clamp(GameConfiguration.intValue("renderer.prototype.fovDegrees", DEFAULT_FOV), MIN_FOV, MAX_FOV);
+        }
+
+        private int depthValue() {
+            return clamp(GameConfiguration.intValue("renderer.prototype.maxDepth", DEFAULT_DEPTH), MIN_DEPTH, MAX_DEPTH);
+        }
+
+        private boolean lightingEnabled() {
+            return GameConfiguration.booleanValue("lighting.enabled", DEFAULT_LIGHTING_ENABLED);
+        }
+
+        private boolean fogEnabled() {
+            return GameConfiguration.booleanValue("lighting.fog.enabled", DEFAULT_FOG_ENABLED);
+        }
+
+        private void adjustFov(int delta) {
+            GameConfiguration.setValue("renderer.prototype.fovDegrees", String.valueOf(clamp(fovValue() + delta, MIN_FOV, MAX_FOV)));
+        }
+
+        private void adjustDepth(int delta) {
+            GameConfiguration.setValue("renderer.prototype.maxDepth", String.valueOf(clamp(depthValue() + delta, MIN_DEPTH, MAX_DEPTH)));
+        }
+
+        private void toggleLighting() {
+            GameConfiguration.setValue("lighting.enabled", String.valueOf(!lightingEnabled()));
+        }
+
+        private void toggleFog() {
+            GameConfiguration.setValue("lighting.fog.enabled", String.valueOf(!fogEnabled()));
+        }
+
+        private void resetDefaults() {
+            GameConfiguration.setValue("renderer.prototype.fovDegrees", String.valueOf(DEFAULT_FOV));
+            GameConfiguration.setValue("renderer.prototype.maxDepth", String.valueOf(DEFAULT_DEPTH));
+            GameConfiguration.setValue("lighting.enabled", String.valueOf(DEFAULT_LIGHTING_ENABLED));
+            GameConfiguration.setValue("lighting.fog.enabled", String.valueOf(DEFAULT_FOG_ENABLED));
+        }
+
+        private String rangeLabel(String label, int value, int min, int max, String suffix) {
+            int filledBlocks = (int) Math.round(((value - min) / (double) Math.max(1, max - min)) * 10.0);
+            StringBuilder bar = new StringBuilder("[");
+            for (int i = 0; i < 10; i++) {
+                bar.append(i < filledBlocks ? "#" : ".");
+            }
+            bar.append("] ");
+            bar.append(value).append(suffix);
+            return label + " " + bar;
+        }
+
+        private String toggleLabel(String label, boolean enabled) {
+            return label + " [" + (enabled ? "ON" : "OFF") + "]";
+        }
+
+        private int clamp(int value, int min, int max) {
+            return Math.max(min, Math.min(max, value));
         }
     }
 

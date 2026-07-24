@@ -75,6 +75,7 @@ enum ContentCategory {
     QUESTS("Quests"),
     DIALOGUES("Dialogues"),
     AREAS("Mob Areas"),
+    LIGHTS("Lights"),
     TRIGGERS("Triggers"),
     PLACEMENTS("Placements"),
     DIAGNOSTICS("Diagnostics");
@@ -196,6 +197,20 @@ record TriggerSettings(
 ) {
 }
 
+record LightPreset(
+        String label,
+        int colorRgb,
+        double radius,
+        double intensity,
+        double heightOffset,
+        double flickerAmount
+) {
+    @Override
+    public String toString() {
+        return label;
+    }
+}
+
 record DialogueOption(String label, String interactionId) {
     @Override
     public String toString() {
@@ -300,6 +315,7 @@ enum PaintMode {
     PLACE_OBJECT("Place Object"),
     ERASE_OBJECT("Erase Object"),
     SET_SPAWN("Set Spawn"),
+    PLACE_LIGHT("Place Light"),
     PLACE_TRIGGER("Place Trigger"),
     WIRE_TRIGGER("Wire Trigger"),
     PLACE_PREFAB("Place Prefab");

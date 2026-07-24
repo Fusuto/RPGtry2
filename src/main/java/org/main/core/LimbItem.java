@@ -18,6 +18,8 @@ public class LimbItem extends InventorySystem.Item {
     private final String iconPath;
     private final String examineText;
     private final String paperDollSourcePath;
+    private String firstPersonModelPath = "";
+    private String firstPersonRigId = "";
 
     public LimbItem(
             String name,
@@ -126,6 +128,24 @@ public class LimbItem extends InventorySystem.Item {
         return paperDollSourcePath;
     }
 
+    public String getFirstPersonModelPath() {
+        return firstPersonModelPath;
+    }
+
+    public String getFirstPersonRigId() {
+        return firstPersonRigId;
+    }
+
+    public boolean hasFirstPersonModel() {
+        return !firstPersonModelPath.isBlank() && limbSlot != null && limbSlot.isArm();
+    }
+
+    public LimbItem withFirstPersonModel(String modelPath, String rigId) {
+        firstPersonModelPath = modelPath == null ? "" : modelPath.trim().replace('\\', '/');
+        firstPersonRigId = rigId == null ? "" : rigId.trim();
+        return this;
+    }
+
     @Override
     public String getExamineText() {
         return examineText;
@@ -147,7 +167,7 @@ public class LimbItem extends InventorySystem.Item {
                 iconPath,
                 examineText,
                 paperDollSourcePath
-        );
+        ).withFirstPersonModel(firstPersonModelPath, firstPersonRigId);
     }
 
     @Override

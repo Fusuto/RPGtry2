@@ -31,6 +31,7 @@ public final class LwjglSkinnedModel {
     public record Material(BufferedImage texture, float red, float green, float blue, float alpha) { }
 
     public record SkinnedMesh(
+            String name,
             float[] bindPositions,
             float[] texCoords,
             int[] indices,
@@ -179,6 +180,16 @@ public final class LwjglSkinnedModel {
         return availableClipNames;
     }
     public boolean hasClip(CharacterModelDefinition.AnimationSlot slot) { return bindings.containsKey(slot); }
+    public double clipDurationSeconds(CharacterModelDefinition.AnimationSlot slot) {
+        ClipBinding binding = bindings.get(slot);
+        return binding == null ? 0.0
+                : binding.clip().durationSeconds() / Math.max(0.0001, binding.speed());
+    }
+    public double impactFraction(CharacterModelDefinition.AnimationSlot slot) {
+        ClipBinding binding = bindings.get(slot);
+        return binding == null ? CharacterModelDefinition.DEFAULT_IMPACT_FRACTION
+                : binding.impactFraction();
+    }
     public double normalizedScaleForHeight(double targetHeight) {
         return targetHeight / Math.max(0.0001, maxY - minY);
     }
@@ -248,6 +259,67 @@ public final class LwjglSkinnedModel {
         if (binding == null) return skin(slot, 0.0);
         double progress = Math.max(0.0, Math.min(1.0, normalizedProgress));
         return skin(binding, progress * binding.clip().durationSeconds() / Math.max(0.0001, binding.speed()));
+    }
+
+    /** Returns an animated node/socket transform in model space. */
+    public Matrix4f nodeTransformNormalized(
+            CharacterModelDefinition.AnimationSlot slot,
+            double normalizedProgress,
+            String nodeName
+    ) {
+        Integer nodeIndex = nodeName == null ? null : baseNodeIndex(nodeName);
+        if (nodeIndex == null) return null;
+        ClipBinding binding = bindings.get(slot);
+        if (binding == null) {
+            Matrix4f[] globals = bindGlobals();
+            return new Matrix4f(inverseRoot).mul(globals[nodeIndex]);
+        }
+        double progress = Math.max(0.0, Math.min(1.0, normalizedProgress));
+        double elapsed = progress * binding.clip().durationSeconds()
+                / Math.max(0.0001, binding.speed());
+        Matrix4f[] globals = evaluateGlobals(binding, elapsed);
+        return new Matrix4f(inverseRoot).mul(globals[nodeIndex]);
+    }
+
+    public boolean hasNode(String nodeName) {
+        return baseNodeIndex(nodeName) != null;
+    }
+
+    private Integer baseNodeIndex(String nodeName) {
+        if (nodeName == null || nodeName.isBlank()) return null;
+        for (int index = 0; index < nodes.size(); index++) {
+            if (nodes.get(index).name().equalsIgnoreCase(nodeName.trim())) return index;
+        }
+        return null;
+    }
+
+    private Matrix4f[] bindGlobals() {
+        Matrix4f[] globals = new Matrix4f[nodes.size()];
+        for (int index = 0; index < nodes.size(); index++) {
+            Node node = nodes.get(index);
+            globals[index] = node.parent() < 0
+                    ? new Matrix4f(node.bindLocal())
+                    : new Matrix4f(globals[node.parent()]).mul(node.bindLocal());
+        }
+        return globals;
+    }
+
+    private Matrix4f[] evaluateGlobals(ClipBinding binding, double elapsedSeconds) {
+        AnimationClip clip = binding.clip();
+        double duration = Math.max(0.0001, clip.durationTicks());
+        double ticks = Math.max(0.0, elapsedSeconds)
+                * Math.max(0.0001, clip.ticksPerSecond()) * binding.speed();
+        double time = binding.looping() ? ticks % duration : Math.min(duration, ticks);
+        Matrix4f[] globals = new Matrix4f[nodes.size()];
+        for (int index = 0; index < nodes.size(); index++) {
+            Node node = nodes.get(index);
+            Matrix4f local = evaluateLocal(node, clip.channels().get(node.name()), time,
+                    index == rootMotionNodeIndex);
+            globals[index] = node.parent() < 0
+                    ? local
+                    : new Matrix4f(globals[node.parent()]).mul(local);
+        }
+        return globals;
     }
 
     /**
@@ -329,7 +401,6 @@ public final class LwjglSkinnedModel {
             List<Node> nodes = new ArrayList<>();
             Map<String, Integer> byName = new LinkedHashMap<>();
             collectNodes(scene.mRootNode(), -1, nodes, byName);
-            String signature = skeletonSignature(nodes);
             List<BufferedImage> textures = loadEmbeddedTextures(scene);
             List<SkinnedMesh> meshes = new ArrayList<>();
             List<Bone> bones = new ArrayList<>();
@@ -342,6 +413,7 @@ public final class LwjglSkinnedModel {
                 }
             }
             List<AnimationClip> clips = readAnimations(scene);
+            String signature = skeletonSignature(nodes, bones, clips);
             return new ImportedScene(List.copyOf(nodes), Map.copyOf(byName), List.copyOf(meshes),
                     List.copyOf(bones), List.copyOf(clips), signature);
         } finally { aiReleaseImport(scene); }
@@ -402,7 +474,8 @@ public final class LwjglSkinnedModel {
             IntBuffer face = faces.get(i).mIndices();
             if (face.remaining() == 3) { indexList.add(face.get(0)); indexList.add(face.get(1)); indexList.add(face.get(2)); }
         }
-        return new SkinnedMesh(positions, uv, indexList.stream().mapToInt(Integer::intValue).toArray(),
+        return new SkinnedMesh(source.mName().dataString(), positions, uv,
+                indexList.stream().mapToInt(Integer::intValue).toArray(),
                 boneIndices, weights, nodeIndex, new Matrix4f(), material(scene, source, textures, assetPath));
     }
 
@@ -476,9 +549,31 @@ public final class LwjglSkinnedModel {
                 m.a3(), m.b3(), m.c3(), m.d3(), m.a4(), m.b4(), m.c4(), m.d4());
     }
 
-    private static String skeletonSignature(List<Node> nodes) {
+    private static String skeletonSignature(
+            List<Node> nodes,
+            List<Bone> bones,
+            List<AnimationClip> clips
+    ) {
+        LinkedHashSet<String> relevantNames = new LinkedHashSet<>();
+        for (Bone bone : bones) relevantNames.add(bone.name());
+        for (AnimationClip clip : clips) relevantNames.addAll(clip.channels().keySet());
+        if (relevantNames.isEmpty()) {
+            for (Node node : nodes) relevantNames.add(node.name());
+        }
+        Set<Integer> relevantIndexes = new HashSet<>();
+        for (int index = 0; index < nodes.size(); index++) {
+            if (!relevantNames.contains(nodes.get(index).name())) continue;
+            int current = index;
+            while (current >= 0 && relevantIndexes.add(current)) current = nodes.get(current).parent();
+        }
         StringBuilder value = new StringBuilder();
-        for (Node node : nodes) value.append(node.name()).append('@').append(node.parent()).append(';');
+        for (int index = 0; index < nodes.size(); index++) {
+            if (!relevantIndexes.contains(index)) continue;
+            Node node = nodes.get(index);
+            String parentName = node.parent() >= 0 && relevantIndexes.contains(node.parent())
+                    ? nodes.get(node.parent()).name() : "";
+            value.append(node.name()).append('@').append(parentName).append(';');
+        }
         try {
             byte[] hash = MessageDigest.getInstance("SHA-256").digest(value.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hash);

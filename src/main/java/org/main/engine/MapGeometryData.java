@@ -2,7 +2,7 @@ package org.main.engine;
 
 public final class MapGeometryData {
     public static final int DEFAULT_HEIGHT_LEVEL = 1;
-    public static final int MIN_HEIGHT_LEVEL = 1;
+    public static final int MIN_HEIGHT_LEVEL = -8;
     public static final int MAX_HEIGHT_LEVEL = 8;
 
     private final int width;
@@ -63,7 +63,7 @@ public final class MapGeometryData {
     }
 
     public double getHeightMultiplier(int x, int y) {
-        return Math.max(MIN_HEIGHT_LEVEL, getHeightLevel(x, y));
+        return Math.max(DEFAULT_HEIGHT_LEVEL, getHeightLevel(x, y));
     }
 
     public void setHeightLevel(int x, int y, int heightLevel) {

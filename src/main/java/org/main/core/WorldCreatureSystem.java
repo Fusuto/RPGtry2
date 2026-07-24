@@ -3,6 +3,7 @@ package org.main.core;
 import org.main.battle.DifficultyResolver;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
+import org.main.engine.TerrainGeometry;
 
 import java.awt.Point;
 import java.util.ArrayDeque;
@@ -139,7 +140,7 @@ public final class WorldCreatureSystem {
                 Point next = new Point(current.x + direction[0], current.y + direction[1]);
                 boolean playerTile = next.equals(target);
                 if (visited.contains(next)
-                        || !map.isWalkable(next.x, next.y)
+                        || !TerrainGeometry.canTraverse(map, current.x, current.y, next.x, next.y)
                         || !area.equals(map.getMobAreaId(next.x, next.y))
                         || (!playerTile && occupied(state, next.x, next.y, enemy))) {
                     continue;
@@ -157,7 +158,7 @@ public final class WorldCreatureSystem {
         for (int[] direction : DIRECTIONS) {
             int x = enemy.getX() + direction[0];
             int y = enemy.getY() + direction[1];
-            if (map.isWalkable(x, y)
+            if (TerrainGeometry.canTraverse(map, enemy.getX(), enemy.getY(), x, y)
                     && area.equals(map.getMobAreaId(x, y))
                     && !(x == state.getPlayerX() && y == state.getPlayerY())
                     && !occupied(state, x, y, enemy)) {
@@ -185,6 +186,8 @@ public final class WorldCreatureSystem {
         int x = x0;
         int y = y0;
         while (x != x1 || y != y1) {
+            int previousX = x;
+            int previousY = y;
             int twice = error * 2;
             if (twice > -dy) {
                 error -= dy;
@@ -193,6 +196,9 @@ public final class WorldCreatureSystem {
             if (twice < dx) {
                 error += dx;
                 y += sy;
+            }
+            if (TerrainGeometry.edgeKind(map, previousX, previousY, x, y) == org.main.engine.TerrainEdgeKind.CLIFF) {
+                return false;
             }
             if ((x != x1 || y != y1) && map.getTile(x, y).blocksMovement()) {
                 return false;

@@ -17,6 +17,8 @@ import org.main.core.EquipmentViewModelProfile;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 import org.main.engine.MapGeometryData;
+import org.main.engine.MapLight;
+import org.main.engine.MapLightingSettings;
 import org.main.engine.MapPaintData;
 import org.main.engine.MobAreaData;
 import org.main.engine.AssetLoader;
@@ -131,6 +133,7 @@ public final class MapDesignLibrary {
         properties.setProperty("description", design.description());
         properties.setProperty("musicPath", design.musicPath());
         properties.setProperty("skyboxPath", design.skyboxPath());
+        writeLighting(properties, design.lightingSettings(), design.lights());
         properties.setProperty("width", String.valueOf(design.width()));
         properties.setProperty("height", String.valueOf(design.height()));
         properties.setProperty("primaryTheme", design.primaryTheme().name());
@@ -302,6 +305,8 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "description", customLimb.description());
             properties.setProperty(prefix + "sourceCreatureId", customLimb.sourceCreatureId());
             properties.setProperty(prefix + "paperDollSourcePath", customLimb.paperDollSourcePath());
+            properties.setProperty(prefix + "firstPersonModelPath", customLimb.firstPersonModelPath());
+            properties.setProperty(prefix + "firstPersonRigId", customLimb.firstPersonRigId());
             properties.setProperty(prefix + "skillIds", joinSkills(customLimb.skillIds()));
             for (PlayerStat stat : PlayerStat.values()) {
                 properties.setProperty(prefix + "stat." + stat.name(), String.valueOf(customLimb.statBonuses().getOrDefault(stat, 0)));
@@ -433,6 +438,8 @@ public final class MapDesignLibrary {
         String description = properties.getProperty("description", "");
         String musicPath = properties.getProperty("musicPath", "");
         String skyboxPath = properties.getProperty("skyboxPath", "");
+        MapLightingSettings lightingSettings = readLightingSettings(properties);
+        List<MapLight> lights = readLights(properties);
         int spawnX = readInt(properties, "spawnX", 1);
         int spawnY = readInt(properties, "spawnY", 1);
         ThemeLibrary primaryTheme = readTheme(properties, "primaryTheme", ThemeLibrary.STONE_WOOD);
@@ -861,13 +868,17 @@ public final class MapDesignLibrary {
             String limbDescription = properties.getProperty(prefix + "description", "");
             String sourceCreatureId = properties.getProperty(prefix + "sourceCreatureId", "");
             String paperDollSourcePath = properties.getProperty(prefix + "paperDollSourcePath", "");
+            String firstPersonModelPath = properties.getProperty(prefix + "firstPersonModelPath", "");
+            String firstPersonRigId = properties.getProperty(prefix + "firstPersonRigId", "");
             List<SkillLibrary> skillIds = readSkillList(properties.getProperty(prefix + "skillIds", ""));
             EnumMap<PlayerStat, Integer> statBonuses = new EnumMap<>(PlayerStat.class);
             for (PlayerStat stat : PlayerStat.values()) {
                 statBonuses.put(stat, readInt(properties, prefix + "stat." + stat.name(), 0));
             }
             if (!limbId.isBlank() && !limbName.isBlank()) {
-                customLimbs.add(new CustomLimb(limbId, limbName, limbSlot, iconPath, condition, limbDescription, sourceCreatureId, paperDollSourcePath, statBonuses, skillIds));
+                customLimbs.add(new CustomLimb(limbId, limbName, limbSlot, iconPath, condition,
+                        limbDescription, sourceCreatureId, paperDollSourcePath, statBonuses, skillIds,
+                        firstPersonModelPath, firstPersonRigId));
             }
         }
 
@@ -907,7 +918,11 @@ public final class MapDesignLibrary {
             }
         }
 
-        return new MapDesign(width, height, displayName, description, musicPath, skyboxPath, primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry, mobAreas, placements, authoredDialogues, authoredQuests, customItems, customMobs, customLimbs, customNpcs, customGatheringNodes, customCookingRecipes, craftingRecipes, triggers, spawnX, spawnY);
+        return new MapDesign(width, height, displayName, description, musicPath, skyboxPath,
+                primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry, mobAreas,
+                placements, authoredDialogues, authoredQuests, customItems, customMobs, customLimbs,
+                customNpcs, customGatheringNodes, customCookingRecipes, craftingRecipes, triggers,
+                lightingSettings, lights, spawnX, spawnY);
     }
 
     private static InputStream openMapDesignStream(Path path) throws IOException {
@@ -1079,7 +1094,9 @@ public final class MapDesignLibrary {
                         : design.mapGeometry().copy(),
                 design.mobAreas() == null
                         ? MobAreaData.blank(design.width(), design.height())
-                        : design.mobAreas().copy()
+                        : design.mobAreas().copy(),
+                design.lightingSettings(),
+                design.lights()
         );
     }
 
@@ -1522,6 +1539,68 @@ public final class MapDesignLibrary {
         }
     }
 
+    private static void writeLighting(Properties properties, MapLightingSettings settings, List<MapLight> lights) {
+        MapLightingSettings safeSettings = settings == null ? MapLightingSettings.defaultSettings() : settings;
+        properties.setProperty("lighting.enabled", String.valueOf(safeSettings.lightingEnabled()));
+        properties.setProperty("lighting.ambientColor", MapLightingSettings.colorHex(safeSettings.ambientColorRgb()));
+        properties.setProperty("lighting.ambientIntensity", String.valueOf(safeSettings.ambientIntensity()));
+        properties.setProperty("lighting.fogEnabled", String.valueOf(safeSettings.fogEnabled()));
+        properties.setProperty("lighting.fogColor", MapLightingSettings.colorHex(safeSettings.fogColorRgb()));
+        properties.setProperty("lighting.fogDensity", String.valueOf(safeSettings.fogDensity()));
+
+        List<MapLight> safeLights = lights == null ? List.of() : lights;
+        properties.setProperty("light.count", String.valueOf(safeLights.size()));
+        for (int i = 0; i < safeLights.size(); i++) {
+            MapLight light = safeLights.get(i);
+            String prefix = "light." + i + ".";
+            properties.setProperty(prefix + "id", light.id());
+            properties.setProperty(prefix + "x", String.valueOf(light.x()));
+            properties.setProperty(prefix + "y", String.valueOf(light.y()));
+            properties.setProperty(prefix + "color", MapLightingSettings.colorHex(light.colorRgb()));
+            properties.setProperty(prefix + "radius", String.valueOf(light.radius()));
+            properties.setProperty(prefix + "intensity", String.valueOf(light.intensity()));
+            properties.setProperty(prefix + "heightOffset", String.valueOf(light.heightOffset()));
+            properties.setProperty(prefix + "flicker", String.valueOf(light.flickerAmount()));
+            properties.setProperty(prefix + "enabled", String.valueOf(light.enabled()));
+        }
+    }
+
+    private static MapLightingSettings readLightingSettings(Properties properties) {
+        MapLightingSettings defaults = MapLightingSettings.defaultSettings();
+        return new MapLightingSettings(
+                Boolean.parseBoolean(properties.getProperty("lighting.enabled", String.valueOf(defaults.lightingEnabled()))),
+                MapLightingSettings.parseColor(properties.getProperty("lighting.ambientColor"), defaults.ambientColorRgb()),
+                readDouble(properties, "lighting.ambientIntensity", defaults.ambientIntensity()),
+                Boolean.parseBoolean(properties.getProperty("lighting.fogEnabled", String.valueOf(defaults.fogEnabled()))),
+                MapLightingSettings.parseColor(properties.getProperty("lighting.fogColor"), defaults.fogColorRgb()),
+                readDouble(properties, "lighting.fogDensity", defaults.fogDensity())
+        );
+    }
+
+    private static List<MapLight> readLights(Properties properties) {
+        int count = readInt(properties, "light.count", 0);
+        List<MapLight> lights = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            String prefix = "light." + i + ".";
+            String id = properties.getProperty(prefix + "id", "");
+            if (id.isBlank()) {
+                continue;
+            }
+            lights.add(new MapLight(
+                    id,
+                    readInt(properties, prefix + "x", 0),
+                    readInt(properties, prefix + "y", 0),
+                    MapLightingSettings.parseColor(properties.getProperty(prefix + "color"), 0xFF8B42),
+                    readDouble(properties, prefix + "radius", 5.0),
+                    readDouble(properties, prefix + "intensity", 1.0),
+                    readDouble(properties, prefix + "heightOffset", 0.65),
+                    readDouble(properties, prefix + "flicker", 0.0),
+                    Boolean.parseBoolean(properties.getProperty(prefix + "enabled", "true"))
+            ));
+        }
+        return lights;
+    }
+
     private static void writeCharacterModel(
             Properties properties,
             String prefix,
@@ -1958,6 +2037,8 @@ public final class MapDesignLibrary {
             List<CustomCookingRecipe> customCookingRecipes,
             List<CraftingRecipe> craftingRecipes,
             List<MapTrigger> triggers,
+            MapLightingSettings lightingSettings,
+            List<MapLight> lights,
             int spawnX,
             int spawnY
     ) {
@@ -1978,6 +2059,43 @@ public final class MapDesignLibrary {
             customCookingRecipes = customCookingRecipes == null ? new ArrayList<>() : customCookingRecipes;
             craftingRecipes = craftingRecipes == null ? new ArrayList<>() : craftingRecipes;
             triggers = triggers == null ? new ArrayList<>() : triggers;
+            lightingSettings = lightingSettings == null ? MapLightingSettings.defaultSettings() : lightingSettings;
+            lights = lights == null ? new ArrayList<>() : new ArrayList<>(lights);
+        }
+
+        public MapDesign(
+                int width,
+                int height,
+                String displayName,
+                String description,
+                String musicPath,
+                String skyboxPath,
+                ThemeLibrary primaryTheme,
+                ThemeLibrary alternateTheme,
+                Library.TileType[][] tiles,
+                int[][] themeIndexes,
+                MapPaintData mapPaint,
+                MapGeometryData mapGeometry,
+                MobAreaData mobAreas,
+                List<MapPlacement> placements,
+                List<AuthoredDialogue> authoredDialogues,
+                List<AuthoredQuest> authoredQuests,
+                List<CustomItem> customItems,
+                List<CustomMob> customMobs,
+                List<CustomLimb> customLimbs,
+                List<CustomNpc> customNpcs,
+                List<CustomGatheringNode> customGatheringNodes,
+                List<CustomCookingRecipe> customCookingRecipes,
+                List<CraftingRecipe> craftingRecipes,
+                List<MapTrigger> triggers,
+                int spawnX,
+                int spawnY
+        ) {
+            this(width, height, displayName, description, musicPath, skyboxPath,
+                    primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry,
+                    mobAreas, placements, authoredDialogues, authoredQuests, customItems, customMobs,
+                    customLimbs, customNpcs, customGatheringNodes, customCookingRecipes, craftingRecipes,
+                    triggers, MapLightingSettings.defaultSettings(), List.of(), spawnX, spawnY);
         }
 
         public MapDesign(
@@ -2456,6 +2574,7 @@ public final class MapDesignLibrary {
                     weaponType,
                     twoHanded
             ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus)
+                    .withContentId(itemId)
                     .withFirstPersonModel(firstPersonModelPath)
                     .withViewModelProfile(viewModelProfile);
         }
@@ -2867,7 +2986,9 @@ public final class MapDesignLibrary {
             String sourceCreatureId,
             String paperDollSourcePath,
             Map<PlayerStat, Integer> statBonuses,
-            List<SkillLibrary> skillIds
+            List<SkillLibrary> skillIds,
+            String firstPersonModelPath,
+            String firstPersonRigId
     ) {
         public CustomLimb {
             limbId = limbId == null ? "" : limbId;
@@ -2878,6 +2999,9 @@ public final class MapDesignLibrary {
             description = description == null ? "" : description;
             sourceCreatureId = sourceCreatureId == null ? "" : sourceCreatureId;
             paperDollSourcePath = paperDollSourcePath == null ? "" : paperDollSourcePath;
+            firstPersonModelPath = firstPersonModelPath == null
+                    ? "" : firstPersonModelPath.trim().replace('\\', '/');
+            firstPersonRigId = firstPersonRigId == null ? "" : firstPersonRigId.trim();
             EnumMap<PlayerStat, Integer> safeStats = new EnumMap<>(PlayerStat.class);
             if (statBonuses != null) {
                 for (PlayerStat stat : PlayerStat.values()) {
@@ -2886,6 +3010,22 @@ public final class MapDesignLibrary {
             }
             statBonuses = safeStats;
             skillIds = skillIds == null ? List.of() : List.copyOf(skillIds);
+        }
+
+        public CustomLimb(
+                String limbId,
+                String displayName,
+                LimbSlot limbSlot,
+                String iconPath,
+                GearDurability condition,
+                String description,
+                String sourceCreatureId,
+                String paperDollSourcePath,
+                Map<PlayerStat, Integer> statBonuses,
+                List<SkillLibrary> skillIds
+        ) {
+            this(limbId, displayName, limbSlot, iconPath, condition, description,
+                    sourceCreatureId, paperDollSourcePath, statBonuses, skillIds, "", "");
         }
 
         public LimbItem createLimb() {
@@ -2900,7 +3040,7 @@ public final class MapDesignLibrary {
                     iconPath,
                     description,
                     paperDollSourcePath
-            );
+            ).withFirstPersonModel(firstPersonModelPath, firstPersonRigId);
         }
     }
 

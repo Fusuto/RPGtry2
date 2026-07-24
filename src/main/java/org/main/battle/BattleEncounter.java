@@ -14,6 +14,7 @@ import org.main.core.PlayerStat;
 import org.main.core.PartyFormation;
 import org.main.core.PlayerCharacterModelConfiguration;
 import org.main.engine.SoundSystem;
+import org.main.experimental.FirstPersonAnimationRuntime;
 import org.main.monsters.Monster;
 
 import java.awt.image.BufferedImage;
@@ -417,12 +418,18 @@ public class BattleEncounter {
             return Library.BattleResult.CONTINUE;
         }
         List<BattleActor> safeTargets = skill.isSummonSkill() ? List.of() : List.copyOf(targets);
+        BattlePresentationDirector.ActionType presentationType = presentationTypeFor(skill);
+        FirstPersonAnimationRuntime.PresentationTiming timing =
+                FirstPersonAnimationRuntime.timing(caster, presentationType);
+        double impactFraction = timing.durationMs() > 0
+                ? timing.impactFraction() : impactFractionFor(caster, skill);
         BattleActionIntent intent = new BattleActionIntent(
                 caster,
                 skill.getName(),
-                presentationTypeFor(skill),
+                presentationType,
                 BattleActionIntent.Priority.MANUAL,
-                impactFractionFor(caster, skill),
+                impactFraction,
+                timing.durationMs(),
                 safeTargets,
                 () -> planSkillOutcome(caster, skill, safeTargets, false)
         );
@@ -957,12 +964,18 @@ public class BattleEncounter {
     }
 
     private String resolveMeleeAutoAction(BattleActor attacker, BattleActor target) {
+        FirstPersonAnimationRuntime.PresentationTiming timing =
+                FirstPersonAnimationRuntime.timing(
+                        attacker, BattlePresentationDirector.ActionType.AUTO_ATTACK);
+        double impactFraction = timing.durationMs() > 0
+                ? timing.impactFraction() : impactFractionFor(attacker, null);
         BattleActionIntent intent = new BattleActionIntent(
                 attacker,
                 "Auto Attack",
                 BattlePresentationDirector.ActionType.AUTO_ATTACK,
                 BattleActionIntent.Priority.AUTOMATIC,
-                impactFractionFor(attacker, null),
+                impactFraction,
+                timing.durationMs(),
                 List.of(target),
                 () -> planMeleeOutcome(attacker, target)
         );

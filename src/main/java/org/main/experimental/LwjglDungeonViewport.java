@@ -1,16 +1,21 @@
 package org.main.experimental;
 
+import org.joml.Matrix4f;
 import org.main.battle.DifficultyResolver;
 import org.main.content.CharacterModelDefinition;
 import org.main.core.GameConfiguration;
 import org.main.core.GameState;
 import org.main.core.Library;
 import org.main.engine.AssetLoader;
+import org.main.engine.DungeonMap;
 import org.main.engine.DungeonRenderContext;
 import org.main.engine.DungeonRenderDebugInfo;
 import org.main.engine.EnvironmentTheme;
+import org.main.engine.MapLight;
 import org.main.engine.MapEntity;
+import org.main.engine.MapLightingSettings;
 import org.main.engine.RealtimeDungeonViewport;
+import org.main.engine.TerrainGeometry;
 import org.main.engine.TextureManager;
 import org.lwjgl.BufferUtils;
 
@@ -38,21 +43,41 @@ import static org.lwjgl.system.MemoryUtil.NULL;
 
 public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     private static final int MAX_DIFFICULTY_LABEL_DEPTH = 3;
+    private static final int MIN_VIEW_DEPTH = 4;
+    private static final int MAX_VIEW_DEPTH = 32;
+    private static final double MIN_FOV_DEGREES = 45.0;
+    private static final double MAX_FOV_DEGREES = 100.0;
     private static final Logger LOGGER = Logger.getLogger(LwjglDungeonViewport.class.getName());
 
     private final LwjglTextureCache textureCache = new LwjglTextureCache();
+    private final LwjglWorldBatchBuilder worldBatchBuilder = new LwjglWorldBatchBuilder();
+    private final LightmapBaker lightmapBaker = new LightmapBaker();
     private final LwjglBattleSceneRenderer battleSceneRenderer = new LwjglBattleSceneRenderer(textureCache);
     private final Map<String, LwjglStaticModel> staticModelCache = new HashMap<>();
     private final Map<CharacterModelDefinition, LwjglSkinnedModel> worldSkinnedModelCache = new HashMap<>();
     private final Set<CharacterModelDefinition> failedWorldSkinnedModels = new HashSet<>();
     private final Set<String> failedStaticModels = new HashSet<>();
     private final LwjglDungeonSceneBuilder sceneBuilder;
+    private LwjglRenderDevice renderDevice;
+    private GpuTexture lightmapTexture;
+    private long lightmapSignature = Long.MIN_VALUE;
+    private double lightmapBakeMs;
+    private int lightmapWidth;
+    private int lightmapHeight;
+    private int worldBatchCount;
+    private int worldRenderedIndices;
+    private Matrix4f currentProjectionView = new Matrix4f();
+    private DungeonMap currentRenderMap;
+    private MapLightingSettings currentLightingSettings = MapLightingSettings.defaultSettings();
+    private double currentCameraX;
+    private double currentCameraY;
+    private double currentCameraZ;
     private final int windowWidth;
     private final int windowHeight;
     private final double wallHeight;
     private final double roofPitchHeight;
     private final double eyeHeight;
-    private final double fovDegrees;
+    private double fovDegrees;
     private final double nearPlane;
     private final double farPlane;
     private final boolean resizable;
@@ -79,11 +104,11 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         this.sceneBuilder = new LwjglDungeonSceneBuilder(textureManager, safeThemes);
         this.windowWidth = Math.max(320, GameConfiguration.intValue("renderer.prototype.windowWidth", 1280));
         this.windowHeight = Math.max(240, GameConfiguration.intValue("renderer.prototype.windowHeight", 720));
-        this.maxDepth = Math.max(1, GameConfiguration.intValue("renderer.prototype.maxDepth", 12));
+        this.maxDepth = clamp(GameConfiguration.intValue("renderer.prototype.maxDepth", 12), MIN_VIEW_DEPTH, MAX_VIEW_DEPTH);
         this.wallHeight = Math.max(0.1, GameConfiguration.doubleValue("renderer.prototype.wallHeight", 1.0));
         this.roofPitchHeight = Math.max(0.0, GameConfiguration.doubleValue("renderer.prototype.roofPitchHeight", 0.45));
         this.eyeHeight = Math.max(0.05, GameConfiguration.doubleValue("renderer.prototype.eyeHeight", 0.55));
-        this.fovDegrees = Math.max(20.0, Math.min(120.0, GameConfiguration.doubleValue("renderer.prototype.fovDegrees", 70.0)));
+        this.fovDegrees = clamp(GameConfiguration.doubleValue("renderer.prototype.fovDegrees", 70.0), MIN_FOV_DEGREES, MAX_FOV_DEGREES);
         this.nearPlane = Math.max(0.01, GameConfiguration.doubleValue("renderer.prototype.nearPlane", 0.05));
         this.farPlane = Math.max(nearPlane + 1.0, GameConfiguration.doubleValue("renderer.prototype.farPlane", 64.0));
         this.resizable = Boolean.parseBoolean(GameConfiguration.stringValue("renderer.prototype.resizable", "true"));
@@ -99,8 +124,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             throw new IllegalStateException("Unable to initialize GLFW.");
         }
 
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, GameConfiguration.intValue("renderer.opengl.major", 4));
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, GameConfiguration.intValue("renderer.opengl.minor", 1));
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
         glfwWindowHint(GLFW_RESIZABLE, resizable ? GLFW_TRUE : GLFW_FALSE);
         window = glfwCreateWindow(windowWidth, windowHeight, "Aether LWJGL Dungeon Prototype", NULL, NULL);
@@ -112,6 +137,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         glfwMakeContextCurrent(window);
         glfwSwapInterval(1);
         createCapabilities();
+        renderDevice = new LwjglRenderDevice(textureCache);
+        lightmapTexture = new GpuTexture();
         glfwShowWindow(window);
 
         glEnable(GL_DEPTH_TEST);
@@ -140,6 +167,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             org.main.core.AetherGameRuntime runtime
     ) {
         long frameStart = System.nanoTime();
+        syncViewSettingsFromConfiguration();
         int[] width = new int[1];
         int[] height = new int[1];
         glfwGetFramebufferSize(window, width, height);
@@ -152,11 +180,26 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         drawSkybox(framebufferWidth, framebufferHeight);
 
         if (shouldRenderDungeon(runtime)) {
-            configureProjection(framebufferWidth, framebufferHeight);
-            configureCamera(context, safeLookState);
-
             double cameraYawDegrees = animatedYawDegrees(context) + safeLookState.yawOffsetDegrees();
             DungeonRenderContext sceneContext = battleBackdropContext(context, runtime);
+            double cameraX = animatedCameraX(sceneContext);
+            double cameraZ = animatedCameraZ(sceneContext);
+            double cameraY = cameraY(sceneContext, cameraX, cameraZ);
+            Matrix4f projectionView = projectionViewMatrix(
+                    framebufferWidth,
+                    framebufferHeight,
+                    sceneContext,
+                    safeLookState,
+                    cameraX,
+                    cameraY,
+                    cameraZ);
+            currentProjectionView = new Matrix4f(projectionView);
+            currentRenderMap = sceneContext.map();
+            currentLightingSettings = sceneContext.map().getLightingSettings();
+            currentCameraX = cameraX;
+            currentCameraY = cameraY;
+            currentCameraZ = cameraZ;
+            ensureLightmap(sceneContext.map());
             LwjglDungeonSceneBuilder.Scene scene = sceneBuilder.build(
                     sceneContext,
                     maxDepth,
@@ -177,9 +220,21 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                     framebufferHeight
             );
 
-            for (LwjglDungeonSceneBuilder.TexturedQuad quad : scene.quads()) {
-                drawQuad(quad);
-            }
+            renderDevice.renderWorld(
+                    worldBatchBuilder.build(scene.quads()),
+                    projectionView,
+                    lightmapTexture,
+                    sceneContext.map().getWidth(),
+                    sceneContext.map().getHeight(),
+                    cameraX,
+                    cameraY,
+                    cameraZ,
+                    sceneContext.map().getLightingSettings());
+            worldBatchCount = renderDevice.batchCount();
+            worldRenderedIndices = renderDevice.renderedIndices();
+
+            configureProjection(framebufferWidth, framebufferHeight);
+            configureCamera(sceneContext, safeLookState);
             for (LwjglDungeonSceneBuilder.ModelInstance model : scene.models()) {
                 drawStaticModel(model);
             }
@@ -196,9 +251,12 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             roofQuads = 0;
             spriteQuads = 0;
             staticModels = 0;
+            worldBatchCount = 0;
+            worldRenderedIndices = 0;
             enemyLabels = List.of();
         }
 
+        glDisable(GL_FOG);
         if (overlayRenderer != null && runtime != null) {
             overlayRenderer.setEnemyLabels(enemyLabels);
             overlayRenderer.setViewportDebugLines(viewportDebugLines());
@@ -238,6 +296,14 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     @Override
     public void shutdown() {
         battleSceneRenderer.shutdown();
+        if (renderDevice != null) {
+            renderDevice.shutdown();
+            renderDevice = null;
+        }
+        if (lightmapTexture != null) {
+            lightmapTexture.shutdown();
+            lightmapTexture = null;
+        }
         staticModelCache.clear();
         worldSkinnedModelCache.clear();
         failedWorldSkinnedModels.clear();
@@ -267,6 +333,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                 + ", roofs=" + roofQuads
                 + ", sprites=" + spriteQuads
                 + ", models=" + staticModels
+                + ", batches=" + worldBatchCount
+                + ", lightmap=" + lightmapWidth + "x" + lightmapHeight
                 + ", textures=" + textureCache.textureCount();
     }
 
@@ -352,11 +420,25 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     }
 
     public void increaseDepth() {
-        maxDepth++;
+        setMaxDepth(maxDepth + 1);
     }
 
     public void decreaseDepth() {
-        maxDepth = Math.max(1, maxDepth - 1);
+        setMaxDepth(maxDepth - 1);
+    }
+
+    private void setMaxDepth(int requestedDepth) {
+        maxDepth = clamp(requestedDepth, MIN_VIEW_DEPTH, MAX_VIEW_DEPTH);
+        GameConfiguration.setValue("renderer.prototype.maxDepth", String.valueOf(maxDepth));
+    }
+
+    private void syncViewSettingsFromConfiguration() {
+        maxDepth = clamp(GameConfiguration.intValue("renderer.prototype.maxDepth", maxDepth), MIN_VIEW_DEPTH, MAX_VIEW_DEPTH);
+        fovDegrees = clamp(
+                GameConfiguration.doubleValue("renderer.prototype.fovDegrees", fovDegrees),
+                MIN_FOV_DEGREES,
+                MAX_FOV_DEGREES
+        );
     }
 
     public boolean toggleDebug() {
@@ -390,6 +472,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             return;
         }
 
+        glDisable(GL_FOG);
         glDisable(GL_DEPTH_TEST);
         glDepthMask(false);
         glMatrixMode(GL_PROJECTION);
@@ -434,15 +517,100 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         glLoadIdentity();
     }
 
+    private Matrix4f projectionViewMatrix(
+            int framebufferWidth,
+            int framebufferHeight,
+            DungeonRenderContext context,
+            CameraLookState lookState,
+            double cameraX,
+            double cameraY,
+            double cameraZ
+    ) {
+        glViewport(0, 0, framebufferWidth, framebufferHeight);
+        double aspect = framebufferWidth / (double) framebufferHeight;
+        double yaw = animatedYawDegrees(context) + lookState.yawOffsetDegrees();
+        Matrix4f projection = new Matrix4f().perspective(
+                (float) Math.toRadians(fovDegrees),
+                (float) aspect,
+                (float) nearPlane,
+                (float) farPlane);
+        Matrix4f view = new Matrix4f()
+                .rotateX((float) Math.toRadians(lookState.pitchOffsetDegrees()))
+                .rotateY((float) Math.toRadians(-yaw))
+                .translate((float) -cameraX, (float) -cameraY, (float) -cameraZ);
+        return projection.mul(view);
+    }
+
+    private void ensureLightmap(DungeonMap map) {
+        if (map == null || lightmapTexture == null) {
+            return;
+        }
+        long signature = lightmapSignature(map);
+        if (signature == lightmapSignature) {
+            return;
+        }
+        LightmapBaker.LightmapBakeResult result = lightmapBaker.bake(map);
+        lightmapTexture.upload(result.image(), true);
+        lightmapSignature = signature;
+        lightmapBakeMs = result.bakeMs();
+        lightmapWidth = result.image().getWidth();
+        lightmapHeight = result.image().getHeight();
+    }
+
+    private long lightmapSignature(DungeonMap map) {
+        long hash = 1469598103934665603L;
+        hash = mix(hash, map.getWidth());
+        hash = mix(hash, map.getHeight());
+        MapLightingSettings settings = map.getLightingSettings();
+        hash = mix(hash, settings.lightingEnabled() ? 1 : 0);
+        hash = mix(hash, settings.ambientColorRgb());
+        hash = mix(hash, Double.doubleToLongBits(settings.ambientIntensity()));
+        hash = mix(hash, settings.fogEnabled() ? 1 : 0);
+        hash = mix(hash, settings.fogColorRgb());
+        hash = mix(hash, Double.doubleToLongBits(settings.fogDensity()));
+        hash = mix(hash, GameConfiguration.intValue("lighting.lightmap.pixelsPerTile", 4));
+        hash = mix(hash, GameConfiguration.intValue("lighting.maxLights", 64));
+        hash = mix(hash, GameConfiguration.booleanValue("lighting.enabled", true) ? 1 : 0);
+        hash = mix(hash, GameConfiguration.booleanValue("lighting.occlusion.enabled", true) ? 1 : 0);
+        for (int y = 0; y < map.getHeight(); y++) {
+            for (int x = 0; x < map.getWidth(); x++) {
+                hash = mix(hash, map.getTile(x, y).ordinal());
+                hash = mix(hash, map.getHeightLevel(x, y));
+            }
+        }
+        for (MapLight light : map.getLightsView()) {
+            hash = mix(hash, light.id().hashCode());
+            hash = mix(hash, light.x());
+            hash = mix(hash, light.y());
+            hash = mix(hash, light.colorRgb());
+            hash = mix(hash, Double.doubleToLongBits(light.radius()));
+            hash = mix(hash, Double.doubleToLongBits(light.intensity()));
+            hash = mix(hash, Double.doubleToLongBits(light.heightOffset()));
+            hash = mix(hash, light.enabled() ? 1 : 0);
+        }
+        return hash;
+    }
+
+    private long mix(long hash, long value) {
+        hash ^= value;
+        return hash * 1099511628211L;
+    }
+
     private void configureCamera(DungeonRenderContext context, CameraLookState lookState) {
         double yaw = animatedYawDegrees(context) + lookState.yawOffsetDegrees();
+        double cameraX = animatedCameraX(context);
+        double cameraZ = animatedCameraZ(context);
         glRotated(lookState.pitchOffsetDegrees(), 1.0, 0.0, 0.0);
         glRotated(-yaw, 0.0, 1.0, 0.0);
         glTranslated(
-                -animatedCameraX(context),
-                -eyeHeight,
-                -animatedCameraZ(context)
+                -cameraX,
+                -cameraY(context, cameraX, cameraZ),
+                -cameraZ
         );
+    }
+
+    private double cameraY(DungeonRenderContext context, double cameraX, double cameraZ) {
+        return TerrainGeometry.groundYAtWorld(context.map(), cameraX, cameraZ) + eyeHeight;
     }
 
     private double animatedYawDegrees(DungeonRenderContext context) {
@@ -552,7 +720,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                 context,
                 lookState,
                 entity.getX() + 0.5,
-                Math.max(0.45, 0.90 * entity.getVisualScale()),
+                TerrainGeometry.groundYAtWorld(context.map(), entity.getX() + 0.5, entity.getY() + 0.5)
+                        + Math.max(0.45, 0.90 * entity.getVisualScale()),
                 entity.getY() + 0.5,
                 framebufferWidth,
                 framebufferHeight
@@ -577,9 +746,11 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             int framebufferWidth,
             int framebufferHeight
     ) {
-        double dx = worldX - animatedCameraX(context);
-        double dy = worldY - eyeHeight;
-        double dz = worldZ - animatedCameraZ(context);
+        double cameraX = animatedCameraX(context);
+        double cameraZ = animatedCameraZ(context);
+        double dx = worldX - cameraX;
+        double dy = worldY - cameraY(context, cameraX, cameraZ);
+        double dz = worldZ - cameraZ;
 
         double yawRadians = Math.toRadians(-(animatedYawDegrees(context) + lookState.yawOffsetDegrees()));
         double yawCos = Math.cos(yawRadians);
@@ -622,6 +793,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         int y = y0;
 
         while (x != targetX || y != targetY) {
+            int previousX = x;
+            int previousY = y;
             int doubledError = error * 2;
             if (doubledError > -dy) {
                 error -= dy;
@@ -632,31 +805,16 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                 y += sy;
             }
 
+            if (context.map().isWallLike(x, y)
+                    || TerrainGeometry.edgeKind(context.map(), previousX, previousY, x, y) == org.main.engine.TerrainEdgeKind.CLIFF) {
+                return false;
+            }
+
             if (x == targetX && y == targetY) {
                 return true;
             }
-
-            if (context.map().isWallLike(x, y)) {
-                return false;
-            }
         }
         return true;
-    }
-
-    private void drawQuad(LwjglDungeonSceneBuilder.TexturedQuad quad) {
-        textureCache.bind(quad.texture());
-        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-        glBegin(GL_QUADS);
-        drawVertex(quad.topLeft());
-        drawVertex(quad.topRight());
-        drawVertex(quad.bottomRight());
-        drawVertex(quad.bottomLeft());
-        glEnd();
-    }
-
-    private void drawVertex(LwjglDungeonSceneBuilder.Vertex vertex) {
-        glTexCoord2d(vertex.u(), vertex.v());
-        glVertex3d(vertex.x(), vertex.y(), vertex.z());
     }
 
     private void drawStaticModel(LwjglDungeonSceneBuilder.ModelInstance instance) {
@@ -670,21 +828,39 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         LwjglStaticModel model = getStaticModel(instance.assetPath());
         if (model == null) {
             if (instance.fallbackSprite() != null) {
-                drawQuad(instance.fallbackSprite());
+                renderDevice.renderWorld(
+                        worldBatchBuilder.build(List.of(instance.fallbackSprite())),
+                        currentProjectionView,
+                        lightmapTexture,
+                        currentRenderMap == null ? 1 : currentRenderMap.getWidth(),
+                        currentRenderMap == null ? 1 : currentRenderMap.getHeight(),
+                        currentCameraX,
+                        currentCameraY,
+                        currentCameraZ,
+                        currentLightingSettings);
             }
             return;
         }
 
-        glPushMatrix();
-        glTranslated(instance.centerX(), instance.baseY(), instance.centerZ());
         double scale = model.normalizedScaleForHeight(instance.height());
-        glScaled(scale, scale, scale);
-        glTranslated(-model.centerX(), -model.baseY(), -model.centerZ());
+        Matrix4f modelMatrix = new Matrix4f()
+                .translate((float) instance.centerX(), (float) instance.baseY(), (float) instance.centerZ())
+                .scale((float) scale)
+                .translate((float) -model.centerX(), (float) -model.baseY(), (float) -model.centerZ());
 
         for (LwjglStaticModel.Mesh mesh : model.meshes()) {
-            drawModelMesh(mesh);
+            renderDevice.renderStaticMesh(
+                    mesh,
+                    currentProjectionView,
+                    modelMatrix,
+                    lightmapTexture,
+                    currentRenderMap == null ? 1 : currentRenderMap.getWidth(),
+                    currentRenderMap == null ? 1 : currentRenderMap.getHeight(),
+                    currentCameraX,
+                    currentCameraY,
+                    currentCameraZ,
+                    currentLightingSettings);
         }
-        glPopMatrix();
         glEnable(GL_TEXTURE_2D);
         glColor4f(1f, 1f, 1f, 1f);
     }
@@ -888,6 +1064,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                         + " | Roofs " + roofQuads
                         + " | Sprites " + spriteQuads
                         + " | Models " + staticModels
+                        + " | Batches " + worldBatchCount
+                        + " | LM " + lightmapWidth + "x" + lightmapHeight
                         + " | Textures " + textureCache.textureCount()
         );
     }
@@ -902,6 +1080,9 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         lines.add("Tiles " + visibleTiles);
         lines.add("Quads F" + floorQuads + " W" + wallQuads + " R" + roofQuads + " S" + spriteQuads);
         lines.add("Models " + staticModels);
+        lines.add("Batches " + worldBatchCount);
+        lines.add("Lightmap " + lightmapWidth + "x" + lightmapHeight);
+        lines.add(String.format("Bake %.1f ms", lightmapBakeMs));
         lines.add("Textures " + textureCache.textureCount());
         if (lastLookState.active()
                 || Math.abs(lastLookState.yawOffsetDegrees()) > 0.001
@@ -912,6 +1093,14 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                     + String.format("%.1f", lastLookState.pitchOffsetDegrees()));
         }
         return lines;
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     public record EnemyLabel(

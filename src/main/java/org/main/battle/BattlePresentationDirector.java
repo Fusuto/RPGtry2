@@ -28,7 +28,8 @@ public final class BattlePresentationDirector {
             ActionType actionType,
             List<TargetReaction> targets,
             Phase phase,
-            double progress
+            double progress,
+            double overallProgress
     ) {
         public ActionSnapshot {
             actionName = actionName == null ? "" : actionName;
@@ -36,6 +37,7 @@ public final class BattlePresentationDirector {
             targets = targets == null ? List.of() : List.copyOf(targets);
             phase = phase == null ? Phase.WINDUP : phase;
             progress = Math.max(0.0, Math.min(1.0, progress));
+            overallProgress = Math.max(0.0, Math.min(1.0, overallProgress));
         }
     }
 
@@ -180,24 +182,34 @@ public final class BattlePresentationDirector {
     private static int phaseDurationMs(BattleActionIntent intent, Phase phase) {
         boolean spell = intent.actionType() == ActionType.SPELL || intent.actionType() == ActionType.HEAL
                 || intent.actionType() == ActionType.SUMMON || intent.actionType() == ActionType.DEFEND;
-        int total = spell ? 1100 : 720;
+        int total = totalDurationMs(intent);
         int impactStart = Math.max(1, (int) Math.round(total * intent.impactFraction()));
+        int impactHold = Math.min(spell ? 300 : 100, Math.max(1, total - impactStart - 1));
         return switch (phase) {
             case WINDUP -> impactStart;
-            case IMPACT -> spell ? 300 : 100;
-            case RECOVERY -> Math.max(1, total - impactStart);
+            case IMPACT -> impactHold;
+            case RECOVERY -> Math.max(1, total - impactStart - impactHold);
         };
+    }
+
+    private static int totalDurationMs(BattleActionIntent intent) {
+        if (intent.presentationDurationMs() > 0) return Math.max(3, intent.presentationDurationMs());
+        boolean spell = intent.actionType() == ActionType.SPELL || intent.actionType() == ActionType.HEAL
+                || intent.actionType() == ActionType.SUMMON || intent.actionType() == ActionType.DEFEND;
+        return spell ? 1400 : 820;
     }
 
     private record ScheduledAction(long sequence, BattleActionIntent intent) { }
 
-    private record ActiveAction(long sequence, BattleActionIntent intent, Phase phase, int elapsedMs, boolean complete) {
+    private record ActiveAction(long sequence, BattleActionIntent intent, Phase phase,
+                                int elapsedMs, int totalElapsedMs, boolean complete) {
         static ActiveAction start(long sequence, BattleActionIntent intent) {
-            return new ActiveAction(sequence, intent, Phase.WINDUP, 0, false);
+            return new ActiveAction(sequence, intent, Phase.WINDUP, 0, 0, false);
         }
 
         ActiveAction advance(int deltaMs) {
             int elapsed = elapsedMs + deltaMs;
+            int totalElapsed = Math.min(totalDurationMs(intent), totalElapsedMs + Math.max(0, deltaMs));
             Phase next = phase;
             while (elapsed >= phaseDurationMs(intent, next)) {
                 elapsed -= phaseDurationMs(intent, next);
@@ -209,20 +221,22 @@ public final class BattlePresentationDirector {
                     intent.enterRecovery();
                     if (intent.skipRecovery()) {
                         intent.complete();
-                        return new ActiveAction(sequence, intent, Phase.RECOVERY, 0, true);
+                        return new ActiveAction(sequence, intent, Phase.RECOVERY, 0, totalElapsed, true);
                     }
                     next = Phase.RECOVERY;
                 } else {
                     intent.complete();
-                    return new ActiveAction(sequence, intent, Phase.RECOVERY, 0, true);
+                    return new ActiveAction(sequence, intent, Phase.RECOVERY, 0, totalElapsed, true);
                 }
             }
-            return new ActiveAction(sequence, intent, next, elapsed, false);
+            return new ActiveAction(sequence, intent, next, elapsed, totalElapsed, false);
         }
 
         ActionSnapshot snapshot() {
             return new ActionSnapshot(sequence, intent.attacker(), intent.actionName(), intent.actionType(),
-                    intent.targets(), phase, elapsedMs / (double) Math.max(1, phaseDurationMs(intent, phase)));
+                    intent.targets(), phase,
+                    elapsedMs / (double) Math.max(1, phaseDurationMs(intent, phase)),
+                    totalElapsedMs / (double) Math.max(1, totalDurationMs(intent)));
         }
     }
 }

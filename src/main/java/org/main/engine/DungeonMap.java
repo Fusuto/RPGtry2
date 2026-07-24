@@ -2,6 +2,9 @@ package org.main.engine;
 
 import org.main.core.Library;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class DungeonMap {
     private static final int FLOOR = 0;
     private static final int WALL = 1;
@@ -17,6 +20,8 @@ public class DungeonMap {
     private final MapPaintData paintData;
     private final MapGeometryData geometryData;
     private final MobAreaData mobAreaData;
+    private final MapLightingSettings lightingSettings;
+    private final List<MapLight> lights;
 
     public DungeonMap(Library.TileType[][] tiles) {
         this(tiles, new int[tiles.length][tiles[0].length]);
@@ -47,6 +52,19 @@ public class DungeonMap {
             MapGeometryData geometryData,
             MobAreaData mobAreaData
     ) {
+        this(tiles, environmentThemeIndexes, paintData, geometryData, mobAreaData,
+                MapLightingSettings.defaultSettings(), List.of());
+    }
+
+    public DungeonMap(
+            Library.TileType[][] tiles,
+            int[][] environmentThemeIndexes,
+            MapPaintData paintData,
+            MapGeometryData geometryData,
+            MobAreaData mobAreaData,
+            MapLightingSettings lightingSettings,
+            List<MapLight> lights
+    ) {
         this.tiles = tiles;
         this.environmentThemeIndexes = environmentThemeIndexes;
         this.paintData = paintData == null
@@ -58,6 +76,10 @@ public class DungeonMap {
         this.mobAreaData = mobAreaData == null
                 ? MobAreaData.blank(tiles[0].length, tiles.length)
                 : mobAreaData;
+        this.lightingSettings = lightingSettings == null
+                ? MapLightingSettings.defaultSettings()
+                : lightingSettings;
+        this.lights = lights == null ? new ArrayList<>() : new ArrayList<>(lights);
     }
 
     public int getWidth() {
@@ -94,6 +116,14 @@ public class DungeonMap {
 
     public MobAreaData getMobAreaData() {
         return mobAreaData;
+    }
+
+    public MapLightingSettings getLightingSettings() {
+        return lightingSettings;
+    }
+
+    public List<MapLight> getLightsView() {
+        return List.copyOf(lights);
     }
 
     public String getMobAreaId(int x, int y) {

@@ -47,6 +47,21 @@ public final class GameConfiguration {
         return value == null ? fallback : value;
     }
 
+    public static boolean booleanValue(String key, boolean fallback) {
+        String value = stringValue(key, String.valueOf(fallback));
+        if (value == null) {
+            return fallback;
+        }
+        String normalized = value.trim().toLowerCase(java.util.Locale.ROOT);
+        if (normalized.equals("true") || normalized.equals("yes") || normalized.equals("on") || normalized.equals("1")) {
+            return true;
+        }
+        if (normalized.equals("false") || normalized.equals("no") || normalized.equals("off") || normalized.equals("0")) {
+            return false;
+        }
+        return fallback;
+    }
+
     public static void setValue(String key, String value) {
         if (key == null || key.isBlank()) {
             return;
@@ -186,6 +201,10 @@ public final class GameConfiguration {
         put("difficulty.speedMultiplierCap", "4.0");
         put("battle.summon.maxActorsPerSide", "6");
 
+        put("terrain.heightStep", "0.35");
+        put("terrain.maxWalkableDelta", "1");
+        put("terrain.cliffTexturePath", "assets/images/building/wall_rock.png");
+
         put("levelGate.equipmentDefense.NONE", "0");
         put("levelGate.equipmentDefense.COPPER", "1");
         put("levelGate.equipmentDefense.BRONZE", "3");
@@ -216,6 +235,18 @@ public final class GameConfiguration {
         put("renderer.prototype.mouseLook.recenterOnRelease", "true");
         put("renderer.prototype.mouseLook.invertX", "true");
         put("renderer.prototype.mouseLook.invertY", "false");
+        put("renderer.opengl.major", "4");
+        put("renderer.opengl.minor", "1");
+
+        put("lighting.enabled", "true");
+        put("lighting.mode", "lightmap");
+        put("lighting.lightmap.pixelsPerTile", "4");
+        put("lighting.dynamic.maxLights", "8");
+        put("lighting.maxLights", "64");
+        put("lighting.occlusion.enabled", "true");
+        put("lighting.flicker.enabled", "true");
+        put("lighting.flicker.updateMs", "90");
+        put("lighting.fog.enabled", "true");
 
         put("movement.animationDurationMs", "160");
         put("rotation.animationDurationMs", "360");

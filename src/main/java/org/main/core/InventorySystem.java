@@ -69,6 +69,7 @@ public final class InventorySystem {
         private final boolean materialTintApplied;
         private int magicAccuracyBonus;
         private int magicPowerBonus;
+        private String contentId = "";
         private String firstPersonModelPath = "";
         private EquipmentViewModelProfile viewModelProfile = EquipmentViewModelProfile.defaults();
         private int quantity;
@@ -276,6 +277,11 @@ public final class InventorySystem {
         public Item withMagicBonuses(int accuracyBonus, int powerBonus) {
             this.magicAccuracyBonus = Math.max(0, accuracyBonus);
             this.magicPowerBonus = Math.max(0, powerBonus);
+            return this;
+        }
+
+        public Item withContentId(String value) {
+            contentId = value == null ? "" : value.trim();
             return this;
         }
 
@@ -607,6 +613,10 @@ public final class InventorySystem {
             return itemType == ItemType.WEAPON ? magicPowerBonus : 0;
         }
 
+        public String getContentId() {
+            return contentId;
+        }
+
         public String getFirstPersonModelPath() {
             return firstPersonModelPath;
         }
@@ -663,6 +673,7 @@ public final class InventorySystem {
                     weaponType,
                     twoHanded
             ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus)
+                    .withContentId(contentId)
                     .withFirstPersonModel(firstPersonModelPath)
                     .withViewModelProfile(viewModelProfile);
         }

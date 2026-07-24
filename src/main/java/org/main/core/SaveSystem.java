@@ -4,6 +4,8 @@ import org.main.content.MapDesignLibrary;
 import org.main.content.PlayerRegionLibrary;
 import org.main.content.WorldManifestLibrary;
 import org.main.engine.DungeonMap;
+import org.main.engine.MapLight;
+import org.main.engine.MapLightingSettings;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapPaintData;
 import org.main.engine.MobAreaData;
@@ -301,6 +303,7 @@ public final class SaveSystem {
         saveMapPaint(properties, prefix + "paint.", dungeonMap.getPaintData());
         saveMapGeometry(properties, prefix + "geometry.", dungeonMap.getGeometryData());
         saveMobAreas(properties, prefix + "mobArea.", dungeonMap.getMobAreaData());
+        saveLighting(properties, prefix + "lighting.", dungeonMap.getLightingSettings(), dungeonMap.getLightsView());
     }
 
     private static DungeonMap loadDungeonMap(Properties properties) {
@@ -333,8 +336,77 @@ public final class SaveSystem {
                 themes,
                 loadMapPaint(properties, prefix + "paint.", width, height),
                 loadMapGeometry(properties, prefix + "geometry.", width, height),
-                loadMobAreas(properties, prefix + "mobArea.", width, height)
+                loadMobAreas(properties, prefix + "mobArea.", width, height),
+                loadLightingSettings(properties, prefix + "lighting."),
+                loadLights(properties, prefix + "lighting.light.")
         );
+    }
+
+    private static void saveLighting(
+            Properties properties,
+            String prefix,
+            MapLightingSettings settings,
+            List<MapLight> lights
+    ) {
+        MapLightingSettings safeSettings = settings == null ? MapLightingSettings.defaultSettings() : settings;
+        properties.setProperty(prefix + "enabled", String.valueOf(safeSettings.lightingEnabled()));
+        properties.setProperty(prefix + "ambientColor", MapLightingSettings.colorHex(safeSettings.ambientColorRgb()));
+        properties.setProperty(prefix + "ambientIntensity", String.valueOf(safeSettings.ambientIntensity()));
+        properties.setProperty(prefix + "fogEnabled", String.valueOf(safeSettings.fogEnabled()));
+        properties.setProperty(prefix + "fogColor", MapLightingSettings.colorHex(safeSettings.fogColorRgb()));
+        properties.setProperty(prefix + "fogDensity", String.valueOf(safeSettings.fogDensity()));
+
+        List<MapLight> safeLights = lights == null ? List.of() : lights;
+        properties.setProperty(prefix + "light.count", String.valueOf(safeLights.size()));
+        for (int i = 0; i < safeLights.size(); i++) {
+            MapLight light = safeLights.get(i);
+            String itemPrefix = prefix + "light." + i + ".";
+            properties.setProperty(itemPrefix + "id", light.id());
+            properties.setProperty(itemPrefix + "x", String.valueOf(light.x()));
+            properties.setProperty(itemPrefix + "y", String.valueOf(light.y()));
+            properties.setProperty(itemPrefix + "color", MapLightingSettings.colorHex(light.colorRgb()));
+            properties.setProperty(itemPrefix + "radius", String.valueOf(light.radius()));
+            properties.setProperty(itemPrefix + "intensity", String.valueOf(light.intensity()));
+            properties.setProperty(itemPrefix + "heightOffset", String.valueOf(light.heightOffset()));
+            properties.setProperty(itemPrefix + "flicker", String.valueOf(light.flickerAmount()));
+            properties.setProperty(itemPrefix + "enabled", String.valueOf(light.enabled()));
+        }
+    }
+
+    private static MapLightingSettings loadLightingSettings(Properties properties, String prefix) {
+        MapLightingSettings defaults = MapLightingSettings.defaultSettings();
+        return new MapLightingSettings(
+                Boolean.parseBoolean(properties.getProperty(prefix + "enabled", String.valueOf(defaults.lightingEnabled()))),
+                MapLightingSettings.parseColor(properties.getProperty(prefix + "ambientColor"), defaults.ambientColorRgb()),
+                readDouble(properties, prefix + "ambientIntensity", defaults.ambientIntensity()),
+                Boolean.parseBoolean(properties.getProperty(prefix + "fogEnabled", String.valueOf(defaults.fogEnabled()))),
+                MapLightingSettings.parseColor(properties.getProperty(prefix + "fogColor"), defaults.fogColorRgb()),
+                readDouble(properties, prefix + "fogDensity", defaults.fogDensity())
+        );
+    }
+
+    private static List<MapLight> loadLights(Properties properties, String prefix) {
+        int count = readInt(properties, prefix + "count", 0);
+        List<MapLight> lights = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            String itemPrefix = prefix + i + ".";
+            String id = properties.getProperty(itemPrefix + "id", "");
+            if (id.isBlank()) {
+                continue;
+            }
+            lights.add(new MapLight(
+                    id,
+                    readInt(properties, itemPrefix + "x", 0),
+                    readInt(properties, itemPrefix + "y", 0),
+                    MapLightingSettings.parseColor(properties.getProperty(itemPrefix + "color"), 0xFF8B42),
+                    readDouble(properties, itemPrefix + "radius", 5.0),
+                    readDouble(properties, itemPrefix + "intensity", 1.0),
+                    readDouble(properties, itemPrefix + "heightOffset", 0.65),
+                    readDouble(properties, itemPrefix + "flicker", 0.0),
+                    Boolean.parseBoolean(properties.getProperty(itemPrefix + "enabled", "true"))
+            ));
+        }
+        return lights;
     }
 
     private static void saveMapPaint(Properties properties, String prefix, MapPaintData paintData) {
@@ -1217,7 +1289,11 @@ public final class SaveSystem {
                 + "|"
                 + encode(limb.getSourceCreatureName())
                 + "|"
-                + encode(limb.getSourceCreatureId());
+                + encode(limb.getSourceCreatureId())
+                + "|"
+                + encode(limb.getFirstPersonModelPath())
+                + "|"
+                + encode(limb.getFirstPersonRigId());
     }
 
     private static LimbItem readCustomLimb(String value) {
@@ -1246,7 +1322,11 @@ public final class SaveSystem {
             String paperDollSourcePath = parts.length >= 8 ? decode(parts[7]) : "";
             String sourceCreatureName = parts.length >= 9 ? decode(parts[8]) : "";
             String sourceCreatureId = parts.length >= 10 ? decode(parts[9]) : "";
-            return new LimbItem(name, sourceCreatureId, sourceCreatureName, slot, stats, List.of(), condition, iconPath, examineText, paperDollSourcePath);
+            String firstPersonModelPath = parts.length >= 11 ? decode(parts[10]) : "";
+            String firstPersonRigId = parts.length >= 12 ? decode(parts[11]) : "";
+            return new LimbItem(name, sourceCreatureId, sourceCreatureName, slot, stats,
+                    List.of(), condition, iconPath, examineText, paperDollSourcePath)
+                    .withFirstPersonModel(firstPersonModelPath, firstPersonRigId);
         } catch (IllegalArgumentException ignored) {
             return null;
         }

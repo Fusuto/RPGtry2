@@ -51,6 +51,7 @@ public final class BattleActionIntent {
     private final Priority priority;
     private final OutcomePlanner planner;
     private final double impactFraction;
+    private final int presentationDurationMs;
     private final List<BattleActor> participantHints;
     private OutcomePlan outcome;
     private Lifecycle lifecycle = Lifecycle.QUEUED;
@@ -65,7 +66,7 @@ public final class BattleActionIntent {
             double impactFraction,
             OutcomePlanner planner
     ) {
-        this(attacker, actionName, actionType, priority, impactFraction, List.of(), planner);
+        this(attacker, actionName, actionType, priority, impactFraction, 0, List.of(), planner);
     }
 
     public BattleActionIntent(
@@ -74,6 +75,19 @@ public final class BattleActionIntent {
             BattlePresentationDirector.ActionType actionType,
             Priority priority,
             double impactFraction,
+            List<BattleActor> participantHints,
+            OutcomePlanner planner
+    ) {
+        this(attacker, actionName, actionType, priority, impactFraction, 0, participantHints, planner);
+    }
+
+    public BattleActionIntent(
+            BattleActor attacker,
+            String actionName,
+            BattlePresentationDirector.ActionType actionType,
+            Priority priority,
+            double impactFraction,
+            int presentationDurationMs,
             List<BattleActor> participantHints,
             OutcomePlanner planner
     ) {
@@ -86,6 +100,7 @@ public final class BattleActionIntent {
         this.impactFraction = Double.isFinite(impactFraction)
                 ? Math.max(0.05, Math.min(0.95, impactFraction))
                 : 0.55;
+        this.presentationDurationMs = Math.max(0, presentationDurationMs);
         this.planner = Objects.requireNonNull(planner, "planner");
         this.participantHints = participantHints == null ? List.of() : participantHints.stream()
                 .filter(Objects::nonNull).distinct().toList();
@@ -96,6 +111,7 @@ public final class BattleActionIntent {
     public BattlePresentationDirector.ActionType actionType() { return actionType; }
     public Priority priority() { return priority; }
     public double impactFraction() { return impactFraction; }
+    public int presentationDurationMs() { return presentationDurationMs; }
     public Lifecycle lifecycle() { return lifecycle; }
     public boolean impactCommitted() { return impactCommitted; }
     public boolean skipRecovery() { return skipRecovery; }

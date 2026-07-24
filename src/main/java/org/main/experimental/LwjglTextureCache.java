@@ -9,12 +9,24 @@ import java.util.IdentityHashMap;
 import java.util.Map;
 
 import static org.lwjgl.opengl.GL11.*;
+import static org.lwjgl.opengl.GL13.GL_TEXTURE0;
+import static org.lwjgl.opengl.GL13.glActiveTexture;
 
 final class LwjglTextureCache {
     private final Map<BufferedImage, Integer> textures = new IdentityHashMap<>();
     private int fallbackTexture;
 
     int bind(BufferedImage image) {
+        glActiveTexture(GL_TEXTURE0);
+        return bindToActiveUnit(image);
+    }
+
+    int bind(BufferedImage image, int textureUnit) {
+        glActiveTexture(GL_TEXTURE0 + textureUnit);
+        return bindToActiveUnit(image);
+    }
+
+    private int bindToActiveUnit(BufferedImage image) {
         if (image == null) {
             return bindFallback();
         }

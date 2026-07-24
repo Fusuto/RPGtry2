@@ -3581,7 +3581,14 @@ public class GameState {
         MobAreaData mobAreaData = source.getMobAreaData() == null
                 ? MobAreaData.blank(source.getWidth(), source.getHeight())
                 : source.getMobAreaData().copy();
-        return new DungeonMap(tiles, themes, paintData, geometryData, mobAreaData);
+        return new DungeonMap(
+                tiles,
+                themes,
+                paintData,
+                geometryData,
+                mobAreaData,
+                source.getLightingSettings(),
+                source.getLightsView());
     }
 
     private Map<String, ResourceNodeSnapshot> copyResourceNodeSnapshots() {
