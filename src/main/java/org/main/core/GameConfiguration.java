@@ -235,11 +235,14 @@ public final class GameConfiguration {
         put("renderer.prototype.mouseLook.recenterOnRelease", "true");
         put("renderer.prototype.mouseLook.invertX", "true");
         put("renderer.prototype.mouseLook.invertY", "false");
+        put("renderer.prototype.viewModel.lightMinimum", "0.12");
         put("renderer.opengl.major", "4");
         put("renderer.opengl.minor", "1");
 
         put("lighting.enabled", "true");
         put("lighting.mode", "lightmap");
+        put("lighting.lightmap.chunkCache.enabled", "true");
+        put("lighting.lightmap.chunkCache.maxEntries", "96");
         put("lighting.lightmap.pixelsPerTile", "4");
         put("lighting.dynamic.maxLights", "8");
         put("lighting.maxLights", "64");

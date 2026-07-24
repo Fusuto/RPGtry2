@@ -6,7 +6,7 @@
 
     <groupId>org.example</groupId>
     <artifactId>Gameproject2</artifactId>
-    <version>0.06</version>
+    <version>0.07</version>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>

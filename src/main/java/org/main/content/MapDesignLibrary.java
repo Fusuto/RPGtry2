@@ -22,6 +22,7 @@ import org.main.engine.MapLightingSettings;
 import org.main.engine.MapPaintData;
 import org.main.engine.MobAreaData;
 import org.main.engine.AssetLoader;
+import org.main.engine.SkyboxSpec;
 import org.main.engine.SpriteAnimation;
 import org.main.monsters.Monster;
 
@@ -2046,7 +2047,7 @@ public final class MapDesignLibrary {
             displayName = displayName == null || displayName.isBlank() ? "Untitled Map" : displayName;
             description = description == null ? "" : description;
             musicPath = musicPath == null ? "" : musicPath.trim();
-            skyboxPath = skyboxPath == null ? "" : skyboxPath.trim();
+            skyboxPath = SkyboxSpec.parseOrDefault(skyboxPath).encode();
             mapPaint = mapPaint == null ? MapPaintData.blank(width, height) : mapPaint;
             mapGeometry = mapGeometry == null ? MapGeometryData.blank(width, height) : mapGeometry;
             mobAreas = mobAreas == null ? MobAreaData.blank(width, height) : mobAreas;

@@ -6,6 +6,7 @@ import org.main.content.CharacterModelDefinition;
 import org.main.core.GameConfiguration;
 import org.main.core.GameState;
 import org.main.core.Library;
+import org.main.core.OpenWorldSession;
 import org.main.engine.AssetLoader;
 import org.main.engine.DungeonMap;
 import org.main.engine.DungeonRenderContext;
@@ -13,14 +14,19 @@ import org.main.engine.DungeonRenderDebugInfo;
 import org.main.engine.EnvironmentTheme;
 import org.main.engine.MapLight;
 import org.main.engine.MapEntity;
+import org.main.engine.MapGeometryData;
 import org.main.engine.MapLightingSettings;
+import org.main.engine.MapPaintData;
+import org.main.engine.MobAreaData;
 import org.main.engine.RealtimeDungeonViewport;
+import org.main.engine.SkyboxSpec;
 import org.main.engine.TerrainGeometry;
 import org.main.engine.TextureManager;
 import org.lwjgl.BufferUtils;
 
 import javax.imageio.ImageIO;
 import java.awt.Dimension;
+import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -30,9 +36,14 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -52,6 +63,17 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     private final LwjglTextureCache textureCache = new LwjglTextureCache();
     private final LwjglWorldBatchBuilder worldBatchBuilder = new LwjglWorldBatchBuilder();
     private final LightmapBaker lightmapBaker = new LightmapBaker();
+    private final ExecutorService lightmapExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "Aether-Lightmap-Baker");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final Map<Long, BufferedImage> chunkLightmapCache = new LinkedHashMap<>(128, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Long, BufferedImage> eldest) {
+            return size() > Math.max(16, GameConfiguration.intValue("lighting.lightmap.chunkCache.maxEntries", 96));
+        }
+    };
     private final LwjglBattleSceneRenderer battleSceneRenderer = new LwjglBattleSceneRenderer(textureCache);
     private final Map<String, LwjglStaticModel> staticModelCache = new HashMap<>();
     private final Map<CharacterModelDefinition, LwjglSkinnedModel> worldSkinnedModelCache = new HashMap<>();
@@ -61,9 +83,16 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     private LwjglRenderDevice renderDevice;
     private GpuTexture lightmapTexture;
     private long lightmapSignature = Long.MIN_VALUE;
+    private long pendingLightmapSignature = Long.MIN_VALUE;
+    private Future<PreparedLightmap> pendingLightmap;
     private double lightmapBakeMs;
     private int lightmapWidth;
     private int lightmapHeight;
+    private BufferedImage currentLightmapImage;
+    private int lightmapChunkHits;
+    private int lightmapChunkMisses;
+    private int lightmapChunkEntries;
+    private boolean lightmapPending;
     private int worldBatchCount;
     private int worldRenderedIndices;
     private Matrix4f currentProjectionView = new Matrix4f();
@@ -93,9 +122,11 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     private double lastFrameMs;
     private double smoothedFrameMs = 16.0;
     private CameraLookState lastLookState = CameraLookState.centered();
+    private double currentSkyboxYawDegrees;
     private List<EnemyLabel> enemyLabels = List.of();
     private String skyboxPath = "";
-    private BufferedImage skyboxImage;
+    private SkyboxSpec skyboxSpec = SkyboxSpec.DEFAULT;
+    private final Map<String, BufferedImage> skyboxFaceImages = new HashMap<>();
 
     public LwjglDungeonViewport(TextureManager textureManager, List<EnvironmentTheme> environmentThemes) {
         List<EnvironmentTheme> safeThemes = environmentThemes == null || environmentThemes.isEmpty()
@@ -175,6 +206,9 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         int framebufferHeight = Math.max(1, height[0]);
         CameraLookState safeLookState = lookState == null ? CameraLookState.centered() : lookState;
         lastLookState = safeLookState;
+        currentSkyboxYawDegrees = context == null
+                ? safeLookState.yawOffsetDegrees()
+                : animatedYawDegrees(context) + safeLookState.yawOffsetDegrees();
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         drawSkybox(framebufferWidth, framebufferHeight);
@@ -296,6 +330,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     @Override
     public void shutdown() {
         battleSceneRenderer.shutdown();
+        lightmapExecutor.shutdownNow();
         if (renderDevice != null) {
             renderDevice.shutdown();
             renderDevice = null;
@@ -308,6 +343,9 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         worldSkinnedModelCache.clear();
         failedWorldSkinnedModels.clear();
         failedStaticModels.clear();
+        synchronized (chunkLightmapCache) {
+            chunkLightmapCache.clear();
+        }
         textureCache.shutdown();
         if (window != NULL) {
             glfwDestroyWindow(window);
@@ -335,6 +373,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                 + ", models=" + staticModels
                 + ", batches=" + worldBatchCount
                 + ", lightmap=" + lightmapWidth + "x" + lightmapHeight
+                + ", lightmapChunks=" + lightmapChunkHits + "/" + lightmapChunkMisses
+                + (lightmapPending ? " pending" : "")
                 + ", textures=" + textureCache.textureCount();
     }
 
@@ -454,13 +494,16 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     }
 
     public void setSkyboxPath(String skyboxPath) {
-        String safePath = skyboxPath == null ? "" : skyboxPath.trim();
+        String safePath = skyboxPath == null || skyboxPath.isBlank()
+                ? SkyboxSpec.DEFAULT.encode()
+                : skyboxPath.trim();
         if (safePath.equals(this.skyboxPath)) {
             return;
         }
 
         this.skyboxPath = safePath;
-        this.skyboxImage = safePath.isBlank() ? null : AssetLoader.loadImage(safePath);
+        this.skyboxFaceImages.clear();
+        this.skyboxSpec = SkyboxSpec.parseOrDefault(safePath);
     }
 
     public List<EnemyLabel> getEnemyLabelsView() {
@@ -468,40 +511,76 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     }
 
     private void drawSkybox(int framebufferWidth, int framebufferHeight) {
-        if (skyboxImage == null) {
+        if (skyboxSpec == null || !skyboxSpec.complete()) {
             return;
         }
 
         glDisable(GL_FOG);
         glDisable(GL_DEPTH_TEST);
         glDepthMask(false);
-        glMatrixMode(GL_PROJECTION);
-        glPushMatrix();
-        glLoadIdentity();
-        glOrtho(0.0, framebufferWidth, framebufferHeight, 0.0, -1.0, 1.0);
-        glMatrixMode(GL_MODELVIEW);
-        glPushMatrix();
-        glLoadIdentity();
-
-        textureCache.bind(skyboxImage);
-        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-        glBegin(GL_QUADS);
-        glTexCoord2d(0.0, 1.0);
-        glVertex2d(0.0, 0.0);
-        glTexCoord2d(1.0, 1.0);
-        glVertex2d(framebufferWidth, 0.0);
-        glTexCoord2d(1.0, 0.0);
-        glVertex2d(framebufferWidth, framebufferHeight);
-        glTexCoord2d(0.0, 0.0);
-        glVertex2d(0.0, framebufferHeight);
-        glEnd();
-
-        glPopMatrix();
-        glMatrixMode(GL_PROJECTION);
-        glPopMatrix();
-        glMatrixMode(GL_MODELVIEW);
+        drawSkyboxCube(framebufferWidth, framebufferHeight);
         glDepthMask(true);
         glEnable(GL_DEPTH_TEST);
+    }
+
+    private void drawSkyboxCube(int framebufferWidth, int framebufferHeight) {
+        glViewport(0, 0, framebufferWidth, framebufferHeight);
+        double aspect = framebufferWidth / (double) framebufferHeight;
+        double top = Math.tan(Math.toRadians(fovDegrees) / 2.0) * nearPlane;
+        double right = top * aspect;
+        glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
+        glLoadIdentity();
+        glFrustum(-right, right, -top, top, nearPlane, farPlane);
+        glMatrixMode(GL_MODELVIEW);
+        glPushMatrix();
+        glLoadIdentity();
+        glRotated(lastLookState.pitchOffsetDegrees(), 1.0, 0.0, 0.0);
+        glRotated(-currentSkyboxYawDegrees, 0.0, 1.0, 0.0);
+        double size = Math.max(8.0, farPlane * 0.45);
+        drawSkyboxFace(skyboxSpec.front(), -size, -size, -size, size, -size, -size, size, size, -size, -size, size, -size);
+        drawSkyboxFace(skyboxSpec.back(), size, -size, size, -size, -size, size, -size, size, size, size, size, size);
+        drawSkyboxFace(skyboxSpec.left(), -size, -size, size, -size, -size, -size, -size, size, -size, -size, size, size);
+        drawSkyboxFace(skyboxSpec.right(), size, -size, -size, size, -size, size, size, size, size, size, size, -size);
+        drawSkyboxFace(skyboxSpec.top(), -size, size, -size, size, size, -size, size, size, size, -size, size, size);
+        drawSkyboxFace(skyboxSpec.bottom(), -size, -size, size, size, -size, size, size, -size, -size, -size, -size, -size);
+        glPopMatrix();
+        glMatrixMode(GL_PROJECTION);
+        glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
+    }
+
+    private void drawSkyboxFace(
+            String path,
+            double x1,
+            double y1,
+            double z1,
+            double x2,
+            double y2,
+            double z2,
+            double x3,
+            double y3,
+            double z3,
+            double x4,
+            double y4,
+            double z4
+    ) {
+        BufferedImage image = skyboxFaceImages.computeIfAbsent(path, AssetLoader::loadImage);
+        if (image == null) {
+            return;
+        }
+        textureCache.bind(image);
+        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        glBegin(GL_QUADS);
+        glTexCoord2d(0.0, 0.0);
+        glVertex3d(x1, y1, z1);
+        glTexCoord2d(1.0, 0.0);
+        glVertex3d(x2, y2, z2);
+        glTexCoord2d(1.0, 1.0);
+        glVertex3d(x3, y3, z3);
+        glTexCoord2d(0.0, 1.0);
+        glVertex3d(x4, y4, z4);
+        glEnd();
     }
 
     private void configureProjection(int framebufferWidth, int framebufferHeight) {
@@ -545,16 +624,201 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         if (map == null || lightmapTexture == null) {
             return;
         }
+        publishReadyLightmap();
         long signature = lightmapSignature(map);
         if (signature == lightmapSignature) {
             return;
         }
-        LightmapBaker.LightmapBakeResult result = lightmapBaker.bake(map);
-        lightmapTexture.upload(result.image(), true);
-        lightmapSignature = signature;
-        lightmapBakeMs = result.bakeMs();
-        lightmapWidth = result.image().getWidth();
-        lightmapHeight = result.image().getHeight();
+        if (pendingLightmap != null && !pendingLightmap.isDone() && pendingLightmapSignature == signature) {
+            lightmapPending = true;
+            return;
+        }
+
+        LightmapJob job = prepareLightmapJob(map, signature);
+        if (lightmapSignature == Long.MIN_VALUE) {
+            uploadPreparedLightmap(buildLightmap(job));
+            return;
+        }
+
+        if (pendingLightmap != null && !pendingLightmap.isDone()) {
+            pendingLightmap.cancel(false);
+        }
+        pendingLightmapSignature = signature;
+        lightmapPending = true;
+        pendingLightmap = lightmapExecutor.submit(() -> buildLightmap(job));
+    }
+
+    private void publishReadyLightmap() {
+        if (pendingLightmap == null || !pendingLightmap.isDone()) {
+            lightmapPending = pendingLightmap != null;
+            return;
+        }
+        try {
+            PreparedLightmap prepared = pendingLightmap.get();
+            uploadPreparedLightmap(prepared);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException exception) {
+            LOGGER.log(Level.WARNING, "Failed to prepare chunked lightmap.", exception.getCause());
+        } finally {
+            pendingLightmap = null;
+            pendingLightmapSignature = Long.MIN_VALUE;
+            lightmapPending = false;
+        }
+    }
+
+    private void uploadPreparedLightmap(PreparedLightmap prepared) {
+        if (prepared == null || prepared.image() == null) {
+            return;
+        }
+        lightmapTexture.upload(prepared.image(), true);
+        currentLightmapImage = prepared.image();
+        lightmapSignature = prepared.signature();
+        lightmapBakeMs = prepared.bakeMs();
+        lightmapWidth = prepared.image().getWidth();
+        lightmapHeight = prepared.image().getHeight();
+        lightmapChunkHits = prepared.chunkHits();
+        lightmapChunkMisses = prepared.chunkMisses();
+        synchronized (chunkLightmapCache) {
+            lightmapChunkEntries = chunkLightmapCache.size();
+        }
+    }
+
+    private LightmapJob prepareLightmapJob(DungeonMap map, long signature) {
+        int split = OpenWorldSession.WINDOW_DIAMETER;
+        boolean chunked = map.getWidth() >= split
+                && map.getHeight() >= split
+                && map.getWidth() % split == 0
+                && map.getHeight() % split == 0
+                && GameConfiguration.booleanValue("lighting.lightmap.chunkCache.enabled", true);
+        if (!chunked) {
+            return new LightmapJob(signature, map.getWidth(), map.getHeight(), List.of(
+                    new LightmapChunk(0, 0, map.getWidth(), map.getHeight(), copyRegion(map, 0, 0, map.getWidth(), map.getHeight()))
+            ));
+        }
+
+        int chunkWidth = map.getWidth() / split;
+        int chunkHeight = map.getHeight() / split;
+        List<LightmapChunk> chunks = new ArrayList<>(split * split);
+        for (int chunkY = 0; chunkY < split; chunkY++) {
+            for (int chunkX = 0; chunkX < split; chunkX++) {
+                int offsetX = chunkX * chunkWidth;
+                int offsetY = chunkY * chunkHeight;
+                DungeonMap chunkMap = copyRegion(map, offsetX, offsetY, chunkWidth, chunkHeight);
+                chunks.add(new LightmapChunk(offsetX, offsetY, chunkWidth, chunkHeight, chunkMap));
+            }
+        }
+        return new LightmapJob(signature, map.getWidth(), map.getHeight(), chunks);
+    }
+
+    private PreparedLightmap buildLightmap(LightmapJob job) {
+        long startNanos = System.nanoTime();
+        int pixelsPerTile = Math.max(1, GameConfiguration.intValue("lighting.lightmap.pixelsPerTile", 4));
+        BufferedImage atlas = new BufferedImage(
+                Math.max(1, job.width() * pixelsPerTile),
+                Math.max(1, job.height() * pixelsPerTile),
+                BufferedImage.TYPE_INT_ARGB
+        );
+        Graphics2D graphics = atlas.createGraphics();
+        int hits = 0;
+        int misses = 0;
+        try {
+            for (LightmapChunk chunk : job.chunks()) {
+                ChunkBakeResult chunkResult = cachedOrBakeChunk(chunk);
+                if (chunkResult.cacheHit()) {
+                    hits++;
+                } else {
+                    misses++;
+                }
+                int x = chunk.offsetX() * pixelsPerTile;
+                int y = atlas.getHeight() - (chunk.offsetY() + chunk.height()) * pixelsPerTile;
+                graphics.drawImage(chunkResult.image(), x, y, null);
+            }
+        } finally {
+            graphics.dispose();
+        }
+        double bakeMs = (System.nanoTime() - startNanos) / 1_000_000.0;
+        return new PreparedLightmap(job.signature(), atlas, bakeMs, hits, misses);
+    }
+
+    private ChunkBakeResult cachedOrBakeChunk(LightmapChunk chunk) {
+        long signature = lightmapSignature(chunk.map());
+        synchronized (chunkLightmapCache) {
+            BufferedImage cached = chunkLightmapCache.get(signature);
+            if (cached != null) {
+                return new ChunkBakeResult(cached, true);
+            }
+        }
+
+        LightmapBaker.LightmapBakeResult result = lightmapBaker.bake(chunk.map());
+        synchronized (chunkLightmapCache) {
+            chunkLightmapCache.put(signature, result.image());
+        }
+        return new ChunkBakeResult(result.image(), false);
+    }
+
+    private DungeonMap copyRegion(DungeonMap source, int offsetX, int offsetY, int width, int height) {
+        Library.TileType[][] tiles = new Library.TileType[height][width];
+        int[][] themes = new int[height][width];
+        int[][] heights = new int[height][width];
+        String[][] mobAreas = new String[height][width];
+        Map<MapPaintData.Layer, String[][]> paintLayers = new LinkedHashMap<>();
+        for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
+            paintLayers.put(layer, new String[height][width]);
+        }
+
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int sourceX = offsetX + x;
+                int sourceY = offsetY + y;
+                tiles[y][x] = source.getTile(sourceX, sourceY);
+                themes[y][x] = source.getEnvironmentThemeIndex(sourceX, sourceY);
+                heights[y][x] = source.getHeightLevel(sourceX, sourceY);
+                mobAreas[y][x] = source.getMobAreaId(sourceX, sourceY);
+                for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
+                    paintLayers.get(layer)[y][x] = source.getPaintBrushId(layer, sourceX, sourceY);
+                }
+            }
+        }
+
+        List<MapLight> lights = new ArrayList<>();
+        for (MapLight light : source.getLightsView()) {
+            if (light == null) {
+                continue;
+            }
+            if (light.x() < offsetX || light.y() < offsetY
+                    || light.x() >= offsetX + width || light.y() >= offsetY + height) {
+                continue;
+            }
+            lights.add(new MapLight(
+                    light.id(),
+                    light.x() - offsetX,
+                    light.y() - offsetY,
+                    light.colorRgb(),
+                    light.radius(),
+                    light.intensity(),
+                    light.heightOffset(),
+                    light.flickerAmount(),
+                    light.enabled()
+            ));
+        }
+
+        return new DungeonMap(
+                tiles,
+                themes,
+                MapPaintData.of(
+                        width,
+                        height,
+                        paintLayers.get(MapPaintData.Layer.FLOOR),
+                        paintLayers.get(MapPaintData.Layer.WALL),
+                        paintLayers.get(MapPaintData.Layer.DOOR),
+                        paintLayers.get(MapPaintData.Layer.ROOF)
+                ),
+                MapGeometryData.of(width, height, heights),
+                MobAreaData.of(width, height, mobAreas),
+                source.getLightingSettings(),
+                lights
+        );
     }
 
     private long lightmapSignature(DungeonMap map) {
@@ -928,6 +1192,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         glLoadIdentity();
 
         glClear(GL_DEPTH_BUFFER_BIT);
+        float[] localLight = sampleViewModelLight();
 
         glTranslated(
                 GameConfiguration.doubleValue(prefix + ".viewModel.positionX", 0.42),
@@ -950,7 +1215,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         glTranslated(-model.centerX(), -model.baseY(), -model.centerZ());
 
         for (LwjglStaticModel.Mesh mesh : model.meshes()) {
-            drawModelMesh(mesh);
+            drawModelMesh(mesh, localLight);
         }
 
         glPopMatrix();
@@ -1002,13 +1267,25 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     }
 
     private void drawModelMesh(LwjglStaticModel.Mesh mesh) {
+        drawModelMesh(mesh, null);
+    }
+
+    private void drawModelMesh(LwjglStaticModel.Mesh mesh, float[] lightTint) {
         if (mesh.texture() == null) {
             glDisable(GL_TEXTURE_2D);
         } else {
             glEnable(GL_TEXTURE_2D);
             textureCache.bind(mesh.texture());
         }
-        glColor4f(mesh.red(), mesh.green(), mesh.blue(), mesh.alpha());
+        float red = mesh.red();
+        float green = mesh.green();
+        float blue = mesh.blue();
+        if (lightTint != null && lightTint.length >= 3) {
+            red *= lightTint[0];
+            green *= lightTint[1];
+            blue *= lightTint[2];
+        }
+        glColor4f(red, green, blue, mesh.alpha());
         float[] positions = mesh.positions();
         float[] texCoords = mesh.texCoords();
         glBegin(GL_TRIANGLES);
@@ -1021,6 +1298,34 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             glVertex3f(positions[positionOffset], positions[positionOffset + 1], positions[positionOffset + 2]);
         }
         glEnd();
+    }
+
+    private float[] sampleViewModelLight() {
+        if (currentLightmapImage == null
+                || currentRenderMap == null
+                || currentLightingSettings == null
+                || !GameConfiguration.booleanValue("lighting.enabled", true)
+                || !currentLightingSettings.lightingEnabled()) {
+            return new float[] {1f, 1f, 1f};
+        }
+
+        int width = Math.max(1, currentLightmapImage.getWidth());
+        int height = Math.max(1, currentLightmapImage.getHeight());
+        double normalizedX = currentCameraX / Math.max(1.0, currentRenderMap.getWidth());
+        double normalizedZ = currentCameraZ / Math.max(1.0, currentRenderMap.getHeight());
+        int sampleX = clamp((int) Math.round(normalizedX * (width - 1)), 0, width - 1);
+        int sampleY = clamp((int) Math.round((1.0 - normalizedZ) * (height - 1)), 0, height - 1);
+        int rgb = currentLightmapImage.getRGB(sampleX, sampleY);
+        float minimum = (float) clamp(
+                GameConfiguration.doubleValue("renderer.prototype.viewModel.lightMinimum", 0.22),
+                0.0,
+                1.0
+        );
+        return new float[] {
+                Math.max(minimum, ((rgb >> 16) & 0xFF) / 255.0f),
+                Math.max(minimum, ((rgb >> 8) & 0xFF) / 255.0f),
+                Math.max(minimum, (rgb & 0xFF) / 255.0f)
+        };
     }
 
     private static double smoothStep(double value) {
@@ -1083,6 +1388,9 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         lines.add("Batches " + worldBatchCount);
         lines.add("Lightmap " + lightmapWidth + "x" + lightmapHeight);
         lines.add(String.format("Bake %.1f ms", lightmapBakeMs));
+        lines.add("LM chunks " + lightmapChunkHits + "/" + lightmapChunkMisses
+                + " cache " + lightmapChunkEntries
+                + (lightmapPending ? " pending" : ""));
         lines.add("Textures " + textureCache.textureCount());
         if (lastLookState.active()
                 || Math.abs(lastLookState.yawOffsetDegrees()) > 0.001
@@ -1108,6 +1416,38 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             int y,
             String text,
             DifficultyResolver.DifficultyBand band
+    ) {
+    }
+
+    private record LightmapJob(
+            long signature,
+            int width,
+            int height,
+            List<LightmapChunk> chunks
+    ) {
+    }
+
+    private record LightmapChunk(
+            int offsetX,
+            int offsetY,
+            int width,
+            int height,
+            DungeonMap map
+    ) {
+    }
+
+    private record PreparedLightmap(
+            long signature,
+            BufferedImage image,
+            double bakeMs,
+            int chunkHits,
+            int chunkMisses
+    ) {
+    }
+
+    private record ChunkBakeResult(
+            BufferedImage image,
+            boolean cacheHit
     ) {
     }
 }

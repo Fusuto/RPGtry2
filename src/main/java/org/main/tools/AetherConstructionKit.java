@@ -31,6 +31,7 @@ import org.main.engine.MapLightingSettings;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapPaintData;
 import org.main.engine.MobAreaData;
+import org.main.engine.SkyboxSpec;
 import org.main.engine.TerrainEdgeKind;
 import org.main.engine.TerrainGeometry;
 
@@ -10254,7 +10255,13 @@ public class AetherConstructionKit extends JFrame {
     private void editMetadata() {
         JTextField titleField = new JTextField(mapTitle(), 24);
         JTextField musicField = new JTextField(design.musicPath(), 28);
-        JTextField skyboxField = new JTextField(design.skyboxPath(), 28);
+        SkyboxSpec skybox = SkyboxSpec.parseOrDefault(design.skyboxPath());
+        JTextField skyboxBackField = new JTextField(skybox.back(), 28);
+        JTextField skyboxBottomField = new JTextField(skybox.bottom(), 28);
+        JTextField skyboxFrontField = new JTextField(skybox.front(), 28);
+        JTextField skyboxLeftField = new JTextField(skybox.left(), 28);
+        JTextField skyboxRightField = new JTextField(skybox.right(), 28);
+        JTextField skyboxTopField = new JTextField(skybox.top(), 28);
         MapLightingSettings lighting = design.lightingSettings();
         JCheckBox lightingEnabledBox = new JCheckBox("Lighting enabled", lighting.lightingEnabled());
         JTextField ambientColorField = new JTextField(MapLightingSettings.colorHex(lighting.ambientColorRgb()), 10);
@@ -10264,19 +10271,34 @@ public class AetherConstructionKit extends JFrame {
         JTextField fogColorField = new JTextField(MapLightingSettings.colorHex(lighting.fogColorRgb()), 10);
         JSpinner fogDensitySpinner = new JSpinner(new SpinnerNumberModel(lighting.fogDensity(), 0.0, 1.0, 0.005));
         JButton musicBrowseButton = new JButton("Browse");
-        JButton skyboxBrowseButton = new JButton("Browse");
+        JButton skyboxBackBrowseButton = new JButton("Browse");
+        JButton skyboxBottomBrowseButton = new JButton("Browse");
+        JButton skyboxFrontBrowseButton = new JButton("Browse");
+        JButton skyboxLeftBrowseButton = new JButton("Browse");
+        JButton skyboxRightBrowseButton = new JButton("Browse");
+        JButton skyboxTopBrowseButton = new JButton("Browse");
         JTextArea descriptionArea = new JTextArea(design.description(), 6, 30);
         descriptionArea.setLineWrap(true);
         descriptionArea.setWrapStyleWord(true);
         musicBrowseButton.addActionListener(event -> browsePathInto(musicField));
-        skyboxBrowseButton.addActionListener(event -> browsePathInto(skyboxField));
+        skyboxBackBrowseButton.addActionListener(event -> browsePathInto(skyboxBackField));
+        skyboxBottomBrowseButton.addActionListener(event -> browsePathInto(skyboxBottomField));
+        skyboxFrontBrowseButton.addActionListener(event -> browsePathInto(skyboxFrontField));
+        skyboxLeftBrowseButton.addActionListener(event -> browsePathInto(skyboxLeftField));
+        skyboxRightBrowseButton.addActionListener(event -> browsePathInto(skyboxRightField));
+        skyboxTopBrowseButton.addActionListener(event -> browsePathInto(skyboxTopField));
 
         JPanel panel = new JPanel(new BorderLayout(6, 6));
         JPanel fields = new JPanel();
         fields.setLayout(new BoxLayout(fields, BoxLayout.Y_AXIS));
         fields.add(formRow("Title", titleField));
         fields.add(formRow("Chunk Ambience", pathFieldPanel(musicField, musicBrowseButton)));
-        fields.add(formRow("Skybox", pathFieldPanel(skyboxField, skyboxBrowseButton)));
+        fields.add(formRow("Skybox Back", pathFieldPanel(skyboxBackField, skyboxBackBrowseButton)));
+        fields.add(formRow("Skybox Bottom", pathFieldPanel(skyboxBottomField, skyboxBottomBrowseButton)));
+        fields.add(formRow("Skybox Front", pathFieldPanel(skyboxFrontField, skyboxFrontBrowseButton)));
+        fields.add(formRow("Skybox Left", pathFieldPanel(skyboxLeftField, skyboxLeftBrowseButton)));
+        fields.add(formRow("Skybox Right", pathFieldPanel(skyboxRightField, skyboxRightBrowseButton)));
+        fields.add(formRow("Skybox Top", pathFieldPanel(skyboxTopField, skyboxTopBrowseButton)));
         fields.add(formRow("Lighting", lightingEnabledBox));
         fields.add(formRow("Ambient Color", ambientColorField));
         fields.add(formRow("Ambient Intensity", ambientIntensitySpinner));
@@ -10312,7 +10334,14 @@ public class AetherConstructionKit extends JFrame {
                 title,
                 descriptionArea.getText() == null ? "" : descriptionArea.getText().trim(),
                 musicField.getText() == null ? "" : musicField.getText().trim(),
-                skyboxField.getText() == null ? "" : skyboxField.getText().trim(),
+                new SkyboxSpec(
+                        skyboxBackField.getText(),
+                        skyboxBottomField.getText(),
+                        skyboxFrontField.getText(),
+                        skyboxLeftField.getText(),
+                        skyboxRightField.getText(),
+                        skyboxTopField.getText()
+                ).encode(),
                 design.primaryTheme(),
                 design.primaryTheme(),
                 design.tiles(),
