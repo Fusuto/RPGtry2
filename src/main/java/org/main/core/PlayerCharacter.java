@@ -1,8 +1,8 @@
 package org.main.core;
 
 import org.main.battle.BattleSkill;
+import org.main.content.BattleContentCatalog;
 import org.main.content.PlayerRegionLibrary;
-import org.main.content.SkillLibrary;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -55,7 +55,8 @@ public class PlayerCharacter {
             HashMap<CharacterSkill, Integer> skills,
             String portraitPath
     ) {
-        this(name, maxHp, currHp, inventory, skills, portraitPath, null, createDefaultStats(), SkillLibrary.createDefaultPlayerSkills());
+        this(name, maxHp, currHp, inventory, skills, portraitPath, null, createDefaultStats(),
+                BattleContentCatalog.defaultPlayerSkills());
     }
 
     public PlayerCharacter(
@@ -230,12 +231,6 @@ public class PlayerCharacter {
         return List.copyOf(battleSkills);
     }
 
-    public void learnSkill(SkillLibrary skill) {
-        if (skill != null) {
-            battleSkills.add(skill.createSkill());
-        }
-    }
-
     public void levelUp(Map<PlayerStat, Integer> chosenStatPoints) {
         level++;
         availableStatPoints += 10;
@@ -317,7 +312,8 @@ public class PlayerCharacter {
     }
 
     private int skillExperienceRequired(int level) {
-        return Math.max(1, level * 100);
+        double rawXp = 100.0 + 125.0 * Math.sqrt(level - 1);
+        return (int) (Math.ceil(rawXp / 10.0) * 10);
     }
 
     public Map<CharacterSkill, Integer> getSkillsView() {
@@ -603,18 +599,31 @@ public class PlayerCharacter {
 
     private void refreshBattleSkillsFromLimbs() {
         battleSkills.clear();
-        battleSkills.addAll(SkillLibrary.createUniversalPlayerSkills());
+        addUniqueBattleSkills(BattleContentCatalog.defaultPlayerSkills());
+        addUniqueBattleSkills(BattleContentCatalog.universalPlayerSkills());
 
         if (debugSkillsLoaded) {
-            battleSkills.addAll(SkillLibrary.createDebugPlayerSkills());
+            addUniqueBattleSkills(BattleContentCatalog.debugPlayerSkills());
         }
 
         for (LimbItem limb : equippedLimbs.values()) {
             if (limb != null && !limb.isBroken()) {
                 for (BattleSkill skill : limb.getSkills()) {
-                    battleSkills.add(skillFromLimb(skill, limb));
+                    addUniqueBattleSkill(skillFromLimb(skill, limb));
                 }
             }
+        }
+    }
+
+    private void addUniqueBattleSkills(List<BattleSkill> skillsToAdd) {
+        if (skillsToAdd == null) return;
+        for (BattleSkill skill : skillsToAdd) addUniqueBattleSkill(skill);
+    }
+
+    private void addUniqueBattleSkill(BattleSkill skill) {
+        if (skill == null) return;
+        if (battleSkills.stream().noneMatch(existing -> existing.getSkillId().equals(skill.getSkillId()))) {
+            battleSkills.add(skill);
         }
     }
 

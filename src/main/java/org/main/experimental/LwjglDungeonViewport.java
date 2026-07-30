@@ -3,6 +3,7 @@ package org.main.experimental;
 import org.joml.Matrix4f;
 import org.main.battle.DifficultyResolver;
 import org.main.content.CharacterModelDefinition;
+import org.main.content.MapDesignLibrary;
 import org.main.core.GameConfiguration;
 import org.main.core.GameState;
 import org.main.core.Library;
@@ -33,7 +34,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -76,6 +79,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     };
     private final LwjglBattleSceneRenderer battleSceneRenderer = new LwjglBattleSceneRenderer(textureCache);
     private final Map<String, LwjglStaticModel> staticModelCache = new HashMap<>();
+    private final Deque<String> pendingStaticModelPreloads = new ArrayDeque<>();
+    private final Set<String> queuedStaticModelPreloads = new HashSet<>();
     private final Map<CharacterModelDefinition, LwjglSkinnedModel> worldSkinnedModelCache = new HashMap<>();
     private final Set<CharacterModelDefinition> failedWorldSkinnedModels = new HashSet<>();
     private final Set<String> failedStaticModels = new HashSet<>();
@@ -119,6 +124,11 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     private int roofQuads;
     private int spriteQuads;
     private int staticModels;
+    private int staticModelPreloadQueueSize;
+    private int staticModelPreloadsThisFrame;
+    private int staticModelCacheHitsThisFrame;
+    private int staticModelCacheMissesThisFrame;
+    private int staticModelFallbacksThisFrame;
     private double lastFrameMs;
     private double smoothedFrameMs = 16.0;
     private CameraLookState lastLookState = CameraLookState.centered();
@@ -234,6 +244,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             currentCameraY = cameraY;
             currentCameraZ = cameraZ;
             ensureLightmap(sceneContext.map());
+            scheduleStaticModelPreloads(sceneContext, runtime);
+            processStaticModelPreloads();
             LwjglDungeonSceneBuilder.Scene scene = sceneBuilder.build(
                     sceneContext,
                     maxDepth,
@@ -263,10 +275,14 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                     cameraX,
                     cameraY,
                     cameraZ,
-                    sceneContext.map().getLightingSettings());
+                    sceneContext.map().getLightingSettings(),
+                    lightmapPending ? dynamicLightsNearCamera(sceneContext.map()) : List.of());
             worldBatchCount = renderDevice.batchCount();
             worldRenderedIndices = renderDevice.renderedIndices();
 
+            staticModelCacheHitsThisFrame = 0;
+            staticModelCacheMissesThisFrame = 0;
+            staticModelFallbacksThisFrame = 0;
             configureProjection(framebufferWidth, framebufferHeight);
             configureCamera(sceneContext, safeLookState);
             for (LwjglDungeonSceneBuilder.ModelInstance model : scene.models()) {
@@ -285,6 +301,9 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             roofQuads = 0;
             spriteQuads = 0;
             staticModels = 0;
+            staticModelCacheHitsThisFrame = 0;
+            staticModelCacheMissesThisFrame = 0;
+            staticModelFallbacksThisFrame = 0;
             worldBatchCount = 0;
             worldRenderedIndices = 0;
             enemyLabels = List.of();
@@ -340,6 +359,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             lightmapTexture = null;
         }
         staticModelCache.clear();
+        pendingStaticModelPreloads.clear();
+        queuedStaticModelPreloads.clear();
         worldSkinnedModelCache.clear();
         failedWorldSkinnedModels.clear();
         failedStaticModels.clear();
@@ -798,6 +819,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                     light.radius(),
                     light.intensity(),
                     light.heightOffset(),
+                    light.offsetX(),
+                    light.offsetZ(),
                     light.flickerAmount(),
                     light.enabled()
             ));
@@ -850,6 +873,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             hash = mix(hash, Double.doubleToLongBits(light.radius()));
             hash = mix(hash, Double.doubleToLongBits(light.intensity()));
             hash = mix(hash, Double.doubleToLongBits(light.heightOffset()));
+            hash = mix(hash, Double.doubleToLongBits(light.offsetX()));
+            hash = mix(hash, Double.doubleToLongBits(light.offsetZ()));
             hash = mix(hash, light.enabled() ? 1 : 0);
         }
         return hash;
@@ -1089,9 +1114,19 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                 return;
             }
         }
-        LwjglStaticModel model = getStaticModel(instance.assetPath());
+        LwjglStaticModel model = cachedStaticModel(instance.assetPath());
+        if (model == null) {
+            staticModelCacheMissesThisFrame++;
+            model = GameConfiguration.booleanValue("renderer.staticModel.loadVisibleImmediately", true)
+                    ? getStaticModel(instance.assetPath())
+                    : null;
+            if (model == null) {
+                enqueueStaticModelPreload(instance.assetPath());
+            }
+        }
         if (model == null) {
             if (instance.fallbackSprite() != null) {
+                staticModelFallbacksThisFrame++;
                 renderDevice.renderWorld(
                         worldBatchBuilder.build(List.of(instance.fallbackSprite())),
                         currentProjectionView,
@@ -1101,17 +1136,23 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                         currentCameraX,
                         currentCameraY,
                         currentCameraZ,
-                        currentLightingSettings);
+                        currentLightingSettings,
+                        List.of());
             }
             return;
         }
+        staticModelCacheHitsThisFrame++;
 
         double scale = model.normalizedScaleForHeight(instance.height());
         Matrix4f modelMatrix = new Matrix4f()
                 .translate((float) instance.centerX(), (float) instance.baseY(), (float) instance.centerZ())
-                .scale((float) scale)
+                .rotateY((float) Math.toRadians(instance.yawDegrees()))
+                .rotateX((float) Math.toRadians(instance.pitchDegrees()))
+                .rotateZ((float) Math.toRadians(instance.rollDegrees()))
+                .scale((float) (scale * Math.max(0.05, instance.scaleMultiplier())))
                 .translate((float) -model.centerX(), (float) -model.baseY(), (float) -model.centerZ());
 
+        List<RuntimeLight> dynamicLights = dynamicLightsForModel(instance);
         for (LwjglStaticModel.Mesh mesh : model.meshes()) {
             renderDevice.renderStaticMesh(
                     mesh,
@@ -1123,10 +1164,120 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                     currentCameraX,
                     currentCameraY,
                     currentCameraZ,
-                    currentLightingSettings);
+                    currentLightingSettings,
+                    instance.brightness(),
+                    dynamicLights);
         }
         glEnable(GL_TEXTURE_2D);
         glColor4f(1f, 1f, 1f, 1f);
+    }
+
+    private LwjglStaticModel cachedStaticModel(String assetPath) {
+        String normalizedPath = normalizeStaticModelPath(assetPath);
+        if (normalizedPath.isBlank() || failedStaticModels.contains(normalizedPath)) {
+            return null;
+        }
+        return staticModelCache.get(normalizedPath);
+    }
+
+    private List<RuntimeLight> dynamicLightsForModel(LwjglDungeonSceneBuilder.ModelInstance instance) {
+        if (instance == null || currentRenderMap == null || !GameConfiguration.booleanValue("lighting.enabled", true)) {
+            return List.of();
+        }
+        int maxLights = Math.max(0, Math.min(8, GameConfiguration.intValue("lighting.dynamic.maxLights", 8)));
+        if (maxLights == 0) {
+            return List.of();
+        }
+        List<MapLight> sourceLights = currentRenderMap.getLightsView();
+        if (sourceLights.isEmpty()) {
+            return List.of();
+        }
+        List<RuntimeLight> lights = new ArrayList<>();
+        double modelCenterY = instance.baseY() + instance.height() * 0.5;
+        for (MapLight light : sourceLights) {
+            if (light == null || !light.enabled()) {
+                continue;
+            }
+            double lightX = light.x() + 0.5 + light.offsetX();
+            double lightZ = light.y() + 0.5 + light.offsetZ();
+            double lightY = TerrainGeometry.groundYAtWorld(currentRenderMap, lightX, lightZ) + light.heightOffset();
+            double dx = lightX - instance.centerX();
+            double dy = lightY - modelCenterY;
+            double dz = lightZ - instance.centerZ();
+            double radius = Math.max(0.1, light.radius());
+            if (dx * dx + dy * dy + dz * dz > radius * radius) {
+                continue;
+            }
+            lights.add(new RuntimeLight(
+                    lightX,
+                    lightY,
+                    lightZ,
+                    light.colorRgb(),
+                    radius,
+                    light.intensity(),
+                    light.flickerAmount(),
+                    0.0));
+            if (lights.size() >= maxLights) {
+                break;
+            }
+        }
+        return lights;
+    }
+
+    private List<RuntimeLight> dynamicLightsNearCamera(DungeonMap map) {
+        if (map == null || !GameConfiguration.booleanValue("lighting.enabled", true)) {
+            return List.of();
+        }
+        MapLightingSettings settings = map.getLightingSettings();
+        if (settings != null && !settings.lightingEnabled()) {
+            return List.of();
+        }
+        int maxLights = Math.max(0, Math.min(8, GameConfiguration.intValue("lighting.dynamic.maxLights", 8)));
+        if (maxLights == 0 || map.getLightsView().isEmpty()) {
+            return List.of();
+        }
+        double maxRange = Math.max(maxDepth + 2.0, GameConfiguration.doubleValue("lighting.dynamic.transitionBridgeRange", 16.0));
+        double maxRangeSquared = maxRange * maxRange;
+        List<MapLight> sorted = new ArrayList<>(map.getLightsView());
+        sorted.sort((left, right) -> Double.compare(
+                distanceSquaredToCamera(left),
+                distanceSquaredToCamera(right)));
+        List<RuntimeLight> lights = new ArrayList<>();
+        for (MapLight light : sorted) {
+            if (light == null || !light.enabled()) {
+                continue;
+            }
+            if (distanceSquaredToCamera(light) > maxRangeSquared) {
+                continue;
+            }
+            double lightX = light.x() + 0.5 + light.offsetX();
+            double lightZ = light.y() + 0.5 + light.offsetZ();
+            double lightY = TerrainGeometry.groundYAtWorld(map, lightX, lightZ) + light.heightOffset();
+            lights.add(new RuntimeLight(
+                    lightX,
+                    lightY,
+                    lightZ,
+                    light.colorRgb(),
+                    light.radius(),
+                    light.intensity(),
+                    light.flickerAmount(),
+                    0.0));
+            if (lights.size() >= maxLights) {
+                break;
+            }
+        }
+        return lights;
+    }
+
+    private double distanceSquaredToCamera(MapLight light) {
+        if (light == null) {
+            return Double.POSITIVE_INFINITY;
+        }
+        double lightX = light.x() + 0.5 + light.offsetX();
+        double lightZ = light.y() + 0.5 + light.offsetZ();
+        double dx = lightX - currentCameraX;
+        double dz = lightZ - currentCameraZ;
+        return dx * dx + dz * dz;
     }
 
     private void renderGatheringToolViewModel(GameState.MiningViewModelState viewModelState, int framebufferWidth, int framebufferHeight) {
@@ -1231,9 +1382,12 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         LwjglSkinnedModel.Frame frame = model.skin(instance.animationSlot(), elapsed);
         glPushMatrix();
         glTranslated(instance.centerX(), instance.baseY() + instance.characterModel().verticalOffset(), instance.centerZ());
-        glRotated(instance.characterModel().facingRotationDegrees(), 0, 1, 0);
+        glRotated(instance.characterModel().facingRotationDegrees() + instance.yawDegrees(), 0, 1, 0);
+        glRotated(instance.pitchDegrees(), 1, 0, 0);
+        glRotated(instance.rollDegrees(), 0, 0, 1);
         double scale = model.normalizedScaleForHeight(instance.height());
-        glScaled(scale, scale, scale);
+        double adjustedScale = scale * Math.max(0.05, instance.scaleMultiplier());
+        glScaled(adjustedScale, adjustedScale, adjustedScale);
         glTranslated(-model.centerX(), -model.baseY(), -model.centerZ());
         for (int meshIndex = 0; meshIndex < model.meshes().size(); meshIndex++) {
             LwjglSkinnedModel.SkinnedMesh mesh = model.meshes().get(meshIndex);
@@ -1333,23 +1487,85 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         return clamped * clamped * (3.0 - 2.0 * clamped);
     }
 
+    private void scheduleStaticModelPreloads(DungeonRenderContext context, org.main.core.AetherGameRuntime runtime) {
+        if (context == null) {
+            return;
+        }
+        int preloadDepth = maxDepth + Math.max(0, GameConfiguration.intValue("renderer.staticModel.preloadExtraDepth", 4));
+        double maxDistanceSquared = preloadDepth * preloadDepth;
+        for (MapEntity entity : context.entities()) {
+            if (entity == null || !entity.hasVisibleStaticModel()) {
+                continue;
+            }
+            double dx = entity.getX() + 0.5 - (context.playerX() + 0.5);
+            double dz = entity.getY() + 0.5 - (context.playerY() + 0.5);
+            if (dx * dx + dz * dz <= maxDistanceSquared) {
+                enqueueStaticModelPreload(entity.getStaticModelPath());
+            }
+        }
+
+        if (runtime == null || runtime.gameState() == null) {
+            return;
+        }
+        for (MapDesignLibrary.CustomFurnitureDefinition furniture : runtime.gameState().getCustomFurniture()) {
+            enqueueStaticModelPreload(furniture.modelPath());
+        }
+        for (MapDesignLibrary.CustomGatheringNode node : runtime.gameState().getCustomGatheringNodes()) {
+            for (String modelPath : node.modelPaths()) {
+                enqueueStaticModelPreload(modelPath);
+            }
+        }
+    }
+
+    private void enqueueStaticModelPreload(String assetPath) {
+        String normalizedPath = normalizeStaticModelPath(assetPath);
+        if (normalizedPath.isBlank()
+                || staticModelCache.containsKey(normalizedPath)
+                || failedStaticModels.contains(normalizedPath)
+                || queuedStaticModelPreloads.contains(normalizedPath)) {
+            return;
+        }
+        pendingStaticModelPreloads.addLast(normalizedPath);
+        queuedStaticModelPreloads.add(normalizedPath);
+    }
+
+    private void processStaticModelPreloads() {
+        staticModelPreloadsThisFrame = 0;
+        int budget = Math.max(0, GameConfiguration.intValue("renderer.staticModel.preloadPerFrame", 2));
+        while (staticModelPreloadsThisFrame < budget && !pendingStaticModelPreloads.isEmpty()) {
+            String assetPath = pendingStaticModelPreloads.removeFirst();
+            queuedStaticModelPreloads.remove(assetPath);
+            if (staticModelCache.containsKey(assetPath) || failedStaticModels.contains(assetPath)) {
+                continue;
+            }
+            getStaticModel(assetPath);
+            staticModelPreloadsThisFrame++;
+        }
+        staticModelPreloadQueueSize = pendingStaticModelPreloads.size();
+    }
+
     private LwjglStaticModel getStaticModel(String assetPath) {
-        if (assetPath == null || assetPath.isBlank() || failedStaticModels.contains(assetPath)) {
+        String normalizedPath = normalizeStaticModelPath(assetPath);
+        if (normalizedPath.isBlank() || failedStaticModels.contains(normalizedPath)) {
             return null;
         }
-        LwjglStaticModel cached = staticModelCache.get(assetPath);
+        LwjglStaticModel cached = staticModelCache.get(normalizedPath);
         if (cached != null) {
             return cached;
         }
         try {
-            LwjglStaticModel loaded = LwjglStaticModel.load(assetPath);
-            staticModelCache.put(assetPath, loaded);
+            LwjglStaticModel loaded = LwjglStaticModel.load(normalizedPath);
+            staticModelCache.put(normalizedPath, loaded);
             return loaded;
         } catch (Exception exception) {
-            failedStaticModels.add(assetPath);
-            LOGGER.log(Level.WARNING, "Failed to load static model " + assetPath, exception);
+            failedStaticModels.add(normalizedPath);
+            LOGGER.log(Level.WARNING, "Failed to load static model " + normalizedPath, exception);
             return null;
         }
+    }
+
+    private String normalizeStaticModelPath(String assetPath) {
+        return assetPath == null ? "" : assetPath.trim().replace('\\', '/');
     }
 
     private int totalQuads() {
@@ -1369,6 +1585,11 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                         + " | Roofs " + roofQuads
                         + " | Sprites " + spriteQuads
                         + " | Models " + staticModels
+                        + " | ModelCache " + staticModelCache.size()
+                        + "/" + staticModelPreloadQueueSize
+                        + " h" + staticModelCacheHitsThisFrame
+                        + " m" + staticModelCacheMissesThisFrame
+                        + " f" + staticModelFallbacksThisFrame
                         + " | Batches " + worldBatchCount
                         + " | LM " + lightmapWidth + "x" + lightmapHeight
                         + " | Textures " + textureCache.textureCount()
@@ -1385,6 +1606,12 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         lines.add("Tiles " + visibleTiles);
         lines.add("Quads F" + floorQuads + " W" + wallQuads + " R" + roofQuads + " S" + spriteQuads);
         lines.add("Models " + staticModels);
+        lines.add("Model cache " + staticModelCache.size()
+                + " queue " + staticModelPreloadQueueSize
+                + " loaded " + staticModelPreloadsThisFrame);
+        lines.add("Model hits " + staticModelCacheHitsThisFrame
+                + " miss " + staticModelCacheMissesThisFrame
+                + " fallback " + staticModelFallbacksThisFrame);
         lines.add("Batches " + worldBatchCount);
         lines.add("Lightmap " + lightmapWidth + "x" + lightmapHeight);
         lines.add(String.format("Bake %.1f ms", lightmapBakeMs));

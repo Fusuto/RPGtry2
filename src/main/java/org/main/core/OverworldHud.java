@@ -1,6 +1,7 @@
 package org.main.core;
 
 import org.main.battle.DifficultyResolver;
+import org.main.content.MapDesignLibrary;
 import org.main.engine.AssetLoader;
 
 import java.awt.AlphaComposite;
@@ -556,25 +557,30 @@ public class OverworldHud {
         g.drawString("Quests", x + 18, y + 28);
 
         int rowY = y + 52;
-        int selectedStage = 0;
-        GameState.QuestDefinition selectedQuest = null;
+        MapDesignLibrary.AuthoredQuest selectedQuest = null;
+        List<MapDesignLibrary.AuthoredQuest> visibleQuests = gameState.getQuestRuntime().definitions();
+        String selectedId = gameState.getSelectedQuestId();
+        if (visibleQuests.stream().noneMatch(quest -> quest.questId().equals(selectedId)) && !visibleQuests.isEmpty()) {
+            gameState.setSelectedQuestId(visibleQuests.get(0).questId());
+        }
 
-        for (GameState.QuestDefinition quest : gameState.getQuestDefinitions()) {
-            int stage = gameState.getQuestStagesView().getOrDefault(quest.id(), 0);
-            boolean selected = quest.id().equals(gameState.getSelectedQuestId());
+        for (MapDesignLibrary.AuthoredQuest quest : visibleQuests) {
+            QuestRuntime.State state = gameState.getQuestRuntime().state(quest.questId());
+            boolean selected = quest.questId().equals(gameState.getSelectedQuestId());
 
             if (selected || selectedQuest == null) {
                 selectedQuest = quest;
-                selectedStage = stage;
             }
 
             Rectangle rowBounds = new Rectangle(x + 18, rowY - 16, 168, 24);
-            questRowBounds.put(quest.id(), rowBounds);
+            questRowBounds.put(quest.questId(), rowBounds);
 
             g.setColor(selected ? new Color(42, 44, 52, 210) : new Color(0, 0, 0, 0));
             g.fillRoundRect(rowBounds.x, rowBounds.y, rowBounds.width, rowBounds.height, 4, 4);
 
-            g.setColor(questColor(quest, stage));
+            g.setColor(state == QuestRuntime.State.COMPLETED
+                    ? new Color(92, 225, 112)
+                    : new Color(224, 74, 74));
             g.setFont(g.getFont().deriveFont(Font.BOLD, 13f));
             g.drawString(quest.displayName(), x + 26, rowY);
             rowY += 28;
@@ -593,14 +599,54 @@ public class OverworldHud {
 
         g.setFont(g.getFont().deriveFont(Font.PLAIN, 13f));
         g.setColor(new Color(210, 204, 178));
-        drawWrappedText(
-                g,
-                selectedQuest.stageDescription(selectedStage),
-                textX,
-                textY + 26,
-                QUEST_PANEL_WIDTH - 225,
-                18
-        );
+        QuestRuntime.State state = gameState.getQuestRuntime().state(selectedQuest.questId());
+        if (state == QuestRuntime.State.COMPLETED) {
+            drawWrappedText(g, "Completed", textX, textY + 26, QUEST_PANEL_WIDTH - 225, 18);
+            return;
+        }
+        if (state != QuestRuntime.State.ACTIVE) {
+            drawWrappedText(g, "Not completed", textX, textY + 26, QUEST_PANEL_WIDTH - 225, 18);
+            return;
+        }
+        var stage = gameState.getQuestRuntime().currentStage(selectedQuest.questId());
+        if (stage == null) {
+            drawWrappedText(g, "No active stage.", textX, textY + 26, QUEST_PANEL_WIDTH - 225, 18);
+            return;
+        }
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 13f));
+        g.drawString(stage.title(), textX, textY + 25);
+        g.setFont(g.getFont().deriveFont(Font.PLAIN, 13f));
+        drawWrappedText(g, stage.journalText(), textX, textY + 48, QUEST_PANEL_WIDTH - 225, 18);
+        int objectiveY = textY + 108;
+        for (QuestRuntime.ObjectiveView objective : gameState.getQuestRuntime().objectiveViews(selectedQuest.questId())) {
+            if (!objective.visible()) {
+                continue;
+            }
+            g.setColor(objective.complete() ? new Color(112, 220, 128) : new Color(210, 204, 178));
+            String progress = objective.required() > 1
+                    ? " (" + objective.current() + "/" + objective.required() + ")"
+                    : "";
+            drawWrappedText(g, (objective.complete() ? "✓ " : "• ") + objective.text() + progress,
+                    textX, objectiveY, QUEST_PANEL_WIDTH - 225, 18);
+            objectiveY += 38;
+        }
+        if (!stage.rewards().isEmpty()) {
+            g.setColor(new Color(238, 228, 190));
+            g.setFont(g.getFont().deriveFont(Font.BOLD, 12f));
+            g.drawString("Stage rewards", textX, objectiveY);
+            objectiveY += 20;
+            g.setFont(g.getFont().deriveFont(Font.PLAIN, 12f));
+            for (var reward : stage.rewards()) {
+                String rewardText = switch (reward.type()) {
+                    case ITEM -> reward.amount() + " x " + reward.itemId();
+                    case GOLD -> reward.amount() + " gold";
+                    case SKILL_XP -> reward.amount() + " "
+                            + (reward.skill() == null ? "skill" : reward.skill().getDisplayName()) + " XP";
+                };
+                g.drawString(rewardText, textX + 8, objectiveY);
+                objectiveY += 18;
+            }
+        }
     }
 
     private void drawStatsPanel(Graphics2D g, GameState gameState, int width, int height) {
@@ -750,26 +796,10 @@ public class OverworldHud {
         int y = Math.max(62, height - BOTTOM_BAR_HEIGHT - QUEST_PANEL_HEIGHT - 16);
         int rowY = y + 52;
 
-        for (GameState.QuestDefinition quest : gameState.getQuestDefinitions()) {
-            questRowBounds.put(quest.id(), new Rectangle(x + 18, rowY - 16, 168, 24));
+        for (MapDesignLibrary.AuthoredQuest quest : gameState.getQuestRuntime().definitions()) {
+            questRowBounds.put(quest.questId(), new Rectangle(x + 18, rowY - 16, 168, 24));
             rowY += 28;
-
-            if (gameState.getSelectedQuestId() == null) {
-                gameState.setSelectedQuestId(quest.id());
-            }
         }
-    }
-
-    private Color questColor(GameState.QuestDefinition quest, int stage) {
-        if (quest.isComplete(stage)) {
-            return new Color(92, 225, 112);
-        }
-
-        if (stage > 0) {
-            return new Color(245, 166, 72);
-        }
-
-        return new Color(224, 74, 74);
     }
 
     private void drawWrappedText(Graphics2D g, String text, int x, int y, int maxWidth, int lineHeight) {

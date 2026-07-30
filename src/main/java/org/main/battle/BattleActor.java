@@ -6,7 +6,9 @@ import org.main.core.GameConfiguration;
 import org.main.core.PlayerCharacter;
 import org.main.core.PlayerStat;
 import org.main.core.PartyRoster;
+import org.main.content.BattleContentCatalog;
 import org.main.content.CharacterModelDefinition;
+import org.main.content.StatusDefinition;
 
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -14,6 +16,7 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -55,7 +58,7 @@ public class BattleActor {
     private String partyMemberId = "";
 
     private final List<BattleSkill> skills = new ArrayList<>();
-    private final Map<BattleStatusType, BattleStatus> statuses = new EnumMap<>(BattleStatusType.class);
+    private final Map<String, List<BattleStatus>> statuses = new LinkedHashMap<>();
 
     public BattleActor(String name, int maxHp, int currentHp, BufferedImage image, Library.EntityType entityType) {
         this(name, maxHp, currentHp, image, entityType, 5);
@@ -263,7 +266,7 @@ public class BattleActor {
     }
 
     public int takeDamage(int amount) {
-        int adjustedAmount = amount;
+        int adjustedAmount = (int) Math.ceil(amount * incomingDamageMultiplier());
 
         if (defendingTurns > 0) {
             adjustedAmount = (int) Math.ceil(amount * (1.0 - defenseDamageReduction));
@@ -283,12 +286,14 @@ public class BattleActor {
     }
 
     public boolean isStunned() {
-        return hasStatus(BattleStatusType.STUN);
+        return getStatuses().stream()
+                .anyMatch(status -> "action_lock".equals(status.getDefinition().behaviorKindId()));
     }
 
     public int getStunnedTurns() {
-        BattleStatus status = statuses.get(BattleStatusType.STUN);
-        return status == null ? 0 : status.getRemainingTurns();
+        return statuses.getOrDefault("stun", List.of()).stream()
+                .mapToInt(BattleStatus::getRemainingTurns)
+                .max().orElse(0);
     }
 
     public int getDefendingTurns() {
@@ -296,36 +301,89 @@ public class BattleActor {
     }
 
     public void applyStun(int turns) {
-        applyStatus(BattleStatusType.STUN, turns);
+        applyStatus("stun", turns);
     }
 
-    public void applyStatus(BattleStatusType type, int turns) {
-        applyStatus(type, turns, 0);
+    public void applyStatus(String statusId, int turns) {
+        applyStatus(statusId, turns, 0);
     }
 
-    public void applyStatus(BattleStatusType type, int turns, int potency) {
-        if (type == null || turns <= 0) {
+    public void applyStatus(String statusId, int turns, int potency) {
+        String normalizedId = BattleContentCatalog.normalizeId(statusId);
+        StatusDefinition definition = BattleContentCatalog.findStatus(normalizedId);
+        if (definition == null || turns <= 0) {
             return;
         }
 
-        int effectivePotency = potency > 0 ? potency : type.getDefaultPotency();
-        BattleStatus status = statuses.get(type);
-
-        if (status == null) {
-            statuses.put(type, new BattleStatus(type, turns, effectivePotency));
+        int effectivePotency = potency != 0 ? potency : definition.intParameter("magnitude", 0);
+        List<BattleStatus> stacks = statuses.computeIfAbsent(normalizedId, ignored -> new ArrayList<>());
+        if (stacks.isEmpty()) {
+            stacks.add(new BattleStatus(normalizedId, turns, effectivePotency));
             return;
         }
-
-        status.refresh(turns, effectivePotency);
+        switch (definition.stackingPolicy()) {
+            case REFRESH -> stacks.getFirst().refresh(turns, effectivePotency);
+            case REPLACE -> stacks.getFirst().replace(turns, effectivePotency);
+            case STACK -> {
+                if (stacks.size() < definition.maxStacks()) {
+                    stacks.add(new BattleStatus(normalizedId, turns, effectivePotency));
+                } else {
+                    BattleStatus weakest = stacks.stream()
+                            .min(java.util.Comparator
+                                    .comparingInt((BattleStatus value) -> Math.abs(value.getPotency()))
+                                    .thenComparingInt(BattleStatus::getRemainingTurns))
+                            .orElse(stacks.getFirst());
+                    weakest.replace(turns, effectivePotency);
+                }
+            }
+        }
     }
 
-    public boolean hasStatus(BattleStatusType type) {
-        BattleStatus status = statuses.get(type);
-        return status != null && !status.isExpired();
+    public boolean hasStatus(String statusId) {
+        String normalizedId = BattleContentCatalog.normalizeId(statusId);
+        return statuses.getOrDefault(normalizedId, List.of()).stream()
+                .anyMatch(status -> !status.isExpired());
+    }
+
+    public boolean hasStatusPolarity(StatusDefinition.Polarity polarity) {
+        return getStatuses().stream().anyMatch(status -> status.getDefinition().polarity() == polarity);
+    }
+
+    public boolean canAcceptStatus(String statusId) {
+        String normalizedId = BattleContentCatalog.normalizeId(statusId);
+        StatusDefinition definition = BattleContentCatalog.findStatus(normalizedId);
+        if (definition == null) return false;
+        if (!hasStatus(normalizedId)) return true;
+        return definition.stackingPolicy() != StatusDefinition.StackingPolicy.STACK
+                || statuses.getOrDefault(normalizedId, List.of()).size() < definition.maxStacks();
     }
 
     public List<BattleStatus> getStatuses() {
-        return List.copyOf(statuses.values());
+        return statuses.values().stream().flatMap(List::stream).toList();
+    }
+
+    public int removeStatuses(String statusId, StatusDefinition.Polarity polarity, int maximum) {
+        int remaining = Math.max(1, maximum);
+        int removed = 0;
+        Iterator<Map.Entry<String, List<BattleStatus>>> iterator = statuses.entrySet().iterator();
+        while (iterator.hasNext() && remaining > 0) {
+            Map.Entry<String, List<BattleStatus>> entry = iterator.next();
+            boolean idMatches = statusId != null && !statusId.isBlank()
+                    && entry.getKey().equals(BattleContentCatalog.normalizeId(statusId));
+            boolean polarityMatches = (statusId == null || statusId.isBlank())
+                    && (polarity == null || statusDefinition(entry.getKey()).polarity() == polarity);
+            if (!idMatches && !polarityMatches) {
+                continue;
+            }
+            while (!entry.getValue().isEmpty() && remaining-- > 0) {
+                entry.getValue().removeLast();
+                removed++;
+            }
+            if (entry.getValue().isEmpty()) {
+                iterator.remove();
+            }
+        }
+        return removed;
     }
 
     public void applyDefend(int turns, double damageReduction) {
@@ -342,16 +400,18 @@ public class BattleActor {
             defenseDamageReduction = 0.0;
         }
 
-        Iterator<BattleStatus> iterator = statuses.values().iterator();
-
-        while (iterator.hasNext()) {
-            BattleStatus status = iterator.next();
-            status.tick();
-
-            if (status.isExpired()) {
-                iterator.remove();
+        for (BattleStatus status : getStatuses()) {
+            if ("periodic_health".equals(status.getDefinition().behaviorKindId())) {
+                int amount = status.getPotency() != 0
+                        ? status.getPotency()
+                        : status.getDefinition().intParameter("magnitude", 0);
+                if (amount >= 0) healDamage(amount);
+                else takeDamage(-amount);
             }
+            status.tick();
         }
+        statuses.values().forEach(values -> values.removeIf(BattleStatus::isExpired));
+        statuses.entrySet().removeIf(entry -> entry.getValue().isEmpty());
     }
 
     public int getIntelligence() {
@@ -401,12 +461,61 @@ public class BattleActor {
 
     private int adjustedStat(int baseValue, PlayerStat stat) {
         int adjustedValue = baseValue;
-        for (BattleStatus status : statuses.values()) {
-            if (!status.isExpired() && status.getType().getAffectedStat() == stat) {
-                adjustedValue -= status.getPotency();
+        for (BattleStatus status : getStatuses()) {
+            StatusDefinition definition = status.getDefinition();
+            if (!status.isExpired() && affectedStat(definition) == stat) {
+                int magnitude = status.getPotency() != 0
+                        ? status.getPotency()
+                        : definition.intParameter("magnitude", 0);
+                adjustedValue += magnitude;
             }
         }
         return Math.max(0, adjustedValue);
+    }
+
+    public double outgoingDamageMultiplier() {
+        double multiplier = 1.0;
+        for (BattleStatus status : getStatuses()) {
+            if ("outgoing_damage_modifier".equals(status.getDefinition().behaviorKindId())) {
+                double percent = status.getPotency() != 0
+                        ? status.getPotency()
+                        : status.getDefinition().doubleParameter("percent", 0);
+                multiplier *= Math.max(0.05, 1.0 + percent / 100.0);
+            }
+        }
+        return multiplier;
+    }
+
+    private double incomingDamageMultiplier() {
+        double multiplier = 1.0;
+        for (BattleStatus status : getStatuses()) {
+            if ("incoming_damage_modifier".equals(status.getDefinition().behaviorKindId())) {
+                double percent = status.getPotency() != 0
+                        ? -Math.abs(status.getPotency())
+                        : status.getDefinition().doubleParameter("percent", 0);
+                multiplier *= Math.max(0.05, 1.0 + percent / 100.0);
+            }
+        }
+        return multiplier;
+    }
+
+    private static StatusDefinition statusDefinition(String statusId) {
+        StatusDefinition definition = BattleContentCatalog.findStatus(statusId);
+        if (definition == null) {
+            throw new IllegalStateException("Battle status definition is unavailable: " + statusId);
+        }
+        return definition;
+    }
+
+    private static PlayerStat affectedStat(StatusDefinition definition) {
+        if (definition == null || !"stat_modifier".equals(definition.behaviorKindId())) {
+            return null;
+        }
+        try {
+            return PlayerStat.valueOf(definition.parameters().getOrDefault("stat", "").trim().toUpperCase());
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
     }
 
     public void setAgilityStat(int agilityStat) {

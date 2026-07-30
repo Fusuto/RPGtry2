@@ -1,6 +1,7 @@
 package org.main.battle;
 
-import org.main.content.SkillLibrary;
+import org.main.content.BattleContentCatalog;
+import org.main.content.BattleContentTypeRegistry;
 import org.main.core.CharacterSkill;
 import org.main.core.GameConfiguration;
 import org.main.core.Library;
@@ -53,22 +54,22 @@ public final class DifficultyResolver {
             return emptyRating();
         }
 
-        return rateMonsterProfile(monster.getName(), monster.getStatsView(), monster.getSkills());
+        return rateMonsterProfile(monster.getName(), monster.getStatsView(), monster.getSkillIds());
     }
 
     public static DifficultyRating rateMonsterProfile(
             String name,
             Map<PlayerStat, Integer> stats,
-            List<SkillLibrary> skills
+            List<String> skillIds
     ) {
-        BattleActor actor = createMonsterProfile(name, stats, skills);
+        BattleActor actor = createMonsterProfile(name, stats, skillIds);
         return rateActor(actor);
     }
 
     public static BattleActor createMonsterProfile(
             String name,
             Map<PlayerStat, Integer> stats,
-            List<SkillLibrary> skills
+            List<String> skillIds
     ) {
         BattleActor actor = new BattleActor(
                 name == null || name.isBlank() ? "Enemy" : name,
@@ -80,9 +81,9 @@ public final class DifficultyResolver {
                 stats == null ? 0 : stats.getOrDefault(PlayerStat.DEFENSE, 0)
         );
         actor.configureMonsterCombatStats(stats);
-        if (skills != null) {
-            skills.stream()
-                    .map(SkillLibrary::createSkill)
+        if (skillIds != null) {
+            skillIds.stream()
+                    .map(BattleContentCatalog::createSkill)
                     .forEach(actor::addSkill);
         }
         return actor;
@@ -122,10 +123,32 @@ public final class DifficultyResolver {
                 + actor.getCombatSkillLevel(CharacterSkill.DEFENSE)
                 + actor.getArmorBonus()
                 + actor.getMaxHp()) / survivalDivisor();
-        double utilityPower = 0.0;
-        double power = Math.max(1.0, offensivePower + defensivePower);
+        double utilityPower = actor.getSkills().stream()
+                .mapToDouble(DifficultyResolver::skillUtility)
+                .sum();
+        double power = Math.max(1.0, offensivePower + defensivePower + utilityPower);
         int level = Math.max(minLevel(), (int) Math.floor(power));
         return new DifficultyRating(level, power, offensivePower, defensivePower, utilityPower);
+    }
+
+    private static double skillUtility(BattleSkill skill) {
+        if (skill == null) return 0.0;
+        double cooldownWeight = 1.0 / Math.max(1.0, skill.getBaseCooldownSeconds() / 5.0);
+        return skill.getEffects().stream().mapToDouble(effect -> {
+            BattleContentTypeRegistry.HandlerDescriptor descriptor =
+                    BattleContentTypeRegistry.effectDescriptor(effect.kindId());
+            if (descriptor == null) return 0.0;
+            double base = switch (descriptor.aiRole()) {
+                case "OFFENSE" -> effect.intParameter("potency", 1) * 0.10;
+                case "HEAL" -> effect.intParameter("potency", 3) * 0.10;
+                case "STATUS" -> 0.75 * effect.chance();
+                case "CLEANSE" -> 0.60;
+                case "SUMMON" -> effect.doubleParameter("successPercent", 50) / 100.0;
+                case "UTILITY" -> 0.15;
+                default -> 0.0;
+            };
+            return base * cooldownWeight;
+        }).sum();
     }
 
     public static DifficultyComparison compare(DifficultyRating playerRating, DifficultyRating monsterRating) {

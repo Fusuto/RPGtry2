@@ -3,8 +3,6 @@ package org.main.battle;
 import org.main.core.CharacterSkill;
 import org.main.core.GameConfiguration;
 
-import java.util.concurrent.ThreadLocalRandom;
-
 public final class CombatResolver {
     private CombatResolver() {
     }
@@ -14,7 +12,7 @@ public final class CombatResolver {
     }
 
     public static CombatResult resolvePhysicalSkill(BattleActor attacker, BattleActor defender, BattleSkill skill) {
-        int skillBonus = skill == null ? 0 : skill.getDamage();
+        int skillBonus = skill == null ? 0 : skill.getPrimaryPotency();
         return resolvePhysical(attacker, defender, skillBonus, "hits");
     }
 
@@ -31,11 +29,11 @@ public final class CombatResolver {
         double hitChance = hitChance(accuracyRoll, defenseRoll);
         boolean hit = roll(hitChance);
         int maxHit = Math.max(0,
-                (skill == null ? 0 : skill.getDamage())
+                (skill == null ? 0 : skill.getPrimaryPotency())
                         + caster.getWillpowerStat() / magicStatDamageDivisor()
                         + caster.getCombatSkillLevel(CharacterSkill.MAGIC_POWER) / magicStatDamageDivisor()
         );
-        int damage = hit ? randomDamage(maxHit) : 0;
+        int damage = hit ? applyOutgoingMultiplier(caster, randomDamage(maxHit)) : 0;
 
         return new CombatResult(hit, damage, hitChance, maxHit, hit ? "casts for " + damage : "misses");
     }
@@ -46,7 +44,7 @@ public final class CombatResolver {
         }
 
         return Math.max(0,
-                        skill.getDamage()
+                        skill.getPrimaryPotency()
                         + caster.getWillpowerStat() / healingStatDivisor()
                         + caster.getCombatSkillLevel(CharacterSkill.MAGIC_POWER) / healingStatDivisor()
         );
@@ -67,7 +65,7 @@ public final class CombatResolver {
                         + attacker.getWeaponPowerBonus()
                         + Math.max(0, maxHitBonus)
         );
-        int damage = hit ? randomDamage(maxHit) : 0;
+        int damage = hit ? applyOutgoingMultiplier(attacker, randomDamage(maxHit)) : 0;
 
         return new CombatResult(hit, damage, hitChance, maxHit, hit ? verb + " for " + damage : "misses");
     }
@@ -99,7 +97,7 @@ public final class CombatResolver {
     }
 
     private static boolean roll(double chance) {
-        return ThreadLocalRandom.current().nextDouble() < chance;
+        return BattleRandom.nextDouble() < chance;
     }
 
     private static int randomDamage(int maxHit) {
@@ -107,7 +105,12 @@ public final class CombatResolver {
             return 0;
         }
 
-        return ThreadLocalRandom.current().nextInt(maxHit + damageRollInclusiveOffset());
+        return BattleRandom.nextInt(maxHit + damageRollInclusiveOffset());
+    }
+
+    private static int applyOutgoingMultiplier(BattleActor actor, int damage) {
+        return Math.max(0, (int) Math.round(damage
+                * (actor == null ? 1.0 : actor.outgoingDamageMultiplier())));
     }
 
     private static double minHitChance() { return GameConfiguration.doubleValue("battle.hitChance.minimum", 0.05); }

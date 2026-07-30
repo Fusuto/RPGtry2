@@ -179,11 +179,8 @@ final class DialogueGraphPanel extends JPanel {
         if (!choice.takeItemName().isBlank()) {
             tags.add("take");
         }
-        if (!choice.giveItemName().isBlank()) {
+        if (!choice.rewards().isEmpty()) {
             tags.add("give");
-        }
-        if (!choice.questId().isBlank()) {
-            tags.add("q" + choice.questStage());
         }
         String label = choice.label();
         if (!tags.isEmpty()) {

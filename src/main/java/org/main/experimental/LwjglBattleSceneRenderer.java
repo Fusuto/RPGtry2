@@ -229,7 +229,7 @@ final class LwjglBattleSceneRenderer {
         FirstPersonCombatLibrary.ItemProfile shieldProfile = resolved.content().itemProfile(shield);
         FirstPersonCombatLibrary.ItemProfile armorProfile = resolved.content().itemProfile(chest);
 
-        // Authored legacy camera-space models stay on the proven fallback path
+        // Authored camera-space models stay on their dedicated rendering path
         // until a socket/attachment profile is created for them.
         if (weapon != null && weapon.hasFirstPersonModel() && weaponProfile == null) return false;
         if (shield != null && shield.hasFirstPersonModel() && shieldProfile == null) return false;

@@ -5,7 +5,6 @@ import org.main.core.GameConfiguration;
 import org.main.core.InventorySystem;
 import org.main.core.InteractionSystem;
 import org.main.core.Library;
-import org.main.content.SkillLibrary;
 import org.main.core.GameEnvironment;
 import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
@@ -399,17 +398,6 @@ public class BattleController {
 
         if (!currentEncounter.canSelectActorForSkill(caster, selectedActor, pendingSkill)) {
             currentEncounter.setBattleMessage("Invalid target.");
-            return;
-        }
-
-        if (SkillLibrary.isDebugDropHpSkill(pendingSkill)) {
-            Library.BattleResult result = currentEncounter.handleDebugDropHp(selectedActor);
-
-            pendingSkill = null;
-            battleRenderer.clearSelectableTargets();
-            battleRenderer.clearPreviewSkill();
-
-            handleBattleResult(result);
             return;
         }
 

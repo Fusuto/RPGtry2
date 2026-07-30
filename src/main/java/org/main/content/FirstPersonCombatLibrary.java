@@ -383,7 +383,7 @@ public final class FirstPersonCombatLibrary {
         try (InputStream input = AssetLoader.openAssetStream(path)) {
             properties.load(input);
         } catch (IOException ignored) {
-            // Empty content is a supported backward-compatible state.
+            // Empty content is a supported authored state.
         }
         return properties;
     }

@@ -15,6 +15,7 @@ import static org.lwjgl.opengl.GL13.glActiveTexture;
 final class LwjglTextureCache {
     private final Map<BufferedImage, Integer> textures = new IdentityHashMap<>();
     private int fallbackTexture;
+    private int whiteTexture;
 
     int bind(BufferedImage image) {
         glActiveTexture(GL_TEXTURE0);
@@ -24,6 +25,15 @@ final class LwjglTextureCache {
     int bind(BufferedImage image, int textureUnit) {
         glActiveTexture(GL_TEXTURE0 + textureUnit);
         return bindToActiveUnit(image);
+    }
+
+    int bindWhite(int textureUnit) {
+        glActiveTexture(GL_TEXTURE0 + textureUnit);
+        if (whiteTexture == 0) {
+            whiteTexture = upload(createSolidImage(0xFFFFFFFF));
+        }
+        glBindTexture(GL_TEXTURE_2D, whiteTexture);
+        return whiteTexture;
     }
 
     private int bindToActiveUnit(BufferedImage image) {
@@ -56,6 +66,10 @@ final class LwjglTextureCache {
         if (fallbackTexture != 0) {
             glDeleteTextures(fallbackTexture);
             fallbackTexture = 0;
+        }
+        if (whiteTexture != 0) {
+            glDeleteTextures(whiteTexture);
+            whiteTexture = 0;
         }
     }
 
@@ -122,6 +136,12 @@ final class LwjglTextureCache {
         image.setRGB(1, 0, 0xFF111111);
         image.setRGB(0, 1, 0xFF111111);
         image.setRGB(1, 1, 0xFFFF00FF);
+        return image;
+    }
+
+    private BufferedImage createSolidImage(int argb) {
+        BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+        image.setRGB(0, 0, argb);
         return image;
     }
 }

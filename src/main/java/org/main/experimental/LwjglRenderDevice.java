@@ -15,6 +15,8 @@ import static org.lwjgl.opengl.GL11.glDisable;
 import static org.lwjgl.opengl.GL11.glEnable;
 
 final class LwjglRenderDevice {
+    private static final int MAX_DYNAMIC_LIGHTS = 8;
+
     private final LwjglTextureCache textureCache;
     private final ShaderProgram worldShader;
     private final Map<MaterialKey, GpuMesh> meshes = new HashMap<>();
@@ -36,7 +38,8 @@ final class LwjglRenderDevice {
             double cameraX,
             double cameraY,
             double cameraZ,
-            MapLightingSettings lightingSettings
+            MapLightingSettings lightingSettings,
+            List<RuntimeLight> dynamicLights
     ) {
         if (batches == null || batches.isEmpty()) {
             batchCount = 0;
@@ -52,10 +55,11 @@ final class LwjglRenderDevice {
         worldShader.setUniformMatrix("uModel", new Matrix4f());
         worldShader.setUniform("uDiffuse", 0);
         worldShader.setUniform("uLightmap", 1);
+        worldShader.setUniform("uModelBrightness", 1.0f);
         worldShader.setUniform2("uMapSize", Math.max(1f, mapWidth), Math.max(1f, mapHeight));
         worldShader.setUniform3("uCameraPosition", (float) cameraX, (float) cameraY, (float) cameraZ);
         worldShader.setUniform("uFogEnabled", lightingSettings != null && lightingSettings.fogEnabled() ? 1 : 0);
-        worldShader.setUniform("uDynamicLightCount", 0);
+        configureDynamicLights(dynamicLights);
         worldShader.setUniform3(
                 "uFogColor",
                 lightingSettings == null ? 0.08f : lightingSettings.fogRed(),
@@ -94,7 +98,9 @@ final class LwjglRenderDevice {
             double cameraX,
             double cameraY,
             double cameraZ,
-            MapLightingSettings lightingSettings
+            MapLightingSettings lightingSettings,
+            double modelBrightness,
+            List<RuntimeLight> dynamicLights
     ) {
         if (sourceMesh == null || sourceMesh.indices().length == 0) {
             return;
@@ -107,10 +113,11 @@ final class LwjglRenderDevice {
         worldShader.setUniformMatrix("uModel", model == null ? new Matrix4f() : model);
         worldShader.setUniform("uDiffuse", 0);
         worldShader.setUniform("uLightmap", 1);
+        worldShader.setUniform("uModelBrightness", (float) Math.max(0.0, Math.min(4.0, modelBrightness)));
         worldShader.setUniform2("uMapSize", Math.max(1f, mapWidth), Math.max(1f, mapHeight));
         worldShader.setUniform3("uCameraPosition", (float) cameraX, (float) cameraY, (float) cameraZ);
         worldShader.setUniform("uFogEnabled", lightingSettings != null && lightingSettings.fogEnabled() ? 1 : 0);
-        worldShader.setUniform("uDynamicLightCount", 0);
+        configureDynamicLights(dynamicLights);
         worldShader.setUniform3(
                 "uFogColor",
                 lightingSettings == null ? 0.08f : lightingSettings.fogRed(),
@@ -120,10 +127,46 @@ final class LwjglRenderDevice {
         if (lightmap != null) {
             lightmap.bind(1);
         }
-        textureCache.bind(sourceMesh.texture(), 0);
+        if (sourceMesh.texture() == null) {
+            textureCache.bindWhite(0);
+        } else {
+            textureCache.bind(sourceMesh.texture(), 0);
+        }
         GpuMesh mesh = staticModelMeshes.computeIfAbsent(sourceMesh, this::createStaticModelMesh);
         mesh.draw();
         worldShader.unbind();
+    }
+
+    private void configureDynamicLights(List<RuntimeLight> dynamicLights) {
+        int count = dynamicLights == null ? 0 : Math.min(MAX_DYNAMIC_LIGHTS, dynamicLights.size());
+        worldShader.setUniform("uDynamicLightCount", count);
+        for (int i = 0; i < count; i++) {
+            RuntimeLight light = dynamicLights.get(i);
+            worldShader.setUniform4(
+                    "uDynamicLightPositionRadius[" + i + "]",
+                    (float) light.x(),
+                    (float) light.y(),
+                    (float) light.z(),
+                    (float) light.radius());
+            worldShader.setUniform4(
+                    "uDynamicLightColorIntensity[" + i + "]",
+                    colorRed(light.colorRgb()),
+                    colorGreen(light.colorRgb()),
+                    colorBlue(light.colorRgb()),
+                    (float) light.intensity());
+        }
+    }
+
+    private static float colorRed(int rgb) {
+        return ((rgb >> 16) & 0xFF) / 255.0f;
+    }
+
+    private static float colorGreen(int rgb) {
+        return ((rgb >> 8) & 0xFF) / 255.0f;
+    }
+
+    private static float colorBlue(int rgb) {
+        return (rgb & 0xFF) / 255.0f;
     }
 
     int batchCount() {
@@ -211,6 +254,7 @@ final class LwjglRenderDevice {
 
             uniform sampler2D uDiffuse;
             uniform sampler2D uLightmap;
+            uniform float uModelBrightness;
             uniform vec3 uCameraPosition;
             uniform int uFogEnabled;
             uniform vec3 uFogColor;
@@ -222,7 +266,7 @@ final class LwjglRenderDevice {
             out vec4 fragColor;
 
             void main() {
-                vec4 diffuse = texture(uDiffuse, vUv) * vColor;
+                vec4 diffuse = texture(uDiffuse, vUv) * vColor * vec4(vec3(uModelBrightness), 1.0);
                 if (diffuse.a <= 0.10) {
                     discard;
                 }

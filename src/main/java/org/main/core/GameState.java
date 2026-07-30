@@ -36,24 +36,25 @@ public class GameState {
     private final Map<String, String> tileInteractionIds = new HashMap<>();
     private final List<MapDesignLibrary.MapTrigger> mapTriggers = new ArrayList<>();
     private final Map<String, MapDesignLibrary.AuthoredDialogue> authoredDialogues = new HashMap<>();
-    private final Map<String, QuestDefinition> authoredQuestDefinitions = new HashMap<>();
+    private final Map<String, MapDesignLibrary.AuthoredQuest> authoredQuests = new HashMap<>();
     private final Map<String, MapDesignLibrary.CustomItem> customItems = new HashMap<>();
     private final Map<String, MapDesignLibrary.CustomLimb> customLimbs = new HashMap<>();
+    private final Map<String, MapDesignLibrary.CustomFurnitureDefinition> customFurniture = new HashMap<>();
     private final Map<String, MapDesignLibrary.CustomGatheringNode> customGatheringNodes = new HashMap<>();
     private final Map<String, MapDesignLibrary.CustomCookingRecipe> customCookingRecipes = new HashMap<>();
     private final Map<String, MapDesignLibrary.CraftingRecipe> craftingRecipes = new HashMap<>();
     private final Map<String, MapRuntimeState> mapRuntimeStates = new HashMap<>();
     private final Map<String, OpenWorldSession> openWorldSessions = new HashMap<>();
     private final Set<String> spokenAuthoredDialogues = new HashSet<>();
+    private final Set<String> claimedDialogueRewardKeys = new HashSet<>();
     private final Set<String> removedEntityKeys = new HashSet<>();
     private final Set<String> firedMapTriggerIds = new HashSet<>();
-    private final Map<String, Integer> questStages = new HashMap<>();
+    private final QuestRuntime questRuntime = new QuestRuntime(this);
     private final InputBindings inputBindings = new InputBindings();
     private final WorldMessageLog worldMessageLog = new WorldMessageLog();
 
     private final NavigationState navigationState = new NavigationState();
     private final MiniMapState miniMapState = new MiniMapState();
-    private final QuestState questState = new QuestState();
     private final SkillingState skillingState = new SkillingState();
 
     private GameMode gameMode = GameMode.START_MENU;
@@ -351,10 +352,6 @@ public class GameState {
         return miniMapState;
     }
 
-    public QuestState getQuestState() {
-        return questState;
-    }
-
     public SkillingState getSkillingState() {
         return skillingState;
     }
@@ -650,6 +647,7 @@ public class GameState {
         setAuthoredQuests(generatedDungeon.authoredQuests());
         setCustomItems(generatedDungeon.customItems());
         setCustomLimbs(generatedDungeon.customLimbs());
+        setCustomFurniture(generatedDungeon.customFurniture());
         setCustomGatheringNodes(generatedDungeon.customGatheringNodes());
         setCustomCookingRecipes(generatedDungeon.customCookingRecipes());
         setCraftingRecipes(generatedDungeon.craftingRecipes());
@@ -770,19 +768,6 @@ public class GameState {
                 getDiscoveredMiniMapTileKeys(),
                 new ArrayList<>(mapTriggers),
                 new HashSet<>(firedMapTriggerIds),
-                new ArrayList<>(authoredDialogues.values()),
-                authoredQuestDefinitions.values().stream()
-                        .map(quest -> new MapDesignLibrary.AuthoredQuest(
-                                quest.id(),
-                                quest.displayName(),
-                                quest.stageDescriptions()
-                        ))
-                        .toList(),
-                new ArrayList<>(customItems.values()),
-                new ArrayList<>(customLimbs.values()),
-                new ArrayList<>(getCustomGatheringNodes()),
-                new ArrayList<>(customCookingRecipes.values()),
-                new ArrayList<>(craftingRecipes.values()),
                 getTemporaryStationSnapshots()
         ));
     }
@@ -964,6 +949,7 @@ public class GameState {
         setAuthoredQuests(window.quests());
         setCustomItems(window.items());
         setCustomLimbs(window.limbs());
+        setCustomFurniture(window.furniture());
         setCustomGatheringNodes(window.gatheringNodes());
         setCustomCookingRecipes(window.cookingRecipes());
         setCraftingRecipes(window.craftingRecipes());
@@ -1014,9 +1000,10 @@ public class GameState {
         mapTriggers.clear();
         firedMapTriggerIds.clear();
         authoredDialogues.clear();
-        authoredQuestDefinitions.clear();
+        authoredQuests.clear();
         customItems.clear();
         customLimbs.clear();
+        customFurniture.clear();
         customGatheringNodes.clear();
         customCookingRecipes.clear();
         craftingRecipes.clear();
@@ -1041,7 +1028,11 @@ public class GameState {
         clearBattleState();
     }
 
-    private void restoreRuntimeState(MapRuntimeState state, Path targetPath, int targetX, int targetY) {
+    private void restoreRuntimeState(MapRuntimeState state, Path targetPath, int targetX, int targetY)
+            throws IOException {
+        Path contentPath = state.mapPath() == null ? targetPath : state.mapPath();
+        MapDesignLibrary.AuthoredContent content =
+                MapDesignLibrary.authoredContentOf(MapDesignLibrary.load(contentPath));
         dungeonMap = copyDungeonMap(state.dungeonMap());
         entities.clear();
         entities.addAll(state.entities());
@@ -1060,13 +1051,14 @@ public class GameState {
         restoreResourceNodeSnapshots(state.resourceNodeStates());
         restoreEnemySpawnSnapshots(state);
         currentMapDesignPath = targetPath;
-        setAuthoredDialogues(state.authoredDialogues());
-        setAuthoredQuests(state.authoredQuests());
-        setCustomItems(state.customItems());
-        setCustomLimbs(state.customLimbs());
-        setCustomGatheringNodes(state.customGatheringNodes());
-        setCustomCookingRecipes(state.customCookingRecipes());
-        setCraftingRecipes(state.craftingRecipes());
+        setAuthoredDialogues(content.authoredDialogues());
+        setAuthoredQuests(content.authoredQuests());
+        setCustomItems(content.customItems());
+        setCustomLimbs(content.customLimbs());
+        setCustomFurniture(content.customFurniture());
+        setCustomGatheringNodes(content.customGatheringNodes());
+        setCustomCookingRecipes(content.customCookingRecipes());
+        setCraftingRecipes(content.craftingRecipes());
         resetMiniMapDiscovery();
         Point target = resolveTarget(targetX, targetY);
         setPlayerPosition(target.x, target.y);
@@ -1217,9 +1209,11 @@ public class GameState {
         boolean doorChanged = false;
         for (MapDesignLibrary.MapTrigger trigger : mapTriggers) {
             if (trigger == null
-                    || trigger.fireMode() != MapDesignLibrary.TriggerFireMode.ON_QUEST_STAGE
+                    || trigger.fireMode() != MapDesignLibrary.TriggerFireMode.ON_QUEST_PROGRESS
                     || trigger.requiredQuestId().isBlank()
-                    || getQuestStage(trigger.requiredQuestId()) < trigger.requiredQuestStage()) {
+                    || !hasReachedQuestProgress(
+                            trigger.requiredQuestId(),
+                            trigger.requiredQuestProgress())) {
                 continue;
             }
             if (trigger.oneShot() && firedMapTriggerIds.contains(trigger.id())) {
@@ -1296,20 +1290,18 @@ public class GameState {
     }
 
     public void setAuthoredQuests(List<MapDesignLibrary.AuthoredQuest> quests) {
-        authoredQuestDefinitions.clear();
+        authoredQuests.clear();
         if (quests == null) {
+            questRuntime.setDefinitions(List.of());
             return;
         }
 
         for (MapDesignLibrary.AuthoredQuest quest : quests) {
             if (quest != null && !quest.questId().isBlank()) {
-                authoredQuestDefinitions.put(quest.questId(), new QuestDefinition(
-                        quest.questId(),
-                        quest.displayName(),
-                        quest.stageDescriptions()
-                ));
+                authoredQuests.put(quest.questId(), quest);
             }
         }
+        questRuntime.setDefinitions(quests);
     }
 
     public void setCustomItems(List<MapDesignLibrary.CustomItem> items) {
@@ -1344,6 +1336,31 @@ public class GameState {
 
     public List<MapDesignLibrary.CustomLimb> getCustomLimbs() {
         return List.copyOf(customLimbs.values());
+    }
+
+    public void setCustomFurniture(List<MapDesignLibrary.CustomFurnitureDefinition> furnitureDefinitions) {
+        customFurniture.clear();
+        if (furnitureDefinitions == null) {
+            return;
+        }
+
+        for (MapDesignLibrary.CustomFurnitureDefinition furniture : furnitureDefinitions) {
+            if (furniture != null && !furniture.furnitureId().isBlank()) {
+                customFurniture.put(furniture.furnitureId(), furniture);
+            }
+        }
+    }
+
+    public MapDesignLibrary.AuthoredQuest getAuthoredQuest(String questId) {
+        return questId == null ? null : authoredQuests.get(questId);
+    }
+
+    public QuestRuntime getQuestRuntime() {
+        return questRuntime;
+    }
+
+    public List<MapDesignLibrary.CustomFurnitureDefinition> getCustomFurniture() {
+        return List.copyOf(customFurniture.values());
     }
 
     public void setCustomGatheringNodes(List<MapDesignLibrary.CustomGatheringNode> nodes) {
@@ -1780,59 +1797,33 @@ public class GameState {
         }
     }
 
-    public Map<String, Integer> getQuestStagesView() {
-        return Map.copyOf(questStages);
-    }
-
-    public int getQuestStage(String questId) {
-        if (questId == null || questId.isBlank()) {
-            return -1;
+    private boolean hasReachedQuestProgress(String questId, String requiredProgress) {
+        MapDesignLibrary.AuthoredQuest quest = getAuthoredQuest(questId);
+        QuestRuntime.State state = questRuntime.state(questId);
+        if (quest == null || state == null || requiredProgress == null || requiredProgress.isBlank()) {
+            return false;
         }
-        return questStages.getOrDefault(questId, -1);
-    }
-
-    public List<QuestDefinition> getQuestDefinitions() {
-        return List.copyOf(authoredQuestDefinitions.values());
-    }
-
-    public QuestDefinition getQuestDefinition(String questId) {
-        if (questId == null || questId.isBlank()) {
-            return null;
+        if ("ACTIVE".equals(requiredProgress)) {
+            return state == QuestRuntime.State.ACTIVE || state == QuestRuntime.State.COMPLETED;
         }
-
-        for (QuestDefinition definition : getQuestDefinitions()) {
-            if (questId.equals(definition.id())) {
-                return definition;
+        if ("COMPLETED".equals(requiredProgress)) {
+            return state == QuestRuntime.State.COMPLETED;
+        }
+        if (!requiredProgress.startsWith("STAGE:")) {
+            return false;
+        }
+        String requiredStageId = requiredProgress.substring("STAGE:".length());
+        int requiredIndex = -1;
+        for (int index = 0; index < quest.stages().size(); index++) {
+            if (quest.stages().get(index).stageId().equals(requiredStageId)) {
+                requiredIndex = index;
+                break;
             }
         }
-
-        return null;
-    }
-
-    public void setQuestStages(Map<String, Integer> questStages) {
-        this.questStages.clear();
-
-        if (questStages != null) {
-            questStages.forEach((id, stage) -> {
-                if (id != null && stage != null) {
-                    this.questStages.put(id, Math.max(0, stage));
-                }
-            });
-        }
-        evaluateQuestStageTriggers();
-    }
-
-    public void setQuestStage(String questId, int stage) {
-        if (questId == null || questId.isBlank()) {
-            return;
-        }
-
-        QuestDefinition definition = getQuestDefinition(questId);
-        int safeStage = definition == null
-                ? Math.max(0, stage)
-                : Math.max(0, Math.min(definition.maxStage(), stage));
-        questStages.put(questId, safeStage);
-        evaluateQuestStageTriggers();
+        return requiredIndex >= 0
+                && (state == QuestRuntime.State.COMPLETED
+                || state == QuestRuntime.State.ACTIVE
+                && questRuntime.currentStageIndex(questId) >= requiredIndex);
     }
 
     public int getGold() {
@@ -2019,6 +2010,29 @@ public class GameState {
             fishingMessage = "The shoal goes still. It needs time to recover.";
             worldMessageLog.post(WorldMessageLog.Category.WARNING, fishingMessage);
             fishingActive = false;
+        }
+    }
+
+    public boolean isDialogueRewardClaimed(String claimKey) {
+        return claimKey != null && claimedDialogueRewardKeys.contains(claimKey);
+    }
+
+    public void markDialogueRewardClaimed(String claimKey) {
+        if (claimKey != null && !claimKey.isBlank()) {
+            claimedDialogueRewardKeys.add(claimKey);
+        }
+    }
+
+    public Set<String> getClaimedDialogueRewardKeysView() {
+        return Set.copyOf(claimedDialogueRewardKeys);
+    }
+
+    public void setClaimedDialogueRewardKeys(Set<String> claimKeys) {
+        claimedDialogueRewardKeys.clear();
+        if (claimKeys != null) {
+            claimKeys.stream()
+                    .filter(key -> key != null && !key.isBlank())
+                    .forEach(claimedDialogueRewardKeys::add);
         }
     }
 
@@ -2245,7 +2259,7 @@ public class GameState {
     }
 
     private MapDesignLibrary.CustomGatheringNode getCustomGatheringNodeAt(int x, int y) {
-        MapEntity entity = getEntityAt(x, y);
+        MapEntity entity = getGatheringEntityAt(x, y);
         if (entity != null && entity.getInteractionId() != null) {
             MapDesignLibrary.CustomGatheringNode node = customGatheringNodes.get(entity.getInteractionId());
             if (node != null) {
@@ -2329,6 +2343,7 @@ public class GameState {
         if (enemy == null || enemy.getType() != Library.EntityType.ENEMY || !entities.remove(enemy)) {
             return;
         }
+        questRuntime.recordDefeat(enemy);
         if (enemy.getEnemySpawnId().isBlank()) {
             removedEntityKeys.add(entityKey(enemy));
             return;
@@ -2539,32 +2554,40 @@ public class GameState {
 
     private void updateResourceNodeVisual(int x, int y) {
         int exhaustionLevel = getResourceExhaustionLevel(x, y);
-        MapEntity entity = getEntityAt(x, y);
-
-        if (entity != null && "mineral_rock_basic".equals(entity.getInteractionId())) {
-            int frame = Math.max(1, Math.min(3, exhaustionLevel + 1));
-            entity.setStaticImage(AssetLoader.loadImage("assets/images/generic/64x64/A_Rock1_Node" + frame + ".png"));
-            return;
-        }
+        MapEntity entity = getGatheringEntityAt(x, y);
 
         if (entity != null) {
             MapDesignLibrary.CustomGatheringNode node = customGatheringNodes.get(entity.getInteractionId());
             if (node != null && node.nodeType() != MapDesignLibrary.GatheringNodeType.FISHING_SPOT) {
                 entity.setStaticImage(node.getImageForExhaustion(exhaustionLevel));
-                entity.setStaticModelVisible(exhaustionLevel < maxResourceExhaustionLevel());
+                String modelPath = node.getModelForExhaustion(exhaustionLevel);
+                if (modelPath.isBlank()) {
+                    entity.setStaticModelVisible(false);
+                } else {
+                    entity.withStaticModel(modelPath);
+                }
                 return;
             }
-        }
-
-        if ("fishing_shoal".equals(getTileInteractionId(x, y))
-                && dungeonMap != null) {
-            dungeonMap.setTile(x, y, exhaustionLevel >= 2 ? Library.TileType.WATER : Library.TileType.FISHING_WATER);
         }
 
         MapDesignLibrary.CustomGatheringNode node = customGatheringNodes.get(getTileInteractionId(x, y));
         if (node != null && node.nodeType() == MapDesignLibrary.GatheringNodeType.FISHING_SPOT && dungeonMap != null) {
             dungeonMap.setTile(x, y, exhaustionLevel >= 2 ? Library.TileType.WATER : Library.TileType.FISHING_WATER);
         }
+    }
+
+    private MapEntity getGatheringEntityAt(int x, int y) {
+        for (MapEntity entity : entities) {
+            if (!entity.isAt(x, y)) {
+                continue;
+            }
+            String interactionId = entity.getInteractionId();
+            if (customGatheringNodes.containsKey(interactionId)) {
+                return entity;
+            }
+        }
+
+        return null;
     }
 
     private Point parseTileKey(String key) {
@@ -3810,29 +3833,6 @@ public class GameState {
         return Math.max(0.0, Math.min(1.0, value));
     }
 
-    public record QuestDefinition(String id, String displayName, List<String> stageDescriptions) {
-        public QuestDefinition {
-            id = id == null ? "" : id;
-            displayName = displayName == null || displayName.isBlank() ? "Untitled Quest" : displayName;
-            stageDescriptions = stageDescriptions == null || stageDescriptions.isEmpty()
-                    ? List.of("Begin the quest.", "Complete.")
-                    : List.copyOf(stageDescriptions);
-        }
-
-        public int maxStage() {
-            return stageDescriptions.size() - 1;
-        }
-
-        public boolean isComplete(int stage) {
-            return stage >= maxStage();
-        }
-
-        public String stageDescription(int stage) {
-            int safeStage = Math.max(0, Math.min(maxStage(), stage));
-            return stageDescriptions.get(safeStage);
-        }
-    }
-
     public record ResourceNodeSnapshot(
             int exhaustionLevel,
             int attemptsSinceLastExhaustionRoll,
@@ -3957,13 +3957,6 @@ public class GameState {
             Set<String> discoveredMiniMapTiles,
             List<MapDesignLibrary.MapTrigger> mapTriggers,
             Set<String> firedTriggerIds,
-            List<MapDesignLibrary.AuthoredDialogue> authoredDialogues,
-            List<MapDesignLibrary.AuthoredQuest> authoredQuests,
-            List<MapDesignLibrary.CustomItem> customItems,
-            List<MapDesignLibrary.CustomLimb> customLimbs,
-            List<MapDesignLibrary.CustomGatheringNode> customGatheringNodes,
-            List<MapDesignLibrary.CustomCookingRecipe> customCookingRecipes,
-            List<MapDesignLibrary.CraftingRecipe> craftingRecipes,
             List<TemporaryStationSnapshot> temporaryStations
     ) {
         public MapRuntimeState {
@@ -3977,40 +3970,7 @@ public class GameState {
             discoveredMiniMapTiles = discoveredMiniMapTiles == null ? Set.of() : Set.copyOf(discoveredMiniMapTiles);
             mapTriggers = mapTriggers == null ? List.of() : List.copyOf(mapTriggers);
             firedTriggerIds = firedTriggerIds == null ? Set.of() : Set.copyOf(firedTriggerIds);
-            authoredDialogues = authoredDialogues == null ? List.of() : List.copyOf(authoredDialogues);
-            authoredQuests = authoredQuests == null ? List.of() : List.copyOf(authoredQuests);
-            customItems = customItems == null ? List.of() : List.copyOf(customItems);
-            customLimbs = customLimbs == null ? List.of() : List.copyOf(customLimbs);
-            customGatheringNodes = customGatheringNodes == null ? List.of() : List.copyOf(customGatheringNodes);
-            customCookingRecipes = customCookingRecipes == null ? List.of() : List.copyOf(customCookingRecipes);
-            craftingRecipes = craftingRecipes == null ? List.of() : List.copyOf(craftingRecipes);
             temporaryStations = temporaryStations == null ? List.of() : List.copyOf(temporaryStations);
-        }
-
-        public MapRuntimeState(
-                Path mapPath,
-                DungeonMap dungeonMap,
-                List<MapEntity> entities,
-                boolean hasEntitySnapshot,
-                Map<String, String> tileInteractionIds,
-                Set<String> removedEntityKeys,
-                Map<String, ResourceNodeSnapshot> resourceNodeStates,
-                Set<String> discoveredMiniMapTiles,
-                List<MapDesignLibrary.MapTrigger> mapTriggers,
-                Set<String> firedTriggerIds,
-                List<MapDesignLibrary.AuthoredDialogue> authoredDialogues,
-                List<MapDesignLibrary.AuthoredQuest> authoredQuests,
-                List<MapDesignLibrary.CustomItem> customItems,
-                List<MapDesignLibrary.CustomLimb> customLimbs,
-                List<MapDesignLibrary.CustomGatheringNode> customGatheringNodes,
-                List<MapDesignLibrary.CustomCookingRecipe> customCookingRecipes,
-                List<MapDesignLibrary.CraftingRecipe> craftingRecipes
-        ) {
-            this(mapPath, dungeonMap, entities, hasEntitySnapshot, tileInteractionIds, removedEntityKeys,
-                    resourceNodeStates, Map.of(), Map.of(), System.currentTimeMillis(),
-                    discoveredMiniMapTiles, mapTriggers, firedTriggerIds,
-                    authoredDialogues, authoredQuests, customItems, customLimbs, customGatheringNodes,
-                    customCookingRecipes, craftingRecipes, List.of());
         }
     }
 }

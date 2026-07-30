@@ -1,94 +1,26 @@
 package org.main.battle;
 
+import org.main.content.SkillDefinition;
+import org.main.content.SkillEffectDefinition;
 import org.main.core.Library;
 
-public class BattleSkill {
-    private static final int DEFEND_DEFAULT_TURNS = 2;
-    private static final double DAMAGE_HEAL_PERCENT = 0.50;
+import java.util.List;
+import java.util.Map;
 
+public final class BattleSkill {
     private final String name;
     private final String description;
     private final Library.SkillTargetShape targetShape;
     private final Library.EntityType targetTeam;
     private final Library.BattleTargetingMode targetingMode;
     private final String useSoundPath;
-    private final Library.EffectType effectType;
-    private final int potency;
-    private final BattleStatusType onHitStatusType;
-    private final int onHitStatusTurns;
-    private final SummonMode summonMode;
-    private final String summonSpeciesId;
-    private final String summonDisplayName;
     private final String skillId;
     private final double baseCooldownSeconds;
     private final boolean consumesAutoAction;
-
-    public BattleSkill(
-            String name,
-            String description,
-            Library.SkillTargetShape targetShape,
-            Library.EntityType targetTeam,
-            Library.BattleTargetingMode targetingMode,
-            String useSoundPath,
-            Library.EffectType effectType,
-            int potency
-    ) {
-        this(
-                name,
-                description,
-                targetShape,
-                targetTeam,
-                targetingMode,
-                useSoundPath,
-                effectType,
-                potency,
-                null,
-                0
-        );
-    }
-
-    public BattleSkill(
-            String name,
-            String description,
-            Library.SkillTargetShape targetShape,
-            Library.EntityType targetTeam,
-            Library.BattleTargetingMode targetingMode,
-            String useSoundPath,
-            Library.EffectType effectType,
-            int potency,
-            BattleStatusType onHitStatusType,
-            int onHitStatusTurns
-    ) {
-        this(
-                name,
-                description,
-                targetShape,
-                targetTeam,
-                targetingMode,
-                useSoundPath,
-                effectType,
-                potency,
-                onHitStatusType,
-                onHitStatusTurns,
-                SummonMode.NONE,
-                "",
-                "",
-                "",
-                0.0,
-                true
-        );
-    }
-
-    public BattleSkill(
-            String name,
-            Library.SkillTargetShape targetShape,
-            Library.EntityType targetTeam,
-            Library.BattleTargetingMode targetingMode,
-            Library.EffectType effectType,
-            int potency
-    ) {
-        this(name, "", targetShape, targetTeam, targetingMode, null, effectType, potency);
-    }
+    private final List<SkillEffectDefinition> effects;
+    private final String presentationStyle;
+    private final String summonSpeciesOverride;
+    private final String summonDisplayName;
 
     private BattleSkill(
             String name,
@@ -97,33 +29,48 @@ public class BattleSkill {
             Library.EntityType targetTeam,
             Library.BattleTargetingMode targetingMode,
             String useSoundPath,
-            Library.EffectType effectType,
-            int potency,
-            BattleStatusType onHitStatusType,
-            int onHitStatusTurns,
-            SummonMode summonMode,
-            String summonSpeciesId,
-            String summonDisplayName,
             String skillId,
             double baseCooldownSeconds,
-            boolean consumesAutoAction
+            boolean consumesAutoAction,
+            List<SkillEffectDefinition> effects,
+            String presentationStyle,
+            String summonSpeciesOverride,
+            String summonDisplayName
     ) {
-        this.name = name;
+        this.name = name == null ? "" : name;
         this.description = description == null ? "" : description;
         this.targetShape = targetShape;
         this.targetTeam = targetTeam;
         this.targetingMode = targetingMode;
-        this.useSoundPath = useSoundPath;
-        this.effectType = effectType;
-        this.potency = Math.max(0, potency);
-        this.onHitStatusType = onHitStatusType;
-        this.onHitStatusTurns = Math.max(0, onHitStatusTurns);
-        this.summonMode = summonMode == null ? SummonMode.NONE : summonMode;
-        this.summonSpeciesId = summonSpeciesId == null ? "" : summonSpeciesId;
-        this.summonDisplayName = summonDisplayName == null ? "" : summonDisplayName;
-        this.skillId = skillId == null || skillId.isBlank() ? fallbackSkillId(name) : skillId;
+        this.useSoundPath = useSoundPath == null ? "" : useSoundPath;
+        this.skillId = skillId == null ? "" : skillId;
         this.baseCooldownSeconds = Math.max(0.0, baseCooldownSeconds);
         this.consumesAutoAction = consumesAutoAction;
+        this.effects = effects == null ? List.of() : List.copyOf(effects);
+        this.presentationStyle = presentationStyle == null ? "AUTO" : presentationStyle;
+        this.summonSpeciesOverride = summonSpeciesOverride == null ? "" : summonSpeciesOverride;
+        this.summonDisplayName = summonDisplayName == null ? "" : summonDisplayName;
+    }
+
+    public static BattleSkill fromDefinition(SkillDefinition definition) {
+        if (definition == null) {
+            throw new IllegalArgumentException("Skill definition is required.");
+        }
+        return new BattleSkill(
+                definition.displayName(),
+                definition.description(),
+                definition.targetShape(),
+                definition.targetTeam(),
+                definition.targetingMode(),
+                definition.useSoundPath(),
+                definition.id(),
+                definition.cooldownSeconds(),
+                definition.consumesAutoAction(),
+                definition.effects(),
+                definition.presentationStyle(),
+                "",
+                ""
+        );
     }
 
     public String getName() {
@@ -150,68 +97,55 @@ public class BattleSkill {
         return useSoundPath;
     }
 
-    public Library.EffectType getEffectType() {
-        return effectType;
-    }
-
-    public int getPotency() {
-        return potency;
-    }
-
-    public int getDamage() {
-        return potency;
-    }
-
-    public double getStunChance() {
-        return onHitStatusType == BattleStatusType.STUN ? onHitStatusType.getDefaultApplyChance() : 0.0;
-    }
-
-    public int getStunTurns() {
-        return onHitStatusType == BattleStatusType.STUN ? onHitStatusTurns : 0;
-    }
-
-    public int getDefendTurns() {
-        return effectType == Library.EffectType.DEFEND && potency > 0 ? DEFEND_DEFAULT_TURNS : 0;
-    }
-
-    public double getDamageReduction() {
-        return effectType == Library.EffectType.DEFEND ? Math.max(0.0, Math.min(0.95, potency / 100.0)) : 0.0;
-    }
-
-    public double getSelfHealPercent() {
-        return healsCasterFromDamage() ? DAMAGE_HEAL_PERCENT : 0.0;
+    public int getPrimaryPotency() {
+        return effects.stream()
+                .filter(effect -> "damage".equals(effect.kindId()) || "heal".equals(effect.kindId()))
+                .mapToInt(effect -> effect.intParameter("potency", 0))
+                .findFirst()
+                .orElse(0);
     }
 
     public boolean healsCasterFromDamage() {
-        return effectType == Library.EffectType.DAMAGE_HEAL;
+        return hasEffect("heal_from_damage");
     }
 
-    public BattleStatusType getOnHitStatusType() {
-        return onHitStatusType;
-    }
-
-    public double getOnHitStatusChance() {
-        return onHitStatusType == null ? 0.0 : onHitStatusType.getDefaultApplyChance();
-    }
-
-    public int getOnHitStatusTurns() {
-        return onHitStatusTurns;
-    }
-
-    public boolean hasOnHitStatus() {
-        return onHitStatusType != null && onHitStatusTurns > 0 && getOnHitStatusChance() > 0.0;
+    public List<String> getAppliedStatusIds() {
+        return effects.stream()
+                .filter(effect -> "apply_status".equals(effect.kindId()))
+                .map(effect -> effect.parameter("statusId", ""))
+                .filter(statusId -> !statusId.isBlank())
+                .toList();
     }
 
     public SummonMode getSummonMode() {
-        return summonMode;
+        return effects.stream()
+                .filter(effect -> "summon".equals(effect.kindId()))
+                .map(effect -> enumValue(
+                        SummonMode.class,
+                        effect.parameter("mode", "NONE"),
+                        SummonMode.NONE))
+                .findFirst()
+                .orElse(SummonMode.NONE);
     }
 
     public double getSummonChance() {
-        return effectType == Library.EffectType.SUMMON ? Math.max(0.0, Math.min(1.0, potency / 100.0)) : 0.0;
+        return effects.stream()
+                .filter(effect -> "summon".equals(effect.kindId()))
+                .mapToDouble(effect -> Math.max(0.0, Math.min(1.0,
+                        effect.doubleParameter("successPercent", 100) / 100.0)))
+                .findFirst()
+                .orElse(0.0);
     }
 
     public String getSummonSpeciesId() {
-        return summonSpeciesId;
+        if (!summonSpeciesOverride.isBlank()) {
+            return summonSpeciesOverride;
+        }
+        return effects.stream()
+                .filter(effect -> "summon".equals(effect.kindId()))
+                .map(effect -> effect.parameter("speciesId", ""))
+                .findFirst()
+                .orElse("");
     }
 
     public String getSummonDisplayName() {
@@ -219,7 +153,7 @@ public class BattleSkill {
     }
 
     public boolean isSummonSkill() {
-        return effectType == Library.EffectType.SUMMON && summonMode != SummonMode.NONE;
+        return hasEffect("summon") && getSummonMode() != SummonMode.NONE;
     }
 
     public String getSkillId() {
@@ -234,7 +168,20 @@ public class BattleSkill {
         return consumesAutoAction;
     }
 
-    public BattleSkill withSummonMode(SummonMode summonMode) {
+    public List<SkillEffectDefinition> getEffects() {
+        return effects;
+    }
+
+    public String getPresentationStyle() {
+        return presentationStyle;
+    }
+
+    public boolean hasEffect(String kindId) {
+        String normalized = kindId == null ? "" : kindId.trim().toLowerCase();
+        return effects.stream().anyMatch(effect -> normalized.equals(effect.kindId()));
+    }
+
+    public BattleSkill effectView(String kindId, int effectPotency) {
         return new BattleSkill(
                 name,
                 description,
@@ -242,16 +189,18 @@ public class BattleSkill {
                 targetTeam,
                 targetingMode,
                 useSoundPath,
-                effectType,
-                potency,
-                onHitStatusType,
-                onHitStatusTurns,
-                summonMode,
-                summonSpeciesId,
-                summonDisplayName,
                 skillId,
                 baseCooldownSeconds,
-                consumesAutoAction
+                consumesAutoAction,
+                List.of(new SkillEffectDefinition(
+                        kindId,
+                        SkillEffectDefinition.RecipientScope.RESOLVED_TARGETS,
+                        SkillEffectDefinition.ActivationCondition.ALWAYS,
+                        1.0,
+                        Map.of("potency", String.valueOf(effectPotency)))),
+                presentationStyle,
+                summonSpeciesOverride,
+                summonDisplayName
         );
     }
 
@@ -263,44 +212,22 @@ public class BattleSkill {
                 targetTeam,
                 targetingMode,
                 useSoundPath,
-                effectType,
-                potency,
-                onHitStatusType,
-                onHitStatusTurns,
-                summonMode,
+                skillId,
+                baseCooldownSeconds,
+                consumesAutoAction,
+                effects,
+                presentationStyle,
                 speciesId,
-                displayName,
-                skillId,
-                baseCooldownSeconds,
-                consumesAutoAction
+                displayName
         );
     }
 
-    public BattleSkill withCooldown(String skillId, double baseCooldownSeconds, boolean consumesAutoAction) {
-        return new BattleSkill(
-                name,
-                description,
-                targetShape,
-                targetTeam,
-                targetingMode,
-                useSoundPath,
-                effectType,
-                potency,
-                onHitStatusType,
-                onHitStatusTurns,
-                summonMode,
-                summonSpeciesId,
-                summonDisplayName,
-                skillId,
-                baseCooldownSeconds,
-                consumesAutoAction
-        );
-    }
-
-    private static String fallbackSkillId(String name) {
-        return name == null || name.isBlank()
-                ? "skill"
-                : name.trim().toUpperCase().replaceAll("[^A-Z0-9]+", "_");
+    private static <T extends Enum<T>> T enumValue(Class<T> type, String value, T fallback) {
+        try {
+            return Enum.valueOf(type, value == null ? "" : value.trim().toUpperCase());
+        } catch (IllegalArgumentException exception) {
+            return fallback;
+        }
     }
 
     public enum SummonMode {

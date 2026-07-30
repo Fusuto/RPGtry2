@@ -49,8 +49,8 @@ public final class LightingResolver {
             if (visited++ >= maxLights) {
                 break;
             }
-            double lightX = light.x() + 0.5;
-            double lightZ = light.y() + 0.5;
+            double lightX = light.x() + 0.5 + light.offsetX();
+            double lightZ = light.y() + 0.5 + light.offsetZ();
             double lightY = TerrainGeometry.groundYAtWorld(map, lightX, lightZ) + light.heightOffset();
             double dx = lightX - worldX;
             double dy = lightY - worldY;

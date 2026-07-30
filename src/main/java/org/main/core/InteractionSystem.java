@@ -1531,6 +1531,14 @@ public final class InteractionSystem {
         }
 
         public Interaction create(String interactionId, GameState gameState, MapEntity entity, int tileX, int tileY) {
+            refreshAuthoredNpcContent(gameState, entity);
+            if (entity != null
+                    && gameState != null
+                    && ("npc_hub".equals(interactionId)
+                            || entity.getShopBlueprint() != null
+                            || !entity.getQuestIds().isEmpty())) {
+                return createNpcHubInteraction(gameState, entity, tileX, tileY);
+            }
             if (interactionId == null || interactionId.isBlank()) {
                 return null;
             }
@@ -1582,6 +1590,46 @@ public final class InteractionSystem {
             return factory.create(new InteractionContext(gameState, entity, tileX, tileY));
         }
 
+        private void refreshAuthoredNpcContent(GameState gameState, MapEntity entity) {
+            if (gameState == null
+                    || entity == null
+                    || entity.getType() != Library.EntityType.NPC) {
+                return;
+            }
+            try {
+                MapDesignLibrary.AuthoredContent content = MapDesignLibrary.loadSharedContent();
+                MapDesignLibrary.CustomNpc npc;
+                if (!entity.getContentId().isBlank()) {
+                    npc = content.customNpcs().stream()
+                            .filter(candidate -> candidate.npcId().equals(entity.getContentId()))
+                            .findFirst()
+                            .orElse(null);
+                } else {
+                    List<MapDesignLibrary.CustomNpc> nameMatches = content.customNpcs().stream()
+                            .filter(candidate -> candidate.displayName().equals(entity.getName()))
+                            .toList();
+                    npc = nameMatches.size() == 1 ? nameMatches.getFirst() : null;
+                }
+                if (npc == null) {
+                    return;
+                }
+                gameState.setAuthoredDialogues(content.authoredDialogues());
+                gameState.setAuthoredQuests(content.authoredQuests());
+                entity.withContentId(npc.npcId());
+                entity.withQuestIds(npc.questIds());
+                if ((entity.getInteractionId() == null || entity.getInteractionId().isBlank()
+                        || "npc_hub".equals(entity.getInteractionId()))
+                        && (!npc.interactionId().isBlank() || !npc.questIds().isEmpty())) {
+                    entity.withInteractionId(
+                            npc.interactionId().isBlank() ? "npc_hub" : npc.interactionId()
+                    );
+                }
+            } catch (java.io.IOException exception) {
+                LOGGER.fine(() -> "Could not refresh authored NPC quest content: "
+                        + exception.getMessage());
+            }
+        }
+
         private Interaction createCustomShopInteraction(GameState gameState, MapEntity entity) {
             ShopSystem.ShopBlueprint blueprint = entity.getShopBlueprint();
             if (gameState == null || blueprint == null) {
@@ -1607,6 +1655,200 @@ public final class InteractionSystem {
                     }),
                     closeOption("Leave")
             );
+        }
+
+        private Interaction createNpcHubInteraction(GameState gameState, MapEntity entity, int tileX, int tileY) {
+            if (gameState == null || entity == null) {
+                return null;
+            }
+            if (!entity.getContentId().isBlank()) {
+                gameState.getQuestRuntime().recordTalk(entity.getContentId());
+            }
+            boolean hasGeneralDialogue = entity.hasInteractionId()
+                    && !"custom_shop".equals(entity.getInteractionId())
+                    && !"npc_hub".equals(entity.getInteractionId())
+                    && gameState.getAuthoredDialogue(entity.getInteractionId()) != null;
+            boolean hasShop = entity.getShopBlueprint() != null;
+            List<String> visibleQuestIds = entity.getQuestIds().stream()
+                    .filter(questId -> gameState.getQuestRuntime()
+                            .isVisibleAtNpc(questId, entity.getContentId()))
+                    .filter(questId -> gameState.getAuthoredQuest(questId) != null)
+                    .toList();
+            if (!hasGeneralDialogue && !hasShop && visibleQuestIds.size() == 1) {
+                return createQuestInteraction(
+                        visibleQuestIds.getFirst(),
+                        gameState,
+                        entity,
+                        tileX,
+                        tileY,
+                        ""
+                );
+            }
+            List<InteractionOption> options = new ArrayList<>();
+            if (hasGeneralDialogue) {
+                options.add(option("Talk", () -> {
+                    Interaction authored = createAuthoredInteraction(
+                            entity.getInteractionId(), gameState, entity, tileX, tileY);
+                    if (authored != null) {
+                        gameState.openInteraction(authored);
+                    }
+                }));
+            }
+            if (hasShop) {
+                options.add(option("Trade", () -> {
+                    ShopSystem.ShopSession shop = entity.getShopSession();
+                    if (shop == null) {
+                        shop = ShopSystem.createAuthoredShop(gameState, entity.getShopBlueprint());
+                        entity.setShopSession(shop);
+                    }
+                    if (shop != null) {
+                        gameState.openShop(shop);
+                    }
+                }));
+            }
+            for (String questId : visibleQuestIds) {
+                MapDesignLibrary.AuthoredQuest quest = gameState.getAuthoredQuest(questId);
+                QuestRuntime.State state = gameState.getQuestRuntime().state(questId);
+                if (quest == null || state == null) {
+                    continue;
+                }
+                String marker = switch (state) {
+                    case AVAILABLE -> "! ";
+                    case ACTIVE -> "* ";
+                    case COMPLETED -> "+ ";
+                };
+                options.add(option(marker + quest.displayName(), () -> {
+                    Interaction questInteraction = createQuestInteraction(
+                            questId, gameState, entity, tileX, tileY, "");
+                    if (questInteraction != null) {
+                        gameState.openInteraction(questInteraction);
+                    }
+                }));
+            }
+            options.add(closeOption("Leave"));
+            String greeting = entity.getShopBlueprint() == null
+                    ? "What would you like to discuss?"
+                    : entity.getShopBlueprint().greeting();
+            return dialogue(
+                    entity.getName(),
+                    greeting,
+                    null,
+                    entity.getStaticImage(),
+                    options.toArray(new InteractionOption[0])
+            );
+        }
+
+        private Interaction createQuestInteraction(
+                String questId,
+                GameState gameState,
+                MapEntity entity,
+                int tileX,
+                int tileY,
+                String requestedNodeId
+        ) {
+            MapDesignLibrary.AuthoredQuest quest = gameState.getAuthoredQuest(questId);
+            MapDesignLibrary.QuestFlow flow = gameState.getQuestRuntime().flowFor(questId);
+            if (quest == null || flow == null || flow.nodes().isEmpty()) {
+                List<InteractionOption> unavailableOptions = new ArrayList<>();
+                if (hasNpcHubAlternative(gameState, entity, questId)) {
+                    unavailableOptions.add(option("Back", () -> gameState.openInteraction(
+                            createNpcHubInteraction(gameState, entity, tileX, tileY))));
+                }
+                unavailableOptions.add(closeOption("Leave"));
+                return dialogue(
+                        entity.getName(),
+                        "This quest has no conversation configured for its current state.",
+                        null,
+                        entity.getStaticImage(),
+                        unavailableOptions.toArray(new InteractionOption[0])
+                );
+            }
+            String nodeId = requestedNodeId == null || requestedNodeId.isBlank()
+                    ? flow.entryNodeId()
+                    : requestedNodeId;
+            MapDesignLibrary.QuestFlowNode node = flow.nodes().stream()
+                    .filter(candidate -> candidate.nodeId().equals(nodeId))
+                    .findFirst()
+                    .orElse(flow.nodes().get(0));
+            List<InteractionOption> options = new ArrayList<>();
+            for (MapDesignLibrary.QuestFlowChoice choice : node.choices()) {
+                if (!gameState.getQuestRuntime().choiceVisible(choice)) {
+                    continue;
+                }
+                options.add(option(choice.label(), () -> {
+                    QuestRuntime.TransitionResult result = gameState.getQuestRuntime().applyChoice(questId, choice);
+                    if (!result.success()) {
+                        gameState.openInteraction(dialogue(
+                                entity.getName(),
+                                result.message(),
+                                null,
+                                entity.getStaticImage(),
+                                option("Back", () -> gameState.openInteraction(createQuestInteraction(
+                                        questId, gameState, entity, tileX, tileY, node.nodeId()))),
+                                closeOption("Leave")
+                        ));
+                        return;
+                    }
+                    if (choice.action() == MapDesignLibrary.QuestFlowAction.NONE
+                            && !choice.targetNodeId().isBlank()) {
+                        gameState.openInteraction(createQuestInteraction(
+                                questId, gameState, entity, tileX, tileY, choice.targetNodeId()));
+                        return;
+                    }
+                    String text = !choice.terminalBodyText().isBlank()
+                            ? choice.terminalBodyText()
+                            : result.message().isBlank() ? "The conversation ends." : result.message();
+                    List<InteractionOption> terminalOptions = new ArrayList<>();
+                    if (hasNpcHubAlternative(gameState, entity, questId)) {
+                        terminalOptions.add(option("Back to topics", () -> gameState.openInteraction(
+                                createNpcHubInteraction(gameState, entity, tileX, tileY))));
+                    }
+                    terminalOptions.add(closeOption("Leave"));
+                    gameState.openInteraction(dialogue(
+                            entity.getName(),
+                            text,
+                            null,
+                            entity.getStaticImage(),
+                            terminalOptions.toArray(new InteractionOption[0])
+                    ));
+                }));
+            }
+            if (hasNpcHubAlternative(gameState, entity, questId)) {
+                options.add(option("Back to topics", () -> gameState.openInteraction(
+                        createNpcHubInteraction(gameState, entity, tileX, tileY))));
+            }
+            options.add(closeOption("Leave"));
+            return dialogue(
+                    entity.getName(),
+                    node.bodyText(),
+                    null,
+                    entity.getStaticImage(),
+                    options.toArray(new InteractionOption[0])
+            );
+        }
+
+        private boolean hasNpcHubAlternative(
+                GameState gameState,
+                MapEntity entity,
+                String currentQuestId
+        ) {
+            if (gameState == null || entity == null) {
+                return false;
+            }
+            boolean hasGeneralDialogue = entity.hasInteractionId()
+                    && !"custom_shop".equals(entity.getInteractionId())
+                    && !"npc_hub".equals(entity.getInteractionId())
+                    && gameState.getAuthoredDialogue(entity.getInteractionId()) != null;
+            if (hasGeneralDialogue || entity.getShopBlueprint() != null) {
+                return true;
+            }
+            return entity.getQuestIds().stream()
+                    .filter(questId -> !questId.equals(currentQuestId))
+                    .anyMatch(questId -> gameState.getAuthoredQuest(questId) != null
+                            && gameState.getQuestRuntime().isVisibleAtNpc(
+                                    questId,
+                                    entity.getContentId()
+                            ));
         }
 
         private Interaction createMapLinkInteraction(String interactionId, GameState gameState) {
@@ -1673,6 +1915,11 @@ public final class InteractionSystem {
 
             boolean firstTalk = !gameState.hasSpokenToAuthoredDialogue(authoredDialogue.interactionId());
             String startingNodeId = startingAuthoredNodeId(authoredDialogue, gameState, firstTalk);
+            DialogueTransactionResult rootRewards = applyAuthoredRewardTransaction(
+                    authoredDialogue,
+                    null,
+                    gameState
+            );
             Interaction interaction = createAuthoredNodeInteraction(
                     authoredDialogue,
                     gameState,
@@ -1680,7 +1927,7 @@ public final class InteractionSystem {
                     tileX,
                     tileY,
                     startingNodeId,
-                    "",
+                    rootRewards.text(),
                     firstTalk
             );
             gameState.markSpokenToAuthoredDialogue(authoredDialogue.interactionId());
@@ -1703,43 +1950,7 @@ public final class InteractionSystem {
             if (!authoredDialogue.choices().isEmpty()) {
                 return "start";
             }
-
-            MapDesignLibrary.AuthoredDialogueNode questNode = findRelevantAuthoredQuestNode(authoredDialogue, gameState);
-            return questNode == null ? "start" : questNode.nodeId();
-        }
-
-        private MapDesignLibrary.AuthoredDialogueNode findRelevantAuthoredQuestNode(
-                MapDesignLibrary.AuthoredDialogue authoredDialogue,
-                GameState gameState
-        ) {
-            if (authoredDialogue == null || gameState == null) {
-                return null;
-            }
-
-            for (MapDesignLibrary.AuthoredDialogueNode node : authoredDialogue.nodes()) {
-                if (isFirstTalkNode(node)) {
-                    continue;
-                }
-                for (MapDesignLibrary.AuthoredDialogueChoice choice : node.choices()) {
-                    if (isAuthoredChoiceRelevantForCurrentQuestStage(gameState, choice)) {
-                        return node;
-                    }
-                }
-            }
-            return null;
-        }
-
-        private boolean isAuthoredChoiceRelevantForCurrentQuestStage(
-                GameState gameState,
-                MapDesignLibrary.AuthoredDialogueChoice choice
-        ) {
-            if (choice == null || choice.questId().isBlank() || choice.questStage() < 0) {
-                return false;
-            }
-
-            int currentStage = gameState.getQuestStagesView().getOrDefault(choice.questId(), 0);
-            int requiredStage = Math.max(0, choice.questStage() - 1);
-            return currentStage == requiredStage;
+            return "start";
         }
 
         private Interaction createAuthoredNodeInteraction(
@@ -1859,11 +2070,15 @@ public final class InteractionSystem {
                 int tileY,
                 boolean firstTalk
         ) {
-            String itemFailure = applyAuthoredChoiceItemAction(gameState, choice);
-            if (!itemFailure.isBlank()) {
+            DialogueTransactionResult transaction = applyAuthoredRewardTransaction(
+                    authoredDialogue,
+                    choice,
+                    gameState
+            );
+            if (!transaction.success()) {
                 gameState.openInteraction(dialogue(
                         authoredDialogue.speakerName(),
-                        itemFailure,
+                        transaction.text(),
                         null,
                         entity == null ? null : entity.getStaticImage(),
                         closeOption("Close")
@@ -1871,8 +2086,7 @@ public final class InteractionSystem {
                 return;
             }
 
-            String rewardText = applyAuthoredChoiceReward(gameState, choice);
-            String questText = applyAuthoredChoiceQuestAction(gameState, choice);
+            String rewardText = transaction.text();
             if (!choice.targetNodeId().isBlank()) {
                 gameState.openInteraction(createAuthoredNodeInteraction(
                         authoredDialogue,
@@ -1881,7 +2095,7 @@ public final class InteractionSystem {
                         tileX,
                         tileY,
                         choice.targetNodeId(),
-                        rewardText + questText,
+                        rewardText,
                         firstTalk
                 ));
                 return;
@@ -1891,7 +2105,7 @@ public final class InteractionSystem {
             if (!conversationHubNodeId.isBlank()) {
                 gameState.openInteraction(dialogue(
                         authoredDialogue.speakerName(),
-                        choice.bodyText() + rewardText + questText,
+                        choice.bodyText() + rewardText,
                         null,
                         entity == null ? null : entity.getStaticImage(),
                         authoredTopicsOption(
@@ -1910,7 +2124,7 @@ public final class InteractionSystem {
 
             gameState.openInteraction(dialogue(
                     authoredDialogue.speakerName(),
-                    choice.bodyText() + rewardText + questText,
+                    choice.bodyText() + rewardText,
                     null,
                     entity == null ? null : entity.getStaticImage(),
                     closeOption("Close")
@@ -1950,6 +2164,9 @@ public final class InteractionSystem {
             if (authoredDialogue == null) {
                 return "";
             }
+            if (!authoredDialogue.firstTalkNodeId().isBlank()) {
+                return authoredDialogue.firstTalkNodeId();
+            }
             for (MapDesignLibrary.AuthoredDialogueNode node : authoredDialogue.nodes()) {
                 if (isFirstTalkNode(node)) {
                     return node.nodeId();
@@ -1967,6 +2184,9 @@ public final class InteractionSystem {
         private String repeatTalkNodeId(MapDesignLibrary.AuthoredDialogue authoredDialogue) {
             if (authoredDialogue == null) {
                 return "";
+            }
+            if (!authoredDialogue.repeatTalkNodeId().isBlank()) {
+                return authoredDialogue.repeatTalkNodeId();
             }
             for (MapDesignLibrary.AuthoredDialogueNode node : authoredDialogue.nodes()) {
                 if ("repeatTalk".equalsIgnoreCase(node.nodeId())
@@ -2001,71 +2221,184 @@ public final class InteractionSystem {
             if (choice.firstTalkOnly() && !firstTalk) {
                 return false;
             }
-            if (gameState != null && !choice.questId().isBlank() && choice.questStage() >= 0) {
-                int currentStage = gameState.getQuestStagesView().getOrDefault(choice.questId(), 0);
-                int requiredStage = Math.max(0, choice.questStage() - 1);
-                if (currentStage != requiredStage) {
-                    return false;
-                }
-            }
             return gameState == null
                     || (hasRequiredAuthoredChoiceItem(gameState, choice.requiredItemName())
-                    && hasRequiredAuthoredChoiceItem(gameState, choice.takeItemName()));
+                    && hasRequiredAuthoredChoiceItem(
+                            gameState,
+                            choice.takeItemName(),
+                            choice.takeItemAmount()
+                    ));
         }
 
-        private boolean hasRequiredAuthoredChoiceItem(GameState gameState, String itemName) {
-            return itemName == null
-                    || itemName.isBlank()
-                    || gameState.getInventory().hasItemNamed(itemName);
+        private boolean hasRequiredAuthoredChoiceItem(GameState gameState, String itemId) {
+            return hasRequiredAuthoredChoiceItem(gameState, itemId, 1);
         }
 
-        private String applyAuthoredChoiceItemAction(GameState gameState, MapDesignLibrary.AuthoredDialogueChoice choice) {
-            if (gameState == null || choice == null || choice.takeItemName().isBlank()) {
-                return "";
+        private boolean hasRequiredAuthoredChoiceItem(GameState gameState, String itemId, int amount) {
+            return itemId == null || itemId.isBlank()
+                    || countAuthoredItem(gameState, itemId) >= Math.max(1, amount);
+        }
+
+        private record DialogueTransactionResult(boolean success, String text) {
+        }
+
+        private DialogueTransactionResult applyAuthoredRewardTransaction(
+                MapDesignLibrary.AuthoredDialogue dialogue,
+                MapDesignLibrary.AuthoredDialogueChoice choice,
+                GameState gameState
+        ) {
+            if (dialogue == null || gameState == null) {
+                return new DialogueTransactionResult(false, "This conversation is unavailable.");
             }
-            if (gameState.getInventory().removeFirstItemNamed(choice.takeItemName())) {
-                return "";
+            String owner = choice == null
+                    ? "dialogue:" + dialogue.interactionId() + ":root"
+                    : "dialogue:" + dialogue.interactionId() + ":choice:" + choice.choiceId();
+            List<MapDesignLibrary.RewardDefinition> rewards =
+                    choice == null ? dialogue.rewards() : choice.rewards();
+            List<Map.Entry<String, MapDesignLibrary.RewardDefinition>> pending = new ArrayList<>();
+            for (int index = 0; index < rewards.size(); index++) {
+                MapDesignLibrary.RewardDefinition reward = rewards.get(index);
+                String rewardId = reward.rewardId().isBlank() ? "reward_" + index : reward.rewardId();
+                String claimKey = owner + ":reward:" + rewardId;
+                if (!gameState.isDialogueRewardClaimed(claimKey)) {
+                    pending.add(Map.entry(claimKey, reward));
+                }
             }
-            return "You need " + choice.takeItemName() + " for that.";
-        }
+            String takeItemId = choice == null ? "" : choice.takeItemName();
+            int takeItemAmount = choice == null ? 0 : choice.takeItemAmount();
+            if (!takeItemId.isBlank() && countAuthoredItem(gameState, takeItemId) < takeItemAmount) {
+                return new DialogueTransactionResult(
+                        false,
+                        "You need " + takeItemAmount + " × " + takeItemId + " for that."
+                );
+            }
+            for (Map.Entry<String, MapDesignLibrary.RewardDefinition> entry : pending) {
+                MapDesignLibrary.RewardDefinition reward = entry.getValue();
+                if (reward.type() == MapDesignLibrary.QuestRewardType.SKILL_XP && reward.skill() == null) {
+                    return new DialogueTransactionResult(false, "A dialogue reward is missing its skill.");
+                }
+                if (reward.type() != MapDesignLibrary.QuestRewardType.SKILL_XP) {
+                    String itemId = reward.type() == MapDesignLibrary.QuestRewardType.GOLD
+                            ? "GOLD"
+                            : reward.itemId();
+                    if (gameState.createItemByNameOrId(itemId) == null) {
+                        return new DialogueTransactionResult(false, "Missing reward item: " + itemId);
+                    }
+                }
+            }
 
-        private String applyAuthoredChoiceReward(GameState gameState, MapDesignLibrary.AuthoredDialogueChoice choice) {
-            if (gameState == null || choice == null) {
-                return "";
+            InventorySystem.Inventory inventory = gameState.getInventory();
+            InventorySystem.Inventory.Snapshot inventorySnapshot = inventory.snapshot();
+            Map<CharacterSkill, Integer> skillLevels = gameState.getPlayerCharacter().getSkillsView();
+            Map<CharacterSkill, Integer> skillXp = gameState.getPlayerCharacter().getSkillExperienceView();
+            try {
+                if (!takeItemId.isBlank()
+                        && !removeAuthoredItem(gameState, takeItemId, takeItemAmount)) {
+                    return new DialogueTransactionResult(
+                            false,
+                            "You need " + takeItemAmount + " × " + takeItemId + " for that."
+                    );
+                }
+                for (Map.Entry<String, MapDesignLibrary.RewardDefinition> entry : pending) {
+                    if (entry.getValue().type() != MapDesignLibrary.QuestRewardType.SKILL_XP
+                            && !grantAuthoredInventoryReward(gameState, entry.getValue())) {
+                        return new DialogueTransactionResult(false, "You need more inventory space for these rewards.");
+                    }
+                }
+            } finally {
+                inventory.restore(inventorySnapshot);
             }
 
             StringBuilder rewardText = new StringBuilder();
-            if (!choice.giveItemName().isBlank()) {
-                InventorySystem.Item item = createAuthoredChoiceRewardItem(gameState, choice.giveItemName());
-                if (item == null) {
-                    rewardText.append("\nMissing reward item: ").append(choice.giveItemName());
-                } else if (!gameState.getInventory().addItem(item)) {
-                    rewardText.append("\nInventory full: ").append(item.getName()).append(" lost");
-                } else {
-                    rewardText.append("\n+1 ").append(item.getName());
+            InventorySystem.Inventory.Snapshot commitSnapshot = inventory.snapshot();
+            try {
+                if (!takeItemId.isBlank() && !removeAuthoredItem(gameState, takeItemId, 1)) {
+                    throw new IllegalStateException("Item removal failed.");
                 }
+                for (Map.Entry<String, MapDesignLibrary.RewardDefinition> entry : pending) {
+                    MapDesignLibrary.RewardDefinition reward = entry.getValue();
+                    if (reward.type() == MapDesignLibrary.QuestRewardType.SKILL_XP) {
+                        gameState.getPlayerCharacter().addSkillExperience(reward.skill(), reward.amount());
+                    } else if (!grantAuthoredInventoryReward(gameState, reward)) {
+                        throw new IllegalStateException("Reward grant failed.");
+                    }
+                    appendRewardText(gameState, rewardText, reward);
+                }
+                pending.forEach(entry -> gameState.markDialogueRewardClaimed(entry.getKey()));
+            } catch (RuntimeException exception) {
+                inventory.restore(commitSnapshot);
+                for (CharacterSkill skill : CharacterSkill.values()) {
+                    gameState.getPlayerCharacter().setSkillLevel(skill, skillLevels.getOrDefault(skill, 0));
+                    gameState.getPlayerCharacter().setSkillExperience(skill, skillXp.getOrDefault(skill, 0));
+                }
+                return new DialogueTransactionResult(false, "The dialogue reward could not be granted safely.");
             }
-
-            if (choice.giveGold() > 0) {
-                gameState.addGold(choice.giveGold());
-                rewardText.append("\n+").append(choice.giveGold()).append(" gold");
-            }
-
-            if (choice.giveSkill() != null && choice.giveSkillXp() > 0) {
-                gameState.getPlayerCharacter().addSkillExperience(choice.giveSkill(), choice.giveSkillXp());
-                rewardText.append("\n")
-                        .append("+")
-                        .append(Math.max(0, choice.giveSkillXp()))
-                        .append(" ")
-                        .append(choice.giveSkill() == null ? "Skill" : choice.giveSkill().getDisplayName())
-                        .append(" xp");
-            }
-
-            return rewardText.isEmpty() ? "" : "\n\n" + rewardText;
+            return new DialogueTransactionResult(
+                    true,
+                    rewardText.isEmpty() ? "" : "\n\n" + rewardText
+            );
         }
 
-        private InventorySystem.Item createAuthoredChoiceRewardItem(GameState gameState, String itemName) {
-            return gameState.createItemByNameOrId(itemName);
+        private void appendRewardText(
+                GameState gameState,
+                StringBuilder text,
+                MapDesignLibrary.RewardDefinition reward
+        ) {
+            if (reward.type() == MapDesignLibrary.QuestRewardType.GOLD) {
+                text.append("\n+").append(reward.amount()).append(" gold");
+            } else if (reward.type() == MapDesignLibrary.QuestRewardType.SKILL_XP) {
+                text.append("\n+").append(reward.amount()).append(" ")
+                        .append(reward.skill().getDisplayName()).append(" xp");
+            } else {
+                InventorySystem.Item item = gameState.createItemByNameOrId(reward.itemId());
+                text.append("\n+").append(reward.amount()).append(" ")
+                        .append(item == null ? reward.itemId() : item.getName());
+            }
+        }
+
+        private boolean grantAuthoredInventoryReward(
+                GameState gameState,
+                MapDesignLibrary.RewardDefinition reward
+        ) {
+            String itemId = reward.type() == MapDesignLibrary.QuestRewardType.GOLD
+                    ? "GOLD"
+                    : reward.itemId();
+            InventorySystem.Item first = gameState.createItemByNameOrId(itemId);
+            if (first == null) {
+                return false;
+            }
+            if (first.isStackable()) {
+                first.addQuantity(reward.amount() - 1);
+                return gameState.getInventory().addItem(first);
+            }
+            if (!gameState.getInventory().addItem(first)) {
+                return false;
+            }
+            for (int count = 1; count < reward.amount(); count++) {
+                InventorySystem.Item next = gameState.createItemByNameOrId(itemId);
+                if (next == null || !gameState.getInventory().addItem(next)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private int countAuthoredItem(GameState gameState, String itemId) {
+            int count = gameState.getInventory().countItemByContentId(itemId);
+            if (count > 0) {
+                return count;
+            }
+            InventorySystem.Item resolved = gameState.createItemByNameOrId(itemId);
+            return resolved == null ? 0 : gameState.getInventory().countItemNamed(resolved.getName());
+        }
+
+        private boolean removeAuthoredItem(GameState gameState, String itemId, int amount) {
+            if (gameState.getInventory().countItemByContentId(itemId) >= amount) {
+                return gameState.getInventory().removeItemQuantityByContentId(itemId, amount);
+            }
+            InventorySystem.Item resolved = gameState.createItemByNameOrId(itemId);
+            return resolved != null
+                    && gameState.getInventory().removeItemQuantityNamed(resolved.getName(), amount);
         }
 
         private MapDesignLibrary.AuthoredDialogueNode findAuthoredDialogueNode(
@@ -2083,20 +2416,6 @@ public final class InteractionSystem {
             return null;
         }
 
-        private String applyAuthoredChoiceQuestAction(GameState gameState, MapDesignLibrary.AuthoredDialogueChoice choice) {
-            if (gameState == null
-                    || choice == null
-                    || choice.questId().isBlank()
-                    || choice.questStage() < 0) {
-                return "";
-            }
-
-            gameState.setQuestStage(choice.questId(), choice.questStage());
-            GameState.QuestDefinition quest = gameState.getQuestDefinition(choice.questId());
-            String questName = quest == null ? choice.questId() : quest.displayName();
-            return "\n\nQuest updated: " + questName;
-        }
-
         public static InteractionRegistry createDefault() {
             InteractionRegistry registry = new InteractionRegistry();
 
@@ -2110,14 +2429,6 @@ public final class InteractionSystem {
                     }),
                     closeOption("Stay")
             ));
-
-            registry.register("fishing_shoal", context -> {
-                return createGatheringInteraction(context.getGameState(), context.getTileX(), context.getTileY(), GameState.GatheringToolType.FISHING);
-            });
-
-            registry.register("mineral_rock_basic", context -> {
-                return createGatheringInteraction(context.getGameState(), context.getTileX(), context.getTileY(), GameState.GatheringToolType.MINING);
-            });
 
             registry.register("campfire_basic", context -> {
                 if (!context.getGameState().startCooking(context.getTileX(), context.getTileY())) {

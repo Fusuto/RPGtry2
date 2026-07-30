@@ -3,6 +3,10 @@ package org.main.battle;
 import org.main.core.GameEnvironment;
 import org.main.content.MapDesignLibrary;
 import org.main.content.CharacterModelDefinition;
+import org.main.content.BattleContentTypeRegistry;
+import org.main.content.BattleContentCatalog;
+import org.main.content.SkillEffectDefinition;
+import org.main.content.StatusDefinition;
 import org.main.core.GameBootstrap;
 import org.main.core.CharacterSkill;
 import org.main.core.GameConfiguration;
@@ -21,7 +25,6 @@ import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.Set;
 import java.util.HashSet;
 
@@ -41,6 +44,53 @@ public class BattleEncounter {
 
     public BattleEncounter(List<BattleActor> allies, List<BattleActor> enemies) {
         this(allies, enemies, null);
+    }
+
+    public SandboxResult executeSkillImmediatelyForSandbox(
+            BattleActor caster,
+            BattleSkill skill,
+            List<BattleActor> targets,
+            long seed
+    ) {
+        int casterBefore = caster == null ? 0 : caster.getCurrentHp();
+        List<Integer> targetBefore = targets == null ? List.of()
+                : targets.stream().map(BattleActor::getCurrentHp).toList();
+        try (BattleRandom.Scope ignored = BattleRandom.withSeed(seed)) {
+            BattleActionIntent.OutcomePlan plan = planSkillOutcome(
+                    caster, skill, targets == null ? List.of() : targets, false);
+            if (plan == null) {
+                return new SandboxResult(
+                        "Skill could not be executed with the selected profiles.",
+                        casterBefore,
+                        casterBefore,
+                        targetBefore,
+                        targetBefore,
+                        List.of());
+            }
+            plan.impactCommit().run();
+        }
+        List<BattleActor> safeTargets = targets == null ? List.of() : targets;
+        return new SandboxResult(
+                battleMessage,
+                casterBefore,
+                caster == null ? 0 : caster.getCurrentHp(),
+                targetBefore,
+                safeTargets.stream().map(BattleActor::getCurrentHp).toList(),
+                safeTargets.stream()
+                        .flatMap(actor -> actor.getStatuses().stream())
+                        .map(status -> status.getDefinition().displayName()
+                                + " (" + status.getRemainingTurns() + " turns)")
+                        .toList());
+    }
+
+    public record SandboxResult(
+            String message,
+            int casterHpBefore,
+            int casterHpAfter,
+            List<Integer> targetHpBefore,
+            List<Integer> targetHpAfter,
+            List<String> statuses
+    ) {
     }
 
     public BattleEncounter(List<BattleActor> allies, List<BattleActor> enemies, SoundSystem soundSystem) {
@@ -304,7 +354,7 @@ public class BattleEncounter {
         enemy.setSpeciesId(monster.getCustomId());
         enemy.setExperienceReward(monster.getXpReward());
         enemy.setCharacterModel(monster.getCharacterModel());
-        monster.getSkills().forEach(skill -> enemy.addSkill(skill.createSkill()));
+        monster.getSkillIds().forEach(skillId -> enemy.addSkill(BattleContentCatalog.createSkill(skillId)));
         return enemy;
     }
 
@@ -450,7 +500,10 @@ public class BattleEncounter {
         if (caster == null || skill == null || !caster.isAlive() || !caster.isSkillReady(skill)) {
             return null;
         }
-        if (skill.isSummonSkill()) {
+        if (skill.isSummonSkill()
+                && !skill.hasEffect("damage")
+                && !skill.hasEffect("heal")
+                && !skill.hasEffect("apply_status")) {
             if (!canSummon(caster)) {
                 return null;
             }
@@ -469,16 +522,30 @@ public class BattleEncounter {
         List<BattlePresentationDirector.TargetReaction> reactions = new ArrayList<>();
         for (BattleActor target : targets) {
             if (target == null || !target.isAlive()) continue;
-            if (isDamageSkill(skill)) {
-                CombatResolver.CombatResult result = skill.getTargetingMode() == Library.BattleTargetingMode.MAGIC
-                        ? CombatResolver.resolveSpell(caster, target, skill)
-                        : CombatResolver.resolvePhysicalSkill(caster, target, skill);
+            SkillEffectDefinition primaryDamage = firstEffectForResolvedTargets(skill, "damage");
+            SkillEffectDefinition primaryHeal = firstEffectForResolvedTargets(skill, "heal");
+            if (primaryDamage != null) {
+                BattleSkill effectSkill = skill.effectView(
+                        "damage", primaryDamage.intParameter("potency", skill.getPrimaryPotency()));
+                boolean activates = primaryDamage.condition() == SkillEffectDefinition.ActivationCondition.ALWAYS
+                        && (primaryDamage.chance() >= 1.0
+                        || BattleRandom.nextDouble() < primaryDamage.chance());
+                CombatResolver.CombatResult result = activates
+                        ? (skill.getTargetingMode() == Library.BattleTargetingMode.MAGIC
+                                ? CombatResolver.resolveSpell(caster, target, effectSkill)
+                                : CombatResolver.resolvePhysicalSkill(caster, target, effectSkill))
+                        : new CombatResolver.CombatResult(false, 0, 0, 0, "fails to activate");
                 int projectedDamage = Math.max(0, result.damage());
                 outcomes.add(new PlannedSkillOutcome(target, result, projectedDamage, 0));
                 reactions.add(new BattlePresentationDirector.TargetReaction(
                         target, reactionFor(result.hit(), projectedDamage, target), projectedDamage));
-            } else if (skill.getEffectType() == Library.EffectType.HEAL) {
-                int heal = CombatResolver.resolveHealingAmount(caster, skill);
+            } else if (primaryHeal != null) {
+                boolean activates = primaryHeal.condition() == SkillEffectDefinition.ActivationCondition.ALWAYS
+                        && (primaryHeal.chance() >= 1.0
+                        || BattleRandom.nextDouble() < primaryHeal.chance());
+                BattleSkill effectSkill = skill.effectView(
+                        "heal", primaryHeal.intParameter("potency", skill.getPrimaryPotency()));
+                int heal = activates ? CombatResolver.resolveHealingAmount(caster, effectSkill) : 0;
                 outcomes.add(new PlannedSkillOutcome(target, null, 0, heal));
                 reactions.add(new BattlePresentationDirector.TargetReaction(target,
                         BattlePresentationDirector.Reaction.NONE, 0));
@@ -505,6 +572,7 @@ public class BattleEncounter {
             boolean enemyControlled
     ) {
         int totalDamage = 0;
+        boolean anyHit = false;
         battleMessage = caster.getName() + " uses " + skill.getName() + " on "
                 + joinActorNames(outcomes.stream().map(PlannedSkillOutcome::target).toList()) + ".";
         for (PlannedSkillOutcome outcome : outcomes) {
@@ -514,32 +582,202 @@ public class BattleEncounter {
                 CombatResolver.CombatResult result = outcome.combatResult();
                 int damage = target.takeDamage(outcome.projectedDamage());
                 totalDamage += damage;
+                anyHit |= result.hit();
                 appendBattleMessage(target.getName() + " " + result.text() + ".");
                 awardOffensiveSkillExperience(caster, skill, result, damage);
                 target.addCombatSkillExperience(CharacterSkill.DEFENSE,
                         Math.max(defenseXpMinimum(), damage * defenseXpPerDamage()));
                 if (result.hit()) {
                     playSound(target.getHitSoundPath());
-                    String status = applyOnHitStatus(target, skill,
-                            enemyControlled && caster.getCombatAiIntelligence() >= smartEnemyDebuffIntelligence());
-                    appendBattleMessage(status);
                 }
-            } else if (skill.getEffectType() == Library.EffectType.HEAL) {
+            } else if (hasEffectForResolvedTargets(skill, "heal")) {
                 int before = target.getCurrentHp();
                 target.healDamage(outcome.healAmount());
                 int healed = target.getCurrentHp() - before;
                 caster.addCombatSkillExperience(CharacterSkill.MAGIC_POWER,
                         Math.max(magicHealingXpMinimum(), healed * magicHealingXpPerHp()));
                 appendBattleMessage(target.getName() + " recovers " + healed + " HP.");
-            } else if (skill.getEffectType() == Library.EffectType.DEFEND) {
-                target.applyDefend(skill.getDefendTurns(), skill.getDamageReduction());
             }
+            SupplementalEffectResult supplemental = applyAuthoredEffects(
+                    caster,
+                    target,
+                    skill,
+                    SkillEffectDefinition.RecipientScope.RESOLVED_TARGETS,
+                    outcome.combatResult() != null && outcome.combatResult().hit(),
+                    outcome.projectedDamage(),
+                    totalDamage,
+                    true);
+            totalDamage += supplemental.damageDealt();
+            anyHit |= supplemental.anyHit();
         }
-        if (skill.healsCasterFromDamage() && totalDamage > 0) {
-            caster.healDamage((int) Math.ceil(totalDamage * skill.getSelfHealPercent()));
+        applyAuthoredEffects(
+                caster,
+                caster,
+                skill,
+                SkillEffectDefinition.RecipientScope.CASTER,
+                anyHit,
+                totalDamage,
+                totalDamage,
+                false);
+        if (skill.isSummonSkill() && (skill.hasEffect("damage")
+                || skill.hasEffect("heal") || skill.hasEffect("apply_status"))) {
+            appendBattleMessage(resolveSummon(caster, skill));
         }
         playSound(skill.getUseSoundPath());
         updatePendingBattleResult();
+    }
+
+    private SupplementalEffectResult applyAuthoredEffects(
+            BattleActor caster,
+            BattleActor recipient,
+            BattleSkill skill,
+            SkillEffectDefinition.RecipientScope passScope,
+            boolean initialHit,
+            int initialDamage,
+            int anySkillDamage,
+            boolean skipPrimary
+    ) {
+        boolean previousHit = initialHit;
+        int previousDamage = Math.max(0, initialDamage);
+        boolean anyHit = initialHit;
+        int additionalDamage = 0;
+        boolean skippedDamage = false;
+        boolean skippedHeal = false;
+
+        for (SkillEffectDefinition effect : skill.getEffects()) {
+            boolean appliesToPass = effect.recipientScope() == passScope
+                    || effect.recipientScope() == SkillEffectDefinition.RecipientScope.BOTH;
+            if (!appliesToPass) {
+                continue;
+            }
+            if (skipPrimary && "damage".equals(effect.kindId()) && !skippedDamage) {
+                skippedDamage = true;
+                continue;
+            }
+            if (skipPrimary && "heal".equals(effect.kindId()) && !skippedHeal) {
+                skippedHeal = true;
+                continue;
+            }
+            if (!effectConditionMatches(
+                    effect.condition(), previousHit, previousDamage, anySkillDamage + additionalDamage, recipient)) {
+                previousHit = false;
+                previousDamage = 0;
+                continue;
+            }
+            if (effect.chance() < 1.0 && BattleRandom.nextDouble() >= effect.chance()) {
+                previousHit = false;
+                previousDamage = 0;
+                continue;
+            }
+
+            switch (effect.kindId()) {
+                case "damage" -> {
+                    BattleSkill effectSkill = skill.effectView("damage", effect.intParameter("potency", 0));
+                    CombatResolver.CombatResult result = effectSkill.getTargetingMode() == Library.BattleTargetingMode.MAGIC
+                            ? CombatResolver.resolveSpell(caster, recipient, effectSkill)
+                            : CombatResolver.resolvePhysicalSkill(caster, recipient, effectSkill);
+                    int damage = result.hit() ? recipient.takeDamage(result.damage()) : 0;
+                    previousHit = result.hit();
+                    previousDamage = damage;
+                    anyHit |= result.hit();
+                    additionalDamage += damage;
+                    appendBattleMessage(recipient.getName() + " " + result.text() + ".");
+                }
+                case "heal" -> {
+                    BattleSkill effectSkill = skill.effectView("heal", effect.intParameter("potency", 0));
+                    int before = recipient.getCurrentHp();
+                    recipient.healDamage(CombatResolver.resolveHealingAmount(caster, effectSkill));
+                    int healed = recipient.getCurrentHp() - before;
+                    previousHit = true;
+                    previousDamage = 0;
+                    appendBattleMessage(recipient.getName() + " recovers " + healed + " HP.");
+                }
+                case "heal_from_damage" -> {
+                    int baseDamage = Math.max(0, anySkillDamage + additionalDamage);
+                    int healed = (int) Math.ceil(baseDamage
+                            * Math.max(0, effect.doubleParameter("percent", 0)) / 100.0);
+                    int before = recipient.getCurrentHp();
+                    recipient.healDamage(healed);
+                    appendBattleMessage(recipient.getName() + " recovers "
+                            + (recipient.getCurrentHp() - before) + " HP.");
+                    previousHit = true;
+                    previousDamage = 0;
+                }
+                case "apply_status" -> {
+                    String statusId = BattleContentCatalog.normalizeId(effect.parameter("statusId", ""));
+                    StatusDefinition statusDefinition = BattleContentCatalog.findStatus(statusId);
+                    if (statusDefinition != null) {
+                        int duration = effect.intParameter("duration", statusDefinition.defaultDuration());
+                        int magnitude = effect.intParameter("magnitude", 0);
+                        if (magnitude > 0 && statusDefinition.intParameter("magnitude", 0) < 0) {
+                            magnitude = -magnitude;
+                        }
+                        recipient.applyStatus(statusId, duration, magnitude);
+                        appendBattleMessage(recipient.getName() + " is affected by "
+                                + statusDefinition.displayName() + ".");
+                        previousHit = true;
+                    } else {
+                        previousHit = false;
+                    }
+                    previousDamage = 0;
+                }
+                case "remove_status" -> {
+                    String statusId = effect.parameter("statusId", "");
+                    StatusDefinition.Polarity polarity = parsePolarity(effect.parameter("polarity", "HARMFUL"));
+                    int removed = recipient.removeStatuses(
+                            statusId, polarity, effect.intParameter("count", 1));
+                    appendBattleMessage(recipient.getName() + " loses " + removed + " status effect(s).");
+                    previousHit = removed > 0;
+                    previousDamage = 0;
+                }
+                case "set_hp_percent" -> {
+                    int hp = (int) Math.ceil(recipient.getMaxHp()
+                            * Math.max(0, Math.min(100, effect.doubleParameter("percent", 10))) / 100.0);
+                    recipient.setCurrentHp(hp);
+                    previousHit = true;
+                    previousDamage = 0;
+                }
+                case "summon", "no_op" -> {
+                    previousHit = true;
+                    previousDamage = 0;
+                }
+                default -> {
+                    previousHit = false;
+                    previousDamage = 0;
+                }
+            }
+        }
+        return new SupplementalEffectResult(additionalDamage, anyHit);
+    }
+
+    private boolean effectConditionMatches(
+            SkillEffectDefinition.ActivationCondition condition,
+            boolean previousHit,
+            int previousDamage,
+            int anyDamage,
+            BattleActor recipient
+    ) {
+        return switch (condition) {
+            case ALWAYS -> true;
+            case PREVIOUS_EFFECT_HIT -> previousHit;
+            case PREVIOUS_EFFECT_DEALT_DAMAGE -> previousDamage > 0;
+            case ANY_SKILL_DAMAGE_DEALT -> anyDamage > 0;
+            case TARGET_DEFEATED -> recipient != null && !recipient.isAlive();
+        };
+    }
+
+    private StatusDefinition.Polarity parsePolarity(String value) {
+        if (value == null || value.isBlank() || "ANY".equalsIgnoreCase(value)) {
+            return null;
+        }
+        try {
+            return StatusDefinition.Polarity.valueOf(value.trim().toUpperCase());
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
+    }
+
+    private record SupplementalEffectResult(int damageDealt, boolean anyHit) {
     }
 
     private record PlannedSkillOutcome(
@@ -548,6 +786,21 @@ public class BattleEncounter {
             int projectedDamage,
             int healAmount
     ) { }
+
+    private boolean hasEffectForResolvedTargets(BattleSkill skill, String kindId) {
+        return skill != null && skill.getEffects().stream()
+                .anyMatch(effect -> kindId.equals(effect.kindId())
+                        && (effect.recipientScope() == SkillEffectDefinition.RecipientScope.RESOLVED_TARGETS
+                        || effect.recipientScope() == SkillEffectDefinition.RecipientScope.BOTH));
+    }
+
+    private SkillEffectDefinition firstEffectForResolvedTargets(BattleSkill skill, String kindId) {
+        return skill == null ? null : skill.getEffects().stream()
+                .filter(effect -> kindId.equals(effect.kindId()))
+                .filter(effect -> effect.recipientScope() == SkillEffectDefinition.RecipientScope.RESOLVED_TARGETS
+                        || effect.recipientScope() == SkillEffectDefinition.RecipientScope.BOTH)
+                .findFirst().orElse(null);
+    }
 
     private void startManualSkillCost(BattleActor caster, BattleSkill skill) {
         if (caster == null || skill == null) {
@@ -760,11 +1013,7 @@ public class BattleEncounter {
     }
 
     private boolean isDamageSkill(BattleSkill skill) {
-        if (skill == null) {
-            return false;
-        }
-        return skill.getEffectType() == Library.EffectType.DAMAGE
-                || skill.getEffectType() == Library.EffectType.DAMAGE_HEAL;
+        return skill != null && skill.hasEffect("damage");
     }
 
     private void awardOffensiveSkillExperience(
@@ -1053,15 +1302,24 @@ public class BattleEncounter {
         if (skill == null) {
             return BattlePresentationDirector.ActionType.PHYSICAL_SKILL;
         }
-        return switch (skill.getEffectType()) {
-            case HEAL -> BattlePresentationDirector.ActionType.HEAL;
-            case DEFEND -> BattlePresentationDirector.ActionType.DEFEND;
-            case SUMMON -> BattlePresentationDirector.ActionType.SUMMON;
-            default -> switch (skill.getTargetingMode()) {
+        return switch (skill.getPresentationStyle().trim().toUpperCase()) {
+            case "HEAL" -> BattlePresentationDirector.ActionType.HEAL;
+            case "DEFEND" -> BattlePresentationDirector.ActionType.DEFEND;
+            case "SUMMON" -> BattlePresentationDirector.ActionType.SUMMON;
+            case "SPELL" -> BattlePresentationDirector.ActionType.SPELL;
+            case "RANGED" -> BattlePresentationDirector.ActionType.RANGED;
+            case "PHYSICAL_SKILL" -> BattlePresentationDirector.ActionType.PHYSICAL_SKILL;
+            default -> {
+                if (skill.isSummonSkill()) yield BattlePresentationDirector.ActionType.SUMMON;
+                if (skill.hasEffect("heal") && !skill.hasEffect("damage")) {
+                    yield BattlePresentationDirector.ActionType.HEAL;
+                }
+                yield switch (skill.getTargetingMode()) {
                 case MAGIC -> BattlePresentationDirector.ActionType.SPELL;
                 case RANGED -> BattlePresentationDirector.ActionType.RANGED;
                 default -> BattlePresentationDirector.ActionType.PHYSICAL_SKILL;
-            };
+                };
+            }
         };
     }
 
@@ -1082,7 +1340,7 @@ public class BattleEncounter {
 
         double skillChance = attacker.getCombatAiIntelligence() / enemySkillIntelligenceDivisor();
 
-        if (Math.random() > skillChance) {
+        if (BattleRandom.nextDouble() > skillChance) {
             return null;
         }
 
@@ -1107,12 +1365,26 @@ public class BattleEncounter {
         }
 
         BattleSkill summonSkill = usableSkills.stream()
-                .filter(BattleSkill::isSummonSkill)
+                .filter(skill -> hasAiRole(skill, "SUMMON"))
                 .findFirst()
                 .orElse(null);
 
         if (summonSkill != null) {
             return summonSkill;
+        }
+
+        BattleSkill healSkill = usableSkills.stream()
+                .filter(skill -> hasAiRole(skill, "HEAL"))
+                .findFirst().orElse(null);
+        if (healSkill != null && attacker.getCurrentHp() < attacker.getMaxHp()) {
+            return healSkill;
+        }
+
+        BattleSkill cleanseSkill = usableSkills.stream()
+                .filter(skill -> hasAiRole(skill, "CLEANSE"))
+                .findFirst().orElse(null);
+        if (cleanseSkill != null && attacker.hasStatusPolarity(StatusDefinition.Polarity.HARMFUL)) {
+            return cleanseSkill;
         }
 
         BattleSkill damageSkill = usableSkills.stream()
@@ -1125,7 +1397,7 @@ public class BattleEncounter {
         }
 
         BattleSkill defendSkill = usableSkills.stream()
-                .filter(skill -> skill.getEffectType() == Library.EffectType.DEFEND)
+                .filter(this::isDefensiveSkill)
                 .findFirst()
                 .orElse(null);
 
@@ -1133,10 +1405,26 @@ public class BattleEncounter {
             return defendSkill;
         }
 
+        BattleSkill statusSkill = usableSkills.stream()
+                .filter(skill -> hasAiRole(skill, "STATUS"))
+                .findFirst().orElse(null);
+        if (statusSkill != null) {
+            return statusSkill;
+        }
+
         return usableSkills.stream()
-                .filter(skill -> skill.getEffectType() != Library.EffectType.DEFEND)
+                .filter(skill -> !isDefensiveSkill(skill))
                 .findFirst()
                 .orElse(null);
+    }
+
+    private boolean hasAiRole(BattleSkill skill, String role) {
+        if (skill == null || role == null) return false;
+        return skill.getEffects().stream().anyMatch(effect -> {
+            BattleContentTypeRegistry.HandlerDescriptor descriptor =
+                    BattleContentTypeRegistry.effectDescriptor(effect.kindId());
+            return descriptor != null && role.equals(descriptor.aiRole());
+        });
     }
 
     private String resolveEnemySkill(BattleActor attacker, BattleSkill skill) {
@@ -1161,29 +1449,12 @@ public class BattleEncounter {
         return attacker.getName() + " prepares " + skill.getName() + ".";
     }
 
-    private String applyOnHitStatus(BattleActor target, BattleSkill skill) {
-        return applyOnHitStatus(target, skill, false);
-    }
-
-    private String applyOnHitStatus(BattleActor target, BattleSkill skill, boolean avoidRefresh) {
-        if (target == null || skill == null || !skill.hasOnHitStatus()) {
-            return "";
-        }
-        if (avoidRefresh && target.hasStatus(skill.getOnHitStatusType())) {
-            return "";
-        }
-        if (Math.random() >= skill.getOnHitStatusChance()) {
-            return "";
-        }
-
-        target.applyStatus(skill.getOnHitStatusType(), skill.getOnHitStatusTurns());
-        return target.getName() + " is affected by " + skill.getOnHitStatusType().getDisplayName() + ".";
-    }
-
     private BattleActor selectEnemySkillTarget(BattleActor attacker, BattleSkill skill, List<BattleActor> targets) {
-        if (attacker.getCombatAiIntelligence() >= smartEnemyDebuffIntelligence() && skill.hasOnHitStatus()) {
+        List<String> harmfulStatusIds = appliedHarmfulStatusIds(skill);
+        if (attacker.getCombatAiIntelligence() >= smartEnemyDebuffIntelligence()
+                && !harmfulStatusIds.isEmpty()) {
             List<BattleActor> nonDebuffedTargets = targets.stream()
-                    .filter(target -> !target.hasStatus(skill.getOnHitStatusType()))
+                    .filter(target -> harmfulStatusIds.stream().anyMatch(statusId -> !target.hasStatus(statusId)))
                     .toList();
             if (!nonDebuffedTargets.isEmpty()) {
                 targets = nonDebuffedTargets;
@@ -1201,15 +1472,39 @@ public class BattleEncounter {
     }
 
     private boolean shouldSmartAvoidDebuffRefresh(BattleActor attacker, BattleSkill skill) {
-        if (attacker == null || skill == null || !skill.hasOnHitStatus()) {
+        if (attacker == null || skill == null || !hasAiRole(skill, "STATUS")) {
             return false;
         }
         if (attacker.getCombatAiIntelligence() < smartEnemyDebuffIntelligence()) {
             return false;
         }
 
+        List<String> harmfulStatuses = appliedHarmfulStatusIds(skill);
+        if (harmfulStatuses.isEmpty()) return false;
         return getSelectableActorsForSkill(attacker, skill).stream()
-                .allMatch(target -> target.hasStatus(skill.getOnHitStatusType()));
+                .allMatch(target -> harmfulStatuses.stream().allMatch(statusId -> !target.canAcceptStatus(statusId)));
+    }
+
+    private boolean isDefensiveSkill(BattleSkill skill) {
+        if (skill == null) return false;
+        if ("DEFEND".equalsIgnoreCase(skill.getPresentationStyle())) return true;
+        return skill.getAppliedStatusIds().stream().anyMatch(statusId -> {
+            StatusDefinition definition = BattleContentCatalog.findStatus(statusId);
+            return definition != null
+                    && definition.polarity() == StatusDefinition.Polarity.BENEFICIAL
+                    && "incoming_damage_modifier".equals(definition.behaviorKindId());
+        });
+    }
+
+    private List<String> appliedHarmfulStatusIds(BattleSkill skill) {
+        if (skill == null) return List.of();
+        return skill.getAppliedStatusIds().stream()
+                .map(BattleContentCatalog::normalizeId)
+                .filter(statusId -> {
+                    StatusDefinition definition = BattleContentCatalog.findStatus(statusId);
+                    return definition != null && definition.polarity() == StatusDefinition.Polarity.HARMFUL;
+                })
+                .toList();
     }
 
     private String resolveSummon(BattleActor caster, BattleSkill skill) {
@@ -1221,7 +1516,7 @@ public class BattleEncounter {
             return caster.getName() + " calls out, but there is no room.";
         }
 
-        if (Math.random() > skill.getSummonChance()) {
+        if (BattleRandom.nextDouble() > skill.getSummonChance()) {
             playSound(skill.getUseSoundPath());
             return caster.getName() + "'s " + skill.getName() + " fails.";
         }

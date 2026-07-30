@@ -3,21 +3,16 @@ package org.main.content;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
+import java.util.UUID;
 
 import static org.main.content.MapDesignLibrary.AuthoredContent;
-import static org.main.content.MapDesignLibrary.AuthoredDialogue;
-import static org.main.content.MapDesignLibrary.AuthoredQuest;
-import static org.main.content.MapDesignLibrary.CraftingRecipe;
-import static org.main.content.MapDesignLibrary.CustomCookingRecipe;
-import static org.main.content.MapDesignLibrary.CustomGatheringNode;
-import static org.main.content.MapDesignLibrary.CustomItem;
-import static org.main.content.MapDesignLibrary.CustomLimb;
-import static org.main.content.MapDesignLibrary.CustomMob;
-import static org.main.content.MapDesignLibrary.CustomNpc;
 import static org.main.content.MapDesignLibrary.MapDesign;
 
 final class MapDesignContentStore {
@@ -27,10 +22,10 @@ final class MapDesignContentStore {
     static final String MOB_FILE = "mob.properties";
     static final String LIMB_FILE = "limb.properties";
     static final String NPC_FILE = "npc.properties";
+    static final String FURNITURE_FILE = "furniture.properties";
     static final String GATHERING_NODE_FILE = "gathering_node.properties";
     static final String COOKING_RECIPE_FILE = "cooking_recipe.properties";
     static final String CRAFTING_RECIPE_FILE = "crafting_recipe.properties";
-    static final String LEGACY_COMPOSITE_RECIPE_FILE = "composite_recipe.properties";
 
     private static final Set<String> CATALOG_FILES = Set.of(
             DIALOGUE_FILE,
@@ -39,54 +34,38 @@ final class MapDesignContentStore {
             MOB_FILE,
             LIMB_FILE,
             NPC_FILE,
+            FURNITURE_FILE,
             GATHERING_NODE_FILE,
             COOKING_RECIPE_FILE,
-            CRAFTING_RECIPE_FILE,
-            LEGACY_COMPOSITE_RECIPE_FILE,
-            "authored_content.properties"
+            CRAFTING_RECIPE_FILE
     );
 
     private MapDesignContentStore() {
     }
 
     static AuthoredContent loadSharedContent() throws IOException {
-        MapDesign dialogues = loadSegment(DIALOGUE_FILE);
-        MapDesign quests = loadSegment(QUEST_FILE);
-        MapDesign items = loadSegment(ITEM_FILE);
-        MapDesign mobs = loadSegment(MOB_FILE);
-        MapDesign limbs = loadSegment(LIMB_FILE);
-        MapDesign npcs = loadSegment(NPC_FILE);
-        MapDesign gatheringNodes = loadSegment(GATHERING_NODE_FILE);
-        MapDesign cookingRecipes = loadSegment(COOKING_RECIPE_FILE);
-        MapDesign craftingRecipes = loadSegment(CRAFTING_RECIPE_FILE);
-        if (craftingRecipes == null) {
-            craftingRecipes = loadSegment(LEGACY_COMPOSITE_RECIPE_FILE);
-        }
-
-        boolean hasSegmentCatalog = dialogues != null
-                || quests != null
-                || items != null
-                || mobs != null
-                || limbs != null
-                || npcs != null
-                || gatheringNodes != null
-                || cookingRecipes != null
-                || craftingRecipes != null;
-        if (hasSegmentCatalog) {
-            return new AuthoredContent(
-                    dialogues == null ? List.of() : dialogues.authoredDialogues(),
-                    quests == null ? List.of() : quests.authoredQuests(),
-                    items == null ? List.of() : items.customItems(),
-                    mobs == null ? List.of() : mobs.customMobs(),
-                    limbs == null ? List.of() : limbs.customLimbs(),
-                    npcs == null ? List.of() : npcs.customNpcs(),
-                    gatheringNodes == null ? List.of() : gatheringNodes.customGatheringNodes(),
-                    cookingRecipes == null ? List.of() : cookingRecipes.customCookingRecipes(),
-                    craftingRecipes == null ? List.of() : craftingRecipes.craftingRecipes()
-            );
-        }
-
-        return loadLegacySharedContent();
+        MapDesign dialogues = loadRequiredSegment(DIALOGUE_FILE);
+        MapDesign quests = loadRequiredSegment(QUEST_FILE);
+        MapDesign items = loadRequiredSegment(ITEM_FILE);
+        MapDesign mobs = loadRequiredSegment(MOB_FILE);
+        MapDesign limbs = loadRequiredSegment(LIMB_FILE);
+        MapDesign npcs = loadRequiredSegment(NPC_FILE);
+        MapDesign furniture = loadRequiredSegment(FURNITURE_FILE);
+        MapDesign gatheringNodes = loadRequiredSegment(GATHERING_NODE_FILE);
+        MapDesign cookingRecipes = loadRequiredSegment(COOKING_RECIPE_FILE);
+        MapDesign craftingRecipes = loadRequiredSegment(CRAFTING_RECIPE_FILE);
+        return new AuthoredContent(
+                dialogues.authoredDialogues(),
+                quests.authoredQuests(),
+                items.customItems(),
+                mobs.customMobs(),
+                limbs.customLimbs(),
+                npcs.customNpcs(),
+                furniture.customFurniture(),
+                gatheringNodes.customGatheringNodes(),
+                cookingRecipes.customCookingRecipes(),
+                craftingRecipes.craftingRecipes()
+        );
     }
 
     static void saveSharedContent(AuthoredContent content) throws IOException {
@@ -94,52 +73,58 @@ final class MapDesignContentStore {
             return;
         }
 
-        saveSegment(DIALOGUE_FILE, new AuthoredContent(
-                content.authoredDialogues(), List.of(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), List.of(), List.of()
-        ));
-        saveSegment(QUEST_FILE, new AuthoredContent(
-                List.of(), content.authoredQuests(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), List.of(), List.of()
-        ));
-        saveSegment(ITEM_FILE, new AuthoredContent(
-                List.of(), List.of(), content.customItems(), List.of(), List.of(),
-                List.of(), List.of(), List.of(), List.of()
-        ));
-        saveSegment(MOB_FILE, new AuthoredContent(
-                List.of(), List.of(), List.of(), content.customMobs(), List.of(),
-                List.of(), List.of(), List.of(), List.of()
-        ));
-        saveSegment(LIMB_FILE, new AuthoredContent(
-                List.of(), List.of(), List.of(), List.of(), content.customLimbs(),
-                List.of(), List.of(), List.of(), List.of()
-        ));
-        saveSegment(NPC_FILE, new AuthoredContent(
-                List.of(), List.of(), List.of(), List.of(), List.of(),
-                content.customNpcs(), List.of(), List.of(), List.of()
-        ));
-        saveSegment(GATHERING_NODE_FILE, new AuthoredContent(
-                List.of(), List.of(), List.of(), List.of(), List.of(),
-                List.of(), content.customGatheringNodes(), List.of(), List.of()
-        ));
-        saveSegment(COOKING_RECIPE_FILE, new AuthoredContent(
-                List.of(), List.of(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), content.customCookingRecipes(), List.of()
-        ));
-        saveSegment(CRAFTING_RECIPE_FILE, new AuthoredContent(
-                List.of(), List.of(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), List.of(), content.craftingRecipes()
-        ));
+        List<SegmentWrite> writes = List.of(
+                new SegmentWrite(DIALOGUE_FILE, new AuthoredContent(
+                        content.authoredDialogues(), List.of(), List.of(), List.of(), List.of(),
+                        List.of(), List.of(), List.of(), List.of()
+                )),
+                new SegmentWrite(QUEST_FILE, new AuthoredContent(
+                        List.of(), content.authoredQuests(), List.of(), List.of(), List.of(),
+                        List.of(), List.of(), List.of(), List.of()
+                )),
+                new SegmentWrite(ITEM_FILE, new AuthoredContent(
+                        List.of(), List.of(), content.customItems(), List.of(), List.of(),
+                        List.of(), List.of(), List.of(), List.of()
+                )),
+                new SegmentWrite(MOB_FILE, new AuthoredContent(
+                        List.of(), List.of(), List.of(), content.customMobs(), List.of(),
+                        List.of(), List.of(), List.of(), List.of()
+                )),
+                new SegmentWrite(LIMB_FILE, new AuthoredContent(
+                        List.of(), List.of(), List.of(), List.of(), content.customLimbs(),
+                        List.of(), List.of(), List.of(), List.of()
+                )),
+                new SegmentWrite(NPC_FILE, new AuthoredContent(
+                        List.of(), List.of(), List.of(), List.of(), List.of(),
+                        content.customNpcs(), List.of(), List.of(), List.of()
+                )),
+                new SegmentWrite(FURNITURE_FILE, new AuthoredContent(
+                        List.of(), List.of(), List.of(), List.of(), List.of(),
+                        List.of(), content.customFurniture(), List.of(), List.of(), List.of()
+                )),
+                new SegmentWrite(GATHERING_NODE_FILE, new AuthoredContent(
+                        List.of(), List.of(), List.of(), List.of(), List.of(),
+                        List.of(), content.customGatheringNodes(), List.of(), List.of()
+                )),
+                new SegmentWrite(COOKING_RECIPE_FILE, new AuthoredContent(
+                        List.of(), List.of(), List.of(), List.of(), List.of(),
+                        List.of(), List.of(), content.customCookingRecipes(), List.of()
+                )),
+                new SegmentWrite(CRAFTING_RECIPE_FILE, new AuthoredContent(
+                        List.of(), List.of(), List.of(), List.of(), List.of(),
+                        List.of(), List.of(), List.of(), content.craftingRecipes()
+                ))
+        );
+        saveSegmentsTransactionally(writes);
     }
 
     static boolean isContentCatalogPath(Path path) {
-        if (path == null || path.getFileName() == null) {
-            return false;
-        }
-        return CATALOG_FILES.contains(path.getFileName().toString());
+        return path != null
+                && path.getFileName() != null
+                && CATALOG_FILES.contains(path.getFileName().toString());
     }
 
-    private static MapDesign loadSegment(String fileName) throws IOException {
+    private static MapDesign loadRequiredSegment(String fileName) throws IOException {
         Path editablePath = MapDesignLibrary.CONTENT_FOLDER.resolve(fileName);
         if (Files.isRegularFile(editablePath)) {
             return MapDesignLibrary.loadContentSegment(editablePath);
@@ -149,15 +134,115 @@ final class MapDesignContentStore {
         try {
             return MapDesignLibrary.loadContentSegment(resourcePath);
         } catch (IOException missingResource) {
-            return null;
+            throw new IOException("Required content catalog is missing: " + fileName, missingResource);
         }
     }
 
-    private static void saveSegment(String fileName, AuthoredContent content) throws IOException {
-        MapDesignLibrary.saveContentSegment(
-                contentDesign(fileName, content),
-                MapDesignLibrary.CONTENT_FOLDER.resolve(fileName)
-        );
+    private static void saveSegmentsTransactionally(List<SegmentWrite> writes) throws IOException {
+        Path contentFolder = MapDesignLibrary.CONTENT_FOLDER.toAbsolutePath().normalize();
+        Files.createDirectories(contentFolder);
+        Path stagingFolder = contentFolder.resolve(".transaction-" + UUID.randomUUID()).normalize();
+        if (!stagingFolder.getParent().equals(contentFolder)) {
+            throw new IOException("Invalid content transaction staging path.");
+        }
+        Files.createDirectories(stagingFolder);
+
+        Map<String, Boolean> existed = new LinkedHashMap<>();
+        Map<String, byte[]> originalContents = new LinkedHashMap<>();
+        try {
+            for (SegmentWrite write : writes) {
+                Path target = contentFolder.resolve(write.fileName()).normalize();
+                if (!target.getParent().equals(contentFolder)) {
+                    throw new IOException("Invalid content catalog path: " + write.fileName());
+                }
+                boolean targetExists = Files.isRegularFile(target);
+                existed.put(write.fileName(), targetExists);
+                if (targetExists) {
+                    originalContents.put(write.fileName(), Files.readAllBytes(target));
+                }
+                MapDesignLibrary.saveContentSegment(
+                        contentDesign(write.fileName(), write.content()),
+                        stagingFolder.resolve(write.fileName())
+                );
+            }
+
+            try {
+                for (SegmentWrite write : writes) {
+                    moveReplacing(
+                            stagingFolder.resolve(write.fileName()),
+                            contentFolder.resolve(write.fileName())
+                    );
+                }
+            } catch (IOException writeFailure) {
+                IOException rollbackFailure = rollbackCatalogs(
+                        writes,
+                        existed,
+                        originalContents,
+                        contentFolder
+                );
+                if (rollbackFailure != null) {
+                    writeFailure.addSuppressed(rollbackFailure);
+                }
+                throw writeFailure;
+            }
+        } finally {
+            deleteDirectory(stagingFolder);
+        }
+    }
+
+    private static void moveReplacing(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target,
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static IOException rollbackCatalogs(
+            List<SegmentWrite> writes,
+            Map<String, Boolean> existed,
+            Map<String, byte[]> originalContents,
+            Path contentFolder
+    ) {
+        IOException failure = null;
+        for (SegmentWrite write : writes) {
+            Path target = contentFolder.resolve(write.fileName());
+            try {
+                if (Boolean.TRUE.equals(existed.get(write.fileName()))) {
+                    byte[] original = originalContents.get(write.fileName());
+                    if (original == null) {
+                        throw new IOException("Missing original content for " + write.fileName() + ".");
+                    }
+                    Files.write(target, original);
+                } else {
+                    Files.deleteIfExists(target);
+                }
+            } catch (IOException rollbackError) {
+                if (failure == null) {
+                    failure = new IOException("Content transaction rollback was incomplete.");
+                }
+                failure.addSuppressed(rollbackError);
+            }
+        }
+        return failure;
+    }
+
+    private static void deleteDirectory(Path folder) {
+        if (folder == null || !Files.exists(folder)) {
+            return;
+        }
+        try (var paths = Files.walk(folder)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                    // A stale staging folder is harmless and can be removed on the next editor cleanup.
+                }
+            });
+        } catch (IOException ignored) {
+            // Preserve the original transaction result if cleanup alone fails.
+        }
     }
 
     private static MapDesign contentDesign(String fileName, AuthoredContent content) {
@@ -172,17 +257,24 @@ final class MapDesignContentStore {
                 blank.height(),
                 fileName,
                 "Construction Kit content catalog.",
+                "",
+                "",
                 blank.primaryTheme(),
                 blank.alternateTheme(),
                 blank.tiles(),
                 blank.themeIndexes(),
+                blank.mapPaint(),
+                blank.mapGeometry(),
+                blank.mobAreas(),
                 blank.placements(),
+                blank.placedObjects(),
                 new ArrayList<>(content.authoredDialogues()),
                 new ArrayList<>(content.authoredQuests()),
                 new ArrayList<>(content.customItems()),
                 new ArrayList<>(content.customMobs()),
                 new ArrayList<>(content.customLimbs()),
                 new ArrayList<>(content.customNpcs()),
+                new ArrayList<>(content.customFurniture()),
                 new ArrayList<>(content.customGatheringNodes()),
                 new ArrayList<>(content.customCookingRecipes()),
                 new ArrayList<>(content.craftingRecipes()),
@@ -192,75 +284,6 @@ final class MapDesignContentStore {
         );
     }
 
-    private static AuthoredContent loadLegacySharedContent() throws IOException {
-        Path editableResourcePath = MapDesignLibrary.LEGACY_SHARED_CONTENT_PATH;
-        boolean hasEditableResource = Files.isRegularFile(editableResourcePath);
-        AuthoredContent bundledContent = loadLegacySharedContentFrom(hasEditableResource
-                ? editableResourcePath
-                : Path.of(MapDesignLibrary.CONTENT_RESOURCE_FOLDER, "authored_content.properties"));
-
-        Path dataPath = MapDesignLibrary.DATA_LEGACY_SHARED_CONTENT_PATH;
-        if (!Files.isRegularFile(dataPath)) {
-            return bundledContent;
-        }
-
-        AuthoredContent dataContent = loadLegacySharedContentFrom(dataPath);
-        long bundledModified = hasEditableResource
-                ? Files.getLastModifiedTime(editableResourcePath).toMillis()
-                : Long.MIN_VALUE;
-        long dataModified = Files.getLastModifiedTime(dataPath).toMillis();
-        return dataModified > bundledModified
-                ? mergeContent(bundledContent, dataContent)
-                : mergeContent(dataContent, bundledContent);
-    }
-
-    private static AuthoredContent loadLegacySharedContentFrom(Path path) throws IOException {
-        try {
-            MapDesign contentDesign = MapDesignLibrary.loadContentSegment(path);
-            return MapDesignLibrary.authoredContentOf(contentDesign);
-        } catch (IOException exception) {
-            if (Files.isRegularFile(path)) {
-                throw exception;
-            }
-            return emptyContent();
-        }
-    }
-
-    private static AuthoredContent mergeContent(AuthoredContent base, AuthoredContent override) {
-        List<AuthoredDialogue> dialogues = new ArrayList<>(base.authoredDialogues());
-        List<AuthoredQuest> quests = new ArrayList<>(base.authoredQuests());
-        List<CustomItem> items = new ArrayList<>(base.customItems());
-        List<CustomMob> mobs = new ArrayList<>(base.customMobs());
-        List<CustomLimb> limbs = new ArrayList<>(base.customLimbs());
-        List<CustomNpc> npcs = new ArrayList<>(base.customNpcs());
-        List<CustomGatheringNode> gatheringNodes = new ArrayList<>(base.customGatheringNodes());
-        List<CustomCookingRecipe> cookingRecipes = new ArrayList<>(base.customCookingRecipes());
-        List<CraftingRecipe> craftingRecipes = new ArrayList<>(base.craftingRecipes());
-
-        mergeById(dialogues, override.authoredDialogues(), AuthoredDialogue::interactionId);
-        mergeById(quests, override.authoredQuests(), AuthoredQuest::questId);
-        mergeById(items, override.customItems(), CustomItem::itemId);
-        mergeById(mobs, override.customMobs(), CustomMob::mobId);
-        mergeById(limbs, override.customLimbs(), CustomLimb::limbId);
-        mergeById(npcs, override.customNpcs(), CustomNpc::npcId);
-        mergeById(gatheringNodes, override.customGatheringNodes(), CustomGatheringNode::nodeId);
-        mergeById(cookingRecipes, override.customCookingRecipes(), CustomCookingRecipe::recipeId);
-        mergeById(craftingRecipes, override.craftingRecipes(), CraftingRecipe::recipeId);
-        return new AuthoredContent(dialogues, quests, items, mobs, limbs, npcs, gatheringNodes, cookingRecipes, craftingRecipes);
-    }
-
-    private static <T> void mergeById(List<T> target, List<T> source, Function<T, String> idFunction) {
-        for (T entry : source) {
-            String id = idFunction.apply(entry);
-            target.removeIf(existing -> idFunction.apply(existing).equals(id));
-            target.add(entry);
-        }
-    }
-
-    private static AuthoredContent emptyContent() {
-        return new AuthoredContent(
-                List.of(), List.of(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), List.of(), List.of()
-        );
+    private record SegmentWrite(String fileName, AuthoredContent content) {
     }
 }

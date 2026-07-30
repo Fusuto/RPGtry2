@@ -182,18 +182,6 @@ public final class GameConfiguration {
         put("battle.debug.damageReduction", "1.0");
         put("battle.skillCooldown.willpowerReductionPerPoint", "0.02");
         put("battle.skillCooldown.minimumMultiplier", "0.50");
-        put("battle.skillCooldown.WAIT.seconds", "0");
-        put("battle.skillCooldown.DEBUG_DROP_HP.seconds", "0");
-        put("battle.skillCooldown.BASH.seconds", "6");
-        put("battle.skillCooldown.DEFEND.seconds", "6");
-        put("battle.skillCooldown.PIERCING_LINE.seconds", "7");
-        put("battle.skillCooldown.CRUSH_COLUMN.seconds", "7");
-        put("battle.skillCooldown.FIREBALL.seconds", "8");
-        put("battle.skillCooldown.ABSORB.seconds", "8");
-        put("battle.skillCooldown.ROTTING_GRASP.seconds", "8");
-        put("battle.skillCooldown.HEAL.seconds", "10");
-        put("battle.skillCooldown.WAR_CRY.seconds", "20");
-        put("battle.skillCooldown.RAISE_SKELETON.seconds", "20");
 
         put("difficulty.offenseDivisor", "8.0");
         put("difficulty.survivalDivisor", "10.0");
@@ -236,6 +224,9 @@ public final class GameConfiguration {
         put("renderer.prototype.mouseLook.invertX", "true");
         put("renderer.prototype.mouseLook.invertY", "false");
         put("renderer.prototype.viewModel.lightMinimum", "0.12");
+        put("renderer.staticModel.preloadExtraDepth", "4");
+        put("renderer.staticModel.preloadPerFrame", "8");
+        put("renderer.staticModel.loadVisibleImmediately", "true");
         put("renderer.opengl.major", "4");
         put("renderer.opengl.minor", "1");
 
@@ -245,6 +236,7 @@ public final class GameConfiguration {
         put("lighting.lightmap.chunkCache.maxEntries", "96");
         put("lighting.lightmap.pixelsPerTile", "4");
         put("lighting.dynamic.maxLights", "8");
+        put("lighting.dynamic.transitionBridgeRange", "16.0");
         put("lighting.maxLights", "64");
         put("lighting.occlusion.enabled", "true");
         put("lighting.flicker.enabled", "true");

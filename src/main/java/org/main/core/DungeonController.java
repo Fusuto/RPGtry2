@@ -374,13 +374,27 @@ public class DungeonController {
     }
 
     private MapEntity getEntityAt(int x, int y) {
+        MapEntity item = null;
+        MapEntity fallback = null;
         for (MapEntity entity : gameState.getEntities()) {
-            if (entity.isAt(x, y)) {
+            if (!entity.isAt(x, y)) {
+                continue;
+            }
+            if (entity.getType() == Library.EntityType.ENEMY) {
                 return entity;
+            }
+            if (entity.hasInteractionId()) {
+                return entity;
+            }
+            if (item == null && entity.getType() == Library.EntityType.ITEM) {
+                item = entity;
+            }
+            if (fallback == null) {
+                fallback = entity;
             }
         }
 
-        return null;
+        return item == null ? fallback : item;
     }
 
     private MapEntity getBlockingEntityAt(int x, int y) {

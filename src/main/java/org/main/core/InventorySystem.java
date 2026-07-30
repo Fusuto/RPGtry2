@@ -687,6 +687,43 @@ public final class InventorySystem {
         private final Item[] items = new Item[SLOT_COUNT];
         private final Map<EquipmentSlot, Item> equippedItems = new EnumMap<>(EquipmentSlot.class);
 
+        public static final class Snapshot {
+            private final Item[] items;
+            private final Map<EquipmentSlot, Item> equippedItems;
+
+            private Snapshot(Item[] items, Map<EquipmentSlot, Item> equippedItems) {
+                this.items = items;
+                this.equippedItems = equippedItems;
+            }
+        }
+
+        public Snapshot snapshot() {
+            Item[] itemCopies = new Item[items.length];
+            for (int index = 0; index < items.length; index++) {
+                itemCopies[index] = items[index] == null ? null : items[index].copy();
+            }
+            Map<EquipmentSlot, Item> equipmentCopies = new EnumMap<>(EquipmentSlot.class);
+            equippedItems.forEach((slot, item) ->
+                    equipmentCopies.put(slot, item == null ? null : item.copy()));
+            return new Snapshot(itemCopies, equipmentCopies);
+        }
+
+        public void restore(Snapshot snapshot) {
+            if (snapshot == null) {
+                return;
+            }
+            java.util.Arrays.fill(items, null);
+            for (int index = 0; index < items.length && index < snapshot.items.length; index++) {
+                items[index] = snapshot.items[index] == null ? null : snapshot.items[index].copy();
+            }
+            equippedItems.clear();
+            snapshot.equippedItems.forEach((slot, item) -> {
+                if (item != null) {
+                    equippedItems.put(slot, item.copy());
+                }
+            });
+        }
+
         public Item getItem(int index) {
             if (!isValidInventoryIndex(index)) {
                 return null;
@@ -832,6 +869,70 @@ public final class InventorySystem {
                 }
             }
 
+            return count;
+        }
+
+        public int countItemByContentId(String contentId) {
+            if (contentId == null || contentId.isBlank()) {
+                return 0;
+            }
+            int count = 0;
+            for (Item item : items) {
+                if (item != null && contentId.equalsIgnoreCase(item.getContentId())) {
+                    count += item.isStackable() ? item.getQuantity() : 1;
+                }
+            }
+            for (Item item : equippedItems.values()) {
+                if (item != null && contentId.equalsIgnoreCase(item.getContentId())) {
+                    count += item.isStackable() ? item.getQuantity() : 1;
+                }
+            }
+            return count;
+        }
+
+        public boolean removeItemQuantityByContentId(String contentId, int amount) {
+            if (contentId == null || contentId.isBlank() || amount <= 0
+                    || countItemByContentId(contentId) < amount) {
+                return false;
+            }
+            int remaining = amount;
+            for (int index = 0; index < items.length && remaining > 0; index++) {
+                Item item = items[index];
+                if (item == null || !contentId.equalsIgnoreCase(item.getContentId())) {
+                    continue;
+                }
+                if (item.isStackable()) {
+                    int removed = Math.min(remaining, item.getQuantity());
+                    item.removeQuantity(removed);
+                    remaining -= removed;
+                    if (item.getQuantity() <= 0) {
+                        items[index] = null;
+                    }
+                } else {
+                    items[index] = null;
+                    remaining--;
+                }
+            }
+            for (EquipmentSlot slot : EquipmentSlot.values()) {
+                if (remaining <= 0) {
+                    break;
+                }
+                Item item = equippedItems.get(slot);
+                if (item != null && contentId.equalsIgnoreCase(item.getContentId())) {
+                    equippedItems.remove(slot);
+                    remaining--;
+                }
+            }
+            return remaining == 0;
+        }
+
+        public int freeSlotCount() {
+            int count = 0;
+            for (Item item : items) {
+                if (item == null) {
+                    count++;
+                }
+            }
             return count;
         }
 

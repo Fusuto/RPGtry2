@@ -1,7 +1,7 @@
 package org.main.core;
 
 import org.main.content.PlayerRegionLibrary;
-import org.main.content.SkillLibrary;
+import org.main.content.BattleContentCatalog;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -19,7 +19,7 @@ public final class GameBootstrap {
     public static PlayerCharacter createPlayerCharacter(String name, PlayerRegionLibrary playerRegion) {
         PlayerRegionLibrary selectedRegion = playerRegion == null ? PlayerRegionLibrary.MIDLANDS : playerRegion;
         EnumMap<PlayerStat, Integer> stats = PlayerCharacter.createDefaultStats();
-        var battleSkills = new ArrayList<>(SkillLibrary.createUniversalPlayerSkills());
+        var battleSkills = new ArrayList<>(BattleContentCatalog.universalPlayerSkills());
 
         PlayerCharacter player = new PlayerCharacter(
                 name,

@@ -1,22 +1,33 @@
 package org.main.battle;
 
+import org.main.content.BattleContentCatalog;
+import org.main.content.StatusDefinition;
+
 public class BattleStatus {
-    private final BattleStatusType type;
+    private final String statusId;
     private int remainingTurns;
     private int potency;
 
-    public BattleStatus(BattleStatusType type, int remainingTurns) {
-        this(type, remainingTurns, 0);
+    public BattleStatus(String statusId, int remainingTurns) {
+        this(statusId, remainingTurns, 0);
     }
 
-    public BattleStatus(BattleStatusType type, int remainingTurns, int potency) {
-        this.type = type;
+    public BattleStatus(String statusId, int remainingTurns, int potency) {
+        this.statusId = BattleContentCatalog.normalizeId(statusId);
         this.remainingTurns = Math.max(0, remainingTurns);
-        this.potency = Math.max(0, potency);
+        this.potency = potency;
     }
 
-    public BattleStatusType getType() {
-        return type;
+    public String getStatusId() {
+        return statusId;
+    }
+
+    public StatusDefinition getDefinition() {
+        StatusDefinition definition = BattleContentCatalog.findStatus(statusId);
+        if (definition == null) {
+            throw new IllegalStateException("Battle status definition is unavailable: " + statusId);
+        }
+        return definition;
     }
 
     public int getRemainingTurns() {
@@ -33,7 +44,14 @@ public class BattleStatus {
 
     public void refresh(int turns, int potency) {
         remainingTurns = Math.max(remainingTurns, turns);
-        this.potency = Math.max(this.potency, potency);
+        if (Math.abs(potency) > Math.abs(this.potency)) {
+            this.potency = potency;
+        }
+    }
+
+    public void replace(int turns, int potency) {
+        remainingTurns = Math.max(0, turns);
+        this.potency = potency;
     }
 
     public void tick() {

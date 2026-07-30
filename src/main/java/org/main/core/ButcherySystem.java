@@ -1,7 +1,7 @@
 package org.main.core;
 
 import org.main.battle.BattleSkill;
-import org.main.content.SkillLibrary;
+import org.main.content.BattleContentCatalog;
 import org.main.monsters.Monster;
 
 import java.util.ArrayList;
@@ -220,9 +220,9 @@ public final class ButcherySystem {
         }
 
         List<BattleSkill> skills = new ArrayList<>();
-        for (SkillLibrary skill : monster.getSkills()) {
+        for (String skillId : monster.getSkillIds()) {
             if (ThreadLocalRandom.current().nextDouble() <= skillInheritChance()) {
-                skills.add(skill.createSkill());
+                skills.add(BattleContentCatalog.createSkill(skillId));
             }
         }
 

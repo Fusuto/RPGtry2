@@ -231,7 +231,7 @@ public final class OpenWorldSession {
                     trigger.fireMode(),
                     trigger.oneShot(),
                     trigger.requiredQuestId(),
-                    trigger.requiredQuestStage(),
+                    trigger.requiredQuestProgress(),
                     actions
             ));
         }
@@ -304,6 +304,7 @@ public final class OpenWorldSession {
         state.entities.clear();
         for (PersistedEntityState snapshot : snapshots == null ? List.<PersistedEntityState>of() : snapshots) {
             MapEntity entity = null;
+            boolean authoredEntity = false;
             if (snapshot.temporaryStationType() != null && !snapshot.temporaryStationId().isBlank()) {
                 entity = snapshot.temporaryStationType()
                         .createEntity(snapshot.x(), snapshot.y())
@@ -320,12 +321,12 @@ public final class OpenWorldSession {
                     boolean stableEnemyMatch = snapshot.type() == Library.EntityType.ENEMY
                             && !snapshot.enemySpawnId().isBlank()
                             && snapshot.enemySpawnId().equals(candidate.getEnemySpawnId());
-                    boolean legacyMatch = snapshot.enemySpawnId().isBlank()
-                            && candidate.getType() == snapshot.type()
-                            && candidate.getName().equals(snapshot.name())
-                            && normalizedText(candidate.getInteractionId()).equals(snapshot.interactionId());
-                    if (!claimed.contains(candidate) && (stableEnemyMatch || legacyMatch)) {
+                    boolean stableContentMatch = !snapshot.contentId().isBlank()
+                            && snapshot.contentId().equals(candidate.getContentId());
+                    if (!claimed.contains(candidate)
+                            && (stableEnemyMatch || stableContentMatch)) {
                         entity = candidate;
+                        authoredEntity = true;
                         claimed.add(candidate);
                         break;
                     }
@@ -342,11 +343,29 @@ public final class OpenWorldSession {
                 }
             }
             entity.setPosition(snapshot.x(), snapshot.y());
-            entity.setInteractionId(snapshot.interactionId());
-            entity.setTalkSoundPath(snapshot.talkSoundPath());
+            if (!authoredEntity) {
+                entity.setInteractionId(snapshot.interactionId());
+                entity.withContentId(snapshot.contentId());
+                entity.withQuestIds(snapshot.questIds());
+                entity.setTalkSoundPath(snapshot.talkSoundPath());
+            }
             entity.blocksMovement(snapshot.blocksMovement());
             entity.renderOnWall(snapshot.renderOnWall());
             entity.withVisualScale(snapshot.visualScale());
+            if (!snapshot.staticModelPath().isBlank()) {
+                entity.withStaticModel(snapshot.staticModelPath());
+                entity.withStaticModelTransform(
+                        snapshot.staticModelOffsetX(),
+                        snapshot.staticModelOffsetY(),
+                        snapshot.staticModelOffsetZ(),
+                        snapshot.staticModelYawDegrees(),
+                        snapshot.staticModelPitchDegrees(),
+                        snapshot.staticModelRollDegrees(),
+                        snapshot.staticModelScaleMultiplier()
+                );
+                entity.withStaticModelBrightness(snapshot.staticModelBrightness());
+                entity.setStaticModelVisible(snapshot.staticModelVisible());
+            }
             if (entity.getMonster() != null && !snapshot.enemySpawnId().isBlank()) {
                 entity.configureEnemySpawn(
                         snapshot.enemySpawnId(),
@@ -468,7 +487,7 @@ public final class OpenWorldSession {
                             trigger.fireMode(),
                             trigger.oneShot(),
                             trigger.requiredQuestId(),
-                            trigger.requiredQuestStage(),
+                            trigger.requiredQuestProgress(),
                             actions
                     ));
                     if (chunk.firedTriggerIds.contains(trigger.id())) {
@@ -512,6 +531,7 @@ public final class OpenWorldSession {
                 content.quests,
                 content.items,
                 content.limbs,
+                content.furniture,
                 content.gatheringNodes,
                 content.cookingRecipes,
                 content.craftingRecipes,
@@ -841,6 +861,7 @@ public final class OpenWorldSession {
             List<MapDesignLibrary.AuthoredQuest> quests,
             List<MapDesignLibrary.CustomItem> items,
             List<MapDesignLibrary.CustomLimb> limbs,
+            List<MapDesignLibrary.CustomFurnitureDefinition> furniture,
             List<MapDesignLibrary.CustomGatheringNode> gatheringNodes,
             List<MapDesignLibrary.CustomCookingRecipe> cookingRecipes,
             List<MapDesignLibrary.CraftingRecipe> craftingRecipes,
@@ -852,7 +873,7 @@ public final class OpenWorldSession {
         public WindowState withPlayer(int x, int y) {
             return new WindowState(
                     map, entities, tileInteractions, resourceNodeStates, enemyRespawns, discoveredTiles, removedEntityKeys,
-                    triggers, firedTriggerIds, dialogues, quests, items, limbs, gatheringNodes,
+                    triggers, firedTriggerIds, dialogues, quests, items, limbs, furniture, gatheringNodes,
                     cookingRecipes, craftingRecipes, environmentThemes, centerChunkPath, x, y
             );
         }
@@ -904,10 +925,22 @@ public final class OpenWorldSession {
             int x,
             int y,
             String interactionId,
+            String contentId,
+            List<String> questIds,
             String talkSoundPath,
             boolean blocksMovement,
             boolean renderOnWall,
             double visualScale,
+            String staticModelPath,
+            boolean staticModelVisible,
+            double staticModelOffsetX,
+            double staticModelOffsetY,
+            double staticModelOffsetZ,
+            double staticModelYawDegrees,
+            double staticModelPitchDegrees,
+            double staticModelRollDegrees,
+            double staticModelScaleMultiplier,
+            double staticModelBrightness,
             InventorySystem.Item item,
             String monsterId,
             String enemySpawnId,
@@ -928,7 +961,12 @@ public final class OpenWorldSession {
             name = name == null ? "" : name;
             type = type == null ? Library.EntityType.ITEM : type;
             interactionId = interactionId == null ? "" : interactionId;
+            contentId = contentId == null ? "" : contentId.trim();
+            questIds = questIds == null
+                    ? List.of()
+                    : questIds.stream().filter(id -> id != null && !id.isBlank()).distinct().toList();
             talkSoundPath = talkSoundPath == null ? "" : talkSoundPath;
+            staticModelPath = staticModelPath == null ? "" : staticModelPath.trim().replace('\\', '/');
             monsterId = monsterId == null ? "" : monsterId;
             enemySpawnId = enemySpawnId == null ? "" : enemySpawnId;
             areaId = areaId == null ? "" : areaId;
@@ -937,6 +975,8 @@ public final class OpenWorldSession {
             respawnDelayMs = Math.max(0, respawnDelayMs);
             aiCooldownMs = Math.max(0, aiCooldownMs);
             visualScale = Math.max(0.10, visualScale);
+            staticModelScaleMultiplier = Math.max(0.05, staticModelScaleMultiplier);
+            staticModelBrightness = Math.max(0.0, Math.min(4.0, staticModelBrightness));
             temporaryStationId = temporaryStationId == null ? "" : temporaryStationId;
             temporaryStationRemainingMs = Math.max(0, temporaryStationRemainingMs);
         }
@@ -953,8 +993,9 @@ public final class OpenWorldSession {
                 double visualScale,
                 InventorySystem.Item item
         ) {
-            this(name, type, x, y, interactionId, talkSoundPath, blocksMovement, renderOnWall,
-                    visualScale, item, "", "", x, y, "", 4, 3000, 300000, 0, false,
+            this(name, type, x, y, interactionId, "", List.of(), talkSoundPath, blocksMovement, renderOnWall,
+                    visualScale, "", false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+                    1.0, item, "", "", x, y, "", 4, 3000, 300000, 0, false,
                     "", null, 0, false);
         }
     }
@@ -1053,10 +1094,22 @@ public final class OpenWorldSession {
                                     entity.getX(),
                                     entity.getY(),
                                     entity.getInteractionId(),
+                                    entity.getContentId(),
+                                    entity.getQuestIds(),
                                     entity.getTalkSoundPath(),
                                     entity.blocksMovement(),
                                     entity.shouldRenderOnWall(),
                                     entity.getVisualScale(),
+                                    entity.getStaticModelPath(),
+                                    entity.hasVisibleStaticModel(),
+                                    entity.getStaticModelOffsetX(),
+                                    entity.getStaticModelOffsetY(),
+                                    entity.getStaticModelOffsetZ(),
+                                    entity.getStaticModelYawDegrees(),
+                                    entity.getStaticModelPitchDegrees(),
+                                    entity.getStaticModelRollDegrees(),
+                                    entity.getStaticModelScaleMultiplier(),
+                                    entity.getStaticModelBrightness(),
                                     entity.getItem(),
                                     entity.getMonster() == null ? "" : entity.getMonster().getCustomId(),
                                     entity.getEnemySpawnId(),
@@ -1110,6 +1163,7 @@ public final class OpenWorldSession {
         private final List<MapDesignLibrary.AuthoredQuest> quests = new ArrayList<>();
         private final List<MapDesignLibrary.CustomItem> items = new ArrayList<>();
         private final List<MapDesignLibrary.CustomLimb> limbs = new ArrayList<>();
+        private final List<MapDesignLibrary.CustomFurnitureDefinition> furniture = new ArrayList<>();
         private final List<MapDesignLibrary.CustomGatheringNode> gatheringNodes = new ArrayList<>();
         private final List<MapDesignLibrary.CustomCookingRecipe> cookingRecipes = new ArrayList<>();
         private final List<MapDesignLibrary.CraftingRecipe> craftingRecipes = new ArrayList<>();
@@ -1117,6 +1171,7 @@ public final class OpenWorldSession {
         private final Set<String> questIds = new LinkedHashSet<>();
         private final Set<String> itemIds = new LinkedHashSet<>();
         private final Set<String> limbIds = new LinkedHashSet<>();
+        private final Set<String> furnitureIds = new LinkedHashSet<>();
         private final Set<String> gatheringIds = new LinkedHashSet<>();
         private final Set<String> cookingIds = new LinkedHashSet<>();
         private final Set<String> craftingRecipeIds = new LinkedHashSet<>();
@@ -1126,6 +1181,7 @@ public final class OpenWorldSession {
             addUnique(quests, chunk.design.authoredQuests(), MapDesignLibrary.AuthoredQuest::questId, questIds);
             addUnique(items, chunk.design.customItems(), MapDesignLibrary.CustomItem::itemId, itemIds);
             addUnique(limbs, chunk.design.customLimbs(), MapDesignLibrary.CustomLimb::limbId, limbIds);
+            addUnique(furniture, chunk.design.customFurniture(), MapDesignLibrary.CustomFurnitureDefinition::furnitureId, furnitureIds);
             addUnique(gatheringNodes, chunk.design.customGatheringNodes(), MapDesignLibrary.CustomGatheringNode::nodeId, gatheringIds);
             addUnique(cookingRecipes, chunk.design.customCookingRecipes(), MapDesignLibrary.CustomCookingRecipe::recipeId, cookingIds);
             addUnique(craftingRecipes, chunk.design.craftingRecipes(), MapDesignLibrary.CraftingRecipe::recipeId, craftingRecipeIds);

@@ -67,6 +67,13 @@ final class ShaderProgram {
         }
     }
 
+    void setUniform4(String name, float x, float y, float z, float w) {
+        int location = glGetUniformLocation(programId, name);
+        if (location >= 0) {
+            glUniform4f(location, x, y, z, w);
+        }
+    }
+
     void setUniformMatrix(String name, Matrix4f value) {
         int location = glGetUniformLocation(programId, name);
         if (location < 0) {

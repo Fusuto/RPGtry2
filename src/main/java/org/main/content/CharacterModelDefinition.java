@@ -68,16 +68,6 @@ public final class CharacterModelDefinition {
     private final double verticalOffset;
     private final Map<AnimationSlot, AnimationBinding> animationBindings;
 
-    /** Backward-compatible constructor for legacy path-only definitions. */
-    public CharacterModelDefinition(
-            String modelPath,
-            String rigId,
-            double scale,
-            Map<AnimationSlot, String> animationPaths
-    ) {
-        this(modelPath, rigId, scale, 0.0, 0.0, convertPaths(animationPaths), true);
-    }
-
     public CharacterModelDefinition(
             String modelPath,
             String rigId,
@@ -118,7 +108,7 @@ public final class CharacterModelDefinition {
     }
 
     public static CharacterModelDefinition empty() {
-        return new CharacterModelDefinition("", "", 1.0, Map.of());
+        return new CharacterModelDefinition("", "", 1.0, 0.0, 0.0, Map.of());
     }
 
     public String modelPath() {
@@ -145,13 +135,6 @@ public final class CharacterModelDefinition {
         return animationBindings;
     }
 
-    /** Legacy path-only view retained for existing tools and content callers. */
-    public Map<AnimationSlot, String> animationPaths() {
-        EnumMap<AnimationSlot, String> result = new EnumMap<>(AnimationSlot.class);
-        animationBindings.forEach((slot, binding) -> result.put(slot, binding.path()));
-        return Map.copyOf(result);
-    }
-
     public boolean hasModel() {
         return !modelPath.isBlank();
     }
@@ -165,19 +148,6 @@ public final class CharacterModelDefinition {
             return AnimationBinding.ofPath("");
         }
         return animationBindings.getOrDefault(slot, AnimationBinding.ofPath(""));
-    }
-
-    private static Map<AnimationSlot, AnimationBinding> convertPaths(Map<AnimationSlot, String> paths) {
-        EnumMap<AnimationSlot, AnimationBinding> result = new EnumMap<>(AnimationSlot.class);
-        if (paths != null) {
-            paths.forEach((slot, path) -> {
-                AnimationBinding binding = AnimationBinding.ofPath(path);
-                if (slot != null && binding.isPresent()) {
-                    result.put(slot, binding);
-                }
-            });
-        }
-        return result;
     }
 
     private static String normalize(String value) {

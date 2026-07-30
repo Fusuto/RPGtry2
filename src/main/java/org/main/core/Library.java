@@ -81,11 +81,4 @@ public final class Library {
         SINGLE_ROW
     }
 
-    public enum EffectType{
-        DAMAGE,
-        DAMAGE_HEAL,
-        HEAL,
-        DEFEND,
-        SUMMON
-    }
 }

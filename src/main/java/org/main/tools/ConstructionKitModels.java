@@ -1,7 +1,6 @@
 package org.main.tools;
 
 import org.main.content.MapDesignLibrary;
-import org.main.core.CharacterSkill;
 import org.main.core.Library;
 import org.main.core.PlayerStat;
 import org.main.engine.MapGeometryData;
@@ -9,7 +8,6 @@ import org.main.engine.MobAreaData;
 import org.main.engine.MapPaintData;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -17,8 +15,8 @@ enum PlaceableCategory {
     ITEMS("Items"),
     ENEMIES("Enemies"),
     NPCS("NPCs"),
-    DIALOGUE_NPCS("Dialogue NPCs"),
     GATHERING_NODES("Gathering Nodes"),
+    FURNITURE("Furniture"),
     CRAFTING_NODES("Crafting Nodes"),
     INTERACTIONS("Interactions"),
     MAP_LINKS("Map Links");
@@ -37,11 +35,9 @@ enum PlaceableCategory {
         return switch (this) {
             case ITEMS -> option.kind() == MapDesignLibrary.PlacementKind.ITEM;
             case ENEMIES -> option.kind() == MapDesignLibrary.PlacementKind.ENEMY;
-            case NPCS -> option.kind() == MapDesignLibrary.PlacementKind.GENERIC_NPC
-                    || option.kind() == MapDesignLibrary.PlacementKind.MAIN_NPC
-                    || option.kind() == MapDesignLibrary.PlacementKind.CUSTOM_NPC;
-            case DIALOGUE_NPCS -> option.kind() == MapDesignLibrary.PlacementKind.AUTHORED_DIALOGUE_NPC;
+            case NPCS -> option.kind() == MapDesignLibrary.PlacementKind.CUSTOM_NPC;
             case GATHERING_NODES -> option.kind() == MapDesignLibrary.PlacementKind.GATHERING_NODE;
+            case FURNITURE -> option.kind() == MapDesignLibrary.PlacementKind.FURNITURE;
             case CRAFTING_NODES -> option.kind() == MapDesignLibrary.PlacementKind.CRAFTING_NODE;
             case INTERACTIONS -> option.kind() == MapDesignLibrary.PlacementKind.INTERACTION
                     && !option.id().startsWith("map_link|");
@@ -68,7 +64,10 @@ enum ContentCategory {
     ITEMS("Items"),
     ENEMIES("Enemies"),
     NPCS("NPCs"),
+    FURNITURE("Furniture"),
     LIMBS("Limbs"),
+    BATTLE_SKILLS("Battle Skills"),
+    STATUSES("Statuses"),
     GATHERING("Gathering"),
     COOKING("Cooking"),
     CRAFTING_RECIPES("Crafting Recipes"),
@@ -160,13 +159,6 @@ record AssetBrowserEntry(String assetPath, AssetBrowserType type, Path sourcePat
     }
 }
 
-record FollowUpInteractionOption(String label, String interactionId) {
-    @Override
-    public String toString() {
-        return label;
-    }
-}
-
 record StatTargetOption(String label, PlayerStat stat) {
     @Override
     public String toString() {
@@ -193,8 +185,15 @@ record TriggerSettings(
         MapDesignLibrary.TriggerFireMode fireMode,
         boolean oneShot,
         String requiredQuestId,
-        int requiredQuestStage
+        String requiredQuestProgress
 ) {
+}
+
+record QuestProgressOption(String label, String progressId) {
+    @Override
+    public String toString() {
+        return label;
+    }
 }
 
 record LightPreset(
@@ -216,50 +215,6 @@ record DialogueOption(String label, String interactionId) {
     public String toString() {
         return label;
     }
-}
-
-record AuthoredDialogueDraft(
-        String speakerName,
-        String bodyText,
-        String followUpInteractionId,
-        String questId,
-        int questStage,
-        List<MapDesignLibrary.AuthoredDialogueChoice> choices,
-        List<MapDesignLibrary.AuthoredDialogueNode> nodes
-) {
-}
-
-record DialogueTreeDraft(
-        List<MapDesignLibrary.AuthoredDialogueChoice> choices,
-        List<MapDesignLibrary.AuthoredDialogueNode> nodes
-) {
-}
-
-record PendingChoice(
-        String label,
-        String destination,
-        String questId,
-        int questStage,
-        String requiredItemName,
-        String takeItemName,
-        String giveItemName,
-        int giveGold,
-        CharacterSkill giveSkill,
-        int giveSkillXp,
-        boolean firstTalkOnly
-) {
-}
-
-record SkillXpTag(CharacterSkill skill, int amount) {
-}
-
-record PendingNode(String nodeId, List<String> bodyLines, List<PendingChoice> choices) {
-    PendingNode(String nodeId) {
-        this(nodeId, new ArrayList<>(), new ArrayList<>());
-    }
-}
-
-record AuthoredQuestDraft(String displayName, List<String> stageDescriptions) {
 }
 
 record MapPrefab(

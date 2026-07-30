@@ -126,6 +126,12 @@ public class DungeonMap {
         return List.copyOf(lights);
     }
 
+    public void addLight(MapLight light) {
+        if (light != null) {
+            lights.add(light);
+        }
+    }
+
     public String getMobAreaId(int x, int y) {
         return isOutOfBounds(x, y) ? "" : mobAreaData.get(x, y);
     }

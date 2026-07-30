@@ -3,6 +3,8 @@ package org.main.battle;
 import org.main.core.Library;
 import org.main.core.InventorySystem;
 import org.main.core.WeaponType;
+import org.main.content.StatusDefinition;
+import org.main.engine.AssetLoader;
 
 import java.awt.*;
 import java.awt.image.BufferedImage;
@@ -1570,9 +1572,11 @@ public class BattleRenderer {
         int index = 0;
 
         for (BattleStatus status : statuses) {
-            BattleStatusType type = status.getType();
+            StatusDefinition definition = status.getDefinition();
             int iconX = x + index * (iconSize + gap);
-            BufferedImage icon = type.getIcon();
+            BufferedImage icon = definition.iconPath().isBlank()
+                    ? null
+                    : AssetLoader.loadImage(definition.iconPath());
 
             g.setColor(new Color(0, 0, 0, 165));
             g.fillRoundRect(iconX - 2, y - 2, iconSize + 4, iconSize + 4, 5, 5);

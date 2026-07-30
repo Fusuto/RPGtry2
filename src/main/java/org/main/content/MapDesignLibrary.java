@@ -49,10 +49,7 @@ public final class MapDesignLibrary {
     public static final Path EDITOR_RESOURCE_FOLDER = Path.of("src", "main", "resources", "assets", "editor");
     public static final Path MAP_FOLDER = EDITOR_RESOURCE_FOLDER.resolve("maps");
     public static final Path CONTENT_FOLDER = EDITOR_RESOURCE_FOLDER.resolve("content");
-    public static final Path LEGACY_SHARED_CONTENT_PATH = CONTENT_FOLDER.resolve("authored_content.properties");
     public static final Path DATA_MAP_FOLDER = Path.of("data", "maps");
-    public static final Path DATA_CONTENT_FOLDER = Path.of("data", "content");
-    public static final Path DATA_LEGACY_SHARED_CONTENT_PATH = DATA_CONTENT_FOLDER.resolve("authored_content.properties");
     private static final String OAK_TREE_TEST_MODEL_PATH = "assets/3D/gatheringNode/Tree3.glb";
 
     private MapDesignLibrary() {
@@ -160,6 +157,11 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "y", String.valueOf(placement.y()));
         }
 
+        properties.setProperty("placedObject.count", String.valueOf(design.placedObjects().size()));
+        for (int i = 0; i < design.placedObjects().size(); i++) {
+            writePlacedObject(properties, "placedObject." + i + ".", design.placedObjects().get(i));
+        }
+
         properties.setProperty("trigger.count", String.valueOf(design.triggers().size()));
         for (int i = 0; i < design.triggers().size(); i++) {
             MapTrigger trigger = design.triggers().get(i);
@@ -170,7 +172,7 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "fireMode", trigger.fireMode().name());
             properties.setProperty(prefix + "oneShot", String.valueOf(trigger.oneShot()));
             properties.setProperty(prefix + "requiredQuestId", trigger.requiredQuestId());
-            properties.setProperty(prefix + "requiredQuestStage", String.valueOf(trigger.requiredQuestStage()));
+            properties.setProperty(prefix + "requiredQuestProgress", trigger.requiredQuestProgress());
             properties.setProperty(prefix + "action.count", String.valueOf(trigger.actions().size()));
             for (int actionIndex = 0; actionIndex < trigger.actions().size(); actionIndex++) {
                 TriggerAction action = trigger.actions().get(actionIndex);
@@ -182,6 +184,7 @@ public final class MapDesignLibrary {
         }
 
         if (includeContent) {
+        properties.setProperty("dialogue.schemaVersion", "3");
         properties.setProperty("dialogue.count", String.valueOf(design.authoredDialogues().size()));
         for (int i = 0; i < design.authoredDialogues().size(); i++) {
             AuthoredDialogue authoredDialogue = design.authoredDialogues().get(i);
@@ -190,12 +193,10 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "speakerName", authoredDialogue.speakerName());
             properties.setProperty(prefix + "bodyText", authoredDialogue.bodyText());
             properties.setProperty(prefix + "followUpInteractionId", authoredDialogue.followUpInteractionId());
-            properties.setProperty(prefix + "rewardItemId", authoredDialogue.rewardItemId());
-            properties.setProperty(prefix + "rewardSkill", authoredDialogue.rewardSkill() == null ? "" : authoredDialogue.rewardSkill().name());
-            properties.setProperty(prefix + "rewardSkillXp", String.valueOf(authoredDialogue.rewardSkillXp()));
-            properties.setProperty(prefix + "rewardGold", String.valueOf(authoredDialogue.rewardGold()));
-            properties.setProperty(prefix + "questId", authoredDialogue.questId());
-            properties.setProperty(prefix + "questStage", String.valueOf(authoredDialogue.questStage()));
+            properties.setProperty(prefix + "visualPath", authoredDialogue.visualPath());
+            properties.setProperty(prefix + "firstTalkNodeId", authoredDialogue.firstTalkNodeId());
+            properties.setProperty(prefix + "repeatTalkNodeId", authoredDialogue.repeatTalkNodeId());
+            writeQuestRewards(properties, prefix + "reward.", authoredDialogue.rewards());
             properties.setProperty(prefix + "choice.count", String.valueOf(authoredDialogue.choices().size()));
             for (int choiceIndex = 0; choiceIndex < authoredDialogue.choices().size(); choiceIndex++) {
                 writeAuthoredDialogueChoice(properties, prefix + "choice." + choiceIndex + ".", authoredDialogue.choices().get(choiceIndex));
@@ -206,6 +207,8 @@ public final class MapDesignLibrary {
                 String nodePrefix = prefix + "node." + nodeIndex + ".";
                 properties.setProperty(nodePrefix + "nodeId", node.nodeId());
                 properties.setProperty(nodePrefix + "bodyText", node.bodyText());
+                properties.setProperty(nodePrefix + "canvasX", String.valueOf(node.canvasX()));
+                properties.setProperty(nodePrefix + "canvasY", String.valueOf(node.canvasY()));
                 properties.setProperty(nodePrefix + "choice.count", String.valueOf(node.choices().size()));
                 for (int choiceIndex = 0; choiceIndex < node.choices().size(); choiceIndex++) {
                     writeAuthoredDialogueChoice(properties, nodePrefix + "choice." + choiceIndex + ".", node.choices().get(choiceIndex));
@@ -213,16 +216,30 @@ public final class MapDesignLibrary {
             }
         }
 
+        properties.setProperty("quest.schemaVersion", "3");
         properties.setProperty("quest.count", String.valueOf(design.authoredQuests().size()));
         for (int i = 0; i < design.authoredQuests().size(); i++) {
             AuthoredQuest authoredQuest = design.authoredQuests().get(i);
             String prefix = "quest." + i + ".";
             properties.setProperty(prefix + "questId", authoredQuest.questId());
             properties.setProperty(prefix + "displayName", authoredQuest.displayName());
-            properties.setProperty(prefix + "stage.count", String.valueOf(authoredQuest.stageDescriptions().size()));
-            for (int stage = 0; stage < authoredQuest.stageDescriptions().size(); stage++) {
-                properties.setProperty(prefix + "stage." + stage, authoredQuest.stageDescriptions().get(stage));
+            properties.setProperty(prefix + "summary", authoredQuest.summary());
+            writeQuestRequirements(properties, prefix + "requirement.", authoredQuest.requirements());
+            writeQuestFlow(properties, prefix + "offer.", authoredQuest.offerFlow());
+            properties.setProperty(prefix + "stage.count", String.valueOf(authoredQuest.stages().size()));
+            for (int stageIndex = 0; stageIndex < authoredQuest.stages().size(); stageIndex++) {
+                QuestStage stage = authoredQuest.stages().get(stageIndex);
+                String stagePrefix = prefix + "stage." + stageIndex + ".";
+                properties.setProperty(stagePrefix + "stageId", stage.stageId());
+                properties.setProperty(stagePrefix + "title", stage.title());
+                properties.setProperty(stagePrefix + "journalText", stage.journalText());
+                properties.setProperty(stagePrefix + "completionMode", stage.completionMode().name());
+                writeQuestObjectives(properties, stagePrefix + "objective.", stage.objectives());
+                writeQuestRewards(properties, stagePrefix + "reward.", stage.rewards());
+                writeQuestFlow(properties, stagePrefix + "flow.", stage.flow());
             }
+            writeQuestRewards(properties, prefix + "finalReward.", authoredQuest.finalRewards());
+            writeQuestFlow(properties, prefix + "epilogue.", authoredQuest.epilogueFlow());
         }
 
         properties.setProperty("item.count", String.valueOf(design.customItems().size()));
@@ -314,6 +331,7 @@ public final class MapDesignLibrary {
             }
         }
 
+        properties.setProperty("npc.schemaVersion", "2");
         properties.setProperty("npc.count", String.valueOf(design.customNpcs().size()));
         for (int i = 0; i < design.customNpcs().size(); i++) {
             CustomNpc customNpc = design.customNpcs().get(i);
@@ -323,6 +341,10 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "imagePath", customNpc.imagePath());
             properties.setProperty(prefix + "talkSoundPath", customNpc.talkSoundPath());
             properties.setProperty(prefix + "interactionId", customNpc.interactionId());
+            properties.setProperty(prefix + "quest.count", String.valueOf(customNpc.questIds().size()));
+            for (int questIndex = 0; questIndex < customNpc.questIds().size(); questIndex++) {
+                properties.setProperty(prefix + "quest." + questIndex, customNpc.questIds().get(questIndex));
+            }
             writeCharacterModel(properties, prefix + "model.", customNpc.characterModel());
             CustomShop customShop = customNpc.shop();
             properties.setProperty(prefix + "shop.enabled", String.valueOf(customShop != null));
@@ -341,6 +363,20 @@ public final class MapDesignLibrary {
             }
         }
 
+        properties.setProperty("furniture.count", String.valueOf(design.customFurniture().size()));
+        for (int i = 0; i < design.customFurniture().size(); i++) {
+            CustomFurnitureDefinition furniture = design.customFurniture().get(i);
+            String prefix = "furniture." + i + ".";
+            properties.setProperty(prefix + "furnitureId", furniture.furnitureId());
+            properties.setProperty(prefix + "displayName", furniture.displayName());
+            properties.setProperty(prefix + "category", furniture.category());
+            properties.setProperty(prefix + "modelPath", furniture.modelPath());
+            properties.setProperty(prefix + "defaultScale", String.valueOf(furniture.defaultScale()));
+            properties.setProperty(prefix + "defaultBlocksMovement", String.valueOf(furniture.defaultBlocksMovement()));
+            properties.setProperty(prefix + "interactionId", furniture.interactionId());
+            writeLightAttachment(properties, prefix + "light.", furniture.lightAttachment());
+        }
+
         properties.setProperty("gatheringNode.count", String.valueOf(design.customGatheringNodes().size()));
         for (int i = 0; i < design.customGatheringNodes().size(); i++) {
             CustomGatheringNode node = design.customGatheringNodes().get(i);
@@ -357,6 +393,7 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "smeltXpReward", String.valueOf(node.smeltXpReward()));
             properties.setProperty(prefix + "visualScale", String.valueOf(node.visualScale()));
             properties.setProperty(prefix + "frameDurationMs", String.valueOf(node.frameDurationMs()));
+            writeLightAttachment(properties, prefix + "light.", node.lightAttachment());
             properties.setProperty(prefix + "loot.count", String.valueOf(node.lootEntries().size()));
             for (int lootIndex = 0; lootIndex < node.lootEntries().size(); lootIndex++) {
                 CustomDropEntry loot = node.lootEntries().get(lootIndex);
@@ -367,6 +404,10 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "frame.count", String.valueOf(node.framePaths().size()));
             for (int frameIndex = 0; frameIndex < node.framePaths().size(); frameIndex++) {
                 properties.setProperty(prefix + "frame." + frameIndex, node.framePaths().get(frameIndex));
+            }
+            properties.setProperty(prefix + "model.count", String.valueOf(node.modelPaths().size()));
+            for (int modelIndex = 0; modelIndex < node.modelPaths().size(); modelIndex++) {
+                properties.setProperty(prefix + "model." + modelIndex, node.modelPaths().get(modelIndex));
             }
         }
 
@@ -432,6 +473,7 @@ public final class MapDesignLibrary {
         try (InputStream inputStream = openMapDesignStream(path)) {
             properties.load(inputStream);
         }
+        validateCurrentContentSchema(path, properties);
 
         int width = readInt(properties, "width", 12);
         int height = readInt(properties, "height", 12);
@@ -475,6 +517,15 @@ public final class MapDesignLibrary {
             }
         }
 
+        int placedObjectCount = readInt(properties, "placedObject.count", 0);
+        List<PlacedObjectInstance> placedObjects = new ArrayList<>();
+        for (int i = 0; i < placedObjectCount; i++) {
+            PlacedObjectInstance instance = readPlacedObject(properties, "placedObject." + i + ".");
+            if (instance != null) {
+                placedObjects.add(instance);
+            }
+        }
+
         int triggerCount = readInt(properties, "trigger.count", 0);
         List<MapTrigger> triggers = new ArrayList<>();
         for (int i = 0; i < triggerCount; i++) {
@@ -485,7 +536,7 @@ public final class MapDesignLibrary {
             TriggerFireMode fireMode = readTriggerFireMode(properties.getProperty(prefix + "fireMode", ""));
             boolean oneShot = Boolean.parseBoolean(properties.getProperty(prefix + "oneShot", "true"));
             String requiredQuestId = properties.getProperty(prefix + "requiredQuestId", "");
-            int requiredQuestStage = readInt(properties, prefix + "requiredQuestStage", 0);
+            String requiredQuestProgress = properties.getProperty(prefix + "requiredQuestProgress", "");
             int actionCount = readInt(properties, prefix + "action.count", 0);
             List<TriggerAction> actions = new ArrayList<>();
             for (int actionIndex = 0; actionIndex < actionCount; actionIndex++) {
@@ -506,13 +557,13 @@ public final class MapDesignLibrary {
                         fireMode,
                         oneShot,
                         requiredQuestId,
-                        requiredQuestStage,
+                        requiredQuestProgress,
                         actions
                 ));
             }
         }
 
-        String dialogueRoot = contentRoot(properties, "dialogue", "authoredDialogue");
+        String dialogueRoot = "dialogue";
         int authoredDialogueCount = readInt(properties, dialogueRoot + ".count", 0);
         List<AuthoredDialogue> authoredDialogues = new ArrayList<>();
         for (int i = 0; i < authoredDialogueCount; i++) {
@@ -521,13 +572,7 @@ public final class MapDesignLibrary {
             String speakerName = properties.getProperty(prefix + "speakerName", "");
             String bodyText = properties.getProperty(prefix + "bodyText", "");
             String followUpInteractionId = properties.getProperty(prefix + "followUpInteractionId", "");
-            String visualPath = properties.getProperty(prefix + "visualPath", legacyVisualPath(properties.getProperty(prefix + "visualType", "")));
-            String rewardItemId = properties.getProperty(prefix + "rewardItemId", "");
-            CharacterSkill rewardSkill = readSkill(properties.getProperty(prefix + "rewardSkill", ""));
-            int rewardSkillXp = readInt(properties, prefix + "rewardSkillXp", 0);
-            int rewardGold = readInt(properties, prefix + "rewardGold", 0);
-            String questId = properties.getProperty(prefix + "questId", "");
-            int questStage = readInt(properties, prefix + "questStage", -1);
+            String visualPath = properties.getProperty(prefix + "visualPath", DEFAULT_NPC_VISUAL_PATH);
             int choiceCount = readInt(properties, prefix + "choice.count", 0);
             List<AuthoredDialogueChoice> choices = new ArrayList<>();
             for (int choiceIndex = 0; choiceIndex < choiceCount; choiceIndex++) {
@@ -551,7 +596,13 @@ public final class MapDesignLibrary {
                     }
                 }
                 if (!nodeId.isBlank() && !nodeBodyText.isBlank()) {
-                    nodes.add(new AuthoredDialogueNode(nodeId, nodeBodyText, nodeChoices));
+                    nodes.add(new AuthoredDialogueNode(
+                            nodeId,
+                            nodeBodyText,
+                            readInt(properties, nodePrefix + "canvasX", 80 + nodeIndex * 260),
+                            readInt(properties, nodePrefix + "canvasY", 80),
+                            nodeChoices
+                    ));
                 }
             }
 
@@ -562,19 +613,16 @@ public final class MapDesignLibrary {
                         bodyText,
                         followUpInteractionId,
                         visualPath,
-                        rewardItemId,
-                        rewardSkill,
-                        rewardSkillXp,
-                        rewardGold,
-                        questId,
-                        questStage,
                         choices,
-                        nodes
+                        nodes,
+                        readQuestRewards(properties, prefix + "reward."),
+                        properties.getProperty(prefix + "firstTalkNodeId", ""),
+                        properties.getProperty(prefix + "repeatTalkNodeId", "")
                 ));
             }
         }
 
-        String questRoot = contentRoot(properties, "quest", "authoredQuest");
+        String questRoot = "quest";
         int authoredQuestCount = readInt(properties, questRoot + ".count", 0);
         List<AuthoredQuest> authoredQuests = new ArrayList<>();
         for (int i = 0; i < authoredQuestCount; i++) {
@@ -582,20 +630,41 @@ public final class MapDesignLibrary {
             String questId = properties.getProperty(prefix + "questId", "");
             String questName = properties.getProperty(prefix + "displayName", "");
             int stageCount = readInt(properties, prefix + "stage.count", 0);
-            List<String> stageDescriptions = new ArrayList<>();
-            for (int stage = 0; stage < stageCount; stage++) {
-                String stageText = properties.getProperty(prefix + "stage." + stage, "");
-                if (!stageText.isBlank()) {
-                    stageDescriptions.add(stageText);
-                }
+            List<QuestStage> stages = new ArrayList<>();
+            for (int stageIndex = 0; stageIndex < stageCount; stageIndex++) {
+                String stagePrefix = prefix + "stage." + stageIndex + ".";
+                String stageId = properties.getProperty(stagePrefix + "stageId", "");
+                String journalText = properties.getProperty(stagePrefix + "journalText", "");
+                String title = properties.getProperty(stagePrefix + "title", "");
+                stages.add(new QuestStage(
+                        stageId,
+                        title,
+                        journalText,
+                        readEnum(
+                                properties,
+                                stagePrefix + "completionMode",
+                                QuestCompletionMode.FLOW_CONFIRMED
+                        ),
+                        readQuestObjectives(properties, stagePrefix + "objective."),
+                        readQuestRewards(properties, stagePrefix + "reward."),
+                        readQuestFlow(properties, stagePrefix + "flow.")
+                ));
             }
-
-            if (!questId.isBlank() && !questName.isBlank() && !stageDescriptions.isEmpty()) {
-                authoredQuests.add(new AuthoredQuest(questId, questName, stageDescriptions));
+            if (!questId.isBlank() && !questName.isBlank() && !stages.isEmpty()) {
+                authoredQuests.add(new AuthoredQuest(
+                        questId,
+                        questName,
+                        properties.getProperty(prefix + "summary", ""),
+                        readQuestRequirements(properties, prefix + "requirement."),
+                        readQuestFlow(properties, prefix + "offer."),
+                        stages,
+                        readQuestRewards(properties, prefix + "finalReward."),
+                        readQuestFlow(properties, prefix + "epilogue.")
+                ));
             }
         }
 
-        String itemRoot = contentRoot(properties, "item", "customItem");
+        String itemRoot = "item";
         int customItemCount = readInt(properties, itemRoot + ".count", 0);
         List<CustomItem> customItems = new ArrayList<>();
         for (int i = 0; i < customItemCount; i++) {
@@ -662,7 +731,7 @@ public final class MapDesignLibrary {
             }
         }
 
-        String gatheringNodeRoot = contentRoot(properties, "gatheringNode", "customGatheringNode");
+        String gatheringNodeRoot = "gatheringNode";
         int customGatheringNodeCount = readInt(properties, gatheringNodeRoot + ".count", 0);
         List<CustomGatheringNode> customGatheringNodes = new ArrayList<>();
         for (int i = 0; i < customGatheringNodeCount; i++) {
@@ -703,9 +772,18 @@ public final class MapDesignLibrary {
                     framePaths.add(framePath);
                 }
             }
+            int modelCount = readInt(properties, prefix + "model.count", 0);
+            List<String> modelPaths = new ArrayList<>();
+            for (int modelIndex = 0; modelIndex < modelCount; modelIndex++) {
+                String modelPath = properties.getProperty(prefix + "model." + modelIndex, "");
+                if (!modelPath.isBlank()) {
+                    modelPaths.add(modelPath);
+                }
+            }
             if (nodeType == GatheringNodeType.TREE && framePaths.size() > 2) {
                 framePaths = List.of(framePaths.get(0), framePaths.get(framePaths.size() - 1));
             }
+            LightAttachment light = readLightAttachment(properties, prefix + "light.");
 
             if (!nodeId.isBlank() && !nodeName.isBlank()) {
                 customGatheringNodes.add(new CustomGatheringNode(
@@ -718,16 +796,18 @@ public final class MapDesignLibrary {
                         smeltOutputItemId,
                         smeltXpReward,
                         framePaths,
+                        modelPaths,
                         frameDurationMs,
                         visualScale,
                         gatheringSkill,
                         lootEntries,
-                        smeltRequiredLevel
+                        smeltRequiredLevel,
+                        light
                 ));
             }
         }
 
-        String cookingRecipeRoot = contentRoot(properties, "cookingRecipe", "customCookingRecipe");
+        String cookingRecipeRoot = "cookingRecipe";
         int customCookingRecipeCount = readInt(properties, cookingRecipeRoot + ".count", 0);
         List<CustomCookingRecipe> customCookingRecipes = new ArrayList<>();
         for (int i = 0; i < customCookingRecipeCount; i++) {
@@ -752,11 +832,7 @@ public final class MapDesignLibrary {
             }
         }
 
-        String craftingRecipeRoot = properties.containsKey("craftingRecipe.count")
-                ? "craftingRecipe"
-                : properties.containsKey("compositeRecipe.count")
-                ? "compositeRecipe"
-                : "customCompositeRecipe";
+        String craftingRecipeRoot = "craftingRecipe";
         int customCompositeRecipeCount = readInt(properties, craftingRecipeRoot + ".count", 0);
         List<CraftingRecipe> craftingRecipes = new ArrayList<>();
         for (int i = 0; i < customCompositeRecipeCount; i++) {
@@ -769,7 +845,7 @@ public final class MapDesignLibrary {
             String outputItemId = properties.getProperty(prefix + "outputItemId", "");
             CharacterSkill requiredSkill = readCharacterSkill(
                     properties.getProperty(prefix + "requiredSkill", ""),
-                    "craftingRecipe".equals(craftingRecipeRoot) ? CharacterSkill.CRAFTING : CharacterSkill.SMITHING
+                    CharacterSkill.CRAFTING
             );
             int requiredLevel = readInt(properties, prefix + "requiredLevel", 1);
             int xpReward = readInt(properties, prefix + "xpReward", 0);
@@ -815,7 +891,7 @@ public final class MapDesignLibrary {
             }
         }
 
-        String mobRoot = contentRoot(properties, "mob", "customMob");
+        String mobRoot = "mob";
         int customMobCount = readInt(properties, mobRoot + ".count", 0);
         List<CustomMob> customMobs = new ArrayList<>();
         for (int i = 0; i < customMobCount; i++) {
@@ -837,7 +913,7 @@ public final class MapDesignLibrary {
             int movementIntervalMs = readInt(properties, prefix + "movementIntervalMs", 3000);
             int respawnDelayMs = readInt(properties, prefix + "respawnDelayMs", 300000);
             CharacterModelDefinition characterModel = readCharacterModel(properties, prefix + "model.");
-            List<SkillLibrary> skillIds = readSkillList(properties.getProperty(prefix + "skillIds", ""));
+            List<String> skillIds = readSkillIds(properties.getProperty(prefix + "skillIds", ""));
             int dropCount = readInt(properties, prefix + "drop.count", 0);
             List<CustomDropEntry> dropEntries = new ArrayList<>();
             for (int dropIndex = 0; dropIndex < dropCount; dropIndex++) {
@@ -856,7 +932,7 @@ public final class MapDesignLibrary {
             }
         }
 
-        String limbRoot = contentRoot(properties, "limb", "customLimb");
+        String limbRoot = "limb";
         int customLimbCount = readInt(properties, limbRoot + ".count", 0);
         List<CustomLimb> customLimbs = new ArrayList<>();
         for (int i = 0; i < customLimbCount; i++) {
@@ -871,7 +947,7 @@ public final class MapDesignLibrary {
             String paperDollSourcePath = properties.getProperty(prefix + "paperDollSourcePath", "");
             String firstPersonModelPath = properties.getProperty(prefix + "firstPersonModelPath", "");
             String firstPersonRigId = properties.getProperty(prefix + "firstPersonRigId", "");
-            List<SkillLibrary> skillIds = readSkillList(properties.getProperty(prefix + "skillIds", ""));
+            List<String> skillIds = readSkillIds(properties.getProperty(prefix + "skillIds", ""));
             EnumMap<PlayerStat, Integer> statBonuses = new EnumMap<>(PlayerStat.class);
             for (PlayerStat stat : PlayerStat.values()) {
                 statBonuses.put(stat, readInt(properties, prefix + "stat." + stat.name(), 0));
@@ -883,7 +959,7 @@ public final class MapDesignLibrary {
             }
         }
 
-        String npcRoot = contentRoot(properties, "npc", "customNpc");
+        String npcRoot = "npc";
         int customNpcCount = readInt(properties, npcRoot + ".count", 0);
         List<CustomNpc> customNpcs = new ArrayList<>();
         for (int i = 0; i < customNpcCount; i++) {
@@ -893,6 +969,14 @@ public final class MapDesignLibrary {
             String imagePath = properties.getProperty(prefix + "imagePath", "");
             String talkSoundPath = properties.getProperty(prefix + "talkSoundPath", "");
             String interactionId = properties.getProperty(prefix + "interactionId", "");
+            int questCount = Math.max(0, readInt(properties, prefix + "quest.count", 0));
+            List<String> questIds = new ArrayList<>();
+            for (int questIndex = 0; questIndex < questCount; questIndex++) {
+                String assignedQuestId = properties.getProperty(prefix + "quest." + questIndex, "").trim();
+                if (!assignedQuestId.isBlank()) {
+                    questIds.add(assignedQuestId);
+                }
+            }
             CharacterModelDefinition characterModel = readCharacterModel(properties, prefix + "model.");
             CustomShop shop = null;
             if (Boolean.parseBoolean(properties.getProperty(prefix + "shop.enabled", "false"))) {
@@ -915,15 +999,44 @@ public final class MapDesignLibrary {
             }
             if (!npcId.isBlank() && !npcName.isBlank()) {
                 customNpcs.add(new CustomNpc(
-                        npcId, npcName, imagePath, talkSoundPath, interactionId, shop, characterModel));
+                        npcId, npcName, imagePath, talkSoundPath, interactionId, shop, characterModel, questIds));
             }
         }
 
-        return new MapDesign(width, height, displayName, description, musicPath, skyboxPath,
+        String furnitureRoot = "furniture";
+        int customFurnitureCount = readInt(properties, furnitureRoot + ".count", 0);
+        List<CustomFurnitureDefinition> customFurniture = new ArrayList<>();
+        for (int i = 0; i < customFurnitureCount; i++) {
+            String prefix = furnitureRoot + "." + i + ".";
+            String furnitureId = properties.getProperty(prefix + "furnitureId", "");
+            String furnitureName = properties.getProperty(prefix + "displayName", "");
+            String category = properties.getProperty(prefix + "category", "");
+            String modelPath = properties.getProperty(prefix + "modelPath", "");
+            double defaultScale = readDouble(properties, prefix + "defaultScale", 1.0);
+            boolean defaultBlocksMovement = Boolean.parseBoolean(properties.getProperty(prefix + "defaultBlocksMovement", "false"));
+            String interactionId = properties.getProperty(prefix + "interactionId", "");
+            LightAttachment light = readLightAttachment(properties, prefix + "light.");
+            if (!furnitureId.isBlank() && !furnitureName.isBlank()) {
+                customFurniture.add(new CustomFurnitureDefinition(
+                        furnitureId,
+                        furnitureName,
+                        category,
+                        modelPath,
+                        defaultScale,
+                        defaultBlocksMovement,
+                        interactionId,
+                        light
+                ));
+            }
+        }
+
+        MapDesign design = new MapDesign(width, height, displayName, description, musicPath, skyboxPath,
                 primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry, mobAreas,
                 placements, authoredDialogues, authoredQuests, customItems, customMobs, customLimbs,
-                customNpcs, customGatheringNodes, customCookingRecipes, craftingRecipes, triggers,
+                customNpcs, customFurniture, customGatheringNodes, customCookingRecipes, craftingRecipes, triggers,
                 lightingSettings, lights, spawnX, spawnY);
+        design.placedObjects().addAll(placedObjects);
+        return design;
     }
 
     private static InputStream openMapDesignStream(Path path) throws IOException {
@@ -961,7 +1074,7 @@ public final class MapDesignLibrary {
         if (design == null) {
             return new AuthoredContent(
                     List.of(), List.of(), List.of(), List.of(), List.of(),
-                    List.of(), List.of(), List.of(), List.of()
+                    List.of(), List.of(), List.of(), List.of(), List.of()
             );
         }
         return new AuthoredContent(
@@ -971,6 +1084,7 @@ public final class MapDesignLibrary {
                 design.customMobs(),
                 design.customLimbs(),
                 design.customNpcs(),
+                design.customFurniture(),
                 design.customGatheringNodes(),
                 design.customCookingRecipes(),
                 design.craftingRecipes()
@@ -987,6 +1101,7 @@ public final class MapDesignLibrary {
         mergeMissingById(design.customMobs(), content.customMobs(), CustomMob::mobId);
         mergeMissingById(design.customLimbs(), content.customLimbs(), CustomLimb::limbId);
         mergeMissingById(design.customNpcs(), content.customNpcs(), CustomNpc::npcId);
+        mergeMissingById(design.customFurniture(), content.customFurniture(), CustomFurnitureDefinition::furnitureId);
         mergeMissingById(design.customGatheringNodes(), content.customGatheringNodes(), CustomGatheringNode::nodeId);
         mergeMissingById(design.customCookingRecipes(), content.customCookingRecipes(), CustomCookingRecipe::recipeId);
         mergeMissingById(design.craftingRecipes(), content.craftingRecipes(), CraftingRecipe::recipeId);
@@ -1002,6 +1117,7 @@ public final class MapDesignLibrary {
         replaceEntries(design.customMobs(), content.customMobs());
         replaceEntries(design.customLimbs(), content.customLimbs());
         replaceEntries(design.customNpcs(), content.customNpcs());
+        replaceEntries(design.customFurniture(), content.customFurniture());
         replaceEntries(design.customGatheringNodes(), content.customGatheringNodes());
         replaceEntries(design.customCookingRecipes(), content.customCookingRecipes());
         replaceEntries(design.craftingRecipes(), content.craftingRecipes());
@@ -1079,6 +1195,18 @@ public final class MapDesignLibrary {
         return MapDesignValidator.validate(design);
     }
 
+    public static List<ValidationIssue> validateQuestDialogueContent(
+            List<AuthoredQuest> quests,
+            List<AuthoredDialogue> dialogues,
+            List<CustomNpc> npcs,
+            List<CustomItem> items,
+            List<CustomLimb> limbs,
+            List<CustomMob> mobs
+    ) {
+        return MapDesignValidator.validateQuestDialogueContent(
+                quests, dialogues, npcs, items, limbs, mobs);
+    }
+
     public static boolean hasValidationErrors(MapDesign design) {
         return MapDesignValidator.hasValidationErrors(design);
     }
@@ -1107,7 +1235,13 @@ public final class MapDesignLibrary {
         List<GeneratedDungeon.TileInteraction> tileInteractions = new ArrayList<>();
 
         for (MapPlacement placement : design.placements()) {
-            hydratePlacement(dungeonMap, entities, tileInteractions, design.authoredDialogues(), design.customItems(), design.customMobs(), design.customLimbs(), design.customNpcs(), design.customGatheringNodes(), placement);
+            hydratePlacement(dungeonMap, entities, tileInteractions, design.customItems(), design.customMobs(),
+                    design.customLimbs(), design.customNpcs(), design.customFurniture(),
+                    design.customGatheringNodes(), placement);
+        }
+
+        for (PlacedObjectInstance object : design.placedObjects()) {
+            hydratePlacedObject(dungeonMap, entities, tileInteractions, design, object);
         }
 
         GridPoint spawn = resolveSpawn(dungeonMap, playerX, playerY);
@@ -1121,6 +1255,7 @@ public final class MapDesignLibrary {
                 design.authoredQuests(),
                 design.customItems(),
                 design.customLimbs(),
+                design.customFurniture(),
                 design.customGatheringNodes(),
                 design.customCookingRecipes(),
                 design.craftingRecipes(),
@@ -1148,11 +1283,11 @@ public final class MapDesignLibrary {
             DungeonMap dungeonMap,
             List<MapEntity> entities,
             List<GeneratedDungeon.TileInteraction> tileInteractions,
-            List<AuthoredDialogue> authoredDialogues,
             List<CustomItem> customItems,
             List<CustomMob> customMobs,
             List<CustomLimb> customLimbs,
             List<CustomNpc> customNpcs,
+            List<CustomFurnitureDefinition> customFurniture,
             List<CustomGatheringNode> customGatheringNodes,
             MapPlacement placement
     ) {
@@ -1167,18 +1302,17 @@ public final class MapDesignLibrary {
                     entities.add(CraftingStationType.valueOf(placement.id()).createEntity(placement.x(), placement.y()));
                 }
                 case GATHERING_NODE -> hydrateGatheringNode(dungeonMap, entities, tileInteractions, customGatheringNodes, placement);
-                case GENERIC_NPC -> {
-                    dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
-                    MapEntity legacyNpc = createLegacyNpc(placement.id(), placement.x(), placement.y());
-                    if (legacyNpc != null) {
-                        entities.add(legacyNpc);
-                    }
-                }
-                case MAIN_NPC -> {
-                    dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
-                    MapEntity legacyNpc = createLegacyNpc(placement.id(), placement.x(), placement.y());
-                    if (legacyNpc != null) {
-                        entities.add(legacyNpc);
+                case FURNITURE -> {
+                    CustomFurnitureDefinition furniture = findCustomFurniture(placement.id(), customFurniture);
+                    if (furniture != null) {
+                        PlacedObjectInstance object = PlacedObjectInstance.furniture(
+                                "furniture_" + placement.id() + "_" + placement.x() + "_" + placement.y(),
+                                placement.id(),
+                                placement.x(),
+                                placement.y(),
+                                furniture.defaultBlocksMovement()
+                        );
+                        hydrateFurniture(dungeonMap, entities, furniture, object);
                     }
                 }
                 case CUSTOM_NPC -> {
@@ -1210,17 +1344,6 @@ public final class MapDesignLibrary {
                                 ));
                     }
                 }
-                case AUTHORED_DIALOGUE_NPC -> {
-                    AuthoredDialogue dialogue = findAuthoredDialogue(placement.id(), authoredDialogues);
-                    dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
-                    entities.add(new MapEntity(
-                            dialogue == null ? "NPC" : dialogue.speakerName(),
-                            Library.EntityType.NPC,
-                            placement.x(),
-                            placement.y(),
-                            AssetLoader.loadImage(DEFAULT_NPC_VISUAL_PATH)
-                    ).withInteractionId(placement.id()));
-                }
                 case INTERACTION -> tileInteractions.add(new GeneratedDungeon.TileInteraction(
                         placement.x(),
                         placement.y(),
@@ -1230,45 +1353,6 @@ public final class MapDesignLibrary {
         } catch (IllegalArgumentException ignored) {
             // Bad editor/project data should not prevent the rest of the map from loading.
         }
-    }
-
-    private static AuthoredDialogue findAuthoredDialogue(
-            String interactionId,
-            List<AuthoredDialogue> authoredDialogues
-    ) {
-        if (interactionId == null || authoredDialogues == null) {
-            return null;
-        }
-
-        for (AuthoredDialogue dialogue : authoredDialogues) {
-            if (interactionId.equals(dialogue.interactionId())) {
-                return dialogue;
-            }
-        }
-
-        return null;
-    }
-
-    private static MapEntity createLegacyNpc(String id, int x, int y) {
-        if ("GOBLIN_MERCHANT".equals(id)) {
-            return new MapEntity(
-                    "Goblin Merchant",
-                    Library.EntityType.NPC,
-                    x,
-                    y,
-                    AssetLoader.loadImage("assets/images/monster/Nov-2015/mon/goblin.png")
-            ).withTalkSoundPath("assets/sounds/generated/gobbo_talk.wav");
-        }
-        if ("TIPPING_THE_HAT_SKELETON".equals(id)) {
-            return new MapEntity(
-                    "Sir Tibia",
-                    Library.EntityType.NPC,
-                    x,
-                    y,
-                    AssetLoader.loadImage("assets/images/monster/Nov-2015/mon/undead/skeletons/skeleton_humanoid_small.png")
-            ).withTalkSoundPath("assets/sounds/generated/skelle_talk.wav");
-        }
-        return null;
     }
 
     private static InventorySystem.Item createItem(String itemId, List<CustomItem> customItems, List<CustomLimb> customLimbs) {
@@ -1359,6 +1443,20 @@ public final class MapDesignLibrary {
         return null;
     }
 
+    static CustomFurnitureDefinition findCustomFurniture(String furnitureId, List<CustomFurnitureDefinition> customFurniture) {
+        if (furnitureId == null || customFurniture == null) {
+            return null;
+        }
+
+        for (CustomFurnitureDefinition furniture : customFurniture) {
+            if (furnitureId.equals(furniture.furnitureId())) {
+                return furniture;
+            }
+        }
+
+        return null;
+    }
+
     public static CustomGatheringNode findCustomGatheringNode(String nodeId, List<CustomGatheringNode> customGatheringNodes) {
         if (nodeId == null || customGatheringNodes == null) {
             return null;
@@ -1382,6 +1480,7 @@ public final class MapDesignLibrary {
     ) {
         CustomGatheringNode customNode = findCustomGatheringNode(placement.id(), customGatheringNodes);
         if (customNode != null) {
+            PlacedObjectInstance object = defaultGatheringObjectForPlacement(customNode, placement);
             if (customNode.nodeType() == GatheringNodeType.FISHING_SPOT) {
                 dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FISHING_WATER);
                 tileInteractions.add(new GeneratedDungeon.TileInteraction(
@@ -1389,42 +1488,17 @@ public final class MapDesignLibrary {
                         placement.y(),
                         customNode.interactionId()
                 ));
+                addGatheringNodeLight(dungeonMap, customNode, object);
                 return;
             }
 
             dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
             entities.add(customNode.createEntity(placement.x(), placement.y()));
-            return;
-        }
-
-        if ("FISHING_SHOAL".equals(placement.id())) {
-            dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FISHING_WATER);
-            tileInteractions.add(new GeneratedDungeon.TileInteraction(
-                    placement.x(),
-                    placement.y(),
-                    "fishing_shoal"
-            ));
+            addGatheringNodeLight(dungeonMap, customNode, object);
             return;
         }
 
         dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
-        if ("MINERAL_ROCK_A".equals(placement.id())) {
-            entities.add(new MapEntity(
-                    "Mineral Rock",
-                    Library.EntityType.TRAP,
-                    placement.x(),
-                    placement.y(),
-                    AssetLoader.loadImage("assets/images/generic/64x64/A_Rock1_Node1.png")
-            ).withInteractionId("mineral_rock_basic").blocksMovement(true).withVisualScale(1.35));
-        } else if ("DECORATIVE_SHOAL".equals(placement.id())) {
-            entities.add(new MapEntity(
-                    "Shallow Water",
-                    Library.EntityType.TRAP,
-                    placement.x(),
-                    placement.y(),
-                    AssetLoader.loadImage("assets/images/monster/Nov-2015/dngn/water/shoals_shallow_water4.png")
-            ));
-        }
     }
 
     private static GridPoint resolveSpawn(DungeonMap dungeonMap, int requestedX, int requestedY) {
@@ -1464,32 +1538,24 @@ public final class MapDesignLibrary {
     }
 
     private static void writeAuthoredDialogueChoice(Properties properties, String prefix, AuthoredDialogueChoice choice) {
+        properties.setProperty(prefix + "choiceId", choice.choiceId());
         properties.setProperty(prefix + "label", choice.label());
         properties.setProperty(prefix + "bodyText", choice.bodyText());
         properties.setProperty(prefix + "targetNodeId", choice.targetNodeId());
-        properties.setProperty(prefix + "questId", choice.questId());
-        properties.setProperty(prefix + "questStage", String.valueOf(choice.questStage()));
         properties.setProperty(prefix + "requiredItemName", choice.requiredItemName());
         properties.setProperty(prefix + "takeItemName", choice.takeItemName());
-        properties.setProperty(prefix + "giveItemName", choice.giveItemName());
-        properties.setProperty(prefix + "giveGold", String.valueOf(choice.giveGold()));
-        properties.setProperty(prefix + "giveSkill", choice.giveSkill() == null ? "" : choice.giveSkill().name());
-        properties.setProperty(prefix + "giveSkillXp", String.valueOf(choice.giveSkillXp()));
+        properties.setProperty(prefix + "takeItemAmount", String.valueOf(choice.takeItemAmount()));
         properties.setProperty(prefix + "firstTalkOnly", String.valueOf(choice.firstTalkOnly()));
+        writeQuestRewards(properties, prefix + "reward.", choice.rewards());
     }
 
     private static AuthoredDialogueChoice readAuthoredDialogueChoice(Properties properties, String prefix) {
         String label = properties.getProperty(prefix + "label", "");
         String choiceBodyText = properties.getProperty(prefix + "bodyText", "");
         String targetNodeId = properties.getProperty(prefix + "targetNodeId", "");
-        String questId = properties.getProperty(prefix + "questId", "");
-        int questStage = readInt(properties, prefix + "questStage", -1);
         String requiredItemName = properties.getProperty(prefix + "requiredItemName", "");
         String takeItemName = properties.getProperty(prefix + "takeItemName", "");
-        String giveItemName = properties.getProperty(prefix + "giveItemName", "");
-        int giveGold = readInt(properties, prefix + "giveGold", 0);
-        CharacterSkill giveSkill = readSkill(properties.getProperty(prefix + "giveSkill", ""));
-        int giveSkillXp = readInt(properties, prefix + "giveSkillXp", 0);
+        int takeItemAmount = readInt(properties, prefix + "takeItemAmount", 0);
         boolean firstTalkOnly = Boolean.parseBoolean(properties.getProperty(prefix + "firstTalkOnly", "false"));
         if (label.isBlank() || (choiceBodyText.isBlank() && targetNodeId.isBlank())) {
             return null;
@@ -1498,16 +1564,192 @@ public final class MapDesignLibrary {
                 label,
                 choiceBodyText,
                 targetNodeId,
-                questId,
-                questStage,
                 requiredItemName,
                 takeItemName,
-                giveItemName,
-                giveGold,
-                giveSkill,
-                giveSkillXp,
-                firstTalkOnly
+                takeItemAmount,
+                firstTalkOnly,
+                properties.getProperty(prefix + "choiceId", ""),
+                readQuestRewards(properties, prefix + "reward.")
         );
+    }
+
+    private static void writeQuestRequirements(
+            Properties properties,
+            String prefix,
+            List<QuestRequirement> requirements
+    ) {
+        List<QuestRequirement> safe = requirements == null ? List.of() : requirements;
+        properties.setProperty(prefix + "count", String.valueOf(safe.size()));
+        for (int index = 0; index < safe.size(); index++) {
+            QuestRequirement requirement = safe.get(index);
+            String entryPrefix = prefix + index + ".";
+            properties.setProperty(entryPrefix + "type", requirement.type().name());
+            properties.setProperty(entryPrefix + "targetId", requirement.targetId());
+            properties.setProperty(entryPrefix + "skill", requirement.skill() == null ? "" : requirement.skill().name());
+            properties.setProperty(entryPrefix + "amount", String.valueOf(requirement.amount()));
+        }
+    }
+
+    private static List<QuestRequirement> readQuestRequirements(Properties properties, String prefix) {
+        int count = Math.max(0, readInt(properties, prefix + "count", 0));
+        List<QuestRequirement> result = new ArrayList<>();
+        for (int index = 0; index < count; index++) {
+            String entryPrefix = prefix + index + ".";
+            result.add(new QuestRequirement(
+                    readEnum(properties, entryPrefix + "type", QuestRequirementType.POSSESS_ITEM),
+                    properties.getProperty(entryPrefix + "targetId", ""),
+                    readSkill(properties.getProperty(entryPrefix + "skill", "")),
+                    readInt(properties, entryPrefix + "amount", 1)
+            ));
+        }
+        return List.copyOf(result);
+    }
+
+    private static void writeQuestObjectives(
+            Properties properties,
+            String prefix,
+            List<QuestObjective> objectives
+    ) {
+        List<QuestObjective> safe = objectives == null ? List.of() : objectives;
+        properties.setProperty(prefix + "count", String.valueOf(safe.size()));
+        for (int index = 0; index < safe.size(); index++) {
+            QuestObjective objective = safe.get(index);
+            String entryPrefix = prefix + index + ".";
+            properties.setProperty(entryPrefix + "objectiveId", objective.objectiveId());
+            properties.setProperty(entryPrefix + "type", objective.type().name());
+            properties.setProperty(entryPrefix + "targetId", objective.targetId());
+            properties.setProperty(entryPrefix + "skill", objective.skill() == null ? "" : objective.skill().name());
+            properties.setProperty(entryPrefix + "amount", String.valueOf(objective.amount()));
+            properties.setProperty(entryPrefix + "journalText", objective.journalText());
+            properties.setProperty(entryPrefix + "visible", String.valueOf(objective.visible()));
+        }
+    }
+
+    private static List<QuestObjective> readQuestObjectives(Properties properties, String prefix) {
+        int count = Math.max(0, readInt(properties, prefix + "count", 0));
+        List<QuestObjective> result = new ArrayList<>();
+        for (int index = 0; index < count; index++) {
+            String entryPrefix = prefix + index + ".";
+            result.add(new QuestObjective(
+                    properties.getProperty(entryPrefix + "objectiveId", ""),
+                    readEnum(properties, entryPrefix + "type", QuestObjectiveType.POSSESS_ITEM),
+                    properties.getProperty(entryPrefix + "targetId", ""),
+                    readSkill(properties.getProperty(entryPrefix + "skill", "")),
+                    readInt(properties, entryPrefix + "amount", 1),
+                    properties.getProperty(entryPrefix + "journalText", ""),
+                    Boolean.parseBoolean(properties.getProperty(entryPrefix + "visible", "true"))
+            ));
+        }
+        return List.copyOf(result);
+    }
+
+    private static void writeQuestRewards(
+            Properties properties,
+            String prefix,
+            List<RewardDefinition> rewards
+    ) {
+        List<RewardDefinition> safe = rewards == null ? List.of() : rewards;
+        properties.setProperty(prefix + "count", String.valueOf(safe.size()));
+        for (int index = 0; index < safe.size(); index++) {
+            RewardDefinition reward = safe.get(index);
+            String entryPrefix = prefix + index + ".";
+            properties.setProperty(entryPrefix + "rewardId", reward.rewardId());
+            properties.setProperty(entryPrefix + "type", reward.type().name());
+            properties.setProperty(entryPrefix + "itemId", reward.itemId());
+            properties.setProperty(entryPrefix + "skill", reward.skill() == null ? "" : reward.skill().name());
+            properties.setProperty(entryPrefix + "amount", String.valueOf(reward.amount()));
+        }
+    }
+
+    private static List<RewardDefinition> readQuestRewards(Properties properties, String prefix) {
+        int count = Math.max(0, readInt(properties, prefix + "count", 0));
+        List<RewardDefinition> result = new ArrayList<>();
+        for (int index = 0; index < count; index++) {
+            String entryPrefix = prefix + index + ".";
+            result.add(new RewardDefinition(
+                    properties.getProperty(entryPrefix + "rewardId", ""),
+                    readEnum(properties, entryPrefix + "type", QuestRewardType.ITEM),
+                    properties.getProperty(entryPrefix + "itemId", ""),
+                    readSkill(properties.getProperty(entryPrefix + "skill", "")),
+                    readInt(properties, entryPrefix + "amount", 1)
+            ));
+        }
+        return List.copyOf(result);
+    }
+
+    private static void writeQuestFlow(Properties properties, String prefix, QuestFlow flow) {
+        QuestFlow safe = flow == null ? QuestFlow.empty() : flow;
+        properties.setProperty(prefix + "entryNodeId", safe.entryNodeId());
+        properties.setProperty(prefix + "node.count", String.valueOf(safe.nodes().size()));
+        for (int nodeIndex = 0; nodeIndex < safe.nodes().size(); nodeIndex++) {
+            QuestFlowNode node = safe.nodes().get(nodeIndex);
+            String nodePrefix = prefix + "node." + nodeIndex + ".";
+            properties.setProperty(nodePrefix + "nodeId", node.nodeId());
+            properties.setProperty(nodePrefix + "bodyText", node.bodyText());
+            properties.setProperty(nodePrefix + "canvasX", String.valueOf(node.canvasX()));
+            properties.setProperty(nodePrefix + "canvasY", String.valueOf(node.canvasY()));
+            properties.setProperty(nodePrefix + "choice.count", String.valueOf(node.choices().size()));
+            for (int choiceIndex = 0; choiceIndex < node.choices().size(); choiceIndex++) {
+                QuestFlowChoice choice = node.choices().get(choiceIndex);
+                String choicePrefix = nodePrefix + "choice." + choiceIndex + ".";
+                properties.setProperty(choicePrefix + "choiceId", choice.choiceId());
+                properties.setProperty(choicePrefix + "label", choice.label());
+                properties.setProperty(choicePrefix + "targetNodeId", choice.targetNodeId());
+                properties.setProperty(choicePrefix + "action", choice.action().name());
+                properties.setProperty(choicePrefix + "requiredItemId", choice.requiredItemId());
+                properties.setProperty(choicePrefix + "takeItemId", choice.takeItemId());
+                properties.setProperty(choicePrefix + "takeItemAmount", String.valueOf(choice.takeItemAmount()));
+                properties.setProperty(choicePrefix + "firstTalkOnly", String.valueOf(choice.firstTalkOnly()));
+                properties.setProperty(choicePrefix + "terminalBodyText", choice.terminalBodyText());
+                writeQuestRequirements(properties, choicePrefix + "condition.", choice.conditions());
+                writeQuestRewards(properties, choicePrefix + "reward.", choice.rewards());
+            }
+        }
+    }
+
+    private static QuestFlow readQuestFlow(Properties properties, String prefix) {
+        int nodeCount = Math.max(0, readInt(properties, prefix + "node.count", 0));
+        List<QuestFlowNode> nodes = new ArrayList<>();
+        for (int nodeIndex = 0; nodeIndex < nodeCount; nodeIndex++) {
+            String nodePrefix = prefix + "node." + nodeIndex + ".";
+            int choiceCount = Math.max(0, readInt(properties, nodePrefix + "choice.count", 0));
+            List<QuestFlowChoice> choices = new ArrayList<>();
+            for (int choiceIndex = 0; choiceIndex < choiceCount; choiceIndex++) {
+                String choicePrefix = nodePrefix + "choice." + choiceIndex + ".";
+                choices.add(new QuestFlowChoice(
+                        properties.getProperty(
+                                choicePrefix + "choiceId",
+                                "node_" + nodeIndex + "_choice_" + choiceIndex
+                        ),
+                        properties.getProperty(choicePrefix + "label", "Continue"),
+                        properties.getProperty(choicePrefix + "targetNodeId", ""),
+                        readQuestRequirements(properties, choicePrefix + "condition."),
+                        readEnum(properties, choicePrefix + "action", QuestFlowAction.NONE),
+                        properties.getProperty(choicePrefix + "requiredItemId", ""),
+                        properties.getProperty(choicePrefix + "takeItemId", ""),
+                        readInt(
+                                properties,
+                                choicePrefix + "takeItemAmount",
+                                properties.getProperty(choicePrefix + "takeItemId", "").isBlank() ? 0 : 1
+                        ),
+                        readQuestRewards(properties, choicePrefix + "reward."),
+                        Boolean.parseBoolean(properties.getProperty(choicePrefix + "firstTalkOnly", "false")),
+                        properties.getProperty(choicePrefix + "terminalBodyText", "")
+                ));
+            }
+            nodes.add(new QuestFlowNode(
+                    properties.getProperty(nodePrefix + "nodeId", "node_" + nodeIndex),
+                    properties.getProperty(nodePrefix + "bodyText", ""),
+                    readInt(properties, nodePrefix + "canvasX", 80 + nodeIndex * 260),
+                    readInt(properties, nodePrefix + "canvasY", 80),
+                    choices
+            ));
+        }
+        String entryNodeId = properties.getProperty(prefix + "entryNodeId", "");
+        if (entryNodeId.isBlank() && !nodes.isEmpty()) {
+            entryNodeId = nodes.get(0).nodeId();
+        }
+        return new QuestFlow(entryNodeId, nodes);
     }
 
     private static String joinTileRow(Library.TileType[] row) {
@@ -1540,6 +1782,160 @@ public final class MapDesignLibrary {
         }
     }
 
+    private static void hydratePlacedObject(
+            DungeonMap dungeonMap,
+            List<MapEntity> entities,
+            List<GeneratedDungeon.TileInteraction> tileInteractions,
+            MapDesign design,
+            PlacedObjectInstance object
+    ) {
+        if (object == null || !isInside(dungeonMap, object.x(), object.y())) {
+            return;
+        }
+
+        if (object.kind() == PlacementKind.FURNITURE) {
+            CustomFurnitureDefinition furniture = findCustomFurniture(object.id(), design.customFurniture());
+            if (furniture != null) {
+                hydrateFurniture(dungeonMap, entities, furniture, object);
+            }
+            return;
+        }
+
+        if (object.kind() == PlacementKind.GATHERING_NODE) {
+            hydrateGatheringNodeObject(dungeonMap, entities, tileInteractions, design.customGatheringNodes(), object);
+            return;
+        }
+
+        hydratePlacement(
+                dungeonMap,
+                entities,
+                tileInteractions,
+                design.customItems(),
+                design.customMobs(),
+                design.customLimbs(),
+                design.customNpcs(),
+                design.customFurniture(),
+                design.customGatheringNodes(),
+                new MapPlacement(object.kind(), object.id(), object.x(), object.y())
+        );
+    }
+
+    private static void hydrateGatheringNodeObject(
+            DungeonMap dungeonMap,
+            List<MapEntity> entities,
+            List<GeneratedDungeon.TileInteraction> tileInteractions,
+            List<CustomGatheringNode> customGatheringNodes,
+            PlacedObjectInstance object
+    ) {
+        CustomGatheringNode customNode = findCustomGatheringNode(object.id(), customGatheringNodes);
+        if (customNode == null) {
+            return;
+        }
+
+        if (customNode.nodeType() == GatheringNodeType.FISHING_SPOT) {
+            dungeonMap.setTile(object.x(), object.y(), Library.TileType.FISHING_WATER);
+            tileInteractions.add(new GeneratedDungeon.TileInteraction(
+                    object.x(),
+                    object.y(),
+                    customNode.interactionId()
+            ));
+            if (customNode.modelPaths().isEmpty()) {
+                addGatheringNodeLight(dungeonMap, customNode, object);
+                return;
+            }
+        } else {
+            dungeonMap.setTile(object.x(), object.y(), Library.TileType.FLOOR);
+        }
+
+        MapEntity entity = customNode.createEntity(object.x(), object.y());
+        if (entity != null) {
+            applyPlacedObjectTransform(entity, object);
+            entities.add(entity);
+        }
+        addGatheringNodeLight(dungeonMap, customNode, object);
+    }
+
+    private static PlacedObjectInstance defaultGatheringObjectForPlacement(
+            CustomGatheringNode customNode,
+            MapPlacement placement
+    ) {
+        boolean blocksMovement = customNode.nodeType() == GatheringNodeType.MINING_ROCK
+                || customNode.nodeType() == GatheringNodeType.TREE;
+        return new PlacedObjectInstance(
+                "gathering_" + customNode.nodeId() + "_" + placement.x() + "_" + placement.y(),
+                PlacementKind.GATHERING_NODE,
+                customNode.nodeId(),
+                placement.x(),
+                placement.y(),
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                blocksMovement,
+                null
+        );
+    }
+
+    private static void addGatheringNodeLight(
+            DungeonMap dungeonMap,
+            CustomGatheringNode customNode,
+            PlacedObjectInstance object
+    ) {
+        if (dungeonMap == null || customNode == null || object == null) {
+            return;
+        }
+        MapLight light = customNode.createLight(object);
+        if (light != null) {
+            dungeonMap.addLight(light);
+        }
+    }
+
+    private static void applyPlacedObjectTransform(MapEntity entity, PlacedObjectInstance object) {
+        entity.withStaticModelTransform(
+                object.offsetX(),
+                object.offsetY(),
+                object.offsetZ(),
+                object.yawDegrees(),
+                object.pitchDegrees(),
+                object.rollDegrees(),
+                object.scale()
+        );
+        entity.withStaticModelBrightness(object.modelBrightness());
+        if (object.blocksMovement()) {
+            entity.blocksMovement(true);
+        }
+    }
+
+    private static void addPlacedObjectLight(DungeonMap dungeonMap, PlacedObjectInstance object) {
+        if (dungeonMap == null || object == null || object.lightOverride() == null) {
+            return;
+        }
+        MapLight light = object.lightOverride().toMapLight("object_" + object.instanceId(), object);
+        if (light != null) {
+            dungeonMap.addLight(light);
+        }
+    }
+
+    private static void hydrateFurniture(
+            DungeonMap dungeonMap,
+            List<MapEntity> entities,
+            CustomFurnitureDefinition furniture,
+            PlacedObjectInstance object
+    ) {
+        dungeonMap.setTile(object.x(), object.y(), Library.TileType.FLOOR);
+        MapEntity entity = furniture.createEntity(object);
+        if (entity != null) {
+            entities.add(entity);
+        }
+        MapLight light = furniture.createLight(object);
+        if (light != null) {
+            dungeonMap.addLight(light);
+        }
+    }
+
     private static void writeLighting(Properties properties, MapLightingSettings settings, List<MapLight> lights) {
         MapLightingSettings safeSettings = settings == null ? MapLightingSettings.defaultSettings() : settings;
         properties.setProperty("lighting.enabled", String.valueOf(safeSettings.lightingEnabled()));
@@ -1561,6 +1957,8 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "radius", String.valueOf(light.radius()));
             properties.setProperty(prefix + "intensity", String.valueOf(light.intensity()));
             properties.setProperty(prefix + "heightOffset", String.valueOf(light.heightOffset()));
+            properties.setProperty(prefix + "offsetX", String.valueOf(light.offsetX()));
+            properties.setProperty(prefix + "offsetZ", String.valueOf(light.offsetZ()));
             properties.setProperty(prefix + "flicker", String.valueOf(light.flickerAmount()));
             properties.setProperty(prefix + "enabled", String.valueOf(light.enabled()));
         }
@@ -1595,11 +1993,90 @@ public final class MapDesignLibrary {
                     readDouble(properties, prefix + "radius", 5.0),
                     readDouble(properties, prefix + "intensity", 1.0),
                     readDouble(properties, prefix + "heightOffset", 0.65),
+                    readDouble(properties, prefix + "offsetX", 0.0),
+                    readDouble(properties, prefix + "offsetZ", 0.0),
                     readDouble(properties, prefix + "flicker", 0.0),
                     Boolean.parseBoolean(properties.getProperty(prefix + "enabled", "true"))
             ));
         }
         return lights;
+    }
+
+    private static void writePlacedObject(Properties properties, String prefix, PlacedObjectInstance object) {
+        if (object == null) {
+            return;
+        }
+        properties.setProperty(prefix + "instanceId", object.instanceId());
+        properties.setProperty(prefix + "kind", object.kind().name());
+        properties.setProperty(prefix + "id", object.id());
+        properties.setProperty(prefix + "x", String.valueOf(object.x()));
+        properties.setProperty(prefix + "y", String.valueOf(object.y()));
+        properties.setProperty(prefix + "offsetX", String.valueOf(object.offsetX()));
+        properties.setProperty(prefix + "offsetY", String.valueOf(object.offsetY()));
+        properties.setProperty(prefix + "offsetZ", String.valueOf(object.offsetZ()));
+        properties.setProperty(prefix + "yawDegrees", String.valueOf(object.yawDegrees()));
+        properties.setProperty(prefix + "pitchDegrees", String.valueOf(object.pitchDegrees()));
+        properties.setProperty(prefix + "rollDegrees", String.valueOf(object.rollDegrees()));
+        properties.setProperty(prefix + "scale", String.valueOf(object.scale()));
+        properties.setProperty(prefix + "modelBrightness", String.valueOf(object.modelBrightness()));
+        properties.setProperty(prefix + "blocksMovement", String.valueOf(object.blocksMovement()));
+        writeLightAttachment(properties, prefix + "light.", object.lightOverride());
+    }
+
+    private static PlacedObjectInstance readPlacedObject(Properties properties, String prefix) {
+        String id = properties.getProperty(prefix + "id", "").trim();
+        if (id.isBlank()) {
+            return null;
+        }
+        return new PlacedObjectInstance(
+                properties.getProperty(prefix + "instanceId", id),
+                readEnum(properties, prefix + "kind", PlacementKind.FURNITURE),
+                id,
+                readInt(properties, prefix + "x", 0),
+                readInt(properties, prefix + "y", 0),
+                readDouble(properties, prefix + "offsetX", 0.0),
+                readDouble(properties, prefix + "offsetY", 0.0),
+                readDouble(properties, prefix + "offsetZ", 0.0),
+                readDouble(properties, prefix + "yawDegrees", 0.0),
+                readDouble(properties, prefix + "pitchDegrees", 0.0),
+                readDouble(properties, prefix + "rollDegrees", 0.0),
+                readDouble(properties, prefix + "scale", 1.0),
+                readDouble(properties, prefix + "modelBrightness", 1.0),
+                Boolean.parseBoolean(properties.getProperty(prefix + "blocksMovement", "false")),
+                readLightAttachment(properties, prefix + "light.")
+        );
+    }
+
+    private static void writeLightAttachment(Properties properties, String prefix, LightAttachment light) {
+        properties.setProperty(prefix + "present", String.valueOf(light != null));
+        if (light == null) {
+            return;
+        }
+        properties.setProperty(prefix + "enabled", String.valueOf(light.enabled()));
+        properties.setProperty(prefix + "color", MapLightingSettings.colorHex(light.colorRgb()));
+        properties.setProperty(prefix + "radius", String.valueOf(light.radius()));
+        properties.setProperty(prefix + "intensity", String.valueOf(light.intensity()));
+        properties.setProperty(prefix + "offsetX", String.valueOf(light.offsetX()));
+        properties.setProperty(prefix + "offsetY", String.valueOf(light.offsetY()));
+        properties.setProperty(prefix + "offsetZ", String.valueOf(light.offsetZ()));
+        properties.setProperty(prefix + "flicker", String.valueOf(light.flickerAmount()));
+    }
+
+    private static LightAttachment readLightAttachment(Properties properties, String prefix) {
+        boolean present = Boolean.parseBoolean(properties.getProperty(prefix + "present", "false"));
+        if (!present) {
+            return null;
+        }
+        return new LightAttachment(
+                Boolean.parseBoolean(properties.getProperty(prefix + "enabled", "true")),
+                MapLightingSettings.parseColor(properties.getProperty(prefix + "color"), 0xFF8B42),
+                readDouble(properties, prefix + "radius", 5.0),
+                readDouble(properties, prefix + "intensity", 1.0),
+                readDouble(properties, prefix + "offsetX", 0.0),
+                readDouble(properties, prefix + "offsetY", 0.65),
+                readDouble(properties, prefix + "offsetZ", 0.0),
+                readDouble(properties, prefix + "flicker", 0.0)
+        );
     }
 
     private static void writeCharacterModel(
@@ -1752,18 +2229,6 @@ public final class MapDesignLibrary {
         }
     }
 
-    private static String legacyVisualPath(String value) {
-        if (value == null || value.isBlank()) {
-            return DEFAULT_NPC_VISUAL_PATH;
-        }
-        return switch (value.toUpperCase(Locale.ROOT)) {
-            case "SKELETON" -> "assets/images/monster/Nov-2015/mon/undead/skeletons/skeleton_humanoid_small.png";
-            case "SLIME" -> "assets/images/monster/Nov-2015/mon/amorphous/jelly.png";
-            case "GOBLIN" -> DEFAULT_NPC_VISUAL_PATH;
-            default -> value;
-        };
-    }
-
     private static InventorySystem.ItemType readItemType(String value, InventorySystem.ItemType fallback) {
         try {
             return InventorySystem.ItemType.valueOf(value);
@@ -1808,30 +2273,32 @@ public final class MapDesignLibrary {
         }
     }
 
-    private static List<SkillLibrary> readSkillList(String value) {
+    private static List<String> readSkillIds(String value) {
         if (value == null || value.isBlank()) {
             return List.of();
         }
 
-        List<SkillLibrary> skills = new ArrayList<>();
+        List<String> skills = new ArrayList<>();
         for (String part : value.split(",")) {
             String trimmed = part.trim();
             if (trimmed.isBlank()) {
                 continue;
             }
 
-            skills.add(SkillLibrary.valueOf(trimmed));
+            // Preserve unresolved ids so the Construction Kit can diagnose and
+            // repair references instead of silently dropping authored data.
+            skills.add(BattleContentCatalog.normalizeId(trimmed));
         }
 
         return skills;
     }
 
-    private static String joinSkills(List<SkillLibrary> skills) {
+    private static String joinSkills(List<String> skills) {
         if (skills == null || skills.isEmpty()) {
             return "";
         }
 
-        return String.join(",", skills.stream().map(SkillLibrary::name).toList());
+        return String.join(",", skills.stream().map(BattleContentCatalog::normalizeId).toList());
     }
 
     private static CharacterSkill readSkill(String value) {
@@ -1957,8 +2424,40 @@ public final class MapDesignLibrary {
         }
     }
 
-    private static String contentRoot(Properties properties, String currentRoot, String legacyRoot) {
-        return properties.containsKey(currentRoot + ".count") ? currentRoot : legacyRoot;
+    private static void validateCurrentContentSchema(Path path, Properties properties) throws IOException {
+        if (!MapDesignContentStore.isContentCatalogPath(path)) {
+            return;
+        }
+        String fileName = path.getFileName() == null ? "" : path.getFileName().toString();
+        String root = switch (fileName) {
+            case MapDesignContentStore.DIALOGUE_FILE -> "dialogue";
+            case MapDesignContentStore.QUEST_FILE -> "quest";
+            case MapDesignContentStore.ITEM_FILE -> "item";
+            case MapDesignContentStore.MOB_FILE -> "mob";
+            case MapDesignContentStore.LIMB_FILE -> "limb";
+            case MapDesignContentStore.NPC_FILE -> "npc";
+            case MapDesignContentStore.FURNITURE_FILE -> "furniture";
+            case MapDesignContentStore.GATHERING_NODE_FILE -> "gatheringNode";
+            case MapDesignContentStore.COOKING_RECIPE_FILE -> "cookingRecipe";
+            case MapDesignContentStore.CRAFTING_RECIPE_FILE -> "craftingRecipe";
+            default -> "";
+        };
+        if (root.isBlank() || !properties.containsKey(root + ".count")) {
+            throw new IOException("Content catalog " + fileName + " is not in the current format.");
+        }
+        int expectedVersion = switch (fileName) {
+            case MapDesignContentStore.DIALOGUE_FILE, MapDesignContentStore.QUEST_FILE -> 3;
+            case MapDesignContentStore.NPC_FILE -> 2;
+            default -> 0;
+        };
+        if (expectedVersion > 0) {
+            String key = root + ".schemaVersion";
+            int actualVersion = readInt(properties, key, -1);
+            if (actualVersion != expectedVersion) {
+                throw new IOException("Unsupported " + fileName + " schema version "
+                        + actualVersion + "; expected " + expectedVersion + ".");
+            }
+        }
     }
 
     private static void retainRequestedContentSegment(Properties properties, Path path) {
@@ -1969,7 +2468,7 @@ public final class MapDesignLibrary {
         String retainedRoot = switch (requestedRoot) {
             case "gathering_node" -> "gatheringNode";
             case "cooking_recipe" -> "cookingRecipe";
-            case "crafting_recipe", "composite_recipe" -> "craftingRecipe";
+            case "crafting_recipe" -> "craftingRecipe";
             default -> requestedRoot;
         };
         properties.keySet().removeIf(rawKey ->
@@ -1983,6 +2482,40 @@ public final class MapDesignLibrary {
         } catch (NumberFormatException ignored) {
             return fallback;
         }
+    }
+
+    private static <T extends Enum<T>> T readEnum(Properties properties, String key, T fallback) {
+        if (fallback == null) {
+            throw new IllegalArgumentException("Fallback enum is required.");
+        }
+        try {
+            return Enum.valueOf(fallback.getDeclaringClass(), properties.getProperty(key, fallback.name()));
+        } catch (IllegalArgumentException ignored) {
+            return fallback;
+        }
+    }
+
+    private static String sanitizeIdentifier(String value, String fallback) {
+        String safeFallback = fallback == null || fallback.isBlank() ? "id" : fallback;
+        if (value == null || value.isBlank()) {
+            return safeFallback;
+        }
+        return value.trim().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_\\-]+", "_");
+    }
+
+    private static double clampFinite(double value, double min, double max, double fallback) {
+        if (!Double.isFinite(value)) {
+            return fallback;
+        }
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static double normalizeDegrees(double degrees) {
+        if (!Double.isFinite(degrees)) {
+            return 0.0;
+        }
+        double normalized = degrees % 360.0;
+        return normalized < 0.0 ? normalized + 360.0 : normalized;
     }
 
     private static int readListInt(String[] values, int index, int fallback) {
@@ -2028,12 +2561,14 @@ public final class MapDesignLibrary {
             MapGeometryData mapGeometry,
             MobAreaData mobAreas,
             List<MapPlacement> placements,
+            List<PlacedObjectInstance> placedObjects,
             List<AuthoredDialogue> authoredDialogues,
             List<AuthoredQuest> authoredQuests,
             List<CustomItem> customItems,
             List<CustomMob> customMobs,
             List<CustomLimb> customLimbs,
             List<CustomNpc> customNpcs,
+            List<CustomFurnitureDefinition> customFurniture,
             List<CustomGatheringNode> customGatheringNodes,
             List<CustomCookingRecipe> customCookingRecipes,
             List<CraftingRecipe> craftingRecipes,
@@ -2051,17 +2586,96 @@ public final class MapDesignLibrary {
             mapPaint = mapPaint == null ? MapPaintData.blank(width, height) : mapPaint;
             mapGeometry = mapGeometry == null ? MapGeometryData.blank(width, height) : mapGeometry;
             mobAreas = mobAreas == null ? MobAreaData.blank(width, height) : mobAreas;
+            placements = placements == null ? new ArrayList<>() : placements;
+            placedObjects = placedObjects == null ? new ArrayList<>() : placedObjects;
             authoredQuests = authoredQuests == null ? new ArrayList<>() : authoredQuests;
             customItems = customItems == null ? new ArrayList<>() : customItems;
             customMobs = customMobs == null ? new ArrayList<>() : customMobs;
             customLimbs = customLimbs == null ? new ArrayList<>() : customLimbs;
             customNpcs = customNpcs == null ? new ArrayList<>() : customNpcs;
+            customFurniture = customFurniture == null ? new ArrayList<>() : customFurniture;
             customGatheringNodes = customGatheringNodes == null ? new ArrayList<>() : customGatheringNodes;
             customCookingRecipes = customCookingRecipes == null ? new ArrayList<>() : customCookingRecipes;
             craftingRecipes = craftingRecipes == null ? new ArrayList<>() : craftingRecipes;
             triggers = triggers == null ? new ArrayList<>() : triggers;
             lightingSettings = lightingSettings == null ? MapLightingSettings.defaultSettings() : lightingSettings;
             lights = lights == null ? new ArrayList<>() : new ArrayList<>(lights);
+        }
+
+        public MapDesign(
+                int width,
+                int height,
+                String displayName,
+                String description,
+                String musicPath,
+                String skyboxPath,
+                ThemeLibrary primaryTheme,
+                ThemeLibrary alternateTheme,
+                Library.TileType[][] tiles,
+                int[][] themeIndexes,
+                MapPaintData mapPaint,
+                MapGeometryData mapGeometry,
+                MobAreaData mobAreas,
+                List<MapPlacement> placements,
+                List<PlacedObjectInstance> placedObjects,
+                List<AuthoredDialogue> authoredDialogues,
+                List<AuthoredQuest> authoredQuests,
+                List<CustomItem> customItems,
+                List<CustomMob> customMobs,
+                List<CustomLimb> customLimbs,
+                List<CustomNpc> customNpcs,
+                List<CustomFurnitureDefinition> customFurniture,
+                List<CustomGatheringNode> customGatheringNodes,
+                List<CustomCookingRecipe> customCookingRecipes,
+                List<CraftingRecipe> craftingRecipes,
+                List<MapTrigger> triggers,
+                int spawnX,
+                int spawnY
+        ) {
+            this(width, height, displayName, description, musicPath, skyboxPath,
+                    primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry,
+                    mobAreas, placements, placedObjects, authoredDialogues, authoredQuests, customItems, customMobs,
+                    customLimbs, customNpcs, customFurniture, customGatheringNodes, customCookingRecipes, craftingRecipes,
+                    triggers, MapLightingSettings.defaultSettings(), List.of(), spawnX, spawnY);
+        }
+
+        public MapDesign(
+                int width,
+                int height,
+                String displayName,
+                String description,
+                String musicPath,
+                String skyboxPath,
+                ThemeLibrary primaryTheme,
+                ThemeLibrary alternateTheme,
+                Library.TileType[][] tiles,
+                int[][] themeIndexes,
+                MapPaintData mapPaint,
+                MapGeometryData mapGeometry,
+                MobAreaData mobAreas,
+                List<MapPlacement> placements,
+                List<AuthoredDialogue> authoredDialogues,
+                List<AuthoredQuest> authoredQuests,
+                List<CustomItem> customItems,
+                List<CustomMob> customMobs,
+                List<CustomLimb> customLimbs,
+                List<CustomNpc> customNpcs,
+                List<CustomFurnitureDefinition> customFurniture,
+                List<CustomGatheringNode> customGatheringNodes,
+                List<CustomCookingRecipe> customCookingRecipes,
+                List<CraftingRecipe> craftingRecipes,
+                List<MapTrigger> triggers,
+                MapLightingSettings lightingSettings,
+                List<MapLight> lights,
+                int spawnX,
+                int spawnY
+        ) {
+            this(width, height, displayName, description, musicPath, skyboxPath,
+                    primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry,
+                    mobAreas, placements, new ArrayList<>(), authoredDialogues, authoredQuests,
+                    customItems, customMobs, customLimbs, customNpcs, customFurniture,
+                    customGatheringNodes, customCookingRecipes, craftingRecipes, triggers,
+                    lightingSettings, lights, spawnX, spawnY);
         }
 
         public MapDesign(
@@ -2089,14 +2703,17 @@ public final class MapDesignLibrary {
                 List<CustomCookingRecipe> customCookingRecipes,
                 List<CraftingRecipe> craftingRecipes,
                 List<MapTrigger> triggers,
+                MapLightingSettings lightingSettings,
+                List<MapLight> lights,
                 int spawnX,
                 int spawnY
         ) {
             this(width, height, displayName, description, musicPath, skyboxPath,
                     primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry,
-                    mobAreas, placements, authoredDialogues, authoredQuests, customItems, customMobs,
-                    customLimbs, customNpcs, customGatheringNodes, customCookingRecipes, craftingRecipes,
-                    triggers, MapLightingSettings.defaultSettings(), List.of(), spawnX, spawnY);
+                    mobAreas, placements, new ArrayList<>(), authoredDialogues, authoredQuests,
+                    customItems, customMobs, customLimbs, customNpcs, new ArrayList<>(),
+                    customGatheringNodes, customCookingRecipes, craftingRecipes, triggers,
+                    lightingSettings, lights, spawnX, spawnY);
         }
 
         public MapDesign(
@@ -2128,8 +2745,8 @@ public final class MapDesignLibrary {
         ) {
             this(width, height, displayName, description, musicPath, skyboxPath,
                     primaryTheme, alternateTheme, tiles, themeIndexes, mapPaint, mapGeometry,
-                    MobAreaData.blank(width, height), placements, authoredDialogues, authoredQuests,
-                    customItems, customMobs, customLimbs, customNpcs, customGatheringNodes,
+                    MobAreaData.blank(width, height), placements, new ArrayList<>(), authoredDialogues, authoredQuests,
+                    customItems, customMobs, customLimbs, customNpcs, new ArrayList<>(), customGatheringNodes,
                     customCookingRecipes, craftingRecipes, triggers, spawnX, spawnY);
         }
 
@@ -2344,6 +2961,177 @@ public final class MapDesignLibrary {
     public record MapPlacement(PlacementKind kind, String id, int x, int y) {
     }
 
+    public record PlacedObjectInstance(
+            String instanceId,
+            PlacementKind kind,
+            String id,
+            int x,
+            int y,
+            double offsetX,
+            double offsetY,
+            double offsetZ,
+            double yawDegrees,
+            double pitchDegrees,
+            double rollDegrees,
+            double scale,
+            double modelBrightness,
+            boolean blocksMovement,
+            LightAttachment lightOverride
+    ) {
+        public PlacedObjectInstance {
+            instanceId = sanitizeIdentifier(instanceId, "placed_object");
+            kind = kind == null ? PlacementKind.FURNITURE : kind;
+            id = id == null ? "" : id.trim();
+            offsetX = clampFinite(offsetX, -4.0, 4.0, 0.0);
+            offsetY = clampFinite(offsetY, -8.0, 8.0, 0.0);
+            offsetZ = clampFinite(offsetZ, -4.0, 4.0, 0.0);
+            yawDegrees = normalizeDegrees(yawDegrees);
+            pitchDegrees = normalizeDegrees(pitchDegrees);
+            rollDegrees = normalizeDegrees(rollDegrees);
+            scale = clampFinite(scale, 0.05, 20.0, 1.0);
+            modelBrightness = clampFinite(modelBrightness, 0.0, 4.0, 1.0);
+        }
+
+        public PlacedObjectInstance(
+                String instanceId,
+                PlacementKind kind,
+                String id,
+                int x,
+                int y,
+                double offsetX,
+                double offsetY,
+                double offsetZ,
+                double yawDegrees,
+                double pitchDegrees,
+                double rollDegrees,
+                double scale,
+                boolean blocksMovement,
+                LightAttachment lightOverride
+        ) {
+            this(instanceId, kind, id, x, y, offsetX, offsetY, offsetZ, yawDegrees, pitchDegrees, rollDegrees, scale,
+                    1.0, blocksMovement, lightOverride);
+        }
+
+        public static PlacedObjectInstance furniture(String instanceId, String furnitureId, int x, int y, boolean blocksMovement) {
+            return new PlacedObjectInstance(
+                    instanceId,
+                    PlacementKind.FURNITURE,
+                    furnitureId,
+                    x,
+                    y,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    1.0,
+                    blocksMovement,
+                    null
+            );
+        }
+    }
+
+    public record LightAttachment(
+            boolean enabled,
+            int colorRgb,
+            double radius,
+            double intensity,
+            double offsetX,
+            double offsetY,
+            double offsetZ,
+            double flickerAmount
+    ) {
+        public LightAttachment {
+            colorRgb &= 0xFFFFFF;
+            radius = clampFinite(radius, 0.1, 64.0, 5.0);
+            intensity = clampFinite(intensity, 0.0, 8.0, 1.0);
+            offsetX = clampFinite(offsetX, -4.0, 4.0, 0.0);
+            offsetY = clampFinite(offsetY, -8.0, 8.0, 0.65);
+            offsetZ = clampFinite(offsetZ, -4.0, 4.0, 0.0);
+            flickerAmount = clampFinite(flickerAmount, 0.0, 1.0, 0.0);
+        }
+
+        public MapLight toMapLight(String lightId, PlacedObjectInstance instance) {
+            if (!enabled || instance == null) {
+                return null;
+            }
+            double yawRadians = Math.toRadians(instance.yawDegrees());
+            double cos = Math.cos(yawRadians);
+            double sin = Math.sin(yawRadians);
+            double rotatedOffsetX = offsetX * cos - offsetZ * sin;
+            double rotatedOffsetZ = offsetX * sin + offsetZ * cos;
+            return new MapLight(
+                    sanitizeIdentifier(lightId, "object_light"),
+                    instance.x(),
+                    instance.y(),
+                    colorRgb,
+                    radius,
+                    intensity,
+                    offsetY + instance.offsetY(),
+                    rotatedOffsetX + instance.offsetX(),
+                    rotatedOffsetZ + instance.offsetZ(),
+                    flickerAmount,
+                    true
+            );
+        }
+    }
+
+    public record CustomFurnitureDefinition(
+            String furnitureId,
+            String displayName,
+            String category,
+            String modelPath,
+            double defaultScale,
+            boolean defaultBlocksMovement,
+            String interactionId,
+            LightAttachment lightAttachment
+    ) {
+        public CustomFurnitureDefinition {
+            furnitureId = sanitizeIdentifier(furnitureId, "furniture");
+            displayName = displayName == null || displayName.isBlank() ? "Furniture" : displayName.trim();
+            category = category == null ? "" : category.trim();
+            modelPath = modelPath == null ? "" : modelPath.trim().replace('\\', '/');
+            defaultScale = clampFinite(defaultScale, 0.05, 20.0, 1.0);
+            interactionId = interactionId == null ? "" : interactionId.trim();
+        }
+
+        public MapEntity createEntity(PlacedObjectInstance instance) {
+            if (instance == null || modelPath.isBlank()) {
+                return null;
+            }
+            boolean blocks = instance.blocksMovement() || defaultBlocksMovement;
+            MapEntity entity = new MapEntity(displayName, Library.EntityType.TRAP, instance.x(), instance.y())
+                    .withStaticModel(modelPath)
+                    .withVisualScale(defaultScale)
+                    .withStaticModelTransform(
+                            instance.offsetX(),
+                            instance.offsetY(),
+                            instance.offsetZ(),
+                            instance.yawDegrees(),
+                            instance.pitchDegrees(),
+                            instance.rollDegrees(),
+                            instance.scale()
+                    )
+                    .withStaticModelBrightness(instance.modelBrightness())
+                    .blocksMovement(blocks);
+            if (!interactionId.isBlank()) {
+                entity.withInteractionId(interactionId);
+            }
+            return entity;
+        }
+
+        public MapLight createLight(PlacedObjectInstance instance) {
+            LightAttachment attachment = instance != null && instance.lightOverride() != null
+                    ? instance.lightOverride()
+                    : lightAttachment;
+            return attachment == null
+                    ? null
+                    : attachment.toMapLight("furniture_" + instance.instanceId(), instance);
+        }
+    }
+
     public record MapTrigger(
             String id,
             int x,
@@ -2351,14 +3139,14 @@ public final class MapDesignLibrary {
             TriggerFireMode fireMode,
             boolean oneShot,
             String requiredQuestId,
-            int requiredQuestStage,
+            String requiredQuestProgress,
             List<TriggerAction> actions
     ) {
         public MapTrigger {
             id = id == null ? "" : id;
             fireMode = fireMode == null ? TriggerFireMode.ON_ENTRY : fireMode;
             requiredQuestId = requiredQuestId == null ? "" : requiredQuestId.trim();
-            requiredQuestStage = Math.max(0, requiredQuestStage);
+            requiredQuestProgress = requiredQuestProgress == null ? "" : requiredQuestProgress.trim();
             actions = actions == null ? List.of() : List.copyOf(actions);
         }
 
@@ -2370,7 +3158,7 @@ public final class MapDesignLibrary {
                 boolean oneShot,
                 List<TriggerAction> actions
         ) {
-            this(id, x, y, fireMode, oneShot, "", 0, actions);
+            this(id, x, y, fireMode, oneShot, "", "", actions);
         }
     }
 
@@ -2387,10 +3175,36 @@ public final class MapDesignLibrary {
             List<CustomMob> customMobs,
             List<CustomLimb> customLimbs,
             List<CustomNpc> customNpcs,
+            List<CustomFurnitureDefinition> customFurniture,
             List<CustomGatheringNode> customGatheringNodes,
             List<CustomCookingRecipe> customCookingRecipes,
             List<CraftingRecipe> craftingRecipes
     ) {
+        public AuthoredContent(
+                List<AuthoredDialogue> authoredDialogues,
+                List<AuthoredQuest> authoredQuests,
+                List<CustomItem> customItems,
+                List<CustomMob> customMobs,
+                List<CustomLimb> customLimbs,
+                List<CustomNpc> customNpcs,
+                List<CustomGatheringNode> customGatheringNodes,
+                List<CustomCookingRecipe> customCookingRecipes,
+                List<CraftingRecipe> craftingRecipes
+        ) {
+            this(
+                    authoredDialogues,
+                    authoredQuests,
+                    customItems,
+                    customMobs,
+                    customLimbs,
+                    customNpcs,
+                    List.of(),
+                    customGatheringNodes,
+                    customCookingRecipes,
+                    craftingRecipes
+            );
+        }
+
         public AuthoredContent {
             authoredDialogues = authoredDialogues == null ? List.of() : List.copyOf(authoredDialogues);
             authoredQuests = authoredQuests == null ? List.of() : List.copyOf(authoredQuests);
@@ -2398,6 +3212,7 @@ public final class MapDesignLibrary {
             customMobs = customMobs == null ? List.of() : List.copyOf(customMobs);
             customLimbs = customLimbs == null ? List.of() : List.copyOf(customLimbs);
             customNpcs = customNpcs == null ? List.of() : List.copyOf(customNpcs);
+            customFurniture = customFurniture == null ? List.of() : List.copyOf(customFurniture);
             customGatheringNodes = customGatheringNodes == null ? List.of() : List.copyOf(customGatheringNodes);
             customCookingRecipes = customCookingRecipes == null ? List.of() : List.copyOf(customCookingRecipes);
             craftingRecipes = craftingRecipes == null ? List.of() : List.copyOf(craftingRecipes);
@@ -2410,48 +3225,23 @@ public final class MapDesignLibrary {
             String bodyText,
             String followUpInteractionId,
             String visualPath,
-            String rewardItemId,
-            CharacterSkill rewardSkill,
-            int rewardSkillXp,
-            int rewardGold,
-            String questId,
-            int questStage,
             List<AuthoredDialogueChoice> choices,
-            List<AuthoredDialogueNode> nodes
+            List<AuthoredDialogueNode> nodes,
+            List<RewardDefinition> rewards,
+            String firstTalkNodeId,
+            String repeatTalkNodeId
     ) {
-        public AuthoredDialogue(String interactionId, String speakerName, String bodyText) {
-            this(interactionId, speakerName, bodyText, "", DEFAULT_NPC_VISUAL_PATH);
-        }
-
-        public AuthoredDialogue(
-                String interactionId,
-                String speakerName,
-                String bodyText,
-                String followUpInteractionId
-        ) {
-            this(interactionId, speakerName, bodyText, followUpInteractionId, DEFAULT_NPC_VISUAL_PATH);
-        }
-
-        public AuthoredDialogue(
-                String interactionId,
-                String speakerName,
-                String bodyText,
-                String followUpInteractionId,
-                String visualPath
-        ) {
-            this(interactionId, speakerName, bodyText, followUpInteractionId, visualPath, "", null, 0, 0, "", -1, List.of(), List.of());
-        }
-
         public AuthoredDialogue {
+            interactionId = interactionId == null ? "" : interactionId.trim();
+            speakerName = speakerName == null ? "" : speakerName.trim();
+            bodyText = bodyText == null ? "" : bodyText;
             followUpInteractionId = followUpInteractionId == null ? "" : followUpInteractionId;
             visualPath = visualPath == null || visualPath.isBlank() ? DEFAULT_NPC_VISUAL_PATH : visualPath;
-            rewardItemId = rewardItemId == null ? "" : rewardItemId;
-            rewardSkillXp = Math.max(0, rewardSkillXp);
-            rewardGold = Math.max(0, rewardGold);
-            questId = questId == null ? "" : questId;
-            questStage = Math.max(-1, questStage);
             choices = choices == null ? List.of() : List.copyOf(choices);
             nodes = nodes == null ? List.of() : List.copyOf(nodes);
+            rewards = rewards == null ? List.of() : List.copyOf(rewards);
+            firstTalkNodeId = firstTalkNodeId == null ? "" : firstTalkNodeId.trim();
+            repeatTalkNodeId = repeatTalkNodeId == null ? "" : repeatTalkNodeId.trim();
         }
     }
 
@@ -2459,35 +3249,36 @@ public final class MapDesignLibrary {
             String label,
             String bodyText,
             String targetNodeId,
-            String questId,
-            int questStage,
             String requiredItemName,
             String takeItemName,
-            String giveItemName,
-            int giveGold,
-            CharacterSkill giveSkill,
-            int giveSkillXp,
-            boolean firstTalkOnly
+            int takeItemAmount,
+            boolean firstTalkOnly,
+            String choiceId,
+            List<RewardDefinition> rewards
     ) {
-        public AuthoredDialogueChoice(String label, String bodyText) {
-            this(label, bodyText, "", "", -1, "", "", "", 0, null, 0, false);
-        }
-
         public AuthoredDialogueChoice {
             label = label == null || label.isBlank() ? "Continue" : label;
             bodyText = bodyText == null ? "" : bodyText;
             targetNodeId = targetNodeId == null ? "" : targetNodeId;
-            questId = questId == null ? "" : questId;
-            questStage = Math.max(-1, questStage);
             requiredItemName = requiredItemName == null ? "" : requiredItemName;
             takeItemName = takeItemName == null ? "" : takeItemName;
-            giveItemName = giveItemName == null ? "" : giveItemName;
-            giveGold = Math.max(0, giveGold);
-            giveSkillXp = Math.max(0, giveSkillXp);
+            takeItemAmount = takeItemName.isBlank() ? 0 : Math.max(1, takeItemAmount);
+            choiceId = choiceId == null ? "" : choiceId.trim();
+            rewards = rewards == null ? List.of() : List.copyOf(rewards);
         }
     }
 
-    public record AuthoredDialogueNode(String nodeId, String bodyText, List<AuthoredDialogueChoice> choices) {
+    public record AuthoredDialogueNode(
+            String nodeId,
+            String bodyText,
+            int canvasX,
+            int canvasY,
+            List<AuthoredDialogueChoice> choices
+    ) {
+        public AuthoredDialogueNode(String nodeId, String bodyText, List<AuthoredDialogueChoice> choices) {
+            this(nodeId, bodyText, 80, 80, choices);
+        }
+
         public AuthoredDialogueNode {
             nodeId = nodeId == null ? "" : nodeId.trim();
             bodyText = bodyText == null ? "" : bodyText;
@@ -2495,13 +3286,245 @@ public final class MapDesignLibrary {
         }
     }
 
-    public record AuthoredQuest(String questId, String displayName, List<String> stageDescriptions) {
+    public enum QuestRequirementType {
+        POSSESS_ITEM,
+        EQUIPPED_ITEM_OR_LIMB,
+        COMPLETED_QUEST,
+        PLAYER_LEVEL,
+        SKILL_LEVEL
+    }
+
+    public enum QuestObjectiveType {
+        POSSESS_ITEM,
+        TURN_IN_ITEM,
+        EQUIPPED_ITEM_OR_LIMB,
+        TALK_TO_NPC,
+        DEFEAT_ENEMY,
+        PLAYER_LEVEL,
+        SKILL_LEVEL,
+        COMPLETE_QUEST
+    }
+
+    public enum QuestRewardType {
+        ITEM,
+        GOLD,
+        SKILL_XP
+    }
+
+    public enum QuestCompletionMode {
+        AUTOMATIC,
+        FLOW_CONFIRMED
+    }
+
+    public enum QuestFlowAction {
+        NONE,
+        ACCEPT_QUEST,
+        ADVANCE_STAGE,
+        COMPLETE_QUEST
+    }
+
+    public record QuestRequirement(
+            QuestRequirementType type,
+            String targetId,
+            CharacterSkill skill,
+            int amount
+    ) {
+        public QuestRequirement {
+            type = type == null ? QuestRequirementType.POSSESS_ITEM : type;
+            targetId = targetId == null ? "" : targetId.trim();
+            amount = Math.max(1, amount);
+        }
+    }
+
+    public record QuestObjective(
+            String objectiveId,
+            QuestObjectiveType type,
+            String targetId,
+            CharacterSkill skill,
+            int amount,
+            String journalText,
+            boolean visible
+    ) {
+        public QuestObjective {
+            objectiveId = objectiveId == null ? "" : objectiveId.trim();
+            type = type == null ? QuestObjectiveType.POSSESS_ITEM : type;
+            targetId = targetId == null ? "" : targetId.trim();
+            amount = Math.max(1, amount);
+            journalText = journalText == null ? "" : journalText.trim();
+        }
+    }
+
+    public record RewardDefinition(
+            String rewardId,
+            QuestRewardType type,
+            String itemId,
+            CharacterSkill skill,
+            int amount
+    ) {
+        public RewardDefinition(QuestRewardType type, String itemId, CharacterSkill skill, int amount) {
+            this("", type, itemId, skill, amount);
+        }
+
+        public RewardDefinition {
+            rewardId = rewardId == null ? "" : rewardId.trim();
+            type = type == null ? QuestRewardType.ITEM : type;
+            itemId = itemId == null ? "" : itemId.trim();
+            amount = Math.max(1, amount);
+        }
+    }
+
+    public record QuestFlowChoice(
+            String choiceId,
+            String label,
+            String targetNodeId,
+            List<QuestRequirement> conditions,
+            QuestFlowAction action,
+            String requiredItemId,
+            String takeItemId,
+            int takeItemAmount,
+            List<RewardDefinition> rewards,
+            boolean firstTalkOnly,
+            String terminalBodyText
+    ) {
+        public QuestFlowChoice(
+                String choiceId,
+                String label,
+                String targetNodeId,
+                List<QuestRequirement> conditions,
+                QuestFlowAction action,
+                String requiredItemId,
+                String takeItemId
+        ) {
+            this(choiceId, label, targetNodeId, conditions, action, requiredItemId, takeItemId,
+                    takeItemId == null || takeItemId.isBlank() ? 0 : 1, List.of(), false, "");
+        }
+
+        public QuestFlowChoice(
+                String choiceId,
+                String label,
+                String targetNodeId,
+                List<QuestRequirement> conditions,
+                QuestFlowAction action,
+                String requiredItemId,
+                String takeItemId,
+                List<RewardDefinition> rewards,
+                boolean firstTalkOnly
+        ) {
+            this(choiceId, label, targetNodeId, conditions, action, requiredItemId, takeItemId,
+                    takeItemId == null || takeItemId.isBlank() ? 0 : 1, rewards, firstTalkOnly, "");
+        }
+
+        public QuestFlowChoice(
+                String choiceId,
+                String label,
+                String targetNodeId,
+                List<QuestRequirement> conditions,
+                QuestFlowAction action,
+                String requiredItemId,
+                String takeItemId,
+                List<RewardDefinition> rewards,
+                boolean firstTalkOnly,
+                String terminalBodyText
+        ) {
+            this(
+                    choiceId,
+                    label,
+                    targetNodeId,
+                    conditions,
+                    action,
+                    requiredItemId,
+                    takeItemId,
+                    takeItemId == null || takeItemId.isBlank() ? 0 : 1,
+                    rewards,
+                    firstTalkOnly,
+                    terminalBodyText
+            );
+        }
+
+        public QuestFlowChoice {
+            choiceId = choiceId == null ? "" : choiceId.trim();
+            label = label == null || label.isBlank() ? "Continue" : label.trim();
+            targetNodeId = targetNodeId == null ? "" : targetNodeId.trim();
+            conditions = conditions == null ? List.of() : List.copyOf(conditions);
+            action = action == null ? QuestFlowAction.NONE : action;
+            requiredItemId = requiredItemId == null ? "" : requiredItemId.trim();
+            takeItemId = takeItemId == null ? "" : takeItemId.trim();
+            takeItemAmount = takeItemId.isBlank() ? 0 : Math.max(1, takeItemAmount);
+            rewards = rewards == null ? List.of() : List.copyOf(rewards);
+            terminalBodyText = terminalBodyText == null ? "" : terminalBodyText;
+        }
+    }
+
+    public record QuestFlowNode(
+            String nodeId,
+            String bodyText,
+            int canvasX,
+            int canvasY,
+            List<QuestFlowChoice> choices
+    ) {
+        public QuestFlowNode {
+            nodeId = nodeId == null ? "" : nodeId.trim();
+            bodyText = bodyText == null ? "" : bodyText;
+            choices = choices == null ? List.of() : List.copyOf(choices);
+        }
+    }
+
+    public record QuestFlow(String entryNodeId, List<QuestFlowNode> nodes) {
+        public QuestFlow {
+            entryNodeId = entryNodeId == null ? "" : entryNodeId.trim();
+            nodes = nodes == null ? List.of() : List.copyOf(nodes);
+        }
+
+        public static QuestFlow empty() {
+            return new QuestFlow("", List.of());
+        }
+    }
+
+    public record QuestStage(
+            String stageId,
+            String title,
+            String journalText,
+            QuestCompletionMode completionMode,
+            List<QuestObjective> objectives,
+            List<RewardDefinition> rewards,
+            QuestFlow flow
+    ) {
+        public QuestStage {
+            stageId = stageId == null ? "" : stageId.trim();
+            title = title == null || title.isBlank() ? "Quest Stage" : title.trim();
+            journalText = journalText == null ? "" : journalText.trim();
+            completionMode = completionMode == null ? QuestCompletionMode.FLOW_CONFIRMED : completionMode;
+            objectives = objectives == null ? List.of() : List.copyOf(objectives);
+            rewards = rewards == null ? List.of() : List.copyOf(rewards);
+            flow = flow == null ? QuestFlow.empty() : flow;
+        }
+    }
+
+    public record AuthoredQuest(
+            String questId,
+            String displayName,
+            String summary,
+            List<QuestRequirement> requirements,
+            QuestFlow offerFlow,
+            List<QuestStage> stages,
+            List<RewardDefinition> finalRewards,
+            QuestFlow epilogueFlow
+    ) {
         public AuthoredQuest {
             questId = questId == null ? "" : questId;
             displayName = displayName == null || displayName.isBlank() ? "Untitled Quest" : displayName;
-            stageDescriptions = stageDescriptions == null || stageDescriptions.isEmpty()
-                    ? List.of("Begin the quest.", "Complete.")
-                    : new ArrayList<>(stageDescriptions);
+            summary = summary == null ? "" : summary.trim();
+            requirements = requirements == null ? List.of() : List.copyOf(requirements);
+            offerFlow = offerFlow == null ? QuestFlow.empty() : offerFlow;
+            stages = stages == null ? List.of() : List.copyOf(stages);
+            finalRewards = finalRewards == null ? List.of() : List.copyOf(finalRewards);
+            epilogueFlow = epilogueFlow == null ? QuestFlow.empty() : epilogueFlow;
+        }
+
+        public List<String> journalEntries() {
+            return stages.stream()
+                    .map(stage -> stage.journalText().isBlank() ? stage.title() : stage.journalText())
+                    .toList();
         }
     }
 
@@ -2706,7 +3729,7 @@ public final class MapDesignLibrary {
             int awarenessRadius,
             int movementIntervalMs,
             int respawnDelayMs,
-            List<SkillLibrary> skillIds,
+            List<String> skillIds,
             List<CustomDropEntry> dropEntries,
             CharacterModelDefinition characterModel
     ) {
@@ -2749,7 +3772,7 @@ public final class MapDesignLibrary {
                 int awarenessRadius,
                 int movementIntervalMs,
                 int respawnDelayMs,
-                List<SkillLibrary> skillIds,
+                List<String> skillIds,
                 List<CustomDropEntry> dropEntries
         ) {
             this(mobId, displayName, imagePath, paperDollSourcePath, statValues, xpReward,
@@ -2769,7 +3792,7 @@ public final class MapDesignLibrary {
                 String attackSoundPath,
                 String damageSoundPath,
                 int combatAiIntelligence,
-                List<SkillLibrary> skillIds,
+                List<String> skillIds,
                 List<CustomDropEntry> dropEntries
         ) {
             this(mobId, displayName, imagePath, paperDollSourcePath, statValues, xpReward,
@@ -2987,7 +4010,7 @@ public final class MapDesignLibrary {
             String sourceCreatureId,
             String paperDollSourcePath,
             Map<PlayerStat, Integer> statBonuses,
-            List<SkillLibrary> skillIds,
+            List<String> skillIds,
             String firstPersonModelPath,
             String firstPersonRigId
     ) {
@@ -3023,25 +4046,27 @@ public final class MapDesignLibrary {
                 String sourceCreatureId,
                 String paperDollSourcePath,
                 Map<PlayerStat, Integer> statBonuses,
-                List<SkillLibrary> skillIds
+                List<String> skillIds
         ) {
             this(limbId, displayName, limbSlot, iconPath, condition, description,
                     sourceCreatureId, paperDollSourcePath, statBonuses, skillIds, "", "");
         }
 
         public LimbItem createLimb() {
-            return new LimbItem(
+            LimbItem limb = new LimbItem(
                     displayName,
                     sourceCreatureId,
                     sourceCreatureId,
                     limbSlot,
                     statBonuses,
-                    skillIds.stream().map(SkillLibrary::createSkill).toList(),
+                    BattleContentCatalog.createSkills(skillIds),
                     condition,
                     iconPath,
                     description,
                     paperDollSourcePath
             ).withFirstPersonModel(firstPersonModelPath, firstPersonRigId);
+            limb.withContentId(limbId);
+            return limb;
         }
     }
 
@@ -3052,7 +4077,8 @@ public final class MapDesignLibrary {
             String talkSoundPath,
             String interactionId,
             CustomShop shop,
-            CharacterModelDefinition characterModel
+            CharacterModelDefinition characterModel,
+            List<String> questIds
     ) {
         public CustomNpc(
                 String npcId,
@@ -3062,7 +4088,7 @@ public final class MapDesignLibrary {
                 String interactionId
         ) {
             this(npcId, displayName, imagePath, talkSoundPath, interactionId, null,
-                    CharacterModelDefinition.empty());
+                    CharacterModelDefinition.empty(), List.of());
         }
 
         public CustomNpc(
@@ -3074,7 +4100,19 @@ public final class MapDesignLibrary {
                 CustomShop shop
         ) {
             this(npcId, displayName, imagePath, talkSoundPath, interactionId, shop,
-                    CharacterModelDefinition.empty());
+                    CharacterModelDefinition.empty(), List.of());
+        }
+
+        public CustomNpc(
+                String npcId,
+                String displayName,
+                String imagePath,
+                String talkSoundPath,
+                String interactionId,
+                CustomShop shop,
+                CharacterModelDefinition characterModel
+        ) {
+            this(npcId, displayName, imagePath, talkSoundPath, interactionId, shop, characterModel, List.of());
         }
 
         public CustomNpc {
@@ -3084,6 +4122,9 @@ public final class MapDesignLibrary {
             talkSoundPath = talkSoundPath == null ? "" : talkSoundPath;
             interactionId = interactionId == null ? "" : interactionId;
             characterModel = characterModel == null ? CharacterModelDefinition.empty() : characterModel;
+            questIds = questIds == null
+                    ? List.of()
+                    : questIds.stream().filter(id -> id != null && !id.isBlank()).distinct().toList();
         }
 
         public MapEntity createEntity(int x, int y) {
@@ -3097,12 +4138,17 @@ public final class MapDesignLibrary {
             if (characterModel.hasModel()) {
                 entity.withCharacterModel(characterModel);
             }
-            if (shop == null) {
-                return entity.withInteractionId(interactionId);
+            String runtimeInteractionId = interactionId;
+            if (runtimeInteractionId.isBlank() && (shop != null || !questIds.isEmpty())) {
+                runtimeInteractionId = "npc_hub";
             }
-            return entity
-                    .withInteractionId("custom_shop")
-                    .withShopBlueprint(shop.toBlueprint());
+            entity.withContentId(npcId)
+                    .withInteractionId(runtimeInteractionId)
+                    .withQuestIds(questIds);
+            if (shop != null) {
+                entity.withShopBlueprint(shop.toBlueprint());
+            }
+            return entity;
         }
     }
 
@@ -3156,11 +4202,13 @@ public final class MapDesignLibrary {
             String smeltOutputItemId,
             int smeltXpReward,
             List<String> framePaths,
+            List<String> modelPaths,
             int frameDurationMs,
             double visualScale,
             CharacterSkill gatheringSkill,
             List<CustomDropEntry> lootEntries,
-            int smeltRequiredLevel
+            int smeltRequiredLevel,
+            LightAttachment lightAttachment
     ) {
         public CustomGatheringNode {
             nodeId = nodeId == null ? "" : nodeId;
@@ -3181,8 +4229,48 @@ public final class MapDesignLibrary {
                     .filter(path -> path != null && !path.isBlank())
                     .map(path -> path.replace('\\', '/'))
                     .toList();
+            modelPaths = modelPaths == null ? List.of() : modelPaths.stream()
+                    .filter(path -> path != null && !path.isBlank())
+                    .map(path -> path.replace('\\', '/'))
+                    .toList();
             frameDurationMs = Math.max(1, frameDurationMs);
             visualScale = Math.max(0.1, visualScale);
+        }
+
+        public CustomGatheringNode(
+                String nodeId,
+                String displayName,
+                GatheringNodeType nodeType,
+                int requiredLevel,
+                String outputItemId,
+                int gatherXpReward,
+                String smeltOutputItemId,
+                int smeltXpReward,
+                List<String> framePaths,
+                int frameDurationMs,
+                double visualScale,
+                CharacterSkill gatheringSkill,
+                List<CustomDropEntry> lootEntries,
+                int smeltRequiredLevel
+        ) {
+            this(
+                    nodeId,
+                    displayName,
+                    nodeType,
+                    requiredLevel,
+                    outputItemId,
+                    gatherXpReward,
+                    smeltOutputItemId,
+                    smeltXpReward,
+                    framePaths,
+                    List.of(),
+                    frameDurationMs,
+                    visualScale,
+                    gatheringSkill,
+                    lootEntries,
+                    smeltRequiredLevel,
+                    null
+            );
         }
 
         public CustomGatheringNode(
@@ -3208,13 +4296,15 @@ public final class MapDesignLibrary {
                     smeltOutputItemId,
                     smeltXpReward,
                     framePaths,
+                    List.of(),
                     frameDurationMs,
                     visualScale,
                     defaultGatheringSkill(nodeType),
                     outputItemId == null || outputItemId.isBlank()
                             ? List.of()
                             : List.of(new CustomDropEntry(outputItemId, 1.0)),
-                    1
+                    1,
+                    null
             );
         }
 
@@ -3247,13 +4337,23 @@ public final class MapDesignLibrary {
             }
 
             entity.withInteractionId(interactionId()).withVisualScale(visualScale);
-            if ("node_oak_tree".equalsIgnoreCase(nodeId)) {
-//                entity.withStaticModel(OAK_TREE_TEST_MODEL_PATH);
+            String defaultModelPath = getModelForExhaustion(0);
+            if (!defaultModelPath.isBlank()) {
+                entity.withStaticModel(defaultModelPath);
             }
             if (nodeType == GatheringNodeType.MINING_ROCK || nodeType == GatheringNodeType.TREE) {
                 entity.blocksMovement(true);
             }
             return entity;
+        }
+
+        public MapLight createLight(PlacedObjectInstance instance) {
+            LightAttachment attachment = instance != null && instance.lightOverride() != null
+                    ? instance.lightOverride()
+                    : lightAttachment;
+            return attachment == null
+                    ? null
+                    : attachment.toMapLight("gathering_" + instance.instanceId(), instance);
         }
 
         public BufferedImage getImageForExhaustion(int exhaustionLevel) {
@@ -3264,6 +4364,16 @@ public final class MapDesignLibrary {
                     ? (exhaustionLevel >= 2 ? framePaths.size() - 1 : 0)
                     : Math.max(0, Math.min(framePaths.size() - 1, exhaustionLevel));
             return AssetLoader.loadImage(framePaths.get(safeIndex));
+        }
+
+        public String getModelForExhaustion(int exhaustionLevel) {
+            if (modelPaths.isEmpty()) {
+                return "";
+            }
+            int safeIndex = nodeType == GatheringNodeType.TREE
+                    ? (exhaustionLevel >= 2 ? modelPaths.size() - 1 : 0)
+                    : Math.max(0, Math.min(modelPaths.size() - 1, exhaustionLevel));
+            return modelPaths.get(safeIndex);
         }
 
         private BufferedImage[] loadFrames() {
@@ -3293,12 +4403,10 @@ public final class MapDesignLibrary {
     public enum PlacementKind {
         CRAFTING_NODE,
         GATHERING_NODE,
-        GENERIC_NPC,
-        MAIN_NPC,
+        FURNITURE,
         CUSTOM_NPC,
         ITEM,
         ENEMY,
-        AUTHORED_DIALOGUE_NPC,
         INTERACTION
     }
 
@@ -3325,7 +4433,7 @@ public final class MapDesignLibrary {
 
     public enum TriggerFireMode {
         ON_ENTRY,
-        ON_QUEST_STAGE
+        ON_QUEST_PROGRESS
     }
 
     public enum TriggerActionType {

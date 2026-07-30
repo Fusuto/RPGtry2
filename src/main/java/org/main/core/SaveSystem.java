@@ -8,6 +8,7 @@ import org.main.engine.MapLight;
 import org.main.engine.MapLightingSettings;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapPaintData;
+import org.main.engine.MapEntity;
 import org.main.engine.MobAreaData;
 
 import java.io.IOException;
@@ -20,6 +21,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -89,13 +91,14 @@ public final class SaveSystem {
         properties.setProperty("world.discovered", join(gameState.getDiscoveredMiniMapTileKeys()));
         properties.setProperty("world.removedEntities", join(gameState.getRemovedEntityKeysView()));
         properties.setProperty("world.spokenAuthoredDialogues", join(gameState.getSpokenAuthoredDialogueIdsView()));
+        properties.setProperty("world.claimedDialogueRewards", join(gameState.getClaimedDialogueRewardKeysView()));
         properties.setProperty("world.mapDesignPath", mapDesignPathForSave(gameState.getCurrentMapDesignPath()));
         saveDungeonMap(properties, gameState.getDungeonMap());
         saveTileInteractions(properties, gameState);
         saveMapRuntimeStates(properties, gameState.getMapRuntimeStatesView());
         saveOpenWorldRuntimeStates(properties, gameState.getOpenWorldRuntimeStatesView());
 
-        gameState.getQuestStagesView().forEach((id, stage) -> properties.setProperty("quest." + id, String.valueOf(stage)));
+        saveQuestRuntime(properties, gameState.getQuestRuntime().snapshots());
 
         try (OutputStream outputStream = Files.newOutputStream(SAVE_PATH)) {
             properties.store(outputStream, "Aether save");
@@ -157,15 +160,12 @@ public final class SaveSystem {
                     loadTileInteractionMap(properties, "world.tileInteractions."),
                     readSet(properties.getProperty("world.removedEntities", "")),
                     Map.of(),
+                    Map.of(),
+                    Map.of(),
+                    System.currentTimeMillis(),
                     readSet(properties.getProperty("world.discovered", "")),
                     List.of(),
                     Set.of(),
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    List.of(),
                     List.of()
             ));
         }
@@ -211,8 +211,9 @@ public final class SaveSystem {
         gameState.setMiniMapMode(readEnum(properties, "world.minimapMode", GameState.MiniMapMode.class, GameState.MiniMapMode.DISCOVERED));
         gameState.setDiscoveredMiniMapTileKeys(readSet(properties.getProperty("world.discovered", "")));
         gameState.setSpokenAuthoredDialogueIds(readSet(properties.getProperty("world.spokenAuthoredDialogues", "")));
+        gameState.setClaimedDialogueRewardKeys(readSet(properties.getProperty("world.claimedDialogueRewards", "")));
         restoreGold(gameState, readInt(properties, "world.gold", gameState.getGold()));
-        gameState.setQuestStages(readQuestStages(properties));
+        gameState.getQuestRuntime().restore(readQuestRuntime(properties));
 
         if (currentFloor <= 1 && !loadedAuthoredMap) {
             GameBootstrap.seedTestContent(gameState);
@@ -268,7 +269,7 @@ public final class SaveSystem {
                 try {
                     saved.put(memberId, PartyFormation.Cell.valueOf(value.trim().toUpperCase()));
                 } catch (IllegalArgumentException ignored) {
-                    // The deterministic repair below handles malformed legacy values.
+                    // The deterministic repair below handles malformed values.
                 }
             }
         }
@@ -368,6 +369,8 @@ public final class SaveSystem {
             properties.setProperty(itemPrefix + "radius", String.valueOf(light.radius()));
             properties.setProperty(itemPrefix + "intensity", String.valueOf(light.intensity()));
             properties.setProperty(itemPrefix + "heightOffset", String.valueOf(light.heightOffset()));
+            properties.setProperty(itemPrefix + "offsetX", String.valueOf(light.offsetX()));
+            properties.setProperty(itemPrefix + "offsetZ", String.valueOf(light.offsetZ()));
             properties.setProperty(itemPrefix + "flicker", String.valueOf(light.flickerAmount()));
             properties.setProperty(itemPrefix + "enabled", String.valueOf(light.enabled()));
         }
@@ -402,6 +405,8 @@ public final class SaveSystem {
                     readDouble(properties, itemPrefix + "radius", 5.0),
                     readDouble(properties, itemPrefix + "intensity", 1.0),
                     readDouble(properties, itemPrefix + "heightOffset", 0.65),
+                    readDouble(properties, itemPrefix + "offsetX", 0.0),
+                    readDouble(properties, itemPrefix + "offsetZ", 0.0),
                     readDouble(properties, itemPrefix + "flicker", 0.0),
                     Boolean.parseBoolean(properties.getProperty(itemPrefix + "enabled", "true"))
             ));
@@ -558,6 +563,7 @@ public final class SaveSystem {
             saveResourceNodeSnapshots(properties, prefix + "resource.", state.resourceNodeStates());
             saveEnemyRespawnSnapshots(properties, prefix + "enemyRespawn.", state.enemyRespawns());
             saveEnemyActiveSnapshots(properties, prefix + "enemyActive.", state.activeEnemies());
+            saveMapEntitySnapshots(properties, prefix + "entity.", state.entities(), state.hasEntitySnapshot());
             saveTemporaryStationSnapshots(properties, prefix + "temporaryStation.", state.temporaryStations());
             saveMapTriggers(properties, prefix + "trigger.", state.mapTriggers());
             index++;
@@ -573,11 +579,16 @@ public final class SaveSystem {
             Path path = readMapDesignPath(properties.getProperty(prefix + "path", ""));
             String key = properties.getProperty(prefix + "key", mapDesignPathForSave(path));
             DungeonMap map = loadDungeonMap(properties, prefix + "map.");
+            List<MapEntity> entities = loadMapEntitySnapshots(properties, prefix + "entity.");
+            boolean hasEntitySnapshot = Boolean.parseBoolean(properties.getProperty(
+                    prefix + "entity.hasSnapshot",
+                    String.valueOf(!entities.isEmpty())
+            ));
             states.put(key, new GameState.MapRuntimeState(
                     path,
                     map,
-                    List.of(),
-                    false,
+                    entities,
+                    hasEntitySnapshot,
                     loadTileInteractionMap(properties, prefix + "tileInteraction."),
                     readSet(properties.getProperty(prefix + "removed", "")),
                     loadResourceNodeSnapshots(properties, prefix + "resource."),
@@ -587,18 +598,157 @@ public final class SaveSystem {
                     readSet(properties.getProperty(prefix + "discovered", "")),
                     loadMapTriggers(properties, prefix + "trigger."),
                     readSet(properties.getProperty(prefix + "firedTriggers", "")),
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    List.of(),
                     loadTemporaryStationSnapshots(properties, prefix + "temporaryStation.")
             ));
         }
 
         return states;
+    }
+
+    private static void saveMapEntitySnapshots(
+            Properties properties,
+            String prefix,
+            List<MapEntity> entities,
+            boolean hasEntitySnapshot
+    ) {
+        List<MapEntity> durableEntities = entities == null
+                ? List.of()
+                : entities.stream()
+                        .filter(entity -> entity != null && !entity.isTemporaryStation())
+                        .toList();
+        properties.setProperty(prefix + "hasSnapshot", String.valueOf(hasEntitySnapshot));
+        properties.setProperty(prefix + "count", String.valueOf(hasEntitySnapshot ? durableEntities.size() : 0));
+        if (!hasEntitySnapshot) {
+            return;
+        }
+
+        for (int i = 0; i < durableEntities.size(); i++) {
+            MapEntity entity = durableEntities.get(i);
+            String itemPrefix = prefix + i + ".";
+            properties.setProperty(itemPrefix + "name", encode(entity.getName()));
+            properties.setProperty(itemPrefix + "type", entity.getType().name());
+            properties.setProperty(itemPrefix + "x", String.valueOf(entity.getX()));
+            properties.setProperty(itemPrefix + "y", String.valueOf(entity.getY()));
+            properties.setProperty(itemPrefix + "interactionId", encode(entity.getInteractionId()));
+            properties.setProperty(itemPrefix + "contentId", encode(entity.getContentId()));
+            properties.setProperty(itemPrefix + "quest.count", String.valueOf(entity.getQuestIds().size()));
+            for (int questIndex = 0; questIndex < entity.getQuestIds().size(); questIndex++) {
+                properties.setProperty(
+                        itemPrefix + "quest." + questIndex,
+                        encode(entity.getQuestIds().get(questIndex))
+                );
+            }
+            properties.setProperty(itemPrefix + "talkSoundPath", encode(entity.getTalkSoundPath()));
+            properties.setProperty(itemPrefix + "blocksMovement", String.valueOf(entity.blocksMovement()));
+            properties.setProperty(itemPrefix + "renderOnWall", String.valueOf(entity.shouldRenderOnWall()));
+            properties.setProperty(itemPrefix + "visualScale", String.valueOf(entity.getVisualScale()));
+            properties.setProperty(itemPrefix + "staticModelPath", encode(entity.getStaticModelPath()));
+            properties.setProperty(itemPrefix + "staticModelVisible", String.valueOf(entity.hasVisibleStaticModel()));
+            properties.setProperty(itemPrefix + "staticModelOffsetX", String.valueOf(entity.getStaticModelOffsetX()));
+            properties.setProperty(itemPrefix + "staticModelOffsetY", String.valueOf(entity.getStaticModelOffsetY()));
+            properties.setProperty(itemPrefix + "staticModelOffsetZ", String.valueOf(entity.getStaticModelOffsetZ()));
+            properties.setProperty(itemPrefix + "staticModelYawDegrees", String.valueOf(entity.getStaticModelYawDegrees()));
+            properties.setProperty(itemPrefix + "staticModelPitchDegrees", String.valueOf(entity.getStaticModelPitchDegrees()));
+            properties.setProperty(itemPrefix + "staticModelRollDegrees", String.valueOf(entity.getStaticModelRollDegrees()));
+            properties.setProperty(itemPrefix + "staticModelScaleMultiplier", String.valueOf(entity.getStaticModelScaleMultiplier()));
+            properties.setProperty(itemPrefix + "staticModelBrightness", String.valueOf(entity.getStaticModelBrightness()));
+            properties.setProperty(itemPrefix + "item", itemKey(entity.getItem()));
+            properties.setProperty(itemPrefix + "monsterId", encode(entity.getMonster() == null ? "" : entity.getMonster().getCustomId()));
+            properties.setProperty(itemPrefix + "enemySpawnId", encode(entity.getEnemySpawnId()));
+            properties.setProperty(itemPrefix + "spawnX", String.valueOf(entity.getSpawnX()));
+            properties.setProperty(itemPrefix + "spawnY", String.valueOf(entity.getSpawnY()));
+            properties.setProperty(itemPrefix + "areaId", encode(entity.getRoamingAreaId()));
+            properties.setProperty(itemPrefix + "awarenessRadius", String.valueOf(entity.getAwarenessRadius()));
+            properties.setProperty(itemPrefix + "movementIntervalMs", String.valueOf(entity.getMovementIntervalMs()));
+            properties.setProperty(itemPrefix + "respawnDelayMs", String.valueOf(entity.getRespawnDelayMs()));
+            properties.setProperty(itemPrefix + "aiCooldownMs", String.valueOf(entity.getWorldAiCooldownMs()));
+            properties.setProperty(itemPrefix + "alerted", String.valueOf(entity.isWorldAlerted()));
+        }
+    }
+
+    private static List<MapEntity> loadMapEntitySnapshots(Properties properties, String prefix) {
+        int count = Math.max(0, readInt(properties, prefix + "count", 0));
+        List<MapEntity> entities = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            String itemPrefix = prefix + i + ".";
+            Library.EntityType type;
+            try {
+                type = Library.EntityType.valueOf(
+                        properties.getProperty(itemPrefix + "type", Library.EntityType.ITEM.name()));
+            } catch (IllegalArgumentException ignored) {
+                type = Library.EntityType.ITEM;
+            }
+
+            InventorySystem.Item item = readInventoryItem(properties.getProperty(itemPrefix + "item", ""));
+            String monsterId = decode(properties.getProperty(itemPrefix + "monsterId", ""));
+            MapEntity entity = null;
+            if (item != null) {
+                entity = new MapEntity(item, readInt(properties, itemPrefix + "x", 0), readInt(properties, itemPrefix + "y", 0));
+            } else if (!monsterId.isBlank()) {
+                var monster = MapDesignLibrary.createEnemyById(monsterId);
+                if (monster != null) {
+                    entity = new MapEntity(monster, readInt(properties, itemPrefix + "x", 0), readInt(properties, itemPrefix + "y", 0));
+                }
+            }
+            if (entity == null) {
+                entity = new MapEntity(
+                        decode(properties.getProperty(itemPrefix + "name", "")),
+                        type,
+                        readInt(properties, itemPrefix + "x", 0),
+                        readInt(properties, itemPrefix + "y", 0)
+                );
+            }
+
+            entity.setInteractionId(decode(properties.getProperty(itemPrefix + "interactionId", "")));
+            entity.withContentId(decode(properties.getProperty(itemPrefix + "contentId", "")));
+            int questCount = Math.max(0, readInt(properties, itemPrefix + "quest.count", 0));
+            List<String> questIds = new ArrayList<>();
+            for (int questIndex = 0; questIndex < questCount; questIndex++) {
+                String questId = decode(properties.getProperty(
+                        itemPrefix + "quest." + questIndex,
+                        ""
+                ));
+                if (!questId.isBlank()) {
+                    questIds.add(questId);
+                }
+            }
+            entity.withQuestIds(questIds);
+            entity.setTalkSoundPath(decode(properties.getProperty(itemPrefix + "talkSoundPath", "")));
+            entity.blocksMovement(Boolean.parseBoolean(properties.getProperty(itemPrefix + "blocksMovement", "false")));
+            entity.renderOnWall(Boolean.parseBoolean(properties.getProperty(itemPrefix + "renderOnWall", "false")));
+            entity.withVisualScale(readDouble(properties, itemPrefix + "visualScale", 1.0));
+            String staticModelPath = decode(properties.getProperty(itemPrefix + "staticModelPath", ""));
+            if (!staticModelPath.isBlank()) {
+                entity.withStaticModel(staticModelPath);
+                entity.withStaticModelTransform(
+                        readDouble(properties, itemPrefix + "staticModelOffsetX", 0.0),
+                        readDouble(properties, itemPrefix + "staticModelOffsetY", 0.0),
+                        readDouble(properties, itemPrefix + "staticModelOffsetZ", 0.0),
+                        readDouble(properties, itemPrefix + "staticModelYawDegrees", 0.0),
+                        readDouble(properties, itemPrefix + "staticModelPitchDegrees", 0.0),
+                        readDouble(properties, itemPrefix + "staticModelRollDegrees", 0.0),
+                        readDouble(properties, itemPrefix + "staticModelScaleMultiplier", 1.0)
+                );
+                entity.withStaticModelBrightness(readDouble(properties, itemPrefix + "staticModelBrightness", 1.0));
+                entity.setStaticModelVisible(Boolean.parseBoolean(properties.getProperty(itemPrefix + "staticModelVisible", "true")));
+            }
+            String enemySpawnId = decode(properties.getProperty(itemPrefix + "enemySpawnId", ""));
+            if (entity.getMonster() != null && !enemySpawnId.isBlank()) {
+                entity.configureEnemySpawn(
+                        enemySpawnId,
+                        readInt(properties, itemPrefix + "spawnX", entity.getX()),
+                        readInt(properties, itemPrefix + "spawnY", entity.getY()),
+                        decode(properties.getProperty(itemPrefix + "areaId", "")),
+                        readInt(properties, itemPrefix + "awarenessRadius", 4),
+                        readInt(properties, itemPrefix + "movementIntervalMs", 3000),
+                        readInt(properties, itemPrefix + "respawnDelayMs", 300000)
+                );
+                entity.setWorldAiCooldownMs(readInt(properties, itemPrefix + "aiCooldownMs", 0));
+                entity.setWorldAlerted(Boolean.parseBoolean(properties.getProperty(itemPrefix + "alerted", "false")));
+            }
+            entities.add(entity);
+        }
+        return entities;
     }
 
     private static void saveTemporaryStationSnapshots(
@@ -851,10 +1001,28 @@ public final class SaveSystem {
             properties.setProperty(entityPrefix + "x", String.valueOf(entity.x()));
             properties.setProperty(entityPrefix + "y", String.valueOf(entity.y()));
             properties.setProperty(entityPrefix + "interactionId", encode(entity.interactionId()));
+            properties.setProperty(entityPrefix + "contentId", encode(entity.contentId()));
+            properties.setProperty(entityPrefix + "quest.count", String.valueOf(entity.questIds().size()));
+            for (int questIndex = 0; questIndex < entity.questIds().size(); questIndex++) {
+                properties.setProperty(
+                        entityPrefix + "quest." + questIndex,
+                        encode(entity.questIds().get(questIndex))
+                );
+            }
             properties.setProperty(entityPrefix + "talkSoundPath", encode(entity.talkSoundPath()));
             properties.setProperty(entityPrefix + "blocksMovement", String.valueOf(entity.blocksMovement()));
             properties.setProperty(entityPrefix + "renderOnWall", String.valueOf(entity.renderOnWall()));
             properties.setProperty(entityPrefix + "visualScale", String.valueOf(entity.visualScale()));
+            properties.setProperty(entityPrefix + "staticModelPath", encode(entity.staticModelPath()));
+            properties.setProperty(entityPrefix + "staticModelVisible", String.valueOf(entity.staticModelVisible()));
+            properties.setProperty(entityPrefix + "staticModelOffsetX", String.valueOf(entity.staticModelOffsetX()));
+            properties.setProperty(entityPrefix + "staticModelOffsetY", String.valueOf(entity.staticModelOffsetY()));
+            properties.setProperty(entityPrefix + "staticModelOffsetZ", String.valueOf(entity.staticModelOffsetZ()));
+            properties.setProperty(entityPrefix + "staticModelYawDegrees", String.valueOf(entity.staticModelYawDegrees()));
+            properties.setProperty(entityPrefix + "staticModelPitchDegrees", String.valueOf(entity.staticModelPitchDegrees()));
+            properties.setProperty(entityPrefix + "staticModelRollDegrees", String.valueOf(entity.staticModelRollDegrees()));
+            properties.setProperty(entityPrefix + "staticModelScaleMultiplier", String.valueOf(entity.staticModelScaleMultiplier()));
+            properties.setProperty(entityPrefix + "staticModelBrightness", String.valueOf(entity.staticModelBrightness()));
             properties.setProperty(entityPrefix + "item", itemKey(entity.item()));
             properties.setProperty(entityPrefix + "monsterId", encode(entity.monsterId()));
             properties.setProperty(entityPrefix + "enemySpawnId", encode(entity.enemySpawnId()));
@@ -897,16 +1065,39 @@ public final class SaveSystem {
             } catch (IllegalArgumentException ignored) {
                 type = Library.EntityType.ITEM;
             }
+            int questCount = Math.max(0, readInt(properties, entityPrefix + "quest.count", 0));
+            List<String> questIds = new ArrayList<>();
+            for (int questIndex = 0; questIndex < questCount; questIndex++) {
+                String questId = decode(properties.getProperty(
+                        entityPrefix + "quest." + questIndex,
+                        ""
+                ));
+                if (!questId.isBlank()) {
+                    questIds.add(questId);
+                }
+            }
             entities.add(new OpenWorldSession.PersistedEntityState(
                     decode(properties.getProperty(entityPrefix + "name", "")),
                     type,
                     readInt(properties, entityPrefix + "x", 0),
                     readInt(properties, entityPrefix + "y", 0),
                     decode(properties.getProperty(entityPrefix + "interactionId", "")),
+                    decode(properties.getProperty(entityPrefix + "contentId", "")),
+                    questIds,
                     decode(properties.getProperty(entityPrefix + "talkSoundPath", "")),
                     Boolean.parseBoolean(properties.getProperty(entityPrefix + "blocksMovement", "false")),
                     Boolean.parseBoolean(properties.getProperty(entityPrefix + "renderOnWall", "false")),
                     readDouble(properties, entityPrefix + "visualScale", 1.0),
+                    decode(properties.getProperty(entityPrefix + "staticModelPath", "")),
+                    Boolean.parseBoolean(properties.getProperty(entityPrefix + "staticModelVisible", "false")),
+                    readDouble(properties, entityPrefix + "staticModelOffsetX", 0.0),
+                    readDouble(properties, entityPrefix + "staticModelOffsetY", 0.0),
+                    readDouble(properties, entityPrefix + "staticModelOffsetZ", 0.0),
+                    readDouble(properties, entityPrefix + "staticModelYawDegrees", 0.0),
+                    readDouble(properties, entityPrefix + "staticModelPitchDegrees", 0.0),
+                    readDouble(properties, entityPrefix + "staticModelRollDegrees", 0.0),
+                    readDouble(properties, entityPrefix + "staticModelScaleMultiplier", 1.0),
+                    readDouble(properties, entityPrefix + "staticModelBrightness", 1.0),
                     readInventoryItem(properties.getProperty(entityPrefix + "item", "")),
                     decode(properties.getProperty(entityPrefix + "monsterId", "")),
                     decode(properties.getProperty(entityPrefix + "enemySpawnId", "")),
@@ -952,7 +1143,7 @@ public final class SaveSystem {
             properties.setProperty(triggerPrefix + "fireMode", trigger.fireMode().name());
             properties.setProperty(triggerPrefix + "oneShot", String.valueOf(trigger.oneShot()));
             properties.setProperty(triggerPrefix + "requiredQuestId", trigger.requiredQuestId());
-            properties.setProperty(triggerPrefix + "requiredQuestStage", String.valueOf(trigger.requiredQuestStage()));
+            properties.setProperty(triggerPrefix + "requiredQuestProgress", trigger.requiredQuestProgress());
             properties.setProperty(triggerPrefix + "action.count", String.valueOf(trigger.actions().size()));
             for (int actionIndex = 0; actionIndex < trigger.actions().size(); actionIndex++) {
                 MapDesignLibrary.TriggerAction action = trigger.actions().get(actionIndex);
@@ -1004,7 +1195,7 @@ public final class SaveSystem {
                     ),
                     Boolean.parseBoolean(properties.getProperty(triggerPrefix + "oneShot", "true")),
                     properties.getProperty(triggerPrefix + "requiredQuestId", ""),
-                    readInt(properties, triggerPrefix + "requiredQuestStage", 0),
+                    properties.getProperty(triggerPrefix + "requiredQuestProgress", ""),
                     actions
             ));
         }
@@ -1346,16 +1537,74 @@ public final class SaveSystem {
         }
     }
 
-    private static Map<String, Integer> readQuestStages(Properties properties) {
-        Map<String, Integer> quests = new HashMap<>();
-
-        for (String key : properties.stringPropertyNames()) {
-            if (key.startsWith("quest.")) {
-                quests.put(key.substring("quest.".length()), readInt(properties, key, 0));
+    private static void saveQuestRuntime(
+            Properties properties,
+            Map<String, QuestRuntime.Snapshot> snapshots
+    ) {
+        List<Map.Entry<String, QuestRuntime.Snapshot>> entries = snapshots.entrySet().stream().toList();
+        properties.setProperty("questState.schemaVersion", "2");
+        properties.setProperty("questState.count", String.valueOf(entries.size()));
+        for (int index = 0; index < entries.size(); index++) {
+            Map.Entry<String, QuestRuntime.Snapshot> entry = entries.get(index);
+            String prefix = "questState." + index + ".";
+            properties.setProperty(prefix + "questId", entry.getKey());
+            properties.setProperty(prefix + "state", entry.getValue().state().name());
+            properties.setProperty(prefix + "stageId", entry.getValue().stageId());
+            List<Map.Entry<String, Integer>> counters = entry.getValue().counters().entrySet().stream().toList();
+            properties.setProperty(prefix + "counter.count", String.valueOf(counters.size()));
+            for (int counterIndex = 0; counterIndex < counters.size(); counterIndex++) {
+                String counterPrefix = prefix + "counter." + counterIndex + ".";
+                properties.setProperty(counterPrefix + "objectiveId", counters.get(counterIndex).getKey());
+                properties.setProperty(counterPrefix + "value", String.valueOf(counters.get(counterIndex).getValue()));
+            }
+            List<String> claims = entry.getValue().claimedRewardKeys().stream().sorted().toList();
+            properties.setProperty(prefix + "claim.count", String.valueOf(claims.size()));
+            for (int claimIndex = 0; claimIndex < claims.size(); claimIndex++) {
+                properties.setProperty(prefix + "claim." + claimIndex, claims.get(claimIndex));
             }
         }
+    }
 
-        return quests;
+    private static Map<String, QuestRuntime.Snapshot> readQuestRuntime(Properties properties) {
+        int count = Math.max(0, readInt(properties, "questState.count", 0));
+        Map<String, QuestRuntime.Snapshot> snapshots = new HashMap<>();
+        for (int index = 0; index < count; index++) {
+            String prefix = "questState." + index + ".";
+            String questId = properties.getProperty(prefix + "questId", "").trim();
+            if (questId.isBlank()) {
+                continue;
+            }
+            QuestRuntime.State state = readEnum(
+                    properties,
+                    prefix + "state",
+                    QuestRuntime.State.class,
+                    QuestRuntime.State.AVAILABLE
+            );
+            int counterCount = Math.max(0, readInt(properties, prefix + "counter.count", 0));
+            Map<String, Integer> counters = new HashMap<>();
+            for (int counterIndex = 0; counterIndex < counterCount; counterIndex++) {
+                String counterPrefix = prefix + "counter." + counterIndex + ".";
+                String objectiveId = properties.getProperty(counterPrefix + "objectiveId", "").trim();
+                if (!objectiveId.isBlank()) {
+                    counters.put(objectiveId, Math.max(0, readInt(properties, counterPrefix + "value", 0)));
+                }
+            }
+            int claimCount = Math.max(0, readInt(properties, prefix + "claim.count", 0));
+            Set<String> claims = new HashSet<>();
+            for (int claimIndex = 0; claimIndex < claimCount; claimIndex++) {
+                String claim = properties.getProperty(prefix + "claim." + claimIndex, "").trim();
+                if (!claim.isBlank()) {
+                    claims.add(claim);
+                }
+            }
+            snapshots.put(questId, new QuestRuntime.Snapshot(
+                    state,
+                    properties.getProperty(prefix + "stageId", ""),
+                    counters,
+                    claims
+            ));
+        }
+        return Map.copyOf(snapshots);
     }
 
     private static String mapDesignPathForSave(Path path) {

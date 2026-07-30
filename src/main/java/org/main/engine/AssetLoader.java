@@ -31,10 +31,6 @@ public final class AssetLoader {
     public record ImageAsset(String fileName, BufferedImage image) {
     }
 
-    private static final String LEGACY_IMAGE_PREFIX = "src/main/java/org/main/images/";
-    private static final String LEGACY_SOUND_PREFIX = "src/main/java/org/main/sounds/";
-    private static final String GENERATED_SOUND_PREFIX = "generated/";
-    private static final Path DATA_FOLDER = Path.of("data");
     private static final ClassLoader CLASS_LOADER = AssetLoader.class.getClassLoader();
     private static final Logger LOGGER = Logger.getLogger(AssetLoader.class.getName());
 
@@ -164,15 +160,6 @@ public final class AssetLoader {
             return directPath;
         }
 
-        if (normalizedPath.startsWith(LEGACY_SOUND_PREFIX + GENERATED_SOUND_PREFIX)) {
-            String fileName = normalizedPath.substring((LEGACY_SOUND_PREFIX + GENERATED_SOUND_PREFIX).length());
-            return generatedSoundsFolder().resolve(fileName);
-        }
-
-        if (normalizedPath.startsWith("sounds/generated/")) {
-            return generatedSoundsFolder().resolve(normalizedPath.substring("sounds/generated/".length()));
-        }
-
         if (normalizedPath.startsWith("data/")) {
             return ApplicationPaths.resolveApplicationPath(normalizedPath);
         }
@@ -182,22 +169,6 @@ public final class AssetLoader {
 
     private static String normalizeResourcePath(String assetPath) {
         String normalizedPath = normalizeSlashes(assetPath);
-
-        if (normalizedPath.startsWith(LEGACY_IMAGE_PREFIX)) {
-            return "assets/images/" + normalizedPath.substring(LEGACY_IMAGE_PREFIX.length());
-        }
-
-        if (normalizedPath.startsWith(LEGACY_SOUND_PREFIX)) {
-            return "assets/sounds/" + normalizedPath.substring(LEGACY_SOUND_PREFIX.length());
-        }
-
-        if (normalizedPath.startsWith("images/")) {
-            return "assets/" + normalizedPath;
-        }
-
-        if (normalizedPath.startsWith("sounds/")) {
-            return "assets/" + normalizedPath;
-        }
 
         if (normalizedPath.startsWith("data/sounds/generated/")) {
             return "assets/sounds/generated/" + normalizedPath.substring("data/sounds/generated/".length());

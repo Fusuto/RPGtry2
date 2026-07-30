@@ -1,7 +1,6 @@
 package org.main.monsters;
 
 import org.main.content.CharacterModelDefinition;
-import org.main.content.SkillLibrary;
 import org.main.core.PlayerStat;
 import org.main.engine.AssetLoader;
 
@@ -21,7 +20,7 @@ public class Monster {
     private final String customAttackSoundPath;
     private final String customDamageSoundPath;
     private final int customCombatAiIntelligence;
-    private final List<SkillLibrary> customSkills;
+    private final List<String> customSkillIds;
     private final String customPaperDollSourcePath;
     private final List<DropEntry> customDrops;
     private final CharacterModelDefinition characterModel;
@@ -39,7 +38,7 @@ public class Monster {
             String attackSoundPath,
             String damageSoundPath,
             int combatAiIntelligence,
-            List<SkillLibrary> skills,
+            List<String> skillIds,
             List<DropEntry> drops,
             CharacterModelDefinition characterModel
     ) {
@@ -54,7 +53,7 @@ public class Monster {
         this.customAttackSoundPath = attackSoundPath == null ? "" : attackSoundPath;
         this.customDamageSoundPath = damageSoundPath == null ? "" : damageSoundPath;
         this.customCombatAiIntelligence = Math.max(0, combatAiIntelligence);
-        this.customSkills = skills == null ? List.of() : List.copyOf(skills);
+        this.customSkillIds = skillIds == null ? List.of() : List.copyOf(skillIds);
         this.customDrops = drops == null ? List.of() : List.copyOf(drops);
         this.characterModel = characterModel == null
                 ? CharacterModelDefinition.empty()
@@ -73,11 +72,11 @@ public class Monster {
             String attackSoundPath,
             String damageSoundPath,
             int combatAiIntelligence,
-            List<SkillLibrary> skills,
+            List<String> skillIds,
             List<DropEntry> drops
     ) {
         this(customId, name, stats, xpReward, description, imagePath, paperDollSourcePath,
-                attackSoundPath, damageSoundPath, combatAiIntelligence, skills, drops,
+                attackSoundPath, damageSoundPath, combatAiIntelligence, skillIds, drops,
                 CharacterModelDefinition.empty());
     }
 
@@ -137,8 +136,8 @@ public class Monster {
         return getStat(PlayerStat.INTELLIGENCE);
     }
 
-    public List<SkillLibrary> getSkills() {
-        return customSkills;
+    public List<String> getSkillIds() {
+        return customSkillIds;
     }
 
     public int getCombatAiIntelligence() {
@@ -173,7 +172,7 @@ public class Monster {
                 customAttackSoundPath,
                 customDamageSoundPath,
                 customCombatAiIntelligence,
-                customSkills,
+                customSkillIds,
                 customDrops,
                 characterModel
         );

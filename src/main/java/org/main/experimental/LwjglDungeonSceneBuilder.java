@@ -164,10 +164,16 @@ final class LwjglDungeonSceneBuilder {
         }
         return new ModelInstance(
                 entity.getStaticModelPath(),
-                entity.getRenderX() + 0.5,
-                TerrainGeometry.groundYAtWorld(context.map(), entity.getRenderX() + 0.5, entity.getRenderY() + 0.5),
-                entity.getRenderY() + 0.5,
+                entity.getRenderX() + 0.5 + entity.getStaticModelOffsetX(),
+                TerrainGeometry.groundYAtWorld(context.map(), entity.getRenderX() + 0.5, entity.getRenderY() + 0.5)
+                        + entity.getStaticModelOffsetY(),
+                entity.getRenderY() + 0.5 + entity.getStaticModelOffsetZ(),
                 spriteHeightFor(entity),
+                entity.getStaticModelYawDegrees(),
+                entity.getStaticModelPitchDegrees(),
+                entity.getStaticModelRollDegrees(),
+                entity.getStaticModelScaleMultiplier(),
+                entity.getStaticModelBrightness(),
                 fallbackSprite,
                 entity.getCharacterModel(),
                 entity.isVisuallyMoving()
@@ -971,6 +977,11 @@ final class LwjglDungeonSceneBuilder {
             double baseY,
             double centerZ,
             double height,
+            double yawDegrees,
+            double pitchDegrees,
+            double rollDegrees,
+            double scaleMultiplier,
+            double brightness,
             TexturedQuad fallbackSprite,
             org.main.content.CharacterModelDefinition characterModel,
             org.main.content.CharacterModelDefinition.AnimationSlot animationSlot

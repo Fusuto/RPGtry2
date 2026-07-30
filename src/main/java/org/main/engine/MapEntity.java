@@ -8,6 +8,7 @@ import org.main.core.InventorySystem;
 import org.main.core.ShopSystem;
 
 import java.awt.image.BufferedImage;
+import java.util.List;
 
 public class MapEntity {
     private static final double MIN_VISUAL_SCALE = 0.10;
@@ -23,11 +24,21 @@ public class MapEntity {
     private String talkSoundPath;
     private ShopSystem.ShopBlueprint shopBlueprint;
     private ShopSystem.ShopSession shopSession;
+    private String contentId = "";
+    private List<String> questIds = List.of();
     private boolean blocksMovementOverride = false;
     private boolean renderOnWall = false;
     private double visualScale = 1.0;
     private String staticModelPath = "";
     private boolean staticModelVisible = true;
+    private double staticModelOffsetX;
+    private double staticModelOffsetY;
+    private double staticModelOffsetZ;
+    private double staticModelYawDegrees;
+    private double staticModelPitchDegrees;
+    private double staticModelRollDegrees;
+    private double staticModelScaleMultiplier = 1.0;
+    private double staticModelBrightness = 1.0;
     private CharacterModelDefinition characterModel = CharacterModelDefinition.empty();
     private String enemySpawnId = "";
     private String enemyLocalSpawnId = "";
@@ -120,6 +131,26 @@ public class MapEntity {
         return this;
     }
 
+    public String getContentId() {
+        return contentId;
+    }
+
+    public MapEntity withContentId(String contentId) {
+        this.contentId = contentId == null ? "" : contentId.trim();
+        return this;
+    }
+
+    public List<String> getQuestIds() {
+        return questIds;
+    }
+
+    public MapEntity withQuestIds(List<String> questIds) {
+        this.questIds = questIds == null
+                ? List.of()
+                : questIds.stream().filter(id -> id != null && !id.isBlank()).distinct().toList();
+        return this;
+    }
+
     public String getTalkSoundPath() {
         return talkSoundPath;
     }
@@ -185,6 +216,62 @@ public class MapEntity {
     public MapEntity withStaticModel(String assetPath) {
         staticModelPath = assetPath == null ? "" : assetPath.trim().replace('\\', '/');
         staticModelVisible = !staticModelPath.isBlank();
+        return this;
+    }
+
+    public MapEntity withStaticModelTransform(
+            double offsetX,
+            double offsetY,
+            double offsetZ,
+            double yawDegrees,
+            double pitchDegrees,
+            double rollDegrees,
+            double scaleMultiplier
+    ) {
+        staticModelOffsetX = clampFinite(offsetX, -4.0, 4.0, 0.0);
+        staticModelOffsetY = clampFinite(offsetY, -8.0, 8.0, 0.0);
+        staticModelOffsetZ = clampFinite(offsetZ, -4.0, 4.0, 0.0);
+        staticModelYawDegrees = normalizeDegrees(yawDegrees);
+        staticModelPitchDegrees = normalizeDegrees(pitchDegrees);
+        staticModelRollDegrees = normalizeDegrees(rollDegrees);
+        staticModelScaleMultiplier = clampFinite(scaleMultiplier, 0.05, 20.0, 1.0);
+        return this;
+    }
+
+    public double getStaticModelOffsetX() {
+        return staticModelOffsetX;
+    }
+
+    public double getStaticModelOffsetY() {
+        return staticModelOffsetY;
+    }
+
+    public double getStaticModelOffsetZ() {
+        return staticModelOffsetZ;
+    }
+
+    public double getStaticModelYawDegrees() {
+        return staticModelYawDegrees;
+    }
+
+    public double getStaticModelPitchDegrees() {
+        return staticModelPitchDegrees;
+    }
+
+    public double getStaticModelRollDegrees() {
+        return staticModelRollDegrees;
+    }
+
+    public double getStaticModelScaleMultiplier() {
+        return staticModelScaleMultiplier;
+    }
+
+    public double getStaticModelBrightness() {
+        return staticModelBrightness;
+    }
+
+    public MapEntity withStaticModelBrightness(double brightness) {
+        staticModelBrightness = clampFinite(brightness, 0.0, 4.0, 1.0);
         return this;
     }
 
@@ -429,11 +516,20 @@ public class MapEntity {
         copy.interactionId = interactionId;
         copy.talkSoundPath = talkSoundPath;
         copy.shopBlueprint = shopBlueprint;
+        copy.contentId = contentId;
+        copy.questIds = List.copyOf(questIds);
         copy.blocksMovementOverride = blocksMovementOverride;
         copy.renderOnWall = renderOnWall;
         copy.visualScale = visualScale;
         copy.staticModelPath = staticModelPath;
         copy.staticModelVisible = staticModelVisible;
+        copy.staticModelOffsetX = staticModelOffsetX;
+        copy.staticModelOffsetY = staticModelOffsetY;
+        copy.staticModelOffsetZ = staticModelOffsetZ;
+        copy.staticModelYawDegrees = staticModelYawDegrees;
+        copy.staticModelPitchDegrees = staticModelPitchDegrees;
+        copy.staticModelRollDegrees = staticModelRollDegrees;
+        copy.staticModelScaleMultiplier = staticModelScaleMultiplier;
         copy.characterModel = characterModel;
         copy.enemySpawnId = enemySpawnId;
         copy.enemyLocalSpawnId = enemyLocalSpawnId;
@@ -450,5 +546,20 @@ public class MapEntity {
         copy.temporaryStationRemainingMs = temporaryStationRemainingMs;
         copy.temporaryStationPendingExpiry = temporaryStationPendingExpiry;
         return copy;
+    }
+
+    private static double clampFinite(double value, double min, double max, double fallback) {
+        if (!Double.isFinite(value)) {
+            return fallback;
+        }
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static double normalizeDegrees(double value) {
+        if (!Double.isFinite(value)) {
+            return 0.0;
+        }
+        double normalized = value % 360.0;
+        return normalized < 0.0 ? normalized + 360.0 : normalized;
     }
 }
