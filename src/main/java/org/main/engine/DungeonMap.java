@@ -3,7 +3,10 @@ package org.main.engine;
 import org.main.core.Library;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 public class DungeonMap {
     private static final int FLOOR = 0;
@@ -22,6 +25,11 @@ public class DungeonMap {
     private final MobAreaData mobAreaData;
     private final MapLightingSettings lightingSettings;
     private final List<MapLight> lights;
+    private final List<MapLight> lightsView;
+    private final Set<TileCoordinate> dirtyTiles = new LinkedHashSet<>();
+    private final Set<TileCoordinate> dirtyTilesView = Collections.unmodifiableSet(dirtyTiles);
+    private long tileRevision;
+    private long lightingRevision;
 
     public DungeonMap(Library.TileType[][] tiles) {
         this(tiles, new int[tiles.length][tiles[0].length]);
@@ -80,6 +88,7 @@ public class DungeonMap {
                 ? MapLightingSettings.defaultSettings()
                 : lightingSettings;
         this.lights = lights == null ? new ArrayList<>() : new ArrayList<>(lights);
+        this.lightsView = Collections.unmodifiableList(this.lights);
     }
 
     public int getWidth() {
@@ -123,12 +132,89 @@ public class DungeonMap {
     }
 
     public List<MapLight> getLightsView() {
-        return List.copyOf(lights);
+        return lightsView;
     }
 
     public void addLight(MapLight light) {
         if (light != null) {
             lights.add(light);
+            lightingRevision++;
+        }
+    }
+
+    public long tileRevision() {
+        return tileRevision;
+    }
+
+    public long paintRevision() {
+        return paintData.revision();
+    }
+
+    public long geometryRevision() {
+        return geometryData.revision();
+    }
+
+    public long lightingRevision() {
+        return lightingRevision;
+    }
+
+    /** Revision for all authored state that can change terrain or lightmap output. */
+    public long renderRevision() {
+        long result = tileRevision;
+        result = 31L * result + paintData.revision();
+        result = 31L * result + geometryData.revision();
+        result = 31L * result + lightingRevision;
+        return result;
+    }
+
+    public Set<TileCoordinate> dirtyTilesView() {
+        return dirtyTilesView;
+    }
+
+    /**
+     * Returns every 8x8-style render cell touched by a tile edit, including its
+     * immediate neighbors so edge faces and roof joins remain conservative.
+     */
+    public Set<RenderCellCoordinate> dirtyRenderCells(int requestedCellSize) {
+        int cellSize = Math.max(1, requestedCellSize);
+        Set<RenderCellCoordinate> cells = new LinkedHashSet<>();
+        for (TileCoordinate tile : dirtyTiles) {
+            addDirtyCellAndNeighbors(cells, tile.x(), tile.y(), cellSize);
+        }
+        for (MapPaintData.TileCoordinate tile : paintData.dirtyTilesView()) {
+            addDirtyCellAndNeighbors(cells, tile.x(), tile.y(), cellSize);
+        }
+        for (MapGeometryData.TileCoordinate tile : geometryData.dirtyTilesView()) {
+            addDirtyCellAndNeighbors(cells, tile.x(), tile.y(), cellSize);
+        }
+        return Collections.unmodifiableSet(cells);
+    }
+
+    public void clearRenderDirtyTiles() {
+        dirtyTiles.clear();
+        paintData.clearDirtyTiles();
+        geometryData.clearDirtyTiles();
+    }
+
+    private void addDirtyCellAndNeighbors(
+            Set<RenderCellCoordinate> cells,
+            int tileX,
+            int tileY,
+            int cellSize
+    ) {
+        int centerX = Math.floorDiv(tileX, cellSize);
+        int centerY = Math.floorDiv(tileY, cellSize);
+        for (int offsetY = -1; offsetY <= 1; offsetY++) {
+            for (int offsetX = -1; offsetX <= 1; offsetX++) {
+                int cellX = centerX + offsetX;
+                int cellY = centerY + offsetY;
+                if (cellX < 0 || cellY < 0
+                        || cellX * cellSize >= getWidth()
+                        || cellY * cellSize >= getHeight()) {
+                    continue;
+                }
+                cells.add(new RenderCellCoordinate(cellX, cellY));
+            }
         }
     }
 
@@ -227,6 +313,18 @@ public class DungeonMap {
             return;
         }
 
-        tiles[y][x] = tileType;
+        Library.TileType value = tileType == null ? Library.TileType.WALL : tileType;
+        if (tiles[y][x] == value) {
+            return;
+        }
+        tiles[y][x] = value;
+        tileRevision++;
+        dirtyTiles.add(new TileCoordinate(x, y));
+    }
+
+    public record TileCoordinate(int x, int y) {
+    }
+
+    public record RenderCellCoordinate(int x, int y) {
     }
 }

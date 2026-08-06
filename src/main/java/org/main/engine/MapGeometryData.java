@@ -1,5 +1,9 @@
 package org.main.engine;
 
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.Set;
+
 public final class MapGeometryData {
     public static final int DEFAULT_HEIGHT_LEVEL = 1;
     public static final int MIN_HEIGHT_LEVEL = -8;
@@ -8,6 +12,9 @@ public final class MapGeometryData {
     private final int width;
     private final int height;
     private final int[][] heightLevels;
+    private final Set<TileCoordinate> dirtyTiles = new LinkedHashSet<>();
+    private final Set<TileCoordinate> dirtyTilesView = Collections.unmodifiableSet(dirtyTiles);
+    private long revision;
 
     private MapGeometryData(int width, int height, int[][] heightLevels) {
         this.width = Math.max(1, width);
@@ -70,7 +77,25 @@ public final class MapGeometryData {
         if (isOutOfBounds(x, y)) {
             return;
         }
-        heightLevels[y][x] = clampHeightLevel(heightLevel);
+        int value = clampHeightLevel(heightLevel);
+        if (heightLevels[y][x] == value) {
+            return;
+        }
+        heightLevels[y][x] = value;
+        revision++;
+        dirtyTiles.add(new TileCoordinate(x, y));
+    }
+
+    public long revision() {
+        return revision;
+    }
+
+    public Set<TileCoordinate> dirtyTilesView() {
+        return dirtyTilesView;
+    }
+
+    public void clearDirtyTiles() {
+        dirtyTiles.clear();
     }
 
     public int[][] copyHeightLevels() {
@@ -111,5 +136,8 @@ public final class MapGeometryData {
             }
         }
         return normalized;
+    }
+
+    public record TileCoordinate(int x, int y) {
     }
 }

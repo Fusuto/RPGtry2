@@ -68,6 +68,7 @@ enum ContentCategory {
     LIMBS("Limbs"),
     BATTLE_SKILLS("Battle Skills"),
     STATUSES("Statuses"),
+    FIRST_PERSON_VIEWMODELS("First-Person Viewmodels"),
     GATHERING("Gathering"),
     COOKING("Cooking"),
     CRAFTING_RECIPES("Crafting Recipes"),

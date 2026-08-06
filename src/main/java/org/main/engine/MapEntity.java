@@ -3,6 +3,7 @@ package org.main.engine;
 import org.main.content.CharacterModelDefinition;
 import org.main.core.Library;
 import org.main.core.CraftingStationType;
+import org.main.core.CorpseState;
 import org.main.monsters.Monster;
 import org.main.core.InventorySystem;
 import org.main.core.ShopSystem;
@@ -12,6 +13,14 @@ import java.util.List;
 
 public class MapEntity {
     private static final double MIN_VISUAL_SCALE = 0.10;
+    private static final double WORLD_TURN_DEGREES_PER_SECOND = 360.0;
+    private static final int WORLD_ANIMATION_BLEND_MS = 120;
+
+    public enum WorldMotionPhase {
+        IDLE,
+        TURNING,
+        WALKING
+    }
 
     private final String name;
     private final Library.EntityType type;
@@ -54,19 +63,40 @@ public class MapEntity {
     private CraftingStationType temporaryStationType;
     private int temporaryStationRemainingMs;
     private boolean temporaryStationPendingExpiry;
+    private CorpseState corpseState;
+    private long animationStartedNanos = System.nanoTime();
+    private CharacterModelDefinition.AnimationSlot worldAnimationSlot =
+            CharacterModelDefinition.AnimationSlot.IDLE;
+    private CharacterModelDefinition.AnimationSlot previousWorldAnimationSlot;
+    private int worldAnimationElapsedMs;
+    private int previousWorldAnimationElapsedMs;
+    private int worldAnimationBlendElapsedMs = WORLD_ANIMATION_BLEND_MS;
 
     private int x;
     private int y;
     private double movementFromX;
     private double movementFromY;
-    private long movementStartedNanos;
-    private static final long WORLD_MOVE_INTERPOLATION_NANOS = 280_000_000L;
+    private int movementTargetX;
+    private int movementTargetY;
+    private WorldMotionPhase worldMotionPhase = WorldMotionPhase.IDLE;
+    private int worldMotionPhaseElapsedMs;
+    private int worldTurnDurationMs;
+    private int worldWalkDurationMs = 280;
+    private boolean worldWalkAnimationAvailable;
+    private double worldFacingYawDegrees;
+    private double worldTurnStartYawDegrees;
+    private double worldTurnDeltaDegrees;
+    private double worldTargetYawDegrees;
 
     public MapEntity(String name, Library.EntityType type, int x, int y) {
         this.name = name;
         this.type = type;
         this.x = x;
         this.y = y;
+        this.movementFromX = x;
+        this.movementFromY = y;
+        this.movementTargetX = x;
+        this.movementTargetY = y;
     }
 
     public MapEntity(InventorySystem.Item item, int x, int y) {
@@ -100,6 +130,26 @@ public class MapEntity {
         withCharacterModel(monster.getCharacterModel());
     }
 
+    public MapEntity(CorpseState corpseState, int x, int y) {
+        this(corpseState == null || corpseState.monster() == null
+                        ? "Remains"
+                        : corpseState.monster().getName() + " Remains",
+                Library.EntityType.CORPSE,
+                x,
+                y,
+                corpseState == null || corpseState.monster() == null
+                        ? null
+                        : corpseState.monster().getImage());
+        this.corpseState = corpseState;
+        this.monster = corpseState == null ? null : corpseState.monster();
+        if (monster != null) {
+            withCharacterModel(monster.getCharacterModel());
+        }
+        this.interactionId = "corpse_loot";
+        this.blocksMovementOverride = false;
+        this.animationStartedNanos = System.nanoTime();
+    }
+
     public BufferedImage getStaticImage() {
         return staticImage;
     }
@@ -112,6 +162,7 @@ public class MapEntity {
         if (idleAnimation != null) {
             idleAnimation.update(deltaMs);
         }
+        advanceWorldMotion(Math.max(0, deltaMs));
     }
 
     public String getInteractionId() {
@@ -304,6 +355,66 @@ public class MapEntity {
         return monster;
     }
 
+    public CorpseState getCorpseState() {
+        return corpseState;
+    }
+
+    public MapEntity withCorpseState(CorpseState state) {
+        corpseState = state;
+        animationStartedNanos = System.nanoTime();
+        return this;
+    }
+
+    public boolean isCorpse() {
+        return type == Library.EntityType.CORPSE && corpseState != null;
+    }
+
+    public double getAnimationElapsedSeconds() {
+        return getAnimationElapsedSeconds(0.0);
+    }
+
+    public double getAnimationElapsedSeconds(double interpolationAlpha) {
+        if (!isCorpse()) {
+            return (worldAnimationElapsedMs + interpolatedStepMs(interpolationAlpha)) / 1000.0;
+        }
+        return Math.max(0.0, (System.nanoTime() - animationStartedNanos) / 1_000_000_000.0);
+    }
+
+    public CharacterModelDefinition.AnimationSlot getWorldAnimationSlot() {
+        return worldAnimationSlot;
+    }
+
+    public CharacterModelDefinition.AnimationSlot getPreviousWorldAnimationSlot() {
+        return getWorldAnimationBlend() < 1.0 ? previousWorldAnimationSlot : null;
+    }
+
+    public double getPreviousWorldAnimationElapsedSeconds() {
+        return getPreviousWorldAnimationElapsedSeconds(0.0);
+    }
+
+    public double getPreviousWorldAnimationElapsedSeconds(double interpolationAlpha) {
+        return (previousWorldAnimationElapsedMs + interpolatedStepMs(interpolationAlpha)) / 1000.0;
+    }
+
+    public double getWorldAnimationBlend() {
+        return getWorldAnimationBlend(0.0);
+    }
+
+    public double getWorldAnimationBlend(double interpolationAlpha) {
+        if (previousWorldAnimationSlot == null) {
+            return 1.0;
+        }
+        return Math.max(0.0, Math.min(1.0,
+                (worldAnimationBlendElapsedMs + interpolatedStepMs(interpolationAlpha))
+                        / (double) WORLD_ANIMATION_BLEND_MS));
+    }
+
+    public void finishCorpseDeathAnimation() {
+        if (isCorpse()) {
+            animationStartedNanos = System.nanoTime() - 3_600_000_000_000L;
+        }
+    }
+
     public String getName() {
         return name;
     }
@@ -333,34 +444,273 @@ public class MapEntity {
     }
 
     public void setPosition(int x, int y) {
-        if (this.x != x || this.y != y) {
-            movementFromX = getRenderX();
-            movementFromY = getRenderY();
-            movementStartedNanos = System.nanoTime();
-        }
         this.x = x;
         this.y = y;
+        movementFromX = x;
+        movementFromY = y;
+        movementTargetX = x;
+        movementTargetY = y;
+        worldMotionPhase = WorldMotionPhase.IDLE;
+        worldMotionPhaseElapsedMs = 0;
+        worldAnimationSlot = CharacterModelDefinition.AnimationSlot.IDLE;
+        previousWorldAnimationSlot = null;
+        worldAnimationElapsedMs = 0;
+        previousWorldAnimationElapsedMs = 0;
+        worldAnimationBlendElapsedMs = WORLD_ANIMATION_BLEND_MS;
     }
 
     public double getRenderX() {
-        return interpolateCoordinate(movementFromX, x);
+        return getRenderX(0.0);
+    }
+
+    public double getRenderX(double interpolationAlpha) {
+        if (worldMotionPhase != WorldMotionPhase.WALKING) {
+            return x;
+        }
+        return interpolateCoordinate(movementFromX, movementTargetX,
+                worldWalkProgress(interpolationAlpha));
     }
 
     public double getRenderY() {
-        return interpolateCoordinate(movementFromY, y);
+        return getRenderY(0.0);
+    }
+
+    public double getRenderY(double interpolationAlpha) {
+        if (worldMotionPhase != WorldMotionPhase.WALKING) {
+            return y;
+        }
+        return interpolateCoordinate(movementFromY, movementTargetY,
+                worldWalkProgress(interpolationAlpha));
     }
 
     public boolean isVisuallyMoving() {
-        return movementStartedNanos > 0
-                && System.nanoTime() - movementStartedNanos < WORLD_MOVE_INTERPOLATION_NANOS;
+        return worldMotionPhase == WorldMotionPhase.WALKING;
     }
 
-    private double interpolateCoordinate(double from, double to) {
-        if (!isVisuallyMoving()) return to;
-        double t = Math.max(0.0, Math.min(1.0,
-                (System.nanoTime() - movementStartedNanos) / (double) WORLD_MOVE_INTERPOLATION_NANOS));
-        double eased = t * t * (3.0 - 2.0 * t);
-        return from + (to - from) * eased;
+    public boolean isWorldMotionActive() {
+        return worldMotionPhase != WorldMotionPhase.IDLE;
+    }
+
+    public WorldMotionPhase getWorldMotionPhase() {
+        return worldMotionPhase;
+    }
+
+    public boolean beginWorldMovement(
+            int targetX,
+            int targetY,
+            int walkDurationMs,
+            boolean walkAnimationAvailable
+    ) {
+        if (isWorldMotionActive() || (targetX == x && targetY == y)) {
+            return false;
+        }
+        int deltaX = targetX - x;
+        int deltaY = targetY - y;
+        if (Math.abs(deltaX) + Math.abs(deltaY) != 1) {
+            return false;
+        }
+
+        movementFromX = x;
+        movementFromY = y;
+        movementTargetX = targetX;
+        movementTargetY = targetY;
+        worldWalkDurationMs = Math.max(1, walkDurationMs);
+        worldWalkAnimationAvailable = walkAnimationAvailable;
+        worldTurnStartYawDegrees = getWorldFacingYawDegrees();
+        worldTargetYawDegrees = yawForDirection(deltaX, deltaY);
+        worldTurnDeltaDegrees = shortestAngleDegrees(
+                worldTurnStartYawDegrees,
+                worldTargetYawDegrees
+        );
+        worldTurnDurationMs = (int) Math.ceil(
+                Math.abs(worldTurnDeltaDegrees) / WORLD_TURN_DEGREES_PER_SECOND * 1000.0
+        );
+        worldMotionPhaseElapsedMs = 0;
+        resetWorldAnimation(CharacterModelDefinition.AnimationSlot.IDLE);
+
+        if (worldTurnDurationMs > 0) {
+            worldMotionPhase = WorldMotionPhase.TURNING;
+        } else {
+            worldFacingYawDegrees = normalizeDegrees(worldTargetYawDegrees);
+            startWalkingPhase();
+        }
+        return true;
+    }
+
+    public boolean occupiesOrReserves(int tileX, int tileY) {
+        return isAt(tileX, tileY)
+                || (isWorldMotionActive()
+                && movementTargetX == tileX
+                && movementTargetY == tileY);
+    }
+
+    public double getWorldFacingYawDegrees() {
+        return getWorldFacingYawDegrees(0.0);
+    }
+
+    public double getWorldFacingYawDegrees(double interpolationAlpha) {
+        if (worldMotionPhase != WorldMotionPhase.TURNING || worldTurnDurationMs <= 0) {
+            return normalizeDegrees(worldFacingYawDegrees);
+        }
+        double progress = Math.max(0.0, Math.min(1.0,
+                (worldMotionPhaseElapsedMs + interpolatedStepMs(interpolationAlpha))
+                        / (double) worldTurnDurationMs));
+        return normalizeDegrees(worldTurnStartYawDegrees
+                + worldTurnDeltaDegrees * smoothStep(progress));
+    }
+
+    public void setWorldFacingYawDegrees(double yawDegrees) {
+        worldFacingYawDegrees = normalizeDegrees(yawDegrees);
+        worldTargetYawDegrees = worldFacingYawDegrees;
+        worldTurnStartYawDegrees = worldFacingYawDegrees;
+        worldTurnDeltaDegrees = 0.0;
+    }
+
+    public int getPersistenceX() {
+        return isWorldMotionActive() ? movementTargetX : x;
+    }
+
+    public int getPersistenceY() {
+        return isWorldMotionActive() ? movementTargetY : y;
+    }
+
+    public double getPersistenceFacingYawDegrees() {
+        return isWorldMotionActive()
+                ? normalizeDegrees(worldTargetYawDegrees)
+                : getWorldFacingYawDegrees();
+    }
+
+    public void translateWorldPosition(int offsetX, int offsetY) {
+        x += offsetX;
+        y += offsetY;
+        movementFromX += offsetX;
+        movementFromY += offsetY;
+        movementTargetX += offsetX;
+        movementTargetY += offsetY;
+    }
+
+    private void advanceWorldMotion(int deltaMs) {
+        int remaining = deltaMs;
+        while (remaining > 0) {
+            if (worldMotionPhase == WorldMotionPhase.IDLE) {
+                advanceWorldAnimation(remaining);
+                return;
+            }
+
+            int phaseDuration = worldMotionPhase == WorldMotionPhase.TURNING
+                    ? worldTurnDurationMs
+                    : worldWalkDurationMs;
+            int phaseRemaining = Math.max(0, phaseDuration - worldMotionPhaseElapsedMs);
+            int consumed = Math.min(remaining, Math.max(1, phaseRemaining));
+            worldMotionPhaseElapsedMs += consumed;
+            advanceWorldAnimation(consumed);
+            remaining -= consumed;
+
+            if (worldMotionPhaseElapsedMs < phaseDuration) {
+                return;
+            }
+            if (worldMotionPhase == WorldMotionPhase.TURNING) {
+                worldFacingYawDegrees = normalizeDegrees(worldTargetYawDegrees);
+                startWalkingPhase();
+            } else {
+                finishWalkingPhase();
+            }
+        }
+    }
+
+    private void startWalkingPhase() {
+        worldMotionPhase = WorldMotionPhase.WALKING;
+        worldMotionPhaseElapsedMs = 0;
+        if (worldWalkAnimationAvailable) {
+            transitionWorldAnimation(CharacterModelDefinition.AnimationSlot.WALK);
+        } else {
+            resetWorldAnimation(CharacterModelDefinition.AnimationSlot.IDLE);
+        }
+    }
+
+    private void finishWalkingPhase() {
+        x = movementTargetX;
+        y = movementTargetY;
+        movementFromX = x;
+        movementFromY = y;
+        worldFacingYawDegrees = normalizeDegrees(worldTargetYawDegrees);
+        worldMotionPhase = WorldMotionPhase.IDLE;
+        worldMotionPhaseElapsedMs = 0;
+        if (worldWalkAnimationAvailable) {
+            transitionWorldAnimation(CharacterModelDefinition.AnimationSlot.IDLE);
+        } else {
+            resetWorldAnimation(CharacterModelDefinition.AnimationSlot.IDLE);
+        }
+    }
+
+    private void transitionWorldAnimation(CharacterModelDefinition.AnimationSlot next) {
+        CharacterModelDefinition.AnimationSlot safe = next == null
+                ? CharacterModelDefinition.AnimationSlot.IDLE
+                : next;
+        if (safe == worldAnimationSlot) {
+            return;
+        }
+        previousWorldAnimationSlot = worldAnimationSlot;
+        previousWorldAnimationElapsedMs = worldAnimationElapsedMs;
+        worldAnimationSlot = safe;
+        worldAnimationElapsedMs = 0;
+        worldAnimationBlendElapsedMs = 0;
+    }
+
+    private void resetWorldAnimation(CharacterModelDefinition.AnimationSlot slot) {
+        worldAnimationSlot = slot == null
+                ? CharacterModelDefinition.AnimationSlot.IDLE
+                : slot;
+        previousWorldAnimationSlot = null;
+        worldAnimationElapsedMs = 0;
+        previousWorldAnimationElapsedMs = 0;
+        worldAnimationBlendElapsedMs = WORLD_ANIMATION_BLEND_MS;
+    }
+
+    private void advanceWorldAnimation(int deltaMs) {
+        worldAnimationElapsedMs += Math.max(0, deltaMs);
+        if (previousWorldAnimationSlot != null) {
+            worldAnimationBlendElapsedMs = Math.min(
+                    WORLD_ANIMATION_BLEND_MS,
+                    worldAnimationBlendElapsedMs + Math.max(0, deltaMs)
+            );
+            if (worldAnimationBlendElapsedMs >= WORLD_ANIMATION_BLEND_MS) {
+                previousWorldAnimationSlot = null;
+            }
+        }
+    }
+
+    private double worldWalkProgress(double interpolationAlpha) {
+        return Math.max(0.0, Math.min(1.0,
+                (worldMotionPhaseElapsedMs + interpolatedStepMs(interpolationAlpha))
+                        / (double) Math.max(1, worldWalkDurationMs)));
+    }
+
+    private static double interpolatedStepMs(double interpolationAlpha) {
+        return Math.max(0.0, Math.min(1.0, interpolationAlpha)) * (1000.0 / 60.0);
+    }
+
+    private double interpolateCoordinate(double from, double to, double progress) {
+        return from + (to - from) * smoothStep(progress);
+    }
+
+    private static double yawForDirection(int deltaX, int deltaY) {
+        return normalizeDegrees(Math.toDegrees(Math.atan2(deltaX, deltaY)));
+    }
+
+    private static double shortestAngleDegrees(double from, double to) {
+        double difference = normalizeDegrees(to) - normalizeDegrees(from);
+        if (difference > 180.0) {
+            difference -= 360.0;
+        } else if (difference < -180.0) {
+            difference += 360.0;
+        }
+        return difference;
+    }
+
+    private static double smoothStep(double value) {
+        double clamped = Math.max(0.0, Math.min(1.0, value));
+        return clamped * clamped * (3.0 - 2.0 * clamped);
     }
 
     public MapEntity configureEnemySpawn(
@@ -431,12 +781,12 @@ public class MapEntity {
     }
 
     public boolean advanceWorldAiCooldown(int deltaMs) {
-        worldAiCooldownMs -= Math.max(0, deltaMs);
-        if (worldAiCooldownMs > 0) {
-            return false;
-        }
+        worldAiCooldownMs = Math.max(0, worldAiCooldownMs - Math.max(0, deltaMs));
+        return worldAiCooldownMs == 0;
+    }
+
+    public void resetWorldAiCooldown() {
         worldAiCooldownMs = movementIntervalMs;
-        return true;
     }
 
     public int getWorldAiCooldownMs() {
@@ -530,6 +880,7 @@ public class MapEntity {
         copy.staticModelPitchDegrees = staticModelPitchDegrees;
         copy.staticModelRollDegrees = staticModelRollDegrees;
         copy.staticModelScaleMultiplier = staticModelScaleMultiplier;
+        copy.staticModelBrightness = staticModelBrightness;
         copy.characterModel = characterModel;
         copy.enemySpawnId = enemySpawnId;
         copy.enemyLocalSpawnId = enemyLocalSpawnId;
@@ -545,6 +896,29 @@ public class MapEntity {
         copy.temporaryStationType = temporaryStationType;
         copy.temporaryStationRemainingMs = temporaryStationRemainingMs;
         copy.temporaryStationPendingExpiry = temporaryStationPendingExpiry;
+        copy.corpseState = corpseState == null ? null : corpseState.copy();
+        if (copy.corpseState != null) {
+            copy.monster = copy.corpseState.monster();
+        }
+        copy.animationStartedNanos = animationStartedNanos;
+        copy.worldAnimationSlot = worldAnimationSlot;
+        copy.previousWorldAnimationSlot = previousWorldAnimationSlot;
+        copy.worldAnimationElapsedMs = worldAnimationElapsedMs;
+        copy.previousWorldAnimationElapsedMs = previousWorldAnimationElapsedMs;
+        copy.worldAnimationBlendElapsedMs = worldAnimationBlendElapsedMs;
+        copy.movementFromX = movementFromX;
+        copy.movementFromY = movementFromY;
+        copy.movementTargetX = movementTargetX;
+        copy.movementTargetY = movementTargetY;
+        copy.worldMotionPhase = worldMotionPhase;
+        copy.worldMotionPhaseElapsedMs = worldMotionPhaseElapsedMs;
+        copy.worldTurnDurationMs = worldTurnDurationMs;
+        copy.worldWalkDurationMs = worldWalkDurationMs;
+        copy.worldWalkAnimationAvailable = worldWalkAnimationAvailable;
+        copy.worldFacingYawDegrees = worldFacingYawDegrees;
+        copy.worldTurnStartYawDegrees = worldTurnStartYawDegrees;
+        copy.worldTurnDeltaDegrees = worldTurnDeltaDegrees;
+        copy.worldTargetYawDegrees = worldTargetYawDegrees;
         return copy;
     }
 

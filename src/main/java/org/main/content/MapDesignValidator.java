@@ -3,10 +3,12 @@ package org.main.content;
 import org.main.core.Library;
 import org.main.content.BattleContentCatalog;
 import org.main.core.CraftingStationType;
+import org.main.core.InventorySystem;
 import org.main.engine.MapLight;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MobAreaData;
 import org.main.engine.MapPaintData;
+import org.main.experimental.CharacterAnimationMetadataResolver;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -1049,6 +1051,7 @@ final class MapDesignValidator {
         validateDuplicateIds(issues, "quest", design.authoredQuests().stream().map(AuthoredQuest::questId).toList());
         validateDuplicateIds(issues, "dialogue", design.authoredDialogues().stream().map(AuthoredDialogue::interactionId).toList());
         validateQuestDefinitions(issues, design);
+        validateButcheryProducts(issues, design);
 
         List<String> knownItems = knownItemIdsAndNames(design.customItems(), design.customLimbs());
         List<String> dialogueIds = design.authoredDialogues().stream().map(AuthoredDialogue::interactionId).toList();
@@ -1172,6 +1175,7 @@ final class MapDesignValidator {
             }
         }
 
+        FirstPersonCombatLibrary.Content firstPersonContent = FirstPersonCombatLibrary.load();
         for (CustomLimb limb : design.customLimbs()) {
             for (String skillId : limb.skillIds()) {
                 if (BattleContentCatalog.findSkill(skillId) == null) {
@@ -1180,19 +1184,45 @@ final class MapDesignValidator {
                             "Limb " + limb.limbId() + " references unknown battle skill " + skillId + "."));
                 }
             }
+            String rigId = FirstPersonCombatLibrary.normalizeId(limb.firstPersonRigId());
+            if (!rigId.isBlank() && !firstPersonContent.rigs().containsKey(rigId)) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.ERROR,
+                        "Limb " + limb.limbId() + " references unknown first-person rig "
+                                + rigId + "."));
+            }
         }
 
         for (CustomItem item : design.customItems()) {
-            validateAssetPath(issues, "Item " + item.itemId(), "icon", item.iconPath(), true);
+            boolean modelBackedWeapon = item.itemType() == InventorySystem.ItemType.WEAPON
+                    && !item.firstPersonModelPath().isBlank();
+            validateAssetPath(issues, "Item " + item.itemId(), "icon", item.iconPath(), !modelBackedWeapon);
             validateAssetPath(issues, "Item " + item.itemId(), "paper-doll overlay", item.paperDollOverlayPath(), false);
             validateAssetPath(issues, "Item " + item.itemId(), "use sound", item.useSoundPath(), false);
             validateModelAssetPath(issues, "Item " + item.itemId(), "first-person model",
                     item.firstPersonModelPath(), false);
+            if (item.itemType() == InventorySystem.ItemType.WEAPON
+                    && item.firstPersonModelPath().isBlank()) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.WARNING,
+                        "Weapon " + item.itemId()
+                                + " has no 3D model and will use its legacy bitmap icon."));
+            }
         }
 
         for (CustomLimb limb : design.customLimbs()) {
-            validateAssetPath(issues, "Limb " + limb.limbId(), "icon", limb.iconPath(), true);
-            validateAssetPath(issues, "Limb " + limb.limbId(), "paper-doll source", limb.paperDollSourcePath(), false);
+            String owner = "Limb " + limb.limbId();
+            if (limb.paperDollDerivedIcon()) {
+                validateAssetPath(
+                        issues,
+                        owner,
+                        "paper-doll icon source",
+                        limb.paperDollSourcePath(),
+                        true);
+            } else {
+                validateAssetPath(issues, owner, "icon", limb.iconPath(), true);
+                validateAssetPath(issues, owner, "paper-doll source", limb.paperDollSourcePath(), false);
+            }
             validateModelAssetPath(issues, "Limb " + limb.limbId(), "first-person arm model",
                     limb.firstPersonModelPath(), false);
         }
@@ -1314,6 +1344,96 @@ final class MapDesignValidator {
         }
     }
 
+    private static void validateButcheryProducts(List<ValidationIssue> issues, MapDesign design) {
+        Map<String, CustomItem> items = new LinkedHashMap<>();
+        design.customItems().forEach(item -> items.put(item.itemId(), item));
+        Map<String, CustomLimb> limbs = new LinkedHashMap<>();
+        design.customLimbs().forEach(limb -> limbs.put(limb.limbId(), limb));
+
+        for (CustomMob mob : design.customMobs()) {
+            EnemyButcheryProfile profile = mob.butcheryProfile();
+            if (profile.hasValueOverride() && profile.baseValueOverride() <= 0) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.ERROR,
+                        "Enemy " + mob.mobId() + " has an invalid butchery value override."));
+            }
+            if (profile.type() == EnemyButcheryProfile.Type.LEATHER) {
+                if (!profile.limbProductIds().isEmpty()) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.ERROR,
+                            "Leather enemy " + mob.mobId() + " also links humanoid limbs."));
+                }
+                CustomItem leather = items.get(profile.leatherItemId());
+                if (leather == null) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.ERROR,
+                            "Leather enemy " + mob.mobId() + " references missing product "
+                                    + profile.leatherItemId() + "."));
+                } else if (leather.itemType() != org.main.core.InventorySystem.ItemType.MISC
+                        || leather.material() != org.main.core.GearMaterial.LEATHER
+                        || !leather.stackable()) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.ERROR,
+                            "Leather enemy " + mob.mobId()
+                                    + " must use a stackable MISC item with LEATHER material."));
+                } else {
+                    if (!mob.mobId().equals(leather.sourceEnemyId())) {
+                        issues.add(new ValidationIssue(
+                                ValidationSeverity.ERROR,
+                                "Leather product " + leather.itemId()
+                                        + " is not linked back to enemy " + mob.mobId() + "."));
+                    }
+                    if (!assetPathLooksResolvable(leather.iconPath())) {
+                        issues.add(new ValidationIssue(
+                                ValidationSeverity.ERROR,
+                                "Leather product " + leather.itemId()
+                                        + " has an unresolved image: " + leather.iconPath() + "."));
+                    }
+                }
+                continue;
+            }
+
+            if (!profile.leatherItemId().isBlank()) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.ERROR,
+                        "Humanoid enemy " + mob.mobId() + " also links a leather product."));
+            }
+            Set<String> uniqueIds = new LinkedHashSet<>();
+            for (org.main.core.LimbSlot slot : org.main.core.LimbSlot.values()) {
+                String limbId = profile.productId(slot);
+                CustomLimb limb = limbs.get(limbId);
+                if (limb == null) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.ERROR,
+                            "Humanoid enemy " + mob.mobId() + " is missing its "
+                                    + slot.getDisplayName() + " product."));
+                    continue;
+                }
+                if (!uniqueIds.add(limbId)) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.ERROR,
+                            "Humanoid enemy " + mob.mobId() + " reuses limb product " + limbId + "."));
+                }
+                if (limb.limbSlot() != slot || !mob.mobId().equals(limb.sourceCreatureId())) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.ERROR,
+                            "Humanoid enemy " + mob.mobId() + " has an incompatible " + slot.getDisplayName()
+                                    + " product."));
+                }
+            }
+            if (mob.paperDollSourcePath().isBlank()) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.ERROR,
+                        "Humanoid enemy " + mob.mobId() + " requires a paper-doll source."));
+            } else if (!assetPathLooksResolvable(mob.paperDollSourcePath())) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.ERROR,
+                        "Humanoid enemy " + mob.mobId() + " has an unresolved paper-doll source: "
+                                + mob.paperDollSourcePath() + "."));
+            }
+        }
+    }
+
     private static void validateAssetPath(
             List<ValidationIssue> issues,
             String owner,
@@ -1354,6 +1474,41 @@ final class MapDesignValidator {
             issues.add(new ValidationIssue(
                     ValidationSeverity.ERROR,
                     owner + " has animation clips but no base 3D character model."
+            ));
+            return;
+        }
+        if (!definition.hasModel()) {
+            return;
+        }
+        try {
+            CharacterAnimationMetadataResolver.ModelMetadata metadata =
+                    CharacterAnimationMetadataResolver.resolve(definition);
+            for (CharacterModelDefinition.AnimationSlot slot
+                    : CharacterModelDefinition.AnimationSlot.values()) {
+                CharacterModelDefinition.AnimationBinding binding =
+                        definition.animationBinding(slot);
+                CharacterAnimationMetadataResolver.SlotMetadata resolved =
+                        metadata.slot(slot);
+                if (binding.isPresent() && !resolved.available()) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.ERROR,
+                            owner + " explicitly assigns " + slot.displayName()
+                                    + " to unavailable or rig-incompatible clip '"
+                                    + (binding.clipName().isBlank()
+                                    ? "(automatic)"
+                                    : binding.clipName())
+                                    + "' in " + binding.path() + "."
+                                    + (resolved.diagnostic().isBlank()
+                                    ? ""
+                                    : " " + resolved.diagnostic())
+                    ));
+                }
+            }
+        } catch (Exception exception) {
+            issues.add(new ValidationIssue(
+                    ValidationSeverity.ERROR,
+                    owner + " 3D character model could not be inspected: "
+                            + exception.getMessage()
             ));
         }
     }

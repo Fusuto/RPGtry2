@@ -72,6 +72,7 @@ public final class InventorySystem {
         private String contentId = "";
         private String firstPersonModelPath = "";
         private EquipmentViewModelProfile viewModelProfile = EquipmentViewModelProfile.defaults();
+        private ItemModelIconProfile modelIconProfile = ItemModelIconProfile.defaults();
         private int quantity;
 
         public Item(String name, ItemType itemType, BufferedImage icon) {
@@ -293,6 +294,11 @@ public final class InventorySystem {
 
         public Item withViewModelProfile(EquipmentViewModelProfile profile) {
             viewModelProfile = profile == null ? EquipmentViewModelProfile.defaults() : profile;
+            return this;
+        }
+
+        public Item withModelIconProfile(ItemModelIconProfile profile) {
+            modelIconProfile = profile == null ? ItemModelIconProfile.defaults() : profile;
             return this;
         }
 
@@ -629,6 +635,14 @@ public final class InventorySystem {
             return viewModelProfile;
         }
 
+        public ItemModelIconProfile getModelIconProfile() {
+            return modelIconProfile;
+        }
+
+        public boolean hasModelBackedIcon() {
+            return itemType == ItemType.WEAPON && !firstPersonModelPath.isBlank();
+        }
+
         public double getWeaponSpeedMultiplier() {
             return itemType == ItemType.WEAPON ? weaponType.getSpeedMultiplier() : 1.0;
         }
@@ -675,7 +689,8 @@ public final class InventorySystem {
             ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus)
                     .withContentId(contentId)
                     .withFirstPersonModel(firstPersonModelPath)
-                    .withViewModelProfile(viewModelProfile);
+                    .withViewModelProfile(viewModelProfile)
+                    .withModelIconProfile(modelIconProfile);
         }
     }
 
@@ -686,6 +701,32 @@ public final class InventorySystem {
 
         private final Item[] items = new Item[SLOT_COUNT];
         private final Map<EquipmentSlot, Item> equippedItems = new EnumMap<>(EquipmentSlot.class);
+
+        /** Stable, allocation-free fingerprint for cached HUD invalidation. */
+        public int presentationSignature() {
+            int result = 1;
+            for (Item item : items) {
+                result = 31 * result + itemPresentationSignature(item);
+            }
+            for (EquipmentSlot slot : EquipmentSlot.values()) {
+                result = 31 * result + slot.ordinal();
+                result = 31 * result + itemPresentationSignature(equippedItems.get(slot));
+            }
+            return result;
+        }
+
+        private static int itemPresentationSignature(Item item) {
+            if (item == null) {
+                return 0;
+            }
+            int result = item.name == null ? 0 : item.name.hashCode();
+            result = 31 * result + (item.contentId == null ? 0 : item.contentId.hashCode());
+            result = 31 * result + item.itemType.ordinal();
+            result = 31 * result + item.quantity;
+            result = 31 * result + item.durability.ordinal();
+            result = 31 * result + item.baseGoldValue;
+            return result;
+        }
 
         public static final class Snapshot {
             private final Item[] items;
@@ -2504,7 +2545,9 @@ public final class InventorySystem {
             int iconY = bounds.y + padding;
             int iconSize = bounds.width - padding * 2;
 
-            if (item.getIcon() != null) {
+            if (ItemModelIconRenderQueue.request(item, iconX, iconY, iconSize, iconSize)) {
+                // The OpenGL overlay pass renders the authored weapon mesh here.
+            } else if (item.getIcon() != null) {
                 g.drawImage(
                         item.getIcon(),
                         iconX,

@@ -5,6 +5,7 @@ import org.main.core.AetherGameRuntime;
 import org.main.core.GameState;
 import org.main.core.InteractionSystem;
 import org.main.core.InventorySystem;
+import org.main.core.ItemModelIconRenderQueue;
 import org.main.core.MiniMapRenderer;
 import org.main.core.OverworldHud;
 import org.main.core.ShopSystem;
@@ -24,7 +25,10 @@ import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,13 +37,23 @@ import org.main.content.PlayerRegionLibrary;
 import static org.lwjgl.BufferUtils.createByteBuffer;
 import static org.lwjgl.opengl.GL11.GL_ALPHA_TEST;
 import static org.lwjgl.opengl.GL11.GL_BLEND;
+import static org.lwjgl.opengl.GL12.GL_BGRA;
+import static org.lwjgl.opengl.GL12.GL_UNSIGNED_INT_8_8_8_8_REV;
+import static org.lwjgl.opengl.GL13.GL_TEXTURE0;
+import static org.lwjgl.opengl.GL13.glActiveTexture;
+import static org.lwjgl.opengl.GL15.GL_STREAM_DRAW;
+import static org.lwjgl.opengl.GL15.glBindBuffer;
+import static org.lwjgl.opengl.GL15.glBufferData;
+import static org.lwjgl.opengl.GL15.glBufferSubData;
+import static org.lwjgl.opengl.GL15.glDeleteBuffers;
+import static org.lwjgl.opengl.GL15.glGenBuffers;
+import static org.lwjgl.opengl.GL21.GL_PIXEL_UNPACK_BUFFER;
 import static org.lwjgl.opengl.GL11.GL_COLOR_BUFFER_BIT;
 import static org.lwjgl.opengl.GL11.GL_DEPTH_TEST;
 import static org.lwjgl.opengl.GL11.GL_NEAREST;
 import static org.lwjgl.opengl.GL11.GL_MODELVIEW;
 import static org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA;
 import static org.lwjgl.opengl.GL11.GL_PROJECTION;
-import static org.lwjgl.opengl.GL11.GL_QUADS;
 import static org.lwjgl.opengl.GL11.GL_RGBA;
 import static org.lwjgl.opengl.GL11.GL_RGBA8;
 import static org.lwjgl.opengl.GL11.GL_SRC_ALPHA;
@@ -47,26 +61,23 @@ import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER;
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER;
 import static org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE;
-import static org.lwjgl.opengl.GL11.glBegin;
 import static org.lwjgl.opengl.GL11.glBindTexture;
 import static org.lwjgl.opengl.GL11.glBlendFunc;
 import static org.lwjgl.opengl.GL11.glColor4f;
 import static org.lwjgl.opengl.GL11.glDeleteTextures;
 import static org.lwjgl.opengl.GL11.glDisable;
 import static org.lwjgl.opengl.GL11.glEnable;
-import static org.lwjgl.opengl.GL11.glEnd;
 import static org.lwjgl.opengl.GL11.glGenTextures;
 import static org.lwjgl.opengl.GL11.glLoadIdentity;
 import static org.lwjgl.opengl.GL11.glMatrixMode;
 import static org.lwjgl.opengl.GL11.glOrtho;
-import static org.lwjgl.opengl.GL11.glTexCoord2f;
 import static org.lwjgl.opengl.GL11.glTexImage2D;
 import static org.lwjgl.opengl.GL11.glTexParameteri;
 import static org.lwjgl.opengl.GL11.glTexSubImage2D;
-import static org.lwjgl.opengl.GL11.glVertex2f;
 
 public final class LwjglTextOverlayRenderer {
     private static final int MAX_CHARACTER_NAME_LENGTH = 16;
+    private static final String ATTRIBUTIONS_ASSET_PATH = "assets/attributions.txt";
     private static final Color PANEL = new Color(10, 10, 14, 188);
     private static final Color PANEL_BORDER = new Color(196, 168, 98, 220);
     private static final Color TEXT = new Color(236, 234, 222);
@@ -89,17 +100,37 @@ public final class LwjglTextOverlayRenderer {
     private final Image gameOverTitleBackground = AssetLoader.loadImage("assets/images/ui/01_UI_Resources/01Battle/battle_gameover_bg.png");
 
     private int textureId;
+    private FixedFunctionPrimitives fixedPrimitives;
     private int textureWidth;
     private int textureHeight;
+    private final int[] uploadPixelBuffers = new int[2];
+    private int uploadPixelBufferCursor;
     private ByteBuffer uploadBuffer;
     private BufferedImage overlayImage;
     private Graphics2D overlayGraphics;
-    private int[] uploadedPixels;
+    private long renderedUiRevision = Long.MIN_VALUE;
+    private int worldTextureId;
+    private int worldTextureWidth;
+    private int worldTextureHeight;
+    private ByteBuffer worldUploadBuffer;
+    private BufferedImage worldOverlayImage;
+    private Graphics2D worldOverlayGraphics;
+    private final int[] worldUploadPixelBuffers = new int[2];
+    private int worldUploadPixelBufferCursor;
+    private long renderedWorldRevision = Long.MIN_VALUE;
+    private List<Rectangle> renderedWorldBounds = List.of();
+    private long localUiRevision;
+    private int renderedEnemyLabelsHash;
     private final List<OverlayAction> overlayActions = new ArrayList<>();
+    private List<ItemModelIconRenderQueue.Request> modelIconRequests = List.of();
     private Runnable quitAction = () -> {
     };
     private boolean customMapPickerOpen = false;
     private String customMapMessage = "";
+    private boolean creditsOpen = false;
+    private String creditsText = "";
+    private String creditsMessage = "";
+    private int creditsScroll;
     private Runnable mapChangedAction = () -> {
     };
     private boolean characterCreationInputActive = false;
@@ -117,6 +148,7 @@ public final class LwjglTextOverlayRenderer {
     private AetherGameRuntime interactionWindowRuntime;
     private List<LwjglDungeonViewport.EnemyLabel> enemyLabels = List.of();
     private List<String> viewportDebugLines = List.of();
+    private boolean deferRedrawOnce;
 
     public void setQuitAction(Runnable quitAction) {
         this.quitAction = quitAction == null ? () -> {
@@ -129,17 +161,42 @@ public final class LwjglTextOverlayRenderer {
     }
 
     public void openCustomMapPicker() {
+        localUiRevision++;
         customMapPickerOpen = true;
+        creditsOpen = false;
         customMapMessage = "";
     }
 
     public void closeCustomMapPicker() {
+        localUiRevision++;
         customMapPickerOpen = false;
         customMapMessage = "";
     }
 
     public boolean isCustomMapPickerOpen() {
         return customMapPickerOpen;
+    }
+
+    public void openCredits() {
+        localUiRevision++;
+        customMapPickerOpen = false;
+        creditsOpen = true;
+        creditsScroll = 0;
+        creditsMessage = "";
+
+        try (InputStream stream = AssetLoader.openAssetStream(ATTRIBUTIONS_ASSET_PATH)) {
+            creditsText = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException exception) {
+            creditsText = "";
+            creditsMessage = "Unable to load " + ATTRIBUTIONS_ASSET_PATH + ": " + exception.getMessage();
+        }
+    }
+
+    public void closeCredits() {
+        localUiRevision++;
+        creditsOpen = false;
+        creditsMessage = "";
+        creditsScroll = 0;
     }
 
     public boolean selectCustomMap(AetherGameRuntime runtime, int choiceIndex) {
@@ -173,6 +230,7 @@ public final class LwjglTextOverlayRenderer {
         selectedPlayerRegion = PlayerRegionLibrary.MIDLANDS;
         characterCreationMessage = "";
         closeCustomMapPicker();
+        closeCredits();
     }
 
     public void appendCharacterNameCodePoint(int codePoint) {
@@ -235,19 +293,31 @@ public final class LwjglTextOverlayRenderer {
     }
 
     public void setGameOverMessage(String gameOverMessage) {
+        localUiRevision++;
         this.gameOverMessage = gameOverMessage == null ? "" : gameOverMessage;
     }
 
     public void setStartMenuMessage(String startMenuMessage) {
+        localUiRevision++;
         this.customMapMessage = startMenuMessage == null ? "" : startMenuMessage;
     }
 
     public void setEnemyLabels(List<LwjglDungeonViewport.EnemyLabel> enemyLabels) {
-        this.enemyLabels = enemyLabels == null ? List.of() : List.copyOf(enemyLabels);
+        List<LwjglDungeonViewport.EnemyLabel> value = enemyLabels == null ? List.of() : enemyLabels;
+        if (!this.enemyLabels.equals(value)) {
+            this.enemyLabels = List.copyOf(value);
+        }
     }
 
     public void setViewportDebugLines(List<String> viewportDebugLines) {
-        this.viewportDebugLines = viewportDebugLines == null ? List.of() : List.copyOf(viewportDebugLines);
+        List<String> value = viewportDebugLines == null ? List.of() : viewportDebugLines;
+        if (!this.viewportDebugLines.equals(value)) {
+            this.viewportDebugLines = List.copyOf(value);
+        }
+    }
+
+    public void deferRedrawOnce() {
+        deferRedrawOnce = true;
     }
 
     public void render(AetherGameRuntime runtime, int width, int height) {
@@ -255,12 +325,90 @@ public final class LwjglTextOverlayRenderer {
             return;
         }
 
-        overlayActions.clear();
         ensureOverlaySurface(width, height);
+        if (fixedPrimitives == null) {
+            fixedPrimitives = new FixedFunctionPrimitives();
+        }
+        GameState gameState = runtime.gameState();
+        int labelsHash = enemyLabels.hashCode();
+        if (gameState.isDungeonMode()) {
+            ensureWorldOverlaySurface(width, height);
+            long uiRevision = gameState.hudPresentationSignature() * 31L + localUiRevision;
+            long worldRevision = gameState.minimapPresentationSignature() * 31L + labelsHash;
+            boolean redrawMain = renderedUiRevision != uiRevision
+                    || textureId == 0
+                    || textureWidth != width
+                    || textureHeight != height;
+            if (redrawMain && deferRedrawOnce && textureId != 0
+                    && textureWidth == width && textureHeight == height) {
+                deferRedrawOnce = false;
+            } else if (redrawMain) {
+                overlayActions.clear();
+                clearOverlaySurface(width, height);
+                ItemModelIconRenderQueue.beginCapture();
+                try {
+                    drawDungeonPersistentOverlay(overlayGraphics, runtime, width, height);
+                } finally {
+                    modelIconRequests = ItemModelIconRenderQueue.finishCapture();
+                }
+                uploadOverlaySurface();
+                renderedUiRevision = uiRevision;
+                deferRedrawOnce = false;
+            } else {
+                deferRedrawOnce = false;
+            }
+            if (renderedWorldRevision != worldRevision
+                    || worldTextureId == 0
+                    || worldTextureWidth != width
+                    || worldTextureHeight != height) {
+                List<Rectangle> currentWorldBounds = worldOverlayBounds(gameState, width, height);
+                List<Rectangle> dirtyWorldBounds = mergeDirtyBounds(renderedWorldBounds, currentWorldBounds);
+                clearWorldOverlaySurface(dirtyWorldBounds);
+                drawEnemyLabels(worldOverlayGraphics, width);
+                miniMapRenderer.draw(worldOverlayGraphics, gameState);
+                uploadWorldOverlaySurface(dirtyWorldBounds);
+                renderedWorldBounds = currentWorldBounds;
+                renderedWorldRevision = worldRevision;
+            }
+            drawOverlayTexture(worldTextureId, width, height);
+            drawOverlayQuad(width, height);
+            renderedEnemyLabelsHash = labelsHash;
+            return;
+        }
+
+        long uiRevision = gameState.uiPresentationRevision() * 31L + localUiRevision;
+        boolean redraw = renderedUiRevision != uiRevision
+                || renderedEnemyLabelsHash != labelsHash
+                || textureId == 0
+                || textureWidth != width
+                || textureHeight != height;
+        if (redraw && deferRedrawOnce && textureId != 0
+                && textureWidth == width && textureHeight == height) {
+            deferRedrawOnce = false;
+            drawOverlayQuad(width, height);
+            return;
+        }
+        deferRedrawOnce = false;
+        if (!redraw) {
+            drawOverlayQuad(width, height);
+            return;
+        }
+        overlayActions.clear();
         clearOverlaySurface(width, height);
-        drawGameOverlay(overlayGraphics, runtime, width, height);
-        uploadChangedRegion();
+        ItemModelIconRenderQueue.beginCapture();
+        try {
+            drawGameOverlay(overlayGraphics, runtime, width, height);
+        } finally {
+            modelIconRequests = ItemModelIconRenderQueue.finishCapture();
+        }
+        uploadOverlaySurface();
+        renderedUiRevision = uiRevision;
+        renderedEnemyLabelsHash = labelsHash;
         drawOverlayQuad(width, height);
+    }
+
+    public List<ItemModelIconRenderQueue.Request> modelIconRequests() {
+        return modelIconRequests;
     }
 
     public void shutdown() {
@@ -269,11 +417,38 @@ public final class LwjglTextOverlayRenderer {
             overlayGraphics = null;
         }
         overlayImage = null;
-        uploadedPixels = null;
         uploadBuffer = null;
+        if (worldOverlayGraphics != null) {
+            worldOverlayGraphics.dispose();
+            worldOverlayGraphics = null;
+        }
+        worldOverlayImage = null;
+        worldUploadBuffer = null;
+        renderedWorldBounds = List.of();
+        modelIconRequests = List.of();
         if (textureId != 0) {
             glDeleteTextures(textureId);
             textureId = 0;
+        }
+        for (int index = 0; index < uploadPixelBuffers.length; index++) {
+            if (uploadPixelBuffers[index] != 0) {
+                glDeleteBuffers(uploadPixelBuffers[index]);
+                uploadPixelBuffers[index] = 0;
+            }
+        }
+        if (worldTextureId != 0) {
+            glDeleteTextures(worldTextureId);
+            worldTextureId = 0;
+        }
+        for (int index = 0; index < worldUploadPixelBuffers.length; index++) {
+            if (worldUploadPixelBuffers[index] != 0) {
+                glDeleteBuffers(worldUploadPixelBuffers[index]);
+                worldUploadPixelBuffers[index] = 0;
+            }
+        }
+        if (fixedPrimitives != null) {
+            fixedPrimitives.shutdown();
+            fixedPrimitives = null;
         }
     }
 
@@ -286,6 +461,7 @@ public final class LwjglTextOverlayRenderer {
     }
 
     public boolean handleMousePressed(int x, int y, int button, AetherGameRuntime runtime) {
+        localUiRevision++;
         if (runtime != null && runtime.gameState().isDungeonMode()) {
             GameState gameState = runtime.gameState();
             java.awt.Point point = new java.awt.Point(x, y);
@@ -312,20 +488,25 @@ public final class LwjglTextOverlayRenderer {
                 InventorySystem.InventoryPanel panel = ensureInventoryPanel(runtime);
                 if (panel != null) {
                     panel.handleMousePressed(mouseEvent(MouseEvent.MOUSE_PRESSED, x, y, button));
+                    gameState.evaluateLiveQuestConditions();
                 }
                 return true;
             }
 
             if (gameState.hasActiveInteraction()) {
-                ensureInteractionWindow(runtime).handleMousePressed(
+                boolean consumed = ensureInteractionWindow(runtime).handleMousePressed(
                         mouseEvent(MouseEvent.MOUSE_PRESSED, x, y, button),
                         gameState.getActiveInteraction()
                 );
+                if (consumed) {
+                    gameState.evaluateLiveQuestConditions();
+                }
                 return true;
             }
 
             if (gameState.hasActiveShop()) {
                 shopWindow.handleMousePressed(mouseEvent(MouseEvent.MOUSE_PRESSED, x, y, button), gameState);
+                gameState.evaluateLiveQuestConditions();
                 return true;
             }
 
@@ -353,16 +534,43 @@ public final class LwjglTextOverlayRenderer {
     }
 
     public boolean handleMouseReleased(int x, int y, int button, AetherGameRuntime runtime) {
-        if (runtime == null || !runtime.gameState().isDungeonMode() || !runtime.gameState().isInventoryOpen()) {
+        localUiRevision++;
+        if (runtime == null || !runtime.gameState().isDungeonMode()) {
+            return false;
+        }
+        if (runtime.gameState().hasActiveInteraction()) {
+            boolean consumed = ensureInteractionWindow(runtime).handleMouseReleased(
+                    mouseEvent(MouseEvent.MOUSE_RELEASED, x, y, button),
+                    runtime.gameState().getActiveInteraction());
+            if (consumed) {
+                runtime.gameState().evaluateLiveQuestConditions();
+            }
+            return consumed;
+        }
+        if (!runtime.gameState().isInventoryOpen()) {
             return false;
         }
 
         InventorySystem.InventoryPanel panel = ensureInventoryPanel(runtime);
-        return panel != null && panel.handleMouseReleased(mouseEvent(MouseEvent.MOUSE_RELEASED, x, y, button));
+        boolean consumed = panel != null
+                && panel.handleMouseReleased(mouseEvent(MouseEvent.MOUSE_RELEASED, x, y, button));
+        if (consumed) {
+            runtime.gameState().evaluateLiveQuestConditions();
+        }
+        return consumed;
     }
 
     public boolean handleMouseDragged(int x, int y, AetherGameRuntime runtime) {
-        if (runtime == null || !runtime.gameState().isDungeonMode() || !runtime.gameState().isInventoryOpen()) {
+        localUiRevision++;
+        if (runtime == null || !runtime.gameState().isDungeonMode()) {
+            return false;
+        }
+        if (runtime.gameState().hasActiveInteraction()) {
+            return ensureInteractionWindow(runtime).handleMouseDragged(
+                    mouseEvent(MouseEvent.MOUSE_DRAGGED, x, y, MouseEvent.BUTTON1),
+                    runtime.gameState().getActiveInteraction());
+        }
+        if (!runtime.gameState().isInventoryOpen()) {
             return false;
         }
 
@@ -390,6 +598,7 @@ public final class LwjglTextOverlayRenderer {
     }
 
     public boolean handleMouseWheel(double yOffset, int mouseX, int mouseY, AetherGameRuntime runtime) {
+        localUiRevision++;
         if (runtime != null && runtime.gameState().isDungeonMode()) {
             GameState gameState = runtime.gameState();
             if (gameState.isCharacterMenuOverlayAllowed()
@@ -409,13 +618,20 @@ public final class LwjglTextOverlayRenderer {
             }
         }
 
-        if (yOffset == 0.0 || activeScrollTarget != ScrollTarget.CUSTOM_MAP) {
+        if (yOffset == 0.0) {
             return handleOverworldHudMouseWheel(yOffset, mouseX, mouseY, runtime);
         }
 
         int delta = yOffset < 0.0 ? 1 : -1;
-        customMapScroll = Math.max(0, customMapScroll + delta);
-        return true;
+        if (activeScrollTarget == ScrollTarget.CUSTOM_MAP) {
+            customMapScroll = Math.max(0, customMapScroll + delta);
+            return true;
+        }
+        if (activeScrollTarget == ScrollTarget.CREDITS) {
+            creditsScroll = Math.max(0, creditsScroll + delta);
+            return true;
+        }
+        return handleOverworldHudMouseWheel(yOffset, mouseX, mouseY, runtime);
     }
 
     private boolean handleOverworldHudMouseWheel(double yOffset, int mouseX, int mouseY, AetherGameRuntime runtime) {
@@ -441,6 +657,7 @@ public final class LwjglTextOverlayRenderer {
     }
 
     public void handleMouseMoved(int x, int y, AetherGameRuntime runtime) {
+        localUiRevision++;
         if (runtime == null || !runtime.gameState().isDungeonMode()) {
             return;
         }
@@ -481,6 +698,10 @@ public final class LwjglTextOverlayRenderer {
         activeScrollTarget = ScrollTarget.NONE;
 
         if (gameState.isStartMenuMode()) {
+            if (creditsOpen) {
+                drawCredits(graphics, width, height);
+                return;
+            }
             if (customMapPickerOpen) {
                 drawCustomMapPicker(graphics, runtime, width, height);
                 return;
@@ -534,6 +755,40 @@ public final class LwjglTextOverlayRenderer {
             ensureInteractionWindow(runtime).draw(graphics, interaction, width, contentHeight);
         }
 
+        if (gameState.isPerformanceOverlayVisible()) {
+            drawDebugHud(graphics, runtime, width);
+        }
+    }
+
+    private void drawDungeonPersistentOverlay(
+            Graphics2D graphics,
+            AetherGameRuntime runtime,
+            int width,
+            int height
+    ) {
+        lastOverlayWidth = width;
+        lastOverlayHeight = height;
+        GameState gameState = runtime.gameState();
+        activeScrollTarget = ScrollTarget.NONE;
+        InteractionSystem.Interaction interaction = gameState.getActiveInteraction();
+        int contentHeight = Math.max(1, height - overworldHud.getBottomReservedHeight());
+
+        if (interaction != null && interaction.isInventoryOverlayAllowed()) {
+            ensureInteractionWindow(runtime).draw(graphics, interaction, width, contentHeight);
+        }
+        if (gameState.isInventoryOpen()) {
+            InventorySystem.InventoryPanel panel = ensureInventoryPanel(runtime);
+            if (panel != null) {
+                panel.draw(graphics, width, contentHeight);
+            }
+        }
+        overworldHud.draw(graphics, gameState, width, height);
+        if (gameState.getActiveShop() != null) {
+            shopWindow.draw(graphics, gameState, width, height);
+        }
+        if (interaction != null && !interaction.isInventoryOverlayAllowed()) {
+            ensureInteractionWindow(runtime).draw(graphics, interaction, width, contentHeight);
+        }
         if (gameState.isPerformanceOverlayVisible()) {
             drawDebugHud(graphics, runtime, width);
         }
@@ -832,7 +1087,63 @@ public final class LwjglTextOverlayRenderer {
             }
         }));
         overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 2), this::openCustomMapPicker));
-        overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 3), quitAction));
+        overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 3), this::openCredits));
+        overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 4), quitAction));
+    }
+
+    private void drawCredits(Graphics2D graphics, int width, int height) {
+        activeScrollTarget = ScrollTarget.CREDITS;
+        AetherMenuScreens.drawMenuBackdrop(graphics, width, height, "Credits");
+
+        int horizontalMargin = Math.max(24, Math.min(64, width / 12));
+        int panelWidth = Math.min(900, Math.max(240, width - horizontalMargin * 2));
+        int panelHeight = Math.min(520, Math.max(220, height - 190));
+        int x = (width - panelWidth) / 2;
+        int y = Math.max(112, (height - panelHeight) / 2 + 44);
+        if (y + panelHeight > height - 24) {
+            y = Math.max(24, height - panelHeight - 24);
+        }
+
+        drawPanel(graphics, x, y, panelWidth, panelHeight, "Attributions");
+        drawMenuButton(graphics, x + panelWidth - 82, y + 14, 58, 26, "Back", this::closeCredits);
+
+        graphics.setFont(bodyFont);
+        int textX = x + 24;
+        int textY = y + 64;
+        int textWidth = panelWidth - 48;
+        int lineHeight = Math.max(18, graphics.getFontMetrics().getHeight() + 4);
+        int footerHeight = 38;
+        int visibleLines = Math.max(1, (panelHeight - 64 - footerHeight) / lineHeight);
+        String displayedCredits = creditsText == null || creditsText.isBlank()
+                ? "No attributions have been added yet."
+                : creditsText;
+        List<String> lines = wrap(graphics, displayedCredits, textWidth);
+        creditsScroll = clampScroll(creditsScroll, lines.size(), visibleLines);
+
+        java.awt.Shape previousClip = graphics.getClip();
+        graphics.clipRect(textX, textY - graphics.getFontMetrics().getAscent(), textWidth, visibleLines * lineHeight);
+        graphics.setColor(TEXT);
+        for (int visibleIndex = 0;
+             visibleIndex < visibleLines && creditsScroll + visibleIndex < lines.size();
+             visibleIndex++) {
+            graphics.drawString(lines.get(creditsScroll + visibleIndex), textX, textY + visibleIndex * lineHeight);
+        }
+        graphics.setClip(previousClip);
+
+        drawScrollHint(
+                graphics,
+                textX,
+                y + panelHeight - 18,
+                lines.size(),
+                visibleLines,
+                creditsScroll
+        );
+
+        if (creditsMessage != null && !creditsMessage.isBlank()) {
+            graphics.setFont(smallFont);
+            graphics.setColor(DANGER);
+            graphics.drawString(fitLine(graphics, creditsMessage, textWidth), textX, y + panelHeight - 18);
+        }
     }
 
     private void drawCustomMapPicker(Graphics2D graphics, AetherGameRuntime runtime, int width, int height) {
@@ -955,9 +1266,21 @@ public final class LwjglTextOverlayRenderer {
             return lines;
         }
 
-        for (String paragraph : text.split("\\R")) {
+        for (String paragraph : text.split("\\R", -1)) {
+            if (paragraph.isBlank()) {
+                lines.add("");
+                continue;
+            }
             StringBuilder current = new StringBuilder();
             for (String word : paragraph.split("\\s+")) {
+                if (graphics.getFontMetrics().stringWidth(word) > width) {
+                    if (!current.isEmpty()) {
+                        lines.add(current.toString());
+                        current.setLength(0);
+                    }
+                    splitLongWord(graphics, lines, word, width);
+                    continue;
+                }
                 String candidate = current.isEmpty() ? word : current + " " + word;
                 if (graphics.getFontMetrics().stringWidth(candidate) <= width) {
                     current = new StringBuilder(candidate);
@@ -973,6 +1296,23 @@ public final class LwjglTextOverlayRenderer {
             }
         }
         return lines;
+    }
+
+    private void splitLongWord(Graphics2D graphics, List<String> lines, String word, int width) {
+        StringBuilder segment = new StringBuilder();
+        for (int offset = 0; offset < word.length();) {
+            int codePoint = word.codePointAt(offset);
+            String candidate = segment + new String(Character.toChars(codePoint));
+            if (!segment.isEmpty() && graphics.getFontMetrics().stringWidth(candidate) > width) {
+                lines.add(segment.toString());
+                segment.setLength(0);
+            }
+            segment.appendCodePoint(codePoint);
+            offset += Character.charCount(codePoint);
+        }
+        if (!segment.isEmpty()) {
+            lines.add(segment.toString());
+        }
     }
 
     private String fitLine(Graphics2D graphics, String line, int width) {
@@ -1026,7 +1366,30 @@ public final class LwjglTextOverlayRenderer {
                 RenderingHints.KEY_ANTIALIASING,
                 RenderingHints.VALUE_ANTIALIAS_ON
         );
-        uploadedPixels = null;
+        renderedUiRevision = Long.MIN_VALUE;
+    }
+
+    private void ensureWorldOverlaySurface(int width, int height) {
+        if (worldOverlayImage != null
+                && worldOverlayImage.getWidth() == width
+                && worldOverlayImage.getHeight() == height) {
+            return;
+        }
+        if (worldOverlayGraphics != null) {
+            worldOverlayGraphics.dispose();
+        }
+        worldOverlayImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        worldOverlayGraphics = worldOverlayImage.createGraphics();
+        worldOverlayGraphics.setRenderingHint(
+                RenderingHints.KEY_TEXT_ANTIALIASING,
+                RenderingHints.VALUE_TEXT_ANTIALIAS_ON
+        );
+        worldOverlayGraphics.setRenderingHint(
+                RenderingHints.KEY_ANTIALIASING,
+                RenderingHints.VALUE_ANTIALIAS_ON
+        );
+        renderedWorldBounds = List.of();
+        renderedWorldRevision = Long.MIN_VALUE;
     }
 
     private void clearOverlaySurface(int width, int height) {
@@ -1035,54 +1398,49 @@ public final class LwjglTextOverlayRenderer {
         overlayGraphics.setComposite(AlphaComposite.SrcOver);
     }
 
-    private void uploadChangedRegion() {
+    private void clearWorldOverlaySurface(List<Rectangle> dirtyBounds) {
+        if (dirtyBounds.isEmpty()) {
+            return;
+        }
+        worldOverlayGraphics.setComposite(AlphaComposite.Clear);
+        for (Rectangle bounds : dirtyBounds) {
+            worldOverlayGraphics.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+        }
+        worldOverlayGraphics.setComposite(AlphaComposite.SrcOver);
+    }
+
+    private void uploadOverlaySurface() {
         int width = overlayImage.getWidth();
         int height = overlayImage.getHeight();
         int[] pixels = ((DataBufferInt) overlayImage.getRaster().getDataBuffer()).getData();
         boolean textureNeedsAllocation = textureId == 0
                 || textureWidth != width
-                || textureHeight != height
-                || uploadedPixels == null
-                || uploadedPixels.length != pixels.length;
+                || textureHeight != height;
 
         ensureOverlayTexture();
+        int requiredBytes = Math.multiplyExact(Math.multiplyExact(width, height), Integer.BYTES);
+        if (uploadBuffer == null || uploadBuffer.capacity() < requiredBytes) {
+            uploadBuffer = createByteBuffer(requiredBytes);
+        }
+        uploadBuffer.clear();
+        IntBuffer integers = uploadBuffer.asIntBuffer();
+        integers.put(pixels);
+        uploadBuffer.limit(requiredBytes);
+        glBindTexture(GL_TEXTURE_2D, textureId);
         if (textureNeedsAllocation) {
-            uploadRegion(pixels, width, 0, 0, width, height, true);
-            uploadedPixels = pixels.clone();
-            textureWidth = width;
-            textureHeight = height;
-            return;
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0,
+                    GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, uploadBuffer);
+        } else {
+            int pixelBuffer = nextUploadPixelBuffer();
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pixelBuffer);
+            glBufferData(GL_PIXEL_UNPACK_BUFFER, requiredBytes, GL_STREAM_DRAW);
+            glBufferSubData(GL_PIXEL_UNPACK_BUFFER, 0L, uploadBuffer);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+                    GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, 0L);
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
         }
-
-        int minX = width;
-        int minY = height;
-        int maxX = -1;
-        int maxY = -1;
-        for (int y = 0; y < height; y++) {
-            int row = y * width;
-            for (int x = 0; x < width; x++) {
-                int index = row + x;
-                if (pixels[index] == uploadedPixels[index]) {
-                    continue;
-                }
-                minX = Math.min(minX, x);
-                minY = Math.min(minY, y);
-                maxX = Math.max(maxX, x);
-                maxY = Math.max(maxY, y);
-            }
-        }
-
-        if (maxX < minX || maxY < minY) {
-            return;
-        }
-
-        int dirtyWidth = maxX - minX + 1;
-        int dirtyHeight = maxY - minY + 1;
-        uploadRegion(pixels, width, minX, minY, dirtyWidth, dirtyHeight, false);
-        for (int y = minY; y <= maxY; y++) {
-            int offset = y * width + minX;
-            System.arraycopy(pixels, offset, uploadedPixels, offset, dirtyWidth);
-        }
+        textureWidth = width;
+        textureHeight = height;
     }
 
     private void ensureOverlayTexture() {
@@ -1093,6 +1451,120 @@ public final class LwjglTextOverlayRenderer {
         glBindTexture(GL_TEXTURE_2D, textureId);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+
+    private void uploadWorldOverlaySurface(List<Rectangle> dirtyBounds) {
+        int width = worldOverlayImage.getWidth();
+        int height = worldOverlayImage.getHeight();
+        boolean textureNeedsAllocation = worldTextureId == 0
+                || worldTextureWidth != width
+                || worldTextureHeight != height;
+        ensureWorldOverlayTexture();
+        glBindTexture(GL_TEXTURE_2D, worldTextureId);
+        if (textureNeedsAllocation) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0,
+                    GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, (ByteBuffer) null);
+            worldTextureWidth = width;
+            worldTextureHeight = height;
+        }
+        int[] pixels = ((DataBufferInt) worldOverlayImage.getRaster().getDataBuffer()).getData();
+        for (Rectangle bounds : dirtyBounds) {
+            uploadWorldOverlayRegion(pixels, width, bounds);
+        }
+    }
+
+    private void uploadWorldOverlayRegion(int[] pixels, int sourceWidth, Rectangle bounds) {
+        if (bounds.width <= 0 || bounds.height <= 0) {
+            return;
+        }
+        int requiredBytes = Math.multiplyExact(Math.multiplyExact(bounds.width, bounds.height), Integer.BYTES);
+        if (worldUploadBuffer == null || worldUploadBuffer.capacity() < requiredBytes) {
+            worldUploadBuffer = createByteBuffer(requiredBytes);
+        }
+        worldUploadBuffer.clear();
+        IntBuffer integers = worldUploadBuffer.asIntBuffer();
+        for (int row = bounds.y; row < bounds.y + bounds.height; row++) {
+            integers.put(pixels, row * sourceWidth + bounds.x, bounds.width);
+        }
+        worldUploadBuffer.limit(requiredBytes);
+        int pixelBuffer = nextWorldUploadPixelBuffer();
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pixelBuffer);
+        glBufferData(GL_PIXEL_UNPACK_BUFFER, requiredBytes, GL_STREAM_DRAW);
+        glBufferSubData(GL_PIXEL_UNPACK_BUFFER, 0L, worldUploadBuffer);
+        glBindTexture(GL_TEXTURE_2D, worldTextureId);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, bounds.x, bounds.y, bounds.width, bounds.height,
+                GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, 0L);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    }
+
+    private void ensureWorldOverlayTexture() {
+        if (worldTextureId != 0) {
+            return;
+        }
+        worldTextureId = glGenTextures();
+        glBindTexture(GL_TEXTURE_2D, worldTextureId);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+
+    private List<Rectangle> worldOverlayBounds(GameState gameState, int width, int height) {
+        List<Rectangle> bounds = new ArrayList<>(enemyLabels.size() + 1);
+        if (gameState.isMiniMapVisible()
+                && (gameState.isMiniMapUnlocked() || gameState.isMiniMapDebugMode())) {
+            bounds.add(clampBounds(new Rectangle(16, 16, 206, 206), width, height));
+        }
+        Font previousFont = worldOverlayGraphics.getFont();
+        worldOverlayGraphics.setFont(previousFont.deriveFont(Font.BOLD, 11f));
+        FontMetrics metrics = worldOverlayGraphics.getFontMetrics();
+        for (LwjglDungeonViewport.EnemyLabel label : enemyLabels) {
+            if (label == null || label.text() == null || label.text().isBlank()) {
+                continue;
+            }
+            int labelWidth = metrics.stringWidth(label.text()) + 10;
+            int labelHeight = metrics.getHeight() + 4;
+            int x = Math.max(4, Math.min(width - labelWidth - 4, label.x() - labelWidth / 2));
+            int y = Math.max(4, label.y() - labelHeight - 3);
+            bounds.add(clampBounds(new Rectangle(x - 2, y - 2, labelWidth + 4, labelHeight + 4), width, height));
+        }
+        worldOverlayGraphics.setFont(previousFont);
+        bounds.removeIf(Rectangle::isEmpty);
+        return List.copyOf(bounds);
+    }
+
+    private List<Rectangle> mergeDirtyBounds(List<Rectangle> previous, List<Rectangle> current) {
+        List<Rectangle> merged = new ArrayList<>(previous.size() + current.size());
+        for (Rectangle bounds : previous) {
+            mergeDirtyBound(merged, bounds);
+        }
+        for (Rectangle bounds : current) {
+            mergeDirtyBound(merged, bounds);
+        }
+        return merged;
+    }
+
+    private void mergeDirtyBound(List<Rectangle> merged, Rectangle candidate) {
+        Rectangle combined = new Rectangle(candidate);
+        for (int index = 0; index < merged.size();) {
+            Rectangle existing = merged.get(index);
+            Rectangle padded = new Rectangle(existing.x - 2, existing.y - 2,
+                    existing.width + 4, existing.height + 4);
+            if (!padded.intersects(combined)) {
+                index++;
+                continue;
+            }
+            combined = combined.union(existing);
+            merged.remove(index);
+            index = 0;
+        }
+        merged.add(combined);
+    }
+
+    private Rectangle clampBounds(Rectangle bounds, int width, int height) {
+        int x = Math.max(0, bounds.x);
+        int y = Math.max(0, bounds.y);
+        int right = Math.min(width, bounds.x + bounds.width);
+        int bottom = Math.min(height, bounds.y + bounds.height);
+        return new Rectangle(x, y, Math.max(0, right - x), Math.max(0, bottom - y));
     }
 
     private void uploadRegion(
@@ -1151,12 +1623,20 @@ public final class LwjglTextOverlayRenderer {
     }
 
     private void drawOverlayQuad(int width, int height) {
+        drawOverlayTexture(textureId, width, height);
+    }
+
+    private void drawOverlayTexture(int targetTextureId, int width, int height) {
+        if (targetTextureId == 0) {
+            return;
+        }
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_ALPHA_TEST);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glEnable(GL_TEXTURE_2D);
-        glBindTexture(GL_TEXTURE_2D, textureId);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, targetTextureId);
         glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 
         glMatrixMode(GL_PROJECTION);
@@ -1165,16 +1645,7 @@ public final class LwjglTextOverlayRenderer {
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
 
-        glBegin(GL_QUADS);
-        glTexCoord2f(0.0f, 0.0f);
-        glVertex2f(0.0f, 0.0f);
-        glTexCoord2f(1.0f, 0.0f);
-        glVertex2f(width, 0.0f);
-        glTexCoord2f(1.0f, 1.0f);
-        glVertex2f(width, height);
-        glTexCoord2f(0.0f, 1.0f);
-        glVertex2f(0.0f, height);
-        glEnd();
+        fixedPrimitives.drawScreenQuad(width, height);
 
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_ALPHA_TEST);
@@ -1185,6 +1656,23 @@ public final class LwjglTextOverlayRenderer {
 
     private enum ScrollTarget {
         NONE,
-        CUSTOM_MAP
+        CUSTOM_MAP,
+        CREDITS
+    }
+
+    private int nextUploadPixelBuffer() {
+        int index = uploadPixelBufferCursor++ & 1;
+        if (uploadPixelBuffers[index] == 0) {
+            uploadPixelBuffers[index] = glGenBuffers();
+        }
+        return uploadPixelBuffers[index];
+    }
+
+    private int nextWorldUploadPixelBuffer() {
+        int index = worldUploadPixelBufferCursor++ & 1;
+        if (worldUploadPixelBuffers[index] == 0) {
+            worldUploadPixelBuffers[index] = glGenBuffers();
+        }
+        return worldUploadPixelBuffers[index];
     }
 }

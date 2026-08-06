@@ -1,6 +1,7 @@
 package org.main.core;
 
 import org.main.content.MapDesignLibrary;
+import org.main.content.BattleContentCatalog;
 import org.main.content.PlayerRegionLibrary;
 import org.main.content.WorldManifestLibrary;
 import org.main.engine.DungeonMap;
@@ -214,15 +215,12 @@ public final class SaveSystem {
         gameState.setClaimedDialogueRewardKeys(readSet(properties.getProperty("world.claimedDialogueRewards", "")));
         restoreGold(gameState, readInt(properties, "world.gold", gameState.getGold()));
         gameState.getQuestRuntime().restore(readQuestRuntime(properties));
+        gameState.evaluateLiveQuestConditions();
 
         if (currentFloor <= 1 && !loadedAuthoredMap) {
             GameBootstrap.seedTestContent(gameState);
         }
 
-        player.getInventory().clear();
-        loadInventory(properties, player.getInventory());
-        loadEquippedLimbs(properties, player);
-        player.setCurrHp(readInt(properties, "player.currHp", player.getCurrHp()));
         gameState.setGameMode(GameState.GameMode.DUNGEON);
     }
 
@@ -565,7 +563,6 @@ public final class SaveSystem {
             saveEnemyActiveSnapshots(properties, prefix + "enemyActive.", state.activeEnemies());
             saveMapEntitySnapshots(properties, prefix + "entity.", state.entities(), state.hasEntitySnapshot());
             saveTemporaryStationSnapshots(properties, prefix + "temporaryStation.", state.temporaryStations());
-            saveMapTriggers(properties, prefix + "trigger.", state.mapTriggers());
             index++;
         }
     }
@@ -596,7 +593,7 @@ public final class SaveSystem {
                     loadEnemyActiveSnapshots(properties, prefix + "enemyActive."),
                     readLong(properties, prefix + "lastUpdatedEpochMs", System.currentTimeMillis()),
                     readSet(properties.getProperty(prefix + "discovered", "")),
-                    loadMapTriggers(properties, prefix + "trigger."),
+                    List.of(),
                     readSet(properties.getProperty(prefix + "firedTriggers", "")),
                     loadTemporaryStationSnapshots(properties, prefix + "temporaryStation.")
             ));
@@ -627,8 +624,10 @@ public final class SaveSystem {
             String itemPrefix = prefix + i + ".";
             properties.setProperty(itemPrefix + "name", encode(entity.getName()));
             properties.setProperty(itemPrefix + "type", entity.getType().name());
-            properties.setProperty(itemPrefix + "x", String.valueOf(entity.getX()));
-            properties.setProperty(itemPrefix + "y", String.valueOf(entity.getY()));
+            properties.setProperty(itemPrefix + "x", String.valueOf(entity.getPersistenceX()));
+            properties.setProperty(itemPrefix + "y", String.valueOf(entity.getPersistenceY()));
+            properties.setProperty(itemPrefix + "worldFacingYawDegrees",
+                    String.valueOf(entity.getPersistenceFacingYawDegrees()));
             properties.setProperty(itemPrefix + "interactionId", encode(entity.getInteractionId()));
             properties.setProperty(itemPrefix + "contentId", encode(entity.getContentId()));
             properties.setProperty(itemPrefix + "quest.count", String.valueOf(entity.getQuestIds().size()));
@@ -654,6 +653,22 @@ public final class SaveSystem {
             properties.setProperty(itemPrefix + "staticModelBrightness", String.valueOf(entity.getStaticModelBrightness()));
             properties.setProperty(itemPrefix + "item", itemKey(entity.getItem()));
             properties.setProperty(itemPrefix + "monsterId", encode(entity.getMonster() == null ? "" : entity.getMonster().getCustomId()));
+            CorpseState corpse = entity.getCorpseState();
+            properties.setProperty(itemPrefix + "corpse.sourceSpawnId",
+                    encode(corpse == null ? "" : corpse.sourceSpawnId()));
+            properties.setProperty(itemPrefix + "corpse.butcheryAttempted",
+                    String.valueOf(corpse != null && corpse.butcheryAttempted()));
+            properties.setProperty(itemPrefix + "corpse.status",
+                    encode(corpse == null ? "" : corpse.statusMessage()));
+            properties.setProperty(itemPrefix + "corpse.item.count",
+                    String.valueOf(corpse == null ? 0 : corpse.contents().size()));
+            if (corpse != null) {
+                for (int corpseItemIndex = 0; corpseItemIndex < corpse.contents().size(); corpseItemIndex++) {
+                    properties.setProperty(
+                            itemPrefix + "corpse.item." + corpseItemIndex,
+                            itemKey(corpse.contents().get(corpseItemIndex)));
+                }
+            }
             properties.setProperty(itemPrefix + "enemySpawnId", encode(entity.getEnemySpawnId()));
             properties.setProperty(itemPrefix + "spawnX", String.valueOf(entity.getSpawnX()));
             properties.setProperty(itemPrefix + "spawnY", String.valueOf(entity.getSpawnY()));
@@ -684,6 +699,33 @@ public final class SaveSystem {
             MapEntity entity = null;
             if (item != null) {
                 entity = new MapEntity(item, readInt(properties, itemPrefix + "x", 0), readInt(properties, itemPrefix + "y", 0));
+            } else if (!monsterId.isBlank() && type == Library.EntityType.CORPSE) {
+                var monster = MapDesignLibrary.createEnemyById(monsterId);
+                if (monster != null) {
+                    int corpseItemCount = Math.max(0, readInt(properties,
+                            itemPrefix + "corpse.item.count", 0));
+                    List<InventorySystem.Item> corpseItems = new ArrayList<>();
+                    for (int corpseItemIndex = 0; corpseItemIndex < corpseItemCount; corpseItemIndex++) {
+                        InventorySystem.Item corpseItem = readInventoryItem(properties.getProperty(
+                                itemPrefix + "corpse.item." + corpseItemIndex, ""));
+                        if (corpseItem != null) {
+                            corpseItems.add(corpseItem);
+                        }
+                    }
+                    CorpseState corpse = new CorpseState(
+                            monster,
+                            decode(properties.getProperty(itemPrefix + "corpse.sourceSpawnId", "")),
+                            corpseItems);
+                    corpse.restoreButcheryState(
+                            Boolean.parseBoolean(properties.getProperty(
+                                    itemPrefix + "corpse.butcheryAttempted", "false")),
+                            decode(properties.getProperty(itemPrefix + "corpse.status", "")));
+                    entity = new MapEntity(
+                            corpse,
+                            readInt(properties, itemPrefix + "x", 0),
+                            readInt(properties, itemPrefix + "y", 0));
+                    entity.finishCorpseDeathAnimation();
+                }
             } else if (!monsterId.isBlank()) {
                 var monster = MapDesignLibrary.createEnemyById(monsterId);
                 if (monster != null) {
@@ -713,6 +755,11 @@ public final class SaveSystem {
                 }
             }
             entity.withQuestIds(questIds);
+            entity.setWorldFacingYawDegrees(readDouble(
+                    properties,
+                    itemPrefix + "worldFacingYawDegrees",
+                    0.0
+            ));
             entity.setTalkSoundPath(decode(properties.getProperty(itemPrefix + "talkSoundPath", "")));
             entity.blocksMovement(Boolean.parseBoolean(properties.getProperty(itemPrefix + "blocksMovement", "false")));
             entity.renderOnWall(Boolean.parseBoolean(properties.getProperty(itemPrefix + "renderOnWall", "false")));
@@ -934,7 +981,6 @@ public final class SaveSystem {
                 saveTileInteractionMap(properties, chunkPrefix + "tileInteraction.", chunk.tileInteractions());
                 saveResourceNodeSnapshots(properties, chunkPrefix + "resource.", chunk.resourceNodeStates());
                 saveEnemyRespawnSnapshots(properties, chunkPrefix + "enemyRespawn.", chunk.enemyRespawns());
-                saveMapTriggers(properties, chunkPrefix + "trigger.", chunk.triggers());
                 chunkIndex++;
             }
             stateIndex++;
@@ -969,7 +1015,7 @@ public final class SaveSystem {
                         loadResourceNodeSnapshots(properties, chunkPrefix + "resource."),
                         loadEnemyRespawnSnapshots(properties, chunkPrefix + "enemyRespawn."),
                         readSet(properties.getProperty(chunkPrefix + "discovered", "")),
-                        loadMapTriggers(properties, chunkPrefix + "trigger."),
+                        List.of(),
                         readSet(properties.getProperty(chunkPrefix + "firedTriggers", "")),
                         readLong(properties, chunkPrefix + "lastUpdatedEpochMs", System.currentTimeMillis())
                 ));
@@ -1000,6 +1046,8 @@ public final class SaveSystem {
             properties.setProperty(entityPrefix + "type", entity.type().name());
             properties.setProperty(entityPrefix + "x", String.valueOf(entity.x()));
             properties.setProperty(entityPrefix + "y", String.valueOf(entity.y()));
+            properties.setProperty(entityPrefix + "worldFacingYawDegrees",
+                    String.valueOf(entity.worldFacingYawDegrees()));
             properties.setProperty(entityPrefix + "interactionId", encode(entity.interactionId()));
             properties.setProperty(entityPrefix + "contentId", encode(entity.contentId()));
             properties.setProperty(entityPrefix + "quest.count", String.valueOf(entity.questIds().size()));
@@ -1034,6 +1082,17 @@ public final class SaveSystem {
             properties.setProperty(entityPrefix + "respawnDelayMs", String.valueOf(entity.respawnDelayMs()));
             properties.setProperty(entityPrefix + "aiCooldownMs", String.valueOf(entity.aiCooldownMs()));
             properties.setProperty(entityPrefix + "alerted", String.valueOf(entity.alerted()));
+            properties.setProperty(entityPrefix + "corpse.sourceSpawnId", encode(entity.corpseSourceSpawnId()));
+            properties.setProperty(entityPrefix + "corpse.butcheryAttempted",
+                    String.valueOf(entity.corpseButcheryAttempted()));
+            properties.setProperty(entityPrefix + "corpse.status", encode(entity.corpseStatus()));
+            properties.setProperty(entityPrefix + "corpse.item.count",
+                    String.valueOf(entity.corpseItems().size()));
+            for (int corpseItemIndex = 0; corpseItemIndex < entity.corpseItems().size(); corpseItemIndex++) {
+                properties.setProperty(
+                        entityPrefix + "corpse.item." + corpseItemIndex,
+                        itemKey(entity.corpseItems().get(corpseItemIndex)));
+            }
             properties.setProperty(entityPrefix + "temporaryStationId", encode(entity.temporaryStationId()));
             properties.setProperty(
                     entityPrefix + "temporaryStationType",
@@ -1076,11 +1135,22 @@ public final class SaveSystem {
                     questIds.add(questId);
                 }
             }
+            int corpseItemCount = Math.max(0, readInt(properties,
+                    entityPrefix + "corpse.item.count", 0));
+            List<InventorySystem.Item> corpseItems = new ArrayList<>();
+            for (int corpseItemIndex = 0; corpseItemIndex < corpseItemCount; corpseItemIndex++) {
+                InventorySystem.Item corpseItem = readInventoryItem(properties.getProperty(
+                        entityPrefix + "corpse.item." + corpseItemIndex, ""));
+                if (corpseItem != null) {
+                    corpseItems.add(corpseItem);
+                }
+            }
             entities.add(new OpenWorldSession.PersistedEntityState(
                     decode(properties.getProperty(entityPrefix + "name", "")),
                     type,
                     readInt(properties, entityPrefix + "x", 0),
                     readInt(properties, entityPrefix + "y", 0),
+                    readDouble(properties, entityPrefix + "worldFacingYawDegrees", 0.0),
                     decode(properties.getProperty(entityPrefix + "interactionId", "")),
                     decode(properties.getProperty(entityPrefix + "contentId", "")),
                     questIds,
@@ -1109,6 +1179,11 @@ public final class SaveSystem {
                     readInt(properties, entityPrefix + "respawnDelayMs", 300000),
                     readInt(properties, entityPrefix + "aiCooldownMs", 0),
                     Boolean.parseBoolean(properties.getProperty(entityPrefix + "alerted", "false")),
+                    decode(properties.getProperty(entityPrefix + "corpse.sourceSpawnId", "")),
+                    corpseItems,
+                    Boolean.parseBoolean(properties.getProperty(
+                            entityPrefix + "corpse.butcheryAttempted", "false")),
+                    decode(properties.getProperty(entityPrefix + "corpse.status", "")),
                     decode(properties.getProperty(entityPrefix + "temporaryStationId", "")),
                     readOptionalEnum(
                             properties.getProperty(entityPrefix + "temporaryStationType", ""),
@@ -1122,85 +1197,6 @@ public final class SaveSystem {
             ));
         }
         return entities;
-    }
-
-    private static void saveMapTriggers(
-            Properties properties,
-            String prefix,
-            List<MapDesignLibrary.MapTrigger> triggers
-    ) {
-        properties.setProperty(prefix + "count", String.valueOf(triggers == null ? 0 : triggers.size()));
-        if (triggers == null) {
-            return;
-        }
-
-        for (int i = 0; i < triggers.size(); i++) {
-            MapDesignLibrary.MapTrigger trigger = triggers.get(i);
-            String triggerPrefix = prefix + i + ".";
-            properties.setProperty(triggerPrefix + "id", trigger.id());
-            properties.setProperty(triggerPrefix + "x", String.valueOf(trigger.x()));
-            properties.setProperty(triggerPrefix + "y", String.valueOf(trigger.y()));
-            properties.setProperty(triggerPrefix + "fireMode", trigger.fireMode().name());
-            properties.setProperty(triggerPrefix + "oneShot", String.valueOf(trigger.oneShot()));
-            properties.setProperty(triggerPrefix + "requiredQuestId", trigger.requiredQuestId());
-            properties.setProperty(triggerPrefix + "requiredQuestProgress", trigger.requiredQuestProgress());
-            properties.setProperty(triggerPrefix + "action.count", String.valueOf(trigger.actions().size()));
-            for (int actionIndex = 0; actionIndex < trigger.actions().size(); actionIndex++) {
-                MapDesignLibrary.TriggerAction action = trigger.actions().get(actionIndex);
-                String actionPrefix = triggerPrefix + "action." + actionIndex + ".";
-                properties.setProperty(actionPrefix + "type", action.type().name());
-                properties.setProperty(actionPrefix + "targetX", String.valueOf(action.targetX()));
-                properties.setProperty(actionPrefix + "targetY", String.valueOf(action.targetY()));
-            }
-        }
-    }
-
-    private static List<MapDesignLibrary.MapTrigger> loadMapTriggers(Properties properties, String prefix) {
-        int count = readInt(properties, prefix + "count", 0);
-        List<MapDesignLibrary.MapTrigger> triggers = new ArrayList<>();
-
-        for (int i = 0; i < count; i++) {
-            String triggerPrefix = prefix + i + ".";
-            String id = properties.getProperty(triggerPrefix + "id", "");
-            if (id.isBlank()) {
-                continue;
-            }
-
-            int actionCount = readInt(properties, triggerPrefix + "action.count", 0);
-            List<MapDesignLibrary.TriggerAction> actions = new ArrayList<>();
-            for (int actionIndex = 0; actionIndex < actionCount; actionIndex++) {
-                String actionPrefix = triggerPrefix + "action." + actionIndex + ".";
-                MapDesignLibrary.TriggerActionType type = readEnum(
-                        properties,
-                        actionPrefix + "type",
-                        MapDesignLibrary.TriggerActionType.class,
-                        MapDesignLibrary.TriggerActionType.CLOSE_DOOR
-                );
-                actions.add(new MapDesignLibrary.TriggerAction(
-                        type,
-                        readInt(properties, actionPrefix + "targetX", 0),
-                        readInt(properties, actionPrefix + "targetY", 0)
-                ));
-            }
-
-            triggers.add(new MapDesignLibrary.MapTrigger(
-                    id,
-                    readInt(properties, triggerPrefix + "x", 0),
-                    readInt(properties, triggerPrefix + "y", 0),
-                    readEnum(
-                            properties,
-                            triggerPrefix + "fireMode",
-                            MapDesignLibrary.TriggerFireMode.class,
-                            MapDesignLibrary.TriggerFireMode.ON_ENTRY
-                    ),
-                    Boolean.parseBoolean(properties.getProperty(triggerPrefix + "oneShot", "true")),
-                    properties.getProperty(triggerPrefix + "requiredQuestId", ""),
-                    properties.getProperty(triggerPrefix + "requiredQuestProgress", ""),
-                    actions
-            ));
-        }
-
-        return triggers;
     }
 
     private static void saveTileInteractionMap(Properties properties, String prefix, Map<String, String> interactions) {
@@ -1327,7 +1323,9 @@ public final class SaveSystem {
         }
 
         if (item.isStackable()) {
-            String itemId = sharedItemId(item.getName());
+            String itemId = item.getContentId().isBlank()
+                    ? sharedItemId(item.getName())
+                    : item.getContentId();
             if (!itemId.isBlank()) {
                 return "STACK|" + itemId + "|" + item.getQuantity();
             }
@@ -1344,6 +1342,9 @@ public final class SaveSystem {
     private static String customItemKey(InventorySystem.Item item) {
         if (item == null) {
             return "";
+        }
+        if (!item.getContentId().isBlank()) {
+            return "CUSTOM_ITEM|" + item.getContentId();
         }
 
         try {
@@ -1484,7 +1485,18 @@ public final class SaveSystem {
                 + "|"
                 + encode(limb.getFirstPersonModelPath())
                 + "|"
-                + encode(limb.getFirstPersonRigId());
+                + encode(limb.getFirstPersonRigId())
+                + "|"
+                + limb.usesPaperDollDerivedIcon()
+                + "|"
+                + limb.getBaseGoldValue()
+                + "|"
+                + encode(limb.getContentId())
+                + "|"
+                + encode(limb.getSkills().stream()
+                        .map(skill -> skill == null ? "" : skill.getSkillId())
+                        .filter(skillId -> !skillId.isBlank())
+                        .collect(Collectors.joining(",")));
     }
 
     private static LimbItem readCustomLimb(String value) {
@@ -1515,9 +1527,23 @@ public final class SaveSystem {
             String sourceCreatureId = parts.length >= 10 ? decode(parts[9]) : "";
             String firstPersonModelPath = parts.length >= 11 ? decode(parts[10]) : "";
             String firstPersonRigId = parts.length >= 12 ? decode(parts[11]) : "";
-            return new LimbItem(name, sourceCreatureId, sourceCreatureName, slot, stats,
-                    List.of(), condition, iconPath, examineText, paperDollSourcePath)
-                    .withFirstPersonModel(firstPersonModelPath, firstPersonRigId);
+            boolean paperDollDerivedIcon = parts.length >= 13 && Boolean.parseBoolean(parts[12]);
+            int baseGoldValue = parts.length >= 14 ? Integer.parseInt(parts[13]) : 25;
+            String contentId = parts.length >= 15 ? decode(parts[14]) : "";
+            List<org.main.battle.BattleSkill> skills = parts.length >= 16
+                    ? Arrays.stream(decode(parts[15]).split(","))
+                            .map(String::trim)
+                            .filter(skillId -> !skillId.isBlank())
+                            .map(BattleContentCatalog::createSkill)
+                            .toList()
+                    : List.of();
+            LimbItem limb = new LimbItem(name, sourceCreatureId, sourceCreatureName, slot, stats,
+                    List.of(), condition, iconPath, examineText, paperDollSourcePath,
+                    paperDollDerivedIcon, baseGoldValue)
+                    .withFirstPersonModel(firstPersonModelPath, firstPersonRigId)
+                    .withSkills(skills);
+            limb.withContentId(contentId);
+            return limb;
         } catch (IllegalArgumentException ignored) {
             return null;
         }

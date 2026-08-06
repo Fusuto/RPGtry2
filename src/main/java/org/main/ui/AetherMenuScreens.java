@@ -19,7 +19,7 @@ public final class AetherMenuScreens {
     private static final int START_BUTTON_WIDTH = 220;
     private static final int START_BUTTON_HEIGHT = 48;
     private static final int START_BUTTON_GAP = 16;
-    private static final int START_BUTTON_COUNT = 4;
+    private static final int START_BUTTON_COUNT = 5;
     private static final int START_MESSAGE_OFFSET_Y = 34;
     private static final int MESSAGE_FONT_SIZE = 15;
     private static final Color TITLE_TEXT_COLOR = new Color(235, 225, 200);
@@ -79,23 +79,35 @@ public final class AetherMenuScreens {
     }
 
     public static void drawStartMenu(Graphics2D g, int width, int height, String message) {
-        drawFramedBackground(g, width, height);
-
-        Font previousFont = g.getFont();
-        g.setFont(new Font(Font.SERIF, Font.BOLD, START_TITLE_FONT_SIZE));
-        drawCenteredText(g, width, "Aether", height / START_TITLE_HEIGHT_DIVISOR, TITLE_TEXT_COLOR);
+        drawMenuBackdrop(g, width, height, "Aether");
 
         drawButton(g, "New", startMenuButtonBounds(width, height, 0));
         drawButton(g, "Load", startMenuButtonBounds(width, height, 1));
         drawButton(g, "Custom Map", startMenuButtonBounds(width, height, 2));
-        drawButton(g, "Quit", startMenuButtonBounds(width, height, 3));
+        drawButton(g, "Credits", startMenuButtonBounds(width, height, 3));
+        drawButton(g, "Quit", startMenuButtonBounds(width, height, 4));
 
         if (message != null && !message.isBlank()) {
+            Font previousFont = g.getFont();
             g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, MESSAGE_FONT_SIZE));
-            Rectangle lastButton = startMenuButtonBounds(width, height, 3);
+            Rectangle lastButton = startMenuButtonBounds(width, height, 4);
             drawCenteredText(g, width, message, lastButton.y + lastButton.height + START_MESSAGE_OFFSET_Y, MESSAGE_TEXT_COLOR);
+            g.setFont(previousFont);
         }
+    }
 
+    public static void drawMenuBackdrop(Graphics2D g, int width, int height, String title) {
+        drawFramedBackground(g, width, height);
+
+        Font previousFont = g.getFont();
+        g.setFont(new Font(Font.SERIF, Font.BOLD, START_TITLE_FONT_SIZE));
+        drawCenteredText(
+                g,
+                width,
+                title == null || title.isBlank() ? "Aether" : title,
+                height / START_TITLE_HEIGHT_DIVISOR,
+                TITLE_TEXT_COLOR
+        );
         g.setFont(previousFont);
     }
 

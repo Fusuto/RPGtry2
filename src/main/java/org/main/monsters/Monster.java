@@ -1,6 +1,7 @@
 package org.main.monsters;
 
 import org.main.content.CharacterModelDefinition;
+import org.main.content.EnemyButcheryProfile;
 import org.main.core.PlayerStat;
 import org.main.engine.AssetLoader;
 
@@ -24,6 +25,7 @@ public class Monster {
     private final String customPaperDollSourcePath;
     private final List<DropEntry> customDrops;
     private final CharacterModelDefinition characterModel;
+    private final EnemyButcheryProfile butcheryProfile;
 
     private int currentHp;
 
@@ -40,7 +42,8 @@ public class Monster {
             int combatAiIntelligence,
             List<String> skillIds,
             List<DropEntry> drops,
-            CharacterModelDefinition characterModel
+            CharacterModelDefinition characterModel,
+            EnemyButcheryProfile butcheryProfile
     ) {
         this.customId = customId == null ? "" : customId;
         this.customName = name == null || name.isBlank() ? "Custom Enemy" : name;
@@ -58,7 +61,30 @@ public class Monster {
         this.characterModel = characterModel == null
                 ? CharacterModelDefinition.empty()
                 : characterModel;
+        this.butcheryProfile = butcheryProfile == null
+                ? EnemyButcheryProfile.defaultHumanoid()
+                : butcheryProfile;
         this.currentHp = getMaxHp();
+    }
+
+    public Monster(
+            String customId,
+            String name,
+            Map<PlayerStat, Integer> stats,
+            int xpReward,
+            String description,
+            String imagePath,
+            String paperDollSourcePath,
+            String attackSoundPath,
+            String damageSoundPath,
+            int combatAiIntelligence,
+            List<String> skillIds,
+            List<DropEntry> drops,
+            CharacterModelDefinition characterModel
+    ) {
+        this(customId, name, stats, xpReward, description, imagePath, paperDollSourcePath,
+                attackSoundPath, damageSoundPath, combatAiIntelligence, skillIds, drops,
+                characterModel, EnemyButcheryProfile.defaultHumanoid());
     }
 
     public Monster(
@@ -77,7 +103,7 @@ public class Monster {
     ) {
         this(customId, name, stats, xpReward, description, imagePath, paperDollSourcePath,
                 attackSoundPath, damageSoundPath, combatAiIntelligence, skillIds, drops,
-                CharacterModelDefinition.empty());
+                CharacterModelDefinition.empty(), EnemyButcheryProfile.defaultHumanoid());
     }
 
     public String getCustomId() {
@@ -156,6 +182,10 @@ public class Monster {
         return characterModel;
     }
 
+    public EnemyButcheryProfile getButcheryProfile() {
+        return butcheryProfile;
+    }
+
     public boolean isAlive() {
         return currentHp > 0;
     }
@@ -174,7 +204,8 @@ public class Monster {
                 customCombatAiIntelligence,
                 customSkillIds,
                 customDrops,
-                characterModel
+                characterModel,
+                butcheryProfile
         );
     }
 

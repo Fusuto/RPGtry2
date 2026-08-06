@@ -18,8 +18,13 @@ import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.locks.LockSupport;
 
 public final class LwjglDungeonPrototype {
+    private static final long SIMULATION_STEP_NANOS = 1_000_000_000L / 60L;
+    private static final int MAX_SIMULATION_STEPS_PER_FRAME = 4;
+    private static final long MAX_RENDER_DELTA_NANOS = 250_000_000L;
+    private static final long FRAME_PACING_SPIN_NANOS = 200_000L;
     private final AetherGameRuntime runtime;
     private final LwjglDungeonViewport viewport;
     private final LwjglInputController inputController = new LwjglInputController();
@@ -34,9 +39,16 @@ public final class LwjglDungeonPrototype {
     private final String characterName;
     private final String regionName;
     private final String smokeScreenshotPath;
+    private final String benchmarkOutputPath;
+    private final String benchmarkScene;
+    private final int benchmarkSeconds;
+    private final int benchmarkWarmupSeconds;
+    private final String benchmarkActions;
     private boolean smokeActionsApplied;
+    private boolean benchmarkActionsApplied;
     private boolean smokeScreenshotCaptured;
     private String lastMapThemeKey = "";
+    private long nextBenchmarkBoundaryCrossingNanos;
 
     private LwjglDungeonPrototype(PrototypeOptions options) {
         this.runtime = new AetherGameRuntime();
@@ -50,10 +62,18 @@ public final class LwjglDungeonPrototype {
         this.characterName = options.characterName();
         this.regionName = options.regionName();
         this.smokeScreenshotPath = options.smokeScreenshotPath();
+        this.benchmarkOutputPath = options.benchmarkOutputPath();
+        this.benchmarkScene = options.benchmarkScene();
+        this.benchmarkSeconds = options.benchmarkSeconds();
+        this.benchmarkWarmupSeconds = options.benchmarkWarmupSeconds();
+        this.benchmarkActions = options.benchmarkActions();
 
         TextureManager textureManager = new TextureManager();
         textureManager.loadFromFolder("assets/images/building");
-        this.viewport = new LwjglDungeonViewport(textureManager, runtime.activeEnvironmentThemes());
+        this.viewport = new LwjglDungeonViewport(
+                textureManager,
+                runtime.activeEnvironmentThemes(),
+                !benchmarkOutputPath.isBlank());
     }
 
     public static void main(String[] args) {
@@ -79,30 +99,76 @@ public final class LwjglDungeonPrototype {
             startAuthoredMap(startMapName, startedCharacter);
         }
         applySmokeActionsIfNeeded();
-        long lastFrameTime = System.currentTimeMillis();
-        long runStartTime = lastFrameTime;
-        long smokeDeadline = smokeRunMs <= 0 ? Long.MAX_VALUE : lastFrameTime + smokeRunMs;
+        runtime.gameState().setPerformanceOverlayVisible(
+                org.main.core.RenderSettings.load().performanceOverlayVisible());
+        long lastLoopNanos = System.nanoTime();
+        long runStartNanos = lastLoopNanos;
+        long smokeDeadlineNanos = smokeRunMs <= 0
+                ? Long.MAX_VALUE
+                : lastLoopNanos + smokeRunMs * 1_000_000L;
+        long benchmarkStartNanos = benchmarkOutputPath.isBlank()
+                ? lastLoopNanos
+                : lastLoopNanos + Math.max(0, benchmarkWarmupSeconds) * 1_000_000_000L;
+        long benchmarkDeadlineNanos = benchmarkOutputPath.isBlank()
+                ? Long.MAX_VALUE
+                : benchmarkStartNanos + Math.max(1, benchmarkSeconds) * 1_000_000_000L;
+        FixedStepAccumulator simulationClock = new FixedStepAccumulator(
+                SIMULATION_STEP_NANOS, MAX_SIMULATION_STEPS_PER_FRAME);
         int renderedFrames = 0;
+        int benchmarkRenderedFrames = 0;
+        boolean benchmarkRecording = benchmarkOutputPath.isBlank();
 
         try {
             while (!viewport.shouldClose()) {
-                long now = System.currentTimeMillis();
-                int deltaMs = (int) Math.max(0, now - lastFrameTime);
-                lastFrameTime = now;
+                long frameStartNanos = System.nanoTime();
+                boolean benchmarkStartedThisFrame = false;
+                if (!benchmarkRecording && frameStartNanos >= benchmarkStartNanos) {
+                    benchmarkRecording = true;
+                    viewport.resetProfiler();
+                    benchmarkStartedThisFrame = true;
+                }
+                viewport.beginProfileFrame(frameStartNanos);
+                long elapsedNanos = Math.max(0L, Math.min(MAX_RENDER_DELTA_NANOS,
+                        frameStartNanos - lastLoopNanos));
+                lastLoopNanos = frameStartNanos;
 
-                inputController.update(deltaMs, runtime, viewport);
-                runtime.update(deltaMs);
+                long inputStart = System.nanoTime();
+                if (benchmarkStartedThisFrame) {
+                    applyBenchmarkActionsIfNeeded();
+                }
+                runBenchmarkScenario(frameStartNanos);
+                inputController.update((int) (elapsedNanos / 1_000_000L), runtime, viewport);
+                viewport.recordProfilePhase(FrameProfiler.Phase.INPUT, System.nanoTime() - inputStart);
+
+                long simulationStart = System.nanoTime();
+                FixedStepAccumulator.Result simulationResult =
+                        simulationClock.advance(elapsedNanos, runtime::update);
+                viewport.setSimulationInterpolationAlpha(simulationResult.interpolationAlpha());
+                viewport.recordProfilePhase(FrameProfiler.Phase.SIMULATION,
+                        System.nanoTime() - simulationStart);
+                long sceneSetupStart = System.nanoTime();
                 refreshViewportChunkSettingsIfMapChanged();
-                viewport.renderFrame(createContext(), inputController.cameraLook(), overlayRenderer, runtime);
+                DungeonRenderContext renderContext = createContext(simulationResult.interpolationAlpha());
+                viewport.recordProfilePhase(FrameProfiler.Phase.SCENE_PREPARATION,
+                        System.nanoTime() - sceneSetupStart);
+                viewport.renderFrame(
+                        renderContext,
+                        inputController.cameraLook(), overlayRenderer, runtime);
                 viewport.pollEvents();
                 renderedFrames++;
+                if (benchmarkRecording && !benchmarkOutputPath.isBlank()) {
+                    benchmarkRenderedFrames++;
+                }
                 captureSmokeScreenshotIfReady(renderedFrames);
-                if (now >= smokeDeadline || (smokeFrameLimit > 0 && renderedFrames >= smokeFrameLimit)) {
+                if (frameStartNanos >= smokeDeadlineNanos
+                        || frameStartNanos >= benchmarkDeadlineNanos
+                        || (smokeFrameLimit > 0 && renderedFrames >= smokeFrameLimit)) {
                     viewport.requestClose();
                 }
+                paceFrame(frameStartNanos);
             }
             if (isSmokeRun()) {
-                long elapsedMs = Math.max(0, System.currentTimeMillis() - runStartTime);
+                long elapsedMs = Math.max(0, (System.nanoTime() - runStartNanos) / 1_000_000L);
                 System.out.println("LWJGL smoke run completed: frames=" + renderedFrames
                         + ", elapsedMs=" + elapsedMs
                         + ", mode=" + runtime.gameState().getGameMode()
@@ -124,6 +190,8 @@ public final class LwjglDungeonPrototype {
                         + ", audio=" + smokeAudioSummary()
                         + ", " + viewport.sceneSummary());
             }
+            exportBenchmarkIfRequested(benchmarkRenderedFrames,
+                    Math.max(0L, System.nanoTime() - benchmarkStartNanos));
         } finally {
             runtime.soundSystem().stopAll();
             overlayRenderer.shutdown();
@@ -131,9 +199,106 @@ public final class LwjglDungeonPrototype {
         }
     }
 
-    private DungeonRenderContext createContext() {
+    private void paceFrame(long frameStartNanos) {
+        org.main.core.RenderSettings settings = viewport.renderSettings();
+        org.main.core.RenderSettings.FrameLimit limit = settings.frameLimit();
+        if (limit == org.main.core.RenderSettings.FrameLimit.UNCAPPED
+                || (settings.vSync() && limit == org.main.core.RenderSettings.FrameLimit.DISPLAY)) {
+            return;
+        }
+        int targetFps = limit.framesPerSecond(viewport.displayRefreshRate());
+        if (targetFps <= 0 || (settings.vSync() && targetFps >= viewport.displayRefreshRate())) {
+            return;
+        }
+        long deadline = frameStartNanos + 1_000_000_000L / targetFps;
+        long remaining;
+        while ((remaining = deadline - System.nanoTime()) > FRAME_PACING_SPIN_NANOS) {
+            LockSupport.parkNanos(remaining - FRAME_PACING_SPIN_NANOS);
+        }
+        while (System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+    }
+
+    private void exportBenchmarkIfRequested(int renderedFrames, long elapsedNanos) {
+        if (benchmarkOutputPath == null || benchmarkOutputPath.isBlank()) {
+            return;
+        }
+        FrameProfiler.Snapshot metrics = viewport.benchmarkProfilerSnapshot();
+        String json = "{\n"
+                + "  \"schemaVersion\": 1,\n"
+                + "  \"scene\": \"" + jsonEscape(benchmarkScene) + "\",\n"
+                + "  \"width\": 1920,\n"
+                + "  \"height\": 1080,\n"
+                + "  \"vsync\": false,\n"
+                + "  \"frameLimit\": \"UNCAPPED\",\n"
+                + "  \"glVendor\": \"" + jsonEscape(viewport.glVendor()) + "\",\n"
+                + "  \"glRenderer\": \"" + jsonEscape(viewport.glRenderer()) + "\",\n"
+                + "  \"javaVersion\": \"" + jsonEscape(System.getProperty("java.version", "unknown")) + "\",\n"
+                + "  \"renderedFrames\": " + renderedFrames + ",\n"
+                + "  \"elapsedSeconds\": " + formatNumber(elapsedNanos / 1_000_000_000.0) + ",\n"
+                + "  \"averageFrameMs\": " + formatNumber(metrics.averageMs()) + ",\n"
+                + "  \"medianFrameMs\": " + formatNumber(metrics.medianMs()) + ",\n"
+                + "  \"p95FrameMs\": " + formatNumber(metrics.p95Ms()) + ",\n"
+                + "  \"p99FrameMs\": " + formatNumber(metrics.p99Ms()) + ",\n"
+                + "  \"maximumFrameMs\": " + formatNumber(metrics.maximumMs()) + ",\n"
+                + "  \"onePercentLowFps\": " + formatNumber(metrics.onePercentLowFps()) + ",\n"
+                + "  \"gpuTimeMs\": " + formatNumber(metrics.gpuTimeMs()) + ",\n"
+                + "  \"averagePhaseMs\": " + phaseJson(metrics, false) + ",\n"
+                + "  \"slowestFramePhaseMs\": " + phaseJson(metrics, true) + ",\n"
+                + "  \"drawCalls\": " + metrics.drawCalls() + ",\n"
+                + "  \"triangles\": " + metrics.triangles() + ",\n"
+                + "  \"uploadedBytes\": " + metrics.uploadedBytes() + ",\n"
+                + "  \"skinnedVertices\": " + metrics.skinnedVertices() + ",\n"
+                + "  \"cacheHits\": " + metrics.cacheHits() + ",\n"
+                + "  \"cacheMisses\": " + metrics.cacheMisses() + ",\n"
+                + "  \"averageAllocatedBytesPerFrame\": " + metrics.averageAllocatedBytes() + ",\n"
+                + "  \"gcEvents\": " + metrics.gcEvents() + "\n"
+                + "}\n";
+        try {
+            Path output = Path.of(benchmarkOutputPath).toAbsolutePath().normalize();
+            Path parent = output.getParent();
+            if (parent != null) {
+                java.nio.file.Files.createDirectories(parent);
+            }
+            java.nio.file.Files.writeString(output, json);
+            System.out.println("LWJGL benchmark JSON: " + output);
+        } catch (IOException exception) {
+            System.out.println("LWJGL benchmark export failed: " + exception.getMessage());
+        }
+    }
+
+    private static String jsonEscape(String value) {
+        return (value == null ? "" : value)
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\r", "\\r")
+                .replace("\n", "\\n");
+    }
+
+    private static String formatNumber(double value) {
+        return String.format(java.util.Locale.ROOT, "%.4f", value);
+    }
+
+    private static String phaseJson(FrameProfiler.Snapshot metrics, boolean slowest) {
+        StringBuilder result = new StringBuilder("{");
+        FrameProfiler.Phase[] phases = FrameProfiler.Phase.values();
+        for (int index = 0; index < phases.length; index++) {
+            if (index > 0) {
+                result.append(", ");
+            }
+            FrameProfiler.Phase phase = phases[index];
+            double value = slowest ? metrics.slowestPhaseMs(phase) : metrics.phaseMs(phase);
+            result.append('"').append(phase.name().toLowerCase(java.util.Locale.ROOT))
+                    .append("\": ").append(formatNumber(value));
+        }
+        return result.append('}').toString();
+    }
+
+    private DungeonRenderContext createContext(double interpolationAlpha) {
         Dimension framebufferSize = viewport.framebufferSize();
-        return runtime.renderContext(framebufferSize.width, framebufferSize.height);
+        return runtime.renderContext(
+                framebufferSize.width, framebufferSize.height, interpolationAlpha);
     }
 
     private void captureSmokeScreenshotIfReady(int renderedFrames) {
@@ -161,8 +326,12 @@ public final class LwjglDungeonPrototype {
             return;
         }
 
+        boolean transitionedBetweenLoadedMaps = !lastMapThemeKey.isBlank();
         lastMapThemeKey = key;
         refreshViewportChunkSettings();
+        if (transitionedBetweenLoadedMaps) {
+            overlayRenderer.deferRedrawOnce();
+        }
     }
 
     private void refreshViewportChunkSettings() {
@@ -178,7 +347,8 @@ public final class LwjglDungeonPrototype {
                 || launchLoadGame
                 || !smokeActions.isBlank()
                 || !startMapName.isBlank()
-                || !smokeScreenshotPath.isBlank();
+                || !smokeScreenshotPath.isBlank()
+                || !benchmarkOutputPath.isBlank();
     }
 
     private boolean loadGameAtStartup() {
@@ -272,9 +442,49 @@ public final class LwjglDungeonPrototype {
         }
 
         smokeActionsApplied = true;
-        for (String rawAction : smokeActions.split(",")) {
+        applyActionList(smokeActions);
+    }
+
+    private void applyBenchmarkActionsIfNeeded() {
+        if (benchmarkActionsApplied || benchmarkActions == null || benchmarkActions.isBlank()) {
+            return;
+        }
+        benchmarkActionsApplied = true;
+        applyActionList(benchmarkActions);
+    }
+
+    private void applyActionList(String actions) {
+        for (String rawAction : actions.split(",")) {
             applySmokeAction(rawAction == null ? "" : rawAction.trim().toLowerCase());
         }
+    }
+
+    private void runBenchmarkScenario(long nowNanos) {
+        if (!benchmarkRecordingScene("overworld-boundary-repeat")) {
+            return;
+        }
+        if (nextBenchmarkBoundaryCrossingNanos == 0L) {
+            nextBenchmarkBoundaryCrossingNanos = nowNanos + 600_000_000L;
+            return;
+        }
+        if (nowNanos < nextBenchmarkBoundaryCrossingNanos) {
+            return;
+        }
+        org.main.content.WorldManifestLibrary.ChunkCoordinate coordinate =
+                runtime.gameState().getCurrentChunkCoordinate();
+        if (coordinate == null) {
+            return;
+        }
+        runtime.gameState().setDirection(coordinate.x() > 0 ? 3 : 1);
+        runtime.dungeonController().moveForward();
+        nextBenchmarkBoundaryCrossingNanos = nowNanos + 600_000_000L;
+    }
+
+    private boolean benchmarkRecordingScene(String expected) {
+        return benchmarkOutputPath != null
+                && !benchmarkOutputPath.isBlank()
+                && benchmarkScene != null
+                && benchmarkScene.equalsIgnoreCase(expected);
     }
 
     private void applySmokeAction(String action) {
@@ -698,7 +908,12 @@ public final class LwjglDungeonPrototype {
             String startMapName,
             String characterName,
             String regionName,
-            String smokeScreenshotPath
+            String smokeScreenshotPath,
+            String benchmarkOutputPath,
+            String benchmarkScene,
+            int benchmarkSeconds,
+            int benchmarkWarmupSeconds,
+            String benchmarkActions
     ) {
         private static PrototypeOptions parse(String[] args) {
             int smokeRunMs = 0;
@@ -711,6 +926,11 @@ public final class LwjglDungeonPrototype {
             String characterName = "";
             String regionName = "";
             String smokeScreenshotPath = "";
+            String benchmarkOutputPath = "";
+            String benchmarkScene = "populated-overworld-center";
+            int benchmarkSeconds = 30;
+            int benchmarkWarmupSeconds = 2;
+            String benchmarkActions = "";
             if (args == null) {
                 return new PrototypeOptions(
                         smokeRunMs,
@@ -722,7 +942,12 @@ public final class LwjglDungeonPrototype {
                         startMapName,
                         characterName,
                         regionName,
-                        smokeScreenshotPath
+                        smokeScreenshotPath,
+                        benchmarkOutputPath,
+                        benchmarkScene,
+                        benchmarkSeconds,
+                        benchmarkWarmupSeconds,
+                        benchmarkActions
                 );
             }
 
@@ -751,6 +976,18 @@ public final class LwjglDungeonPrototype {
                     regionName = arg.substring("--region=".length()).trim();
                 } else if (arg.startsWith("--smoke-screenshot=")) {
                     smokeScreenshotPath = arg.substring("--smoke-screenshot=".length()).trim();
+                } else if (arg.startsWith("--benchmark-output=")) {
+                    benchmarkOutputPath = arg.substring("--benchmark-output=".length()).trim();
+                } else if (arg.startsWith("--benchmark-scene=")) {
+                    benchmarkScene = arg.substring("--benchmark-scene=".length()).trim();
+                } else if (arg.startsWith("--benchmark-seconds=")) {
+                    benchmarkSeconds = Math.max(1, parseNonNegativeInt(
+                            arg.substring("--benchmark-seconds=".length()), benchmarkSeconds));
+                } else if (arg.startsWith("--benchmark-warmup-seconds=")) {
+                    benchmarkWarmupSeconds = parseNonNegativeInt(
+                            arg.substring("--benchmark-warmup-seconds=".length()), benchmarkWarmupSeconds);
+                } else if (arg.startsWith("--benchmark-actions=")) {
+                    benchmarkActions = arg.substring("--benchmark-actions=".length());
                 }
             }
             return new PrototypeOptions(
@@ -763,7 +1000,12 @@ public final class LwjglDungeonPrototype {
                     startMapName,
                     characterName,
                     regionName,
-                    smokeScreenshotPath
+                    smokeScreenshotPath,
+                    benchmarkOutputPath,
+                    benchmarkScene,
+                    benchmarkSeconds,
+                    benchmarkWarmupSeconds,
+                    benchmarkActions
             );
         }
 

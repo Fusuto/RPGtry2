@@ -1,6 +1,7 @@
 package org.main.core;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -40,8 +41,10 @@ public final class WorldMessageLog {
     }
 
     private final List<Message> entries = new ArrayList<>();
+    private final List<Message> entriesView = Collections.unmodifiableList(entries);
     private long elapsedMs;
     private long nextSequence = 1L;
+    private long revision;
 
     public void advance(int deltaMs) {
         elapsedMs += Math.max(0, deltaMs);
@@ -87,6 +90,7 @@ public final class WorldMessageLog {
                         previous.repeatCount() + 1
                 );
                 entries.set(entries.size() - 1, repeated);
+                revision++;
                 return repeated;
             }
         }
@@ -105,11 +109,12 @@ public final class WorldMessageLog {
         while (entries.size() > MAX_ENTRIES) {
             entries.remove(0);
         }
+        revision++;
         return message;
     }
 
     public List<Message> entries() {
-        return List.copyOf(entries);
+        return entriesView;
     }
 
     public List<Message> recent(int maximum) {
@@ -126,8 +131,21 @@ public final class WorldMessageLog {
     }
 
     public void clear() {
+        if (!entries.isEmpty() || elapsedMs != 0L || nextSequence != 1L) {
+            revision++;
+        }
         entries.clear();
         elapsedMs = 0L;
         nextSequence = 1L;
+    }
+
+    public boolean hasRecentMessages() {
+        return !entries.isEmpty()
+                && elapsedMs - entries.get(entries.size() - 1).createdAtMs() <= RECENT_LIFETIME_MS;
+    }
+
+    public long presentationSignature() {
+        long ageBucket = hasRecentMessages() ? elapsedMs / 50L : 0L;
+        return revision * 1_000_003L + ageBucket;
     }
 }

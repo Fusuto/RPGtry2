@@ -6,6 +6,8 @@ import org.main.battle.BattleTiming;
 import org.main.content.CharacterModelDefinition;
 import org.main.content.FirstPersonCombatLibrary;
 import org.main.core.InventorySystem;
+import org.main.core.LimbItem;
+import org.main.core.LimbSlot;
 import org.main.core.WeaponType;
 
 import java.io.IOException;
@@ -17,13 +19,14 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class FirstPersonAnimationRuntime {
     public record ResolvedRig(
             FirstPersonCombatLibrary.Content content,
+            FirstPersonCombatLibrary.RigDefinition rig,
             FirstPersonCombatLibrary.ItemProfile itemProfile,
             FirstPersonCombatLibrary.WieldHand wieldHand,
             CharacterModelDefinition modelDefinition,
             LwjglSkinnedModel model
     ) {
         public boolean usable() {
-            return model != null && content.rig().configured();
+            return model != null && rig != null && rig.configured();
         }
     }
 
@@ -43,17 +46,44 @@ public final class FirstPersonAnimationRuntime {
         if (player == null || player.getSourcePlayer() == null) return empty();
         InventorySystem.Item weapon = player.getSourcePlayer().getInventory()
                 .getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
+        InventorySystem.Item shield = player.getSourcePlayer().getInventory()
+                .getEquippedItem(InventorySystem.EquipmentSlot.SHIELD);
         FirstPersonCombatLibrary.Content content = FirstPersonCombatLibrary.load();
         FirstPersonCombatLibrary.ItemProfile profile = content.itemProfile(weapon);
-        FirstPersonCombatLibrary.WieldHand hand = profile == null
-                ? FirstPersonCombatLibrary.WieldHand.RIGHT : profile.wieldHand();
+        FirstPersonCombatLibrary.ItemProfile shieldProfile = content.itemProfile(shield);
+        FirstPersonCombatLibrary.WieldHand hand = profile != null
+                ? profile.wieldHand()
+                : shieldProfile != null ? shieldProfile.wieldHand()
+                : FirstPersonCombatLibrary.WieldHand.RIGHT;
+        FirstPersonCombatLibrary.WieldHand blockHand = shieldProfile == null
+                ? hand.opposite() : shieldProfile.wieldHand();
+        FirstPersonCombatLibrary.ItemProfile rigProfile = profile == null
+                ? shieldProfile : profile;
+        FirstPersonCombatLibrary.RigDefinition rig = content.rigFor(rigProfile);
+        if ((profile == null || profile.rigId().isBlank())) {
+            LimbItem wieldingArm = player.getSourcePlayer().getEquippedLimb(
+                    hand == FirstPersonCombatLibrary.WieldHand.LEFT
+                            ? LimbSlot.LEFT_ARM
+                            : LimbSlot.RIGHT_ARM);
+            if (wieldingArm != null
+                    && !wieldingArm.getFirstPersonRigId().isBlank()
+                    && content.rigs().containsKey(FirstPersonCombatLibrary.normalizeId(
+                            wieldingArm.getFirstPersonRigId()))) {
+                rig = content.rig(wieldingArm.getFirstPersonRigId());
+            }
+        }
         CharacterModelDefinition definition = definitionFor(
-                content,
+                content, rig,
                 weapon == null ? WeaponType.NONE : weapon.getWeaponType(),
                 profile,
-                hand);
+                hand,
+                shieldProfile,
+                blockHand,
+                shieldProfile == null
+                        ? weapon == null ? WeaponType.NONE : weapon.getWeaponType()
+                        : WeaponType.NONE);
         if (!definition.hasModel()) {
-            return new ResolvedRig(content, profile, hand, definition, null);
+            return new ResolvedRig(content, rig, profile, hand, definition, null);
         }
         LwjglSkinnedModel model;
         try {
@@ -67,7 +97,7 @@ public final class FirstPersonAnimationRuntime {
         } catch (ModelLoadFailure failure) {
             model = null;
         }
-        return new ResolvedRig(content, profile, hand, definition, model);
+        return new ResolvedRig(content, rig, profile, hand, definition, model);
     }
 
     public static PresentationTiming timing(
@@ -113,29 +143,51 @@ public final class FirstPersonAnimationRuntime {
             FirstPersonCombatLibrary.ItemProfile profile,
             FirstPersonCombatLibrary.WieldHand hand
     ) {
+        return definitionFor(content, content.rigFor(profile), weaponType, profile, hand);
+    }
+
+    public static CharacterModelDefinition definitionFor(
+            FirstPersonCombatLibrary.Content content,
+            FirstPersonCombatLibrary.RigDefinition rig,
+            WeaponType weaponType,
+            FirstPersonCombatLibrary.ItemProfile profile,
+            FirstPersonCombatLibrary.WieldHand hand
+    ) {
+        return definitionFor(content, rig, weaponType, profile, hand,
+                profile, hand.opposite(), weaponType);
+    }
+
+    public static CharacterModelDefinition definitionFor(
+            FirstPersonCombatLibrary.Content content,
+            FirstPersonCombatLibrary.RigDefinition rig,
+            WeaponType weaponType,
+            FirstPersonCombatLibrary.ItemProfile profile,
+            FirstPersonCombatLibrary.WieldHand hand,
+            FirstPersonCombatLibrary.ItemProfile blockProfile,
+            FirstPersonCombatLibrary.WieldHand blockHand,
+            WeaponType blockWeaponType
+    ) {
         EnumMap<CharacterModelDefinition.AnimationSlot, CharacterModelDefinition.AnimationBinding> bindings =
                 new EnumMap<>(CharacterModelDefinition.AnimationSlot.class);
         put(bindings, CharacterModelDefinition.AnimationSlot.IDLE,
-                content.resolveBinding(weaponType, profile, hand == FirstPersonCombatLibrary.WieldHand.LEFT
+                content.resolveBinding(weaponType, profile, rig, hand == FirstPersonCombatLibrary.WieldHand.LEFT
                         ? FirstPersonCombatLibrary.AnimationSlot.IDLE_LEFT
                         : FirstPersonCombatLibrary.AnimationSlot.IDLE_RIGHT));
         put(bindings, CharacterModelDefinition.AnimationSlot.ATTACK,
-                content.resolveBinding(weaponType, profile, hand == FirstPersonCombatLibrary.WieldHand.LEFT
+                content.resolveBinding(weaponType, profile, rig, hand == FirstPersonCombatLibrary.WieldHand.LEFT
                         ? FirstPersonCombatLibrary.AnimationSlot.ATTACK_LEFT
                         : FirstPersonCombatLibrary.AnimationSlot.ATTACK_RIGHT));
-        FirstPersonCombatLibrary.WieldHand shieldHand = hand.opposite();
         put(bindings, CharacterModelDefinition.AnimationSlot.BLOCK,
-                content.resolveBinding(weaponType, profile,
-                        shieldHand == FirstPersonCombatLibrary.WieldHand.LEFT
+                content.resolveBinding(blockWeaponType, blockProfile, rig,
+                        blockHand == FirstPersonCombatLibrary.WieldHand.LEFT
                                 ? FirstPersonCombatLibrary.AnimationSlot.BLOCK_LEFT
                                 : FirstPersonCombatLibrary.AnimationSlot.BLOCK_RIGHT));
         put(bindings, CharacterModelDefinition.AnimationSlot.CAST,
-                content.resolveBinding(weaponType, profile, FirstPersonCombatLibrary.AnimationSlot.CAST));
+                content.resolveBinding(weaponType, profile, rig, FirstPersonCombatLibrary.AnimationSlot.CAST));
         put(bindings, CharacterModelDefinition.AnimationSlot.HIT,
-                content.resolveBinding(weaponType, profile, FirstPersonCombatLibrary.AnimationSlot.HIT));
+                content.resolveBinding(weaponType, profile, rig, FirstPersonCombatLibrary.AnimationSlot.HIT));
         put(bindings, CharacterModelDefinition.AnimationSlot.DODGE,
-                content.resolveBinding(weaponType, profile, FirstPersonCombatLibrary.AnimationSlot.DODGE));
-        FirstPersonCombatLibrary.RigDefinition rig = content.rig();
+                content.resolveBinding(weaponType, profile, rig, FirstPersonCombatLibrary.AnimationSlot.DODGE));
         return new CharacterModelDefinition(
                 rig.modelPath(), rig.rigId(), rig.scale(),
                 rig.rotationY(), rig.positionY(), bindings);
@@ -153,7 +205,7 @@ public final class FirstPersonAnimationRuntime {
 
     private static ResolvedRig empty() {
         FirstPersonCombatLibrary.Content content = FirstPersonCombatLibrary.load();
-        return new ResolvedRig(content, null, FirstPersonCombatLibrary.WieldHand.RIGHT,
+        return new ResolvedRig(content, content.rig(), null, FirstPersonCombatLibrary.WieldHand.RIGHT,
                 CharacterModelDefinition.empty(), null);
     }
 

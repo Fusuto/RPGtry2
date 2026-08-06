@@ -164,7 +164,41 @@ public final class AssetLoader {
             return ApplicationPaths.resolveApplicationPath(normalizedPath);
         }
 
+        /*
+         * The Construction Kit writes imported assets into the source-resource
+         * tree. That tree is not part of an already-running class loader, so a
+         * newly imported assets/... path must be resolved directly while
+         * developing instead of waiting for the next Maven resource copy or
+         * application restart.
+         */
+        if (normalizedPath.startsWith("assets/")) {
+            Path workingResource = resolveWithinResourceRoot(
+                    Path.of("src", "main", "resources"),
+                    normalizedPath);
+            if (workingResource != null && Files.exists(workingResource)) {
+                return workingResource;
+            }
+            Path applicationResource = resolveWithinResourceRoot(
+                    ApplicationPaths.applicationFolder()
+                            .resolve("src")
+                            .resolve("main")
+                            .resolve("resources"),
+                    normalizedPath);
+            if (applicationResource != null && Files.exists(applicationResource)) {
+                return applicationResource;
+            }
+        }
+
         return directPath;
+    }
+
+    private static Path resolveWithinResourceRoot(Path resourceRoot, String assetPath) {
+        if (resourceRoot == null || isBlank(assetPath)) {
+            return null;
+        }
+        Path normalizedRoot = resourceRoot.toAbsolutePath().normalize();
+        Path candidate = normalizedRoot.resolve(assetPath).normalize();
+        return candidate.startsWith(normalizedRoot) ? candidate : null;
     }
 
     private static String normalizeResourcePath(String assetPath) {

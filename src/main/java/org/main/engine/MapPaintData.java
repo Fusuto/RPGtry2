@@ -1,5 +1,10 @@
 package org.main.engine;
 
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.Objects;
+import java.util.Set;
+
 public final class MapPaintData {
     public enum Layer {
         FLOOR,
@@ -14,6 +19,9 @@ public final class MapPaintData {
     private final String[][] wallBrushes;
     private final String[][] doorBrushes;
     private final String[][] roofBrushes;
+    private final Set<TileCoordinate> dirtyTiles = new LinkedHashSet<>();
+    private final Set<TileCoordinate> dirtyTilesView = Collections.unmodifiableSet(dirtyTiles);
+    private long revision;
 
     private MapPaintData(
             int width,
@@ -95,7 +103,27 @@ public final class MapPaintData {
             return;
         }
 
-        arrayFor(layer)[y][x] = brushId == null ? "" : brushId.trim();
+        String value = brushId == null ? "" : brushId.trim();
+        String[][] target = arrayFor(layer);
+        String previous = target[y][x] == null ? "" : target[y][x];
+        if (Objects.equals(previous, value)) {
+            return;
+        }
+        target[y][x] = value;
+        revision++;
+        dirtyTiles.add(new TileCoordinate(x, y));
+    }
+
+    public long revision() {
+        return revision;
+    }
+
+    public Set<TileCoordinate> dirtyTilesView() {
+        return dirtyTilesView;
+    }
+
+    public void clearDirtyTiles() {
+        dirtyTiles.clear();
     }
 
     public boolean hasBrush(int x, int y) {
@@ -150,5 +178,8 @@ public final class MapPaintData {
             }
         }
         return normalized;
+    }
+
+    public record TileCoordinate(int x, int y) {
     }
 }

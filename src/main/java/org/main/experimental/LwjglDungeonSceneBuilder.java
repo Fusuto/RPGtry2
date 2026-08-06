@@ -17,6 +17,8 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,16 +38,23 @@ final class LwjglDungeonSceneBuilder {
     private static final double OPEN_DOOR_TOP = 0.86;
     private static final double OPEN_DOOR_BOTTOM = 0.02;
 
-    private final BufferedImage[] decorativeWaterFrames = loadNumberedFrames("shoals_shallow_water", 0, 11);
-    private final BufferedImage[] fishingWaterFrames = {
+    private static final BufferedImage[] DECORATIVE_WATER_FRAMES = loadNumberedFrames("shoals_shallow_water", 0, 11);
+    private static final BufferedImage[] FISHING_WATER_FRAMES = {
             AssetLoader.loadImage(WATER_PATH + "shoals_shallow_water_disturbance1.png"),
             AssetLoader.loadImage(WATER_PATH + "shoals_shallow_water_disturbance2.png"),
             AssetLoader.loadImage(WATER_PATH + "shoals_shallow_water_disturbance3.png")
     };
+    private static final AnimatedTexture DECORATIVE_WATER = new AnimatedTexture(
+            DECORATIVE_WATER_FRAMES, DECORATIVE_WATER_FRAME_MS);
+    private static final AnimatedTexture FISHING_WATER = new AnimatedTexture(
+            FISHING_WATER_FRAMES, FISHING_WATER_FRAME_MS);
     private final TextureManager textureManager;
     private List<EnvironmentTheme> environmentThemes;
     private String cachedCliffTexturePath = "";
     private BufferedImage cachedCliffTexture;
+    private long themeRevision;
+    private final Map<MapEntity, CachedModelInstance> staticEntityModels = new IdentityHashMap<>();
+    private DungeonMap staticEntityModelMap;
 
     LwjglDungeonSceneBuilder(TextureManager textureManager, List<EnvironmentTheme> environmentThemes) {
         this.textureManager = textureManager;
@@ -58,6 +67,125 @@ final class LwjglDungeonSceneBuilder {
         this.environmentThemes = environmentThemes == null || environmentThemes.isEmpty()
                 ? List.of(EnvironmentTheme.defaultTheme())
                 : new ArrayList<>(environmentThemes);
+        themeRevision++;
+    }
+
+    long terrainMaterialRevision() {
+        return themeRevision;
+    }
+
+    Scene buildEntities(
+            DungeonRenderContext context,
+            int maxDepth,
+            double cameraYawDegrees,
+            double fieldOfViewDegrees,
+            double interpolationAlpha
+    ) {
+        if (staticEntityModelMap != context.map()) {
+            staticEntityModels.clear();
+            staticEntityModelMap = context.map();
+        }
+        List<TexturedQuad> quads = new ArrayList<>();
+        List<ModelInstance> models = new ArrayList<>();
+        int spriteQuads = 0;
+        for (MapEntity entity : context.entities()) {
+            double deltaX = entity.getRenderX(interpolationAlpha) - context.playerX();
+            double deltaZ = entity.getRenderY(interpolationAlpha) - context.playerY();
+            if (!ConservativeFrustum.includes(
+                    deltaX,
+                    deltaZ,
+                    cameraYawDegrees,
+                    fieldOfViewDegrees,
+                    maxDepth,
+                    spriteHeightFor(entity) * 0.75)) {
+                continue;
+            }
+            if (entity.hasVisibleStaticModel()) {
+                ModelInstance cached = cachedStaticModelInstance(
+                        context, entity, maxDepth, cameraYawDegrees);
+                if (cached != null) {
+                    models.add(cached);
+                    continue;
+                }
+            }
+            TexturedQuad sprite = spriteQuad(
+                    context, entity, maxDepth, cameraYawDegrees, interpolationAlpha);
+            if (entity.hasVisibleStaticModel()) {
+                ModelInstance model = modelInstance(
+                        context, entity, maxDepth, sprite, interpolationAlpha);
+                if (model != null) {
+                    cacheStaticModelInstance(context, entity, cameraYawDegrees, model);
+                    models.add(model);
+                    continue;
+                }
+            }
+            if (sprite != null) {
+                quads.add(sprite);
+                spriteQuads++;
+            }
+        }
+        return new Scene(quads, models, 0, 0, 0, 0, spriteQuads);
+    }
+
+    private ModelInstance cachedStaticModelInstance(
+            DungeonRenderContext context,
+            MapEntity entity,
+            int maxDepth,
+            double cameraYawDegrees
+    ) {
+        if (!isReusableStaticEntity(entity)) {
+            return null;
+        }
+        double dx = entity.getX() - context.playerX();
+        double dz = entity.getY() - context.playerY();
+        if (dx * dx + dz * dz > maxDepth * maxDepth
+                || (context.map().getTile(entity.getX(), entity.getY()).isWallLike()
+                && !entity.shouldRenderOnWall())) {
+            return null;
+        }
+        CachedModelInstance cached = staticEntityModels.get(entity);
+        long signature = staticModelSignature(context.map(), entity, cameraYawDegrees);
+        return cached != null && cached.signature() == signature ? cached.instance() : null;
+    }
+
+    private void cacheStaticModelInstance(
+            DungeonRenderContext context,
+            MapEntity entity,
+            double cameraYawDegrees,
+            ModelInstance instance
+    ) {
+        if (isReusableStaticEntity(entity)) {
+            staticEntityModels.put(entity, new CachedModelInstance(
+                    staticModelSignature(context.map(), entity, cameraYawDegrees), instance));
+        }
+    }
+
+    private boolean isReusableStaticEntity(MapEntity entity) {
+        return entity != null
+                && entity.getCharacterModel() == null
+                && entity.getIdleAnimation() == null
+                && !entity.isWorldMotionActive();
+    }
+
+    private long staticModelSignature(DungeonMap map, MapEntity entity, double cameraYawDegrees) {
+        long result = map == null ? 0L : map.geometryRevision();
+        result = 31L * result + entity.getX();
+        result = 31L * result + entity.getY();
+        result = mixDouble(result, entity.getVisualScale());
+        result = mixDouble(result, entity.getStaticModelOffsetX());
+        result = mixDouble(result, entity.getStaticModelOffsetY());
+        result = mixDouble(result, entity.getStaticModelOffsetZ());
+        result = mixDouble(result, entity.getStaticModelYawDegrees());
+        result = mixDouble(result, entity.getStaticModelPitchDegrees());
+        result = mixDouble(result, entity.getStaticModelRollDegrees());
+        result = mixDouble(result, entity.getStaticModelScaleMultiplier());
+        result = mixDouble(result, entity.getStaticModelBrightness());
+        result = mixDouble(result, entity.getWorldFacingYawDegrees(0.0));
+        return mixDouble(result, cameraYawDegrees);
+    }
+
+    private long mixDouble(long seed, double value) {
+        return 31L * seed + Double.doubleToLongBits(value);
     }
 
     Scene build(
@@ -148,11 +276,120 @@ final class LwjglDungeonSceneBuilder {
         return new Scene(quads, models, visibleTiles, floorQuads, wallQuads, roofQuads, spriteQuads);
     }
 
+    /**
+     * Builds the authored terrain once and partitions it into persistent render cells.  The
+     * complete-map build is intentional: roof components and edge faces are resolved with
+     * their real neighbours before a quad is assigned to a cell, so cell boundaries cannot
+     * change the generated geometry.
+     */
+    Map<CellCoordinate, TerrainCell> buildTerrainCells(
+            DungeonRenderContext context,
+            int cellSize,
+            double wallHeight,
+            double roofPitchHeight
+    ) {
+        DungeonMap map = context.map();
+        int centerX = Math.max(0, map.getWidth() / 2);
+        int centerY = Math.max(0, map.getHeight() / 2);
+        int fullDepth = (int) Math.ceil(Math.hypot(map.getWidth(), map.getHeight())) + 2;
+        DungeonRenderContext fullContext = new DungeonRenderContext(
+                map,
+                List.of(),
+                context.playerCharacter(),
+                centerX,
+                centerY,
+                context.direction(),
+                context.viewportWidth(),
+                context.viewportHeight(),
+                context.cameraOffsetForward(),
+                context.cameraOffsetSide(),
+                context.cameraRotationRadians());
+        Scene complete = build(fullContext, fullDepth, wallHeight, roofPitchHeight, 0.0);
+        int safeCellSize = Math.max(1, cellSize);
+        Map<CellCoordinate, List<TexturedQuad>> grouped = new LinkedHashMap<>();
+        for (TexturedQuad quad : complete.quads()) {
+            double centerQuadX = (quad.topLeft().x() + quad.topRight().x()
+                    + quad.bottomRight().x() + quad.bottomLeft().x()) * 0.25;
+            double centerQuadZ = (quad.topLeft().z() + quad.topRight().z()
+                    + quad.bottomRight().z() + quad.bottomLeft().z()) * 0.25;
+            CellCoordinate coordinate = new CellCoordinate(
+                    Math.floorDiv((int) Math.floor(centerQuadX), safeCellSize),
+                    Math.floorDiv((int) Math.floor(centerQuadZ), safeCellSize));
+            grouped.computeIfAbsent(coordinate, ignored -> new ArrayList<>()).add(quad);
+        }
+
+        Map<CellCoordinate, TerrainCell> cells = new LinkedHashMap<>();
+        for (Map.Entry<CellCoordinate, List<TexturedQuad>> entry : grouped.entrySet()) {
+            List<TexturedQuad> quads = List.copyOf(entry.getValue());
+            double minX = Double.POSITIVE_INFINITY;
+            double maxX = Double.NEGATIVE_INFINITY;
+            double minZ = Double.POSITIVE_INFINITY;
+            double maxZ = Double.NEGATIVE_INFINITY;
+            int floorQuads = 0;
+            int wallQuads = 0;
+            int roofQuads = 0;
+            for (TexturedQuad quad : quads) {
+                minX = Math.min(minX, minX(quad));
+                maxX = Math.max(maxX, maxX(quad));
+                minZ = Math.min(minZ, minZ(quad));
+                maxZ = Math.max(maxZ, maxZ(quad));
+                switch (quad.kind()) {
+                    case FLOOR -> floorQuads++;
+                    case ROOF -> roofQuads++;
+                    case WALL, CLIFF -> wallQuads++;
+                    case SPRITE -> { }
+                }
+            }
+            int tileMinX = Math.max(0, entry.getKey().x() * safeCellSize);
+            int tileMinY = Math.max(0, entry.getKey().y() * safeCellSize);
+            int tileMaxX = Math.min(map.getWidth(), tileMinX + safeCellSize);
+            int tileMaxY = Math.min(map.getHeight(), tileMinY + safeCellSize);
+            int visibleTiles = Math.max(0, tileMaxX - tileMinX)
+                    * Math.max(0, tileMaxY - tileMinY);
+            Scene scene = new Scene(
+                    quads, List.of(), visibleTiles,
+                    floorQuads, wallQuads, roofQuads, 0);
+            cells.put(entry.getKey(), new TerrainCell(
+                    entry.getKey(), scene, minX, maxX, minZ, maxZ));
+        }
+        return Map.copyOf(cells);
+    }
+
+    private static double minX(TexturedQuad quad) {
+        return Math.min(Math.min(quad.topLeft().x(), quad.topRight().x()),
+                Math.min(quad.bottomRight().x(), quad.bottomLeft().x()));
+    }
+
+    private static double maxX(TexturedQuad quad) {
+        return Math.max(Math.max(quad.topLeft().x(), quad.topRight().x()),
+                Math.max(quad.bottomRight().x(), quad.bottomLeft().x()));
+    }
+
+    private static double minZ(TexturedQuad quad) {
+        return Math.min(Math.min(quad.topLeft().z(), quad.topRight().z()),
+                Math.min(quad.bottomRight().z(), quad.bottomLeft().z()));
+    }
+
+    private static double maxZ(TexturedQuad quad) {
+        return Math.max(Math.max(quad.topLeft().z(), quad.topRight().z()),
+                Math.max(quad.bottomRight().z(), quad.bottomLeft().z()));
+    }
+
     private ModelInstance modelInstance(
             DungeonRenderContext context,
             MapEntity entity,
             int maxDepth,
             TexturedQuad fallbackSprite
+    ) {
+        return modelInstance(context, entity, maxDepth, fallbackSprite, 0.0);
+    }
+
+    private ModelInstance modelInstance(
+            DungeonRenderContext context,
+            MapEntity entity,
+            int maxDepth,
+            TexturedQuad fallbackSprite,
+            double interpolationAlpha
     ) {
         double dx = entity.getX() + 0.5 - (context.playerX() + 0.5);
         double dz = entity.getY() + 0.5 - (context.playerY() + 0.5);
@@ -162,23 +399,48 @@ final class LwjglDungeonSceneBuilder {
         if (context.map().getTile(entity.getX(), entity.getY()).isWallLike() && !entity.shouldRenderOnWall()) {
             return null;
         }
+        org.main.content.CharacterModelDefinition.AnimationSlot animationSlot;
+        org.main.content.CharacterModelDefinition.AnimationSlot previousAnimationSlot = null;
+        double animationElapsedSeconds;
+        double previousAnimationElapsedSeconds = 0.0;
+        double animationBlend = 1.0;
+        if (entity.isCorpse()) {
+            animationSlot = entity.getCharacterModel()
+                    .animationBinding(org.main.content.CharacterModelDefinition.AnimationSlot.DEATH)
+                    .isPresent()
+                    ? org.main.content.CharacterModelDefinition.AnimationSlot.DEATH
+                    : org.main.content.CharacterModelDefinition.AnimationSlot.IDLE;
+            animationElapsedSeconds = entity.getAnimationElapsedSeconds();
+        } else {
+            animationSlot = entity.getWorldAnimationSlot();
+            previousAnimationSlot = entity.getPreviousWorldAnimationSlot();
+            animationElapsedSeconds = entity.getAnimationElapsedSeconds();
+            previousAnimationElapsedSeconds =
+                    entity.getPreviousWorldAnimationElapsedSeconds();
+            animationBlend = entity.getWorldAnimationBlend();
+        }
         return new ModelInstance(
                 entity.getStaticModelPath(),
-                entity.getRenderX() + 0.5 + entity.getStaticModelOffsetX(),
-                TerrainGeometry.groundYAtWorld(context.map(), entity.getRenderX() + 0.5, entity.getRenderY() + 0.5)
+                entity.getRenderX(interpolationAlpha) + 0.5 + entity.getStaticModelOffsetX(),
+                TerrainGeometry.groundYAtWorld(context.map(),
+                        entity.getRenderX(interpolationAlpha) + 0.5,
+                        entity.getRenderY(interpolationAlpha) + 0.5)
                         + entity.getStaticModelOffsetY(),
-                entity.getRenderY() + 0.5 + entity.getStaticModelOffsetZ(),
+                entity.getRenderY(interpolationAlpha) + 0.5 + entity.getStaticModelOffsetZ(),
                 spriteHeightFor(entity),
-                entity.getStaticModelYawDegrees(),
+                entity.getStaticModelYawDegrees() + entity.getWorldFacingYawDegrees(interpolationAlpha),
                 entity.getStaticModelPitchDegrees(),
                 entity.getStaticModelRollDegrees(),
                 entity.getStaticModelScaleMultiplier(),
                 entity.getStaticModelBrightness(),
                 fallbackSprite,
                 entity.getCharacterModel(),
-                entity.isVisuallyMoving()
-                        ? org.main.content.CharacterModelDefinition.AnimationSlot.WALK
-                        : org.main.content.CharacterModelDefinition.AnimationSlot.IDLE
+                animationSlot,
+                entity.isCorpse() ? animationElapsedSeconds : entity.getAnimationElapsedSeconds(interpolationAlpha),
+                previousAnimationSlot,
+                entity.isCorpse() ? previousAnimationElapsedSeconds
+                        : entity.getPreviousWorldAnimationElapsedSeconds(interpolationAlpha),
+                entity.getWorldAnimationBlend(interpolationAlpha)
         );
     }
 
@@ -336,6 +598,17 @@ final class LwjglDungeonSceneBuilder {
         return new TexturedQuad(texture, kind, apex, baseA, baseB, baseB);
     }
 
+    private TexturedQuad triangleQuad(
+            BufferedImage texture,
+            QuadKind kind,
+            Vertex apex,
+            Vertex baseA,
+            Vertex baseB,
+            AnimatedTexture animatedTexture
+    ) {
+        return new TexturedQuad(texture, kind, apex, baseA, baseB, baseB, animatedTexture);
+    }
+
     private double visualHeightForTile(DungeonMap map, Library.TileType tileType, int x, int y, double wallHeight) {
         if (tileType != null && tileType.isWallLike()) {
             return Math.max(0.1, wallHeight * map.getHeightMultiplier(x, y));
@@ -485,37 +758,37 @@ final class LwjglDungeonSceneBuilder {
     }
 
     private int addFloorQuads(List<TexturedQuad> quads, DungeonRenderContext context, Library.TileType tileType, int x, int y) {
-        BufferedImage texture = floorTextureFor(context, tileType, x, y);
+        AnimatedTexture animatedTexture = animatedTextureFor(tileType);
+        BufferedImage texture = animatedTexture == null
+                ? floorTextureFor(context, tileType, x, y)
+                : animatedTexture.representativeFrame();
         Vertex northWest = new Vertex(x, TerrainGeometry.cornerGroundY(context.map(), x, y, TerrainGeometry.Corner.NORTH_WEST), y, 0.0, 1.0);
         Vertex northEast = new Vertex(x + 1.0, TerrainGeometry.cornerGroundY(context.map(), x, y, TerrainGeometry.Corner.NORTH_EAST), y, 1.0, 1.0);
         Vertex southEast = new Vertex(x + 1.0, TerrainGeometry.cornerGroundY(context.map(), x, y, TerrainGeometry.Corner.SOUTH_EAST), y + 1.0, 1.0, 0.0);
         Vertex southWest = new Vertex(x, TerrainGeometry.cornerGroundY(context.map(), x, y, TerrainGeometry.Corner.SOUTH_WEST), y + 1.0, 0.0, 0.0);
 
-        quads.add(triangleQuad(texture, QuadKind.FLOOR, northWest, northEast, southEast));
-        quads.add(triangleQuad(texture, QuadKind.FLOOR, northWest, southEast, southWest));
+        quads.add(triangleQuad(texture, QuadKind.FLOOR, northWest, northEast, southEast, animatedTexture));
+        quads.add(triangleQuad(texture, QuadKind.FLOOR, northWest, southEast, southWest, animatedTexture));
         return 2;
     }
 
     private BufferedImage floorTextureFor(DungeonRenderContext context, Library.TileType tileType, int x, int y) {
-        BufferedImage waterTexture = waterTextureFor(tileType);
-        return waterTexture == null ? textureFor(context, tileType, Face.FLOOR, x, y) : waterTexture;
+        return textureFor(context, tileType, Face.FLOOR, x, y);
     }
 
-    private BufferedImage waterTextureFor(Library.TileType tileType) {
-        if (tileType == Library.TileType.WATER && decorativeWaterFrames.length > 0) {
-            int frame = (int) ((System.currentTimeMillis() / DECORATIVE_WATER_FRAME_MS) % decorativeWaterFrames.length);
-            return decorativeWaterFrames[frame];
+    private AnimatedTexture animatedTextureFor(Library.TileType tileType) {
+        if (tileType == Library.TileType.WATER && DECORATIVE_WATER_FRAMES.length > 0) {
+            return DECORATIVE_WATER;
         }
 
-        if (tileType == Library.TileType.FISHING_WATER && fishingWaterFrames.length > 0) {
-            int frame = (int) ((System.currentTimeMillis() / FISHING_WATER_FRAME_MS) % fishingWaterFrames.length);
-            return fishingWaterFrames[frame];
+        if (tileType == Library.TileType.FISHING_WATER && FISHING_WATER_FRAMES.length > 0) {
+            return FISHING_WATER;
         }
 
         return null;
     }
 
-    private BufferedImage[] loadNumberedFrames(String prefix, int startInclusive, int endInclusive) {
+    private static BufferedImage[] loadNumberedFrames(String prefix, int startInclusive, int endInclusive) {
         int frameCount = Math.max(0, endInclusive - startInclusive + 1);
         BufferedImage[] frames = new BufferedImage[frameCount];
 
@@ -698,6 +971,16 @@ final class LwjglDungeonSceneBuilder {
             int maxDepth,
             double cameraYawDegrees
     ) {
+        return spriteQuad(context, entity, maxDepth, cameraYawDegrees, 0.0);
+    }
+
+    private TexturedQuad spriteQuad(
+            DungeonRenderContext context,
+            MapEntity entity,
+            int maxDepth,
+            double cameraYawDegrees,
+            double interpolationAlpha
+    ) {
         BufferedImage image = entity.getIdleAnimation() == null
                 ? entity.getStaticImage()
                 : entity.getIdleAnimation().getCurrentFrame();
@@ -705,8 +988,10 @@ final class LwjglDungeonSceneBuilder {
             return null;
         }
 
-        double dx = entity.getX() + 0.5 - (context.playerX() + 0.5);
-        double dz = entity.getY() + 0.5 - (context.playerY() + 0.5);
+        double renderX = entity.getRenderX(interpolationAlpha);
+        double renderY = entity.getRenderY(interpolationAlpha);
+        double dx = renderX + 0.5 - (context.playerX() + 0.5);
+        double dz = renderY + 0.5 - (context.playerY() + 0.5);
         if (dx * dx + dz * dz > maxDepth * maxDepth) {
             return null;
         }
@@ -722,8 +1007,8 @@ final class LwjglDungeonSceneBuilder {
         }
 
         RightVector right = rightVector(cameraYawDegrees);
-        double centerX = entity.getX() + 0.5;
-        double centerZ = entity.getY() + 0.5;
+        double centerX = renderX + 0.5;
+        double centerZ = renderY + 0.5;
         double baseY = TerrainGeometry.groundYAtWorld(context.map(), centerX, centerZ);
         double topY = baseY + height;
         double halfWidth = width / 2.0;
@@ -971,6 +1256,19 @@ final class LwjglDungeonSceneBuilder {
     ) {
     }
 
+    record CellCoordinate(int x, int y) {
+    }
+
+    record TerrainCell(
+            CellCoordinate coordinate,
+            Scene scene,
+            double minX,
+            double maxX,
+            double minZ,
+            double maxZ
+    ) {
+    }
+
     record ModelInstance(
             String assetPath,
             double centerX,
@@ -984,7 +1282,11 @@ final class LwjglDungeonSceneBuilder {
             double brightness,
             TexturedQuad fallbackSprite,
             org.main.content.CharacterModelDefinition characterModel,
-            org.main.content.CharacterModelDefinition.AnimationSlot animationSlot
+            org.main.content.CharacterModelDefinition.AnimationSlot animationSlot,
+            double animationElapsedSeconds,
+            org.main.content.CharacterModelDefinition.AnimationSlot previousAnimationSlot,
+            double previousAnimationElapsedSeconds,
+            double animationBlend
     ) {
     }
 
@@ -994,11 +1296,40 @@ final class LwjglDungeonSceneBuilder {
             Vertex topLeft,
             Vertex topRight,
             Vertex bottomRight,
-            Vertex bottomLeft
+            Vertex bottomLeft,
+            AnimatedTexture animatedTexture
     ) {
+        TexturedQuad(
+                BufferedImage texture,
+                QuadKind kind,
+                Vertex topLeft,
+                Vertex topRight,
+                Vertex bottomRight,
+                Vertex bottomLeft
+        ) {
+            this(texture, kind, topLeft, topRight, bottomRight, bottomLeft, null);
+        }
+    }
+
+    record AnimatedTexture(BufferedImage[] frames, long frameDurationMs) {
+        BufferedImage representativeFrame() {
+            return frames == null || frames.length == 0 ? null : frames[0];
+        }
+
+        BufferedImage currentFrame() {
+            if (frames == null || frames.length == 0) {
+                return null;
+            }
+            long duration = Math.max(1L, frameDurationMs);
+            int frame = (int) ((System.currentTimeMillis() / duration) % frames.length);
+            return frames[frame];
+        }
     }
 
     record Vertex(double x, double y, double z, double u, double v) {
+    }
+
+    private record CachedModelInstance(long signature, ModelInstance instance) {
     }
 
     private record RoofTile(

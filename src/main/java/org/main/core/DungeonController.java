@@ -109,6 +109,7 @@ public class DungeonController {
         int targetX = gameState.getPlayerX() + forwardX();
         int targetY = gameState.getPlayerY() + forwardY();
         interactAt(targetX, targetY);
+        gameState.evaluateLiveQuestConditions();
     }
 
     public void interactAt(int targetX, int targetY) {
@@ -377,7 +378,7 @@ public class DungeonController {
         MapEntity item = null;
         MapEntity fallback = null;
         for (MapEntity entity : gameState.getEntities()) {
-            if (!entity.isAt(x, y)) {
+            if (!entity.occupiesOrReserves(x, y)) {
                 continue;
             }
             if (entity.getType() == Library.EntityType.ENEMY) {
@@ -399,7 +400,7 @@ public class DungeonController {
 
     private MapEntity getBlockingEntityAt(int x, int y) {
         for (MapEntity entity : gameState.getEntities()) {
-            if (entity.isAt(x, y) && entity.blocksMovement()) {
+            if (entity.occupiesOrReserves(x, y) && entity.blocksMovement()) {
                 return entity;
             }
         }

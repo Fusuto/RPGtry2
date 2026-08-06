@@ -8,12 +8,18 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class GameConfiguration {
     private static final Path CONFIG_PATH = Path.of("data", "configuration.properties");
     private static final String PACKAGED_CONFIG_PATH = "assets/configuration.properties";
     private static final Map<String, String> DEFAULTS = new LinkedHashMap<>();
     private static final Properties PROPERTIES = new Properties();
+    private static final AtomicLong REVISION = new AtomicLong();
+    private static final Map<String, Integer> INTEGER_CACHE = new ConcurrentHashMap<>();
+    private static final Map<String, Double> DOUBLE_CACHE = new ConcurrentHashMap<>();
+    private static final Map<String, Boolean> BOOLEAN_CACHE = new ConcurrentHashMap<>();
 
     static {
         defaults();
@@ -25,18 +31,36 @@ public final class GameConfiguration {
     }
 
     public static int intValue(String key, int fallback) {
-        String value = PROPERTIES.getProperty(key, DEFAULTS.getOrDefault(key, String.valueOf(fallback)));
+        Integer cached = INTEGER_CACHE.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        String value = configuredValue(key);
+        if (value == null) {
+            return fallback;
+        }
         try {
-            return Integer.parseInt(value.trim());
+            int parsed = Integer.parseInt(value.trim());
+            INTEGER_CACHE.put(key, parsed);
+            return parsed;
         } catch (RuntimeException exception) {
             return fallback;
         }
     }
 
     public static double doubleValue(String key, double fallback) {
-        String value = PROPERTIES.getProperty(key, DEFAULTS.getOrDefault(key, String.valueOf(fallback)));
+        Double cached = DOUBLE_CACHE.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        String value = configuredValue(key);
+        if (value == null) {
+            return fallback;
+        }
         try {
-            return Double.parseDouble(value.trim());
+            double parsed = Double.parseDouble(value.trim());
+            DOUBLE_CACHE.put(key, parsed);
+            return parsed;
         } catch (RuntimeException exception) {
             return fallback;
         }
@@ -48,15 +72,21 @@ public final class GameConfiguration {
     }
 
     public static boolean booleanValue(String key, boolean fallback) {
-        String value = stringValue(key, String.valueOf(fallback));
+        Boolean cached = BOOLEAN_CACHE.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        String value = configuredValue(key);
         if (value == null) {
             return fallback;
         }
         String normalized = value.trim().toLowerCase(java.util.Locale.ROOT);
         if (normalized.equals("true") || normalized.equals("yes") || normalized.equals("on") || normalized.equals("1")) {
+            BOOLEAN_CACHE.put(key, true);
             return true;
         }
         if (normalized.equals("false") || normalized.equals("no") || normalized.equals("off") || normalized.equals("0")) {
+            BOOLEAN_CACHE.put(key, false);
             return false;
         }
         return fallback;
@@ -68,14 +98,30 @@ public final class GameConfiguration {
         }
 
         String safeValue = value == null ? "" : value.trim();
+        String previousValue = PROPERTIES.getProperty(key);
+        if (safeValue.equals(previousValue)) {
+            return;
+        }
         PROPERTIES.setProperty(key, safeValue);
         DEFAULTS.putIfAbsent(key, safeValue);
+        INTEGER_CACHE.remove(key);
+        DOUBLE_CACHE.remove(key);
+        BOOLEAN_CACHE.remove(key);
+        REVISION.incrementAndGet();
         try {
             Files.createDirectories(CONFIG_PATH.getParent());
             writeDefaultsAndCurrentValues();
         } catch (IOException ignored) {
             // Runtime config edits should not crash editor/game tools.
         }
+    }
+
+    /**
+     * Monotonically increases when a runtime setting changes. Renderers can use
+     * this instead of reparsing every configuration value every frame.
+     */
+    public static long revision() {
+        return REVISION.get();
     }
 
     private static void load() {
@@ -125,6 +171,11 @@ public final class GameConfiguration {
 
     private static void put(String key, String value) {
         DEFAULTS.put(key, value);
+    }
+
+    private static String configuredValue(String key) {
+        String value = PROPERTIES.getProperty(key);
+        return value == null ? DEFAULTS.get(key) : value;
     }
 
     private static void defaults() {
@@ -216,6 +267,9 @@ public final class GameConfiguration {
         put("renderer.prototype.farPlane", "64");
         put("renderer.prototype.input.actionCooldownMs", "150");
         put("renderer.prototype.debug.defaultVisible", "false");
+        put("renderer.vsync.enabled", "true");
+        put("renderer.frameLimit", "DISPLAY");
+        put("renderer.performanceOverlay.visible", "false");
         put("renderer.prototype.mouseLook.enabled", "true");
         put("renderer.prototype.mouseLook.sensitivity", "0.12");
         put("renderer.prototype.mouseLook.maxYawDegrees", "90");
@@ -227,6 +281,9 @@ public final class GameConfiguration {
         put("renderer.staticModel.preloadExtraDepth", "4");
         put("renderer.staticModel.preloadPerFrame", "8");
         put("renderer.staticModel.loadVisibleImmediately", "true");
+        put("renderer.gpuSkinning.enabled", "true");
+        put("renderer.terrainCell.uploadBudgetMs", "1.0");
+        put("renderer.terrainCell.gpuCache.maxEntries", "192");
         put("renderer.opengl.major", "4");
         put("renderer.opengl.minor", "1");
 
@@ -245,6 +302,8 @@ public final class GameConfiguration {
 
         put("movement.animationDurationMs", "160");
         put("rotation.animationDurationMs", "360");
+        put("movement.path.maxVisitedTiles", "2048");
+        put("movement.ai.maxDecisionsPerStep", "4");
         put("sound.defaultVolume", "0.20");
         put("sound.doorOpen.path", "");
         put("sound.doorClose.path", "");
@@ -282,15 +341,6 @@ public final class GameConfiguration {
         put("dungeonGenerator.monoTypeChance", "0.30");
         put("dungeonGenerator.targetCarvedCellDivisor", "5");
 
-        put("butchery.targetLegsLevel", "10");
-        put("butchery.targetArmsLevel", "20");
-        put("butchery.targetBodyLevel", "30");
-        put("butchery.targetHeadLevel", "40");
-        put("butchery.baseSuccess", "0.28");
-        put("butchery.successPerLevel", "0.025");
-        put("butchery.difficultyPenalty", "0.006");
-        put("butchery.minSuccess", "0.08");
-        put("butchery.maxSuccess", "0.90");
         put("butchery.baseXp", "12");
         put("grafting.conditionHelpMultiplier", "0.20");
         put("grafting.baseSuccess", "0.25");

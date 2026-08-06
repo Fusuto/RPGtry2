@@ -16,15 +16,20 @@ final class LwjglTextureCache {
     private final Map<BufferedImage, Integer> textures = new IdentityHashMap<>();
     private int fallbackTexture;
     private int whiteTexture;
+    private final int[] boundTextureByUnit = new int[8];
+
+    LwjglTextureCache() {
+        invalidateBindings();
+    }
 
     int bind(BufferedImage image) {
         glActiveTexture(GL_TEXTURE0);
-        return bindToActiveUnit(image);
+        return bindToActiveUnit(image, 0);
     }
 
     int bind(BufferedImage image, int textureUnit) {
         glActiveTexture(GL_TEXTURE0 + textureUnit);
-        return bindToActiveUnit(image);
+        return bindToActiveUnit(image, textureUnit);
     }
 
     int bindWhite(int textureUnit) {
@@ -32,24 +37,28 @@ final class LwjglTextureCache {
         if (whiteTexture == 0) {
             whiteTexture = upload(createSolidImage(0xFFFFFFFF));
         }
-        glBindTexture(GL_TEXTURE_2D, whiteTexture);
+        bindTexture(whiteTexture, textureUnit);
         return whiteTexture;
     }
 
-    private int bindToActiveUnit(BufferedImage image) {
+    void invalidateBindings() {
+        java.util.Arrays.fill(boundTextureByUnit, -1);
+    }
+
+    private int bindToActiveUnit(BufferedImage image, int textureUnit) {
         if (image == null) {
-            return bindFallback();
+            return bindFallback(textureUnit);
         }
 
         Integer existingTexture = textures.get(image);
         if (existingTexture != null) {
-            glBindTexture(GL_TEXTURE_2D, existingTexture);
+            bindTexture(existingTexture, textureUnit);
             return existingTexture;
         }
 
         int textureId = upload(image);
         textures.put(image, textureId);
-        glBindTexture(GL_TEXTURE_2D, textureId);
+        bindTexture(textureId, textureUnit);
         return textureId;
     }
 
@@ -62,6 +71,7 @@ final class LwjglTextureCache {
             glDeleteTextures(textureId);
         }
         textures.clear();
+        invalidateBindings();
 
         if (fallbackTexture != 0) {
             glDeleteTextures(fallbackTexture);
@@ -73,13 +83,21 @@ final class LwjglTextureCache {
         }
     }
 
-    private int bindFallback() {
+    private int bindFallback(int textureUnit) {
         if (fallbackTexture == 0) {
             fallbackTexture = upload(createFallbackImage());
         }
 
-        glBindTexture(GL_TEXTURE_2D, fallbackTexture);
+        bindTexture(fallbackTexture, textureUnit);
         return fallbackTexture;
+    }
+
+    private void bindTexture(int textureId, int textureUnit) {
+        int index = Math.max(0, Math.min(boundTextureByUnit.length - 1, textureUnit));
+        if (boundTextureByUnit[index] != textureId) {
+            glBindTexture(GL_TEXTURE_2D, textureId);
+            boundTextureByUnit[index] = textureId;
+        }
     }
 
     private int upload(BufferedImage source) {

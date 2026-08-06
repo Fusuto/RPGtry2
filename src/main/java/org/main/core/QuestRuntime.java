@@ -112,7 +112,20 @@ public final class QuestRuntime {
             }
         }
         progress.keySet().retainAll(definitions.keySet());
-        refreshAutomaticProgression();
+    }
+
+    /** Allocation-free fingerprint of the state displayed by the quest HUD. */
+    public int presentationSignature() {
+        int result = definitions.keySet().hashCode();
+        for (Map.Entry<String, Progress> entry : progress.entrySet()) {
+            Progress value = entry.getValue();
+            result = 31 * result + entry.getKey().hashCode();
+            result = 31 * result + value.state.ordinal();
+            result = 31 * result + value.stageId.hashCode();
+            result = 31 * result + value.counters.hashCode();
+            result = 31 * result + value.claimedRewardKeys.hashCode();
+        }
+        return result;
     }
 
     public MapDesignLibrary.AuthoredQuest definition(String questId) {
@@ -297,7 +310,7 @@ public final class QuestRuntime {
 
         TransitionResult result = executeTransaction(questId, working, consumption, grants, message);
         if (result.success()) {
-            refreshAutomaticProgression();
+            gameState.evaluateLiveQuestConditions();
         }
         return result;
     }
@@ -405,7 +418,7 @@ public final class QuestRuntime {
                 }
             }
         }
-        refreshAutomaticProgression();
+        gameState.evaluateLiveQuestConditions();
     }
 
     public void refreshAutomaticProgression() {
@@ -514,7 +527,6 @@ public final class QuestRuntime {
             normalizeProgress(questId, value);
             progress.put(questId, value);
         });
-        refreshAutomaticProgression();
     }
 
     private ChoiceLocation locateCurrentChoice(

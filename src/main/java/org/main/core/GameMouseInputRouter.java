@@ -97,20 +97,32 @@ public class GameMouseInputRouter {
         if (gameState.isDungeonMode()
                 && gameState.isInventoryOverlayAllowed()
                 && gameState.isInventoryOpen()) {
-            repaintIfConsumed(inventoryPanel.handleMousePressed(e));
+            boolean consumed = inventoryPanel.handleMousePressed(e);
+            if (consumed) {
+                gameState.evaluateLiveQuestConditions();
+            }
+            repaintIfConsumed(consumed);
             return;
         }
 
         if (gameState.isDungeonMode() && gameState.hasActiveInteraction()) {
-            repaintIfConsumed(interactionWindow.handleMousePressed(
+            boolean consumed = interactionWindow.handleMousePressed(
                     e,
                     gameState.getActiveInteraction()
-            ));
+            );
+            if (consumed) {
+                gameState.evaluateLiveQuestConditions();
+            }
+            repaintIfConsumed(consumed);
             return;
         }
 
         if (gameState.isDungeonMode() && gameState.hasActiveShop()) {
-            repaintIfConsumed(shopWindow.handleMousePressed(e, gameState));
+            boolean consumed = shopWindow.handleMousePressed(e, gameState);
+            if (consumed) {
+                gameState.evaluateLiveQuestConditions();
+            }
+            repaintIfConsumed(consumed);
             return;
         }
 
@@ -138,7 +150,11 @@ public class GameMouseInputRouter {
         }
 
         if (gameState.isDungeonMode() && gameState.isInventoryOpen()) {
-            repaintIfConsumed(inventoryPanel.handleMousePressed(e));
+            boolean consumed = inventoryPanel.handleMousePressed(e);
+            if (consumed) {
+                gameState.evaluateLiveQuestConditions();
+            }
+            repaintIfConsumed(consumed);
         }
     }
 
@@ -146,11 +162,23 @@ public class GameMouseInputRouter {
         if (gameState.isDungeonMode()
                 && gameState.isInventoryOverlayAllowed()
                 && gameState.isInventoryOpen()) {
-            repaintIfConsumed(inventoryPanel.handleMouseReleased(e));
+            boolean consumed = inventoryPanel.handleMouseReleased(e);
+            if (consumed) {
+                gameState.evaluateLiveQuestConditions();
+            }
+            repaintIfConsumed(consumed);
             return;
         }
 
         if (gameState.isDungeonMode() && gameState.hasActiveInteraction()) {
+            boolean consumed = interactionWindow.handleMouseReleased(
+                    e,
+                    gameState.getActiveInteraction()
+            );
+            if (consumed) {
+                gameState.evaluateLiveQuestConditions();
+            }
+            repaintIfConsumed(consumed);
             return;
         }
 
@@ -159,7 +187,11 @@ public class GameMouseInputRouter {
         }
 
         if (gameState.isDungeonMode() && gameState.isInventoryOpen()) {
-            repaintIfConsumed(inventoryPanel.handleMouseReleased(e));
+            boolean consumed = inventoryPanel.handleMouseReleased(e);
+            if (consumed) {
+                gameState.evaluateLiveQuestConditions();
+            }
+            repaintIfConsumed(consumed);
         }
     }
 
@@ -183,6 +215,10 @@ public class GameMouseInputRouter {
         }
 
         if (gameState.isDungeonMode() && gameState.hasActiveInteraction()) {
+            repaintIfConsumed(interactionWindow.handleMouseDragged(
+                    e,
+                    gameState.getActiveInteraction()
+            ));
             return;
         }
 

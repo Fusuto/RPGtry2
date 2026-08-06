@@ -12,7 +12,8 @@ final class LwjglWorldBatchBuilder {
         }
         Map<MaterialKey, BatchAccumulator> accumulators = new HashMap<>();
         for (LwjglDungeonSceneBuilder.TexturedQuad quad : quads) {
-            MaterialKey key = new MaterialKey(quad.texture(), materialFlags(quad.kind()));
+            MaterialKey key = new MaterialKey(
+                    quad.texture(), materialFlags(quad.kind()), quad.animatedTexture());
             accumulators.computeIfAbsent(key, BatchAccumulator::new).add(quad);
         }
         List<RenderBatch> batches = new ArrayList<>();
@@ -28,8 +29,8 @@ final class LwjglWorldBatchBuilder {
 
     private static final class BatchAccumulator {
         private final MaterialKey material;
-        private final List<Float> vertices = new ArrayList<>();
-        private final List<Integer> indices = new ArrayList<>();
+        private final FloatArray vertices = new FloatArray(256);
+        private final IntArray indices = new IntArray(96);
         private int vertexCount;
 
         private BatchAccumulator(MaterialKey material) {
@@ -69,14 +70,8 @@ final class LwjglWorldBatchBuilder {
         }
 
         private RenderBatch toBatch() {
-            float[] vertexArray = new float[vertices.size()];
-            for (int i = 0; i < vertices.size(); i++) {
-                vertexArray[i] = vertices.get(i);
-            }
-            int[] indexArray = new int[indices.size()];
-            for (int i = 0; i < indices.size(); i++) {
-                indexArray[i] = indices.get(i);
-            }
+            float[] vertexArray = vertices.toArray();
+            int[] indexArray = indices.toArray();
             return new RenderBatch(material, vertexArray, indexArray, vertexCount, indexArray.length);
         }
 
@@ -102,5 +97,57 @@ final class LwjglWorldBatchBuilder {
     }
 
     private record Normal(float x, float y, float z) {
+    }
+
+    private static final class FloatArray {
+        private float[] values;
+        private int size;
+
+        private FloatArray(int initialCapacity) {
+            values = new float[Math.max(1, initialCapacity)];
+        }
+
+        private void add(float value) {
+            ensureCapacity(size + 1);
+            values[size++] = value;
+        }
+
+        private float[] toArray() {
+            return java.util.Arrays.copyOf(values, size);
+        }
+
+        private void ensureCapacity(int required) {
+            if (required <= values.length) {
+                return;
+            }
+            values = java.util.Arrays.copyOf(values,
+                    Math.max(required, values.length + (values.length >> 1)));
+        }
+    }
+
+    private static final class IntArray {
+        private int[] values;
+        private int size;
+
+        private IntArray(int initialCapacity) {
+            values = new int[Math.max(1, initialCapacity)];
+        }
+
+        private void add(int value) {
+            ensureCapacity(size + 1);
+            values[size++] = value;
+        }
+
+        private int[] toArray() {
+            return java.util.Arrays.copyOf(values, size);
+        }
+
+        private void ensureCapacity(int required) {
+            if (required <= values.length) {
+                return;
+            }
+            values = java.util.Arrays.copyOf(values,
+                    Math.max(required, values.length + (values.length >> 1)));
+        }
     }
 }

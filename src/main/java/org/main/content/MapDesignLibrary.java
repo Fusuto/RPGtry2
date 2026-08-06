@@ -1,5 +1,6 @@
 package org.main.content;
 
+import org.main.battle.DifficultyResolver;
 import org.main.core.CharacterSkill;
 import org.main.core.CraftingStationType;
 import org.main.core.GearDurability;
@@ -14,6 +15,7 @@ import org.main.core.ShopSystem;
 import org.main.core.WeaponType;
 import org.main.core.GeneratedDungeon;
 import org.main.core.EquipmentViewModelProfile;
+import org.main.core.ItemModelIconProfile;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 import org.main.engine.MapGeometryData;
@@ -51,6 +53,8 @@ public final class MapDesignLibrary {
     public static final Path CONTENT_FOLDER = EDITOR_RESOURCE_FOLDER.resolve("content");
     public static final Path DATA_MAP_FOLDER = Path.of("data", "maps");
     private static final String OAK_TREE_TEST_MODEL_PATH = "assets/3D/gatheringNode/Tree3.glb";
+    private static final String LEGACY_GENERATED_LIMB_ICON =
+            "assets/images/monster/Ancient/Oct-5-2010/player/hand1/misc/head.png";
 
     private MapDesignLibrary() {
     }
@@ -242,6 +246,7 @@ public final class MapDesignLibrary {
             writeQuestFlow(properties, prefix + "epilogue.", authoredQuest.epilogueFlow());
         }
 
+        properties.setProperty("item.schemaVersion", "3");
         properties.setProperty("item.count", String.valueOf(design.customItems().size()));
         for (int i = 0; i < design.customItems().size(); i++) {
             CustomItem customItem = design.customItems().get(i);
@@ -267,6 +272,7 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "magicAccuracyBonus", String.valueOf(customItem.magicAccuracyBonus()));
             properties.setProperty(prefix + "magicPowerBonus", String.valueOf(customItem.magicPowerBonus()));
             properties.setProperty(prefix + "firstPersonModelPath", customItem.firstPersonModelPath());
+            properties.setProperty(prefix + "sourceEnemyId", customItem.sourceEnemyId());
             EquipmentViewModelProfile pose = customItem.viewModelProfile();
             properties.setProperty(prefix + "viewModel.positionX", String.valueOf(pose.positionX()));
             properties.setProperty(prefix + "viewModel.positionY", String.valueOf(pose.positionY()));
@@ -279,8 +285,16 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "viewModel.swingAxisY", String.valueOf(pose.swingAxisY()));
             properties.setProperty(prefix + "viewModel.swingAxisZ", String.valueOf(pose.swingAxisZ()));
             properties.setProperty(prefix + "viewModel.pairedHands", String.valueOf(pose.pairedHands()));
+            ItemModelIconProfile icon = customItem.modelIconProfile();
+            properties.setProperty(prefix + "modelIcon.rotationX", String.valueOf(icon.rotationX()));
+            properties.setProperty(prefix + "modelIcon.rotationY", String.valueOf(icon.rotationY()));
+            properties.setProperty(prefix + "modelIcon.rotationZ", String.valueOf(icon.rotationZ()));
+            properties.setProperty(prefix + "modelIcon.zoom", String.valueOf(icon.zoom()));
+            properties.setProperty(prefix + "modelIcon.offsetX", String.valueOf(icon.offsetX()));
+            properties.setProperty(prefix + "modelIcon.offsetY", String.valueOf(icon.offsetY()));
         }
 
+        properties.setProperty("mob.schemaVersion", "2");
         properties.setProperty("mob.count", String.valueOf(design.customMobs().size()));
         for (int i = 0; i < design.customMobs().size(); i++) {
             CustomMob customMob = design.customMobs().get(i);
@@ -300,6 +314,14 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "awarenessRadius", String.valueOf(customMob.awarenessRadius()));
             properties.setProperty(prefix + "movementIntervalMs", String.valueOf(customMob.movementIntervalMs()));
             properties.setProperty(prefix + "respawnDelayMs", String.valueOf(customMob.respawnDelayMs()));
+            EnemyButcheryProfile butchery = customMob.butcheryProfile();
+            properties.setProperty(prefix + "butchery.type", butchery.type().name());
+            properties.setProperty(prefix + "butchery.leatherItemId", butchery.leatherItemId());
+            properties.setProperty(prefix + "butchery.baseValueOverride",
+                    butchery.baseValueOverride() == null ? "" : String.valueOf(butchery.baseValueOverride()));
+            for (LimbSlot slot : LimbSlot.values()) {
+                properties.setProperty(prefix + "butchery.limb." + slot.name(), butchery.productId(slot));
+            }
             writeCharacterModel(properties, prefix + "model.", customMob.characterModel());
             properties.setProperty(prefix + "skillIds", joinSkills(customMob.skillIds()));
             properties.setProperty(prefix + "drop.count", String.valueOf(customMob.dropEntries().size()));
@@ -311,6 +333,7 @@ public final class MapDesignLibrary {
             }
         }
 
+        properties.setProperty("limb.schemaVersion", "2");
         properties.setProperty("limb.count", String.valueOf(design.customLimbs().size()));
         for (int i = 0; i < design.customLimbs().size(); i++) {
             CustomLimb customLimb = design.customLimbs().get(i);
@@ -319,6 +342,8 @@ public final class MapDesignLibrary {
             properties.setProperty(prefix + "displayName", customLimb.displayName());
             properties.setProperty(prefix + "limbSlot", customLimb.limbSlot().name());
             properties.setProperty(prefix + "iconPath", customLimb.iconPath());
+            properties.setProperty(prefix + "paperDollDerivedIcon", String.valueOf(customLimb.paperDollDerivedIcon()));
+            properties.setProperty(prefix + "baseGoldValue", String.valueOf(customLimb.baseGoldValue()));
             properties.setProperty(prefix + "condition", customLimb.condition().name());
             properties.setProperty(prefix + "description", customLimb.description());
             properties.setProperty(prefix + "sourceCreatureId", customLimb.sourceCreatureId());
@@ -690,6 +715,7 @@ public final class MapDesignLibrary {
             int magicAccuracyBonus = readInt(properties, prefix + "magicAccuracyBonus", 0);
             int magicPowerBonus = readInt(properties, prefix + "magicPowerBonus", 0);
             String firstPersonModelPath = properties.getProperty(prefix + "firstPersonModelPath", "");
+            String sourceEnemyId = properties.getProperty(prefix + "sourceEnemyId", "");
             EquipmentViewModelProfile viewModelProfile = new EquipmentViewModelProfile(
                     readDouble(properties, prefix + "viewModel.positionX", 0.38),
                     readDouble(properties, prefix + "viewModel.positionY", -0.45),
@@ -703,6 +729,13 @@ public final class MapDesignLibrary {
                     readDouble(properties, prefix + "viewModel.swingAxisZ", 1.0),
                     Boolean.parseBoolean(properties.getProperty(prefix + "viewModel.pairedHands", "false"))
             );
+            ItemModelIconProfile modelIconProfile = new ItemModelIconProfile(
+                    readDouble(properties, prefix + "modelIcon.rotationX", -24.0),
+                    readDouble(properties, prefix + "modelIcon.rotationY", 35.0),
+                    readDouble(properties, prefix + "modelIcon.rotationZ", 0.0),
+                    readDouble(properties, prefix + "modelIcon.zoom", 1.0),
+                    readDouble(properties, prefix + "modelIcon.offsetX", 0.0),
+                    readDouble(properties, prefix + "modelIcon.offsetY", 0.0));
             if (!itemId.isBlank() && !itemName.isBlank()) {
                 customItems.add(new CustomItem(
                         itemId,
@@ -726,7 +759,9 @@ public final class MapDesignLibrary {
                         magicAccuracyBonus,
                         magicPowerBonus,
                         firstPersonModelPath,
-                        viewModelProfile
+                        viewModelProfile,
+                        sourceEnemyId,
+                        modelIconProfile
                 ));
             }
         }
@@ -912,6 +947,30 @@ public final class MapDesignLibrary {
             int awarenessRadius = readInt(properties, prefix + "awarenessRadius", 4);
             int movementIntervalMs = readInt(properties, prefix + "movementIntervalMs", 3000);
             int respawnDelayMs = readInt(properties, prefix + "respawnDelayMs", 300000);
+            EnemyButcheryProfile.Type butcheryType;
+            try {
+                butcheryType = EnemyButcheryProfile.Type.valueOf(
+                        properties.getProperty(prefix + "butchery.type", "HUMANOID_LIMBS"));
+            } catch (IllegalArgumentException ignored) {
+                butcheryType = EnemyButcheryProfile.Type.HUMANOID_LIMBS;
+            }
+            EnumMap<LimbSlot, String> butcheryLimbIds = new EnumMap<>(LimbSlot.class);
+            for (LimbSlot slot : LimbSlot.values()) {
+                String productId = properties.getProperty(prefix + "butchery.limb." + slot.name(), "").trim();
+                if (!productId.isBlank()) {
+                    butcheryLimbIds.put(slot, productId);
+                }
+            }
+            String leatherItemId = properties.getProperty(prefix + "butchery.leatherItemId", "").trim();
+            String overrideValue = properties.getProperty(prefix + "butchery.baseValueOverride", "").trim();
+            Integer baseValueOverride = overrideValue.isBlank()
+                    ? null
+                    : Math.max(1, readInt(properties, prefix + "butchery.baseValueOverride", 1));
+            EnemyButcheryProfile butcheryProfile = new EnemyButcheryProfile(
+                    butcheryType,
+                    butcheryLimbIds,
+                    leatherItemId,
+                    baseValueOverride);
             CharacterModelDefinition characterModel = readCharacterModel(properties, prefix + "model.");
             List<String> skillIds = readSkillIds(properties.getProperty(prefix + "skillIds", ""));
             int dropCount = readInt(properties, prefix + "drop.count", 0);
@@ -928,7 +987,7 @@ public final class MapDesignLibrary {
                 customMobs.add(new CustomMob(mobId, mobName, imagePath, paperDollSourcePath, statValues,
                         xpReward, mobDescription, attackSoundPath, damageSoundPath, combatAiIntelligence,
                         awarenessRadius, movementIntervalMs, respawnDelayMs, skillIds, dropEntries,
-                        characterModel));
+                        characterModel, butcheryProfile));
             }
         }
 
@@ -945,6 +1004,20 @@ public final class MapDesignLibrary {
             String limbDescription = properties.getProperty(prefix + "description", "");
             String sourceCreatureId = properties.getProperty(prefix + "sourceCreatureId", "");
             String paperDollSourcePath = properties.getProperty(prefix + "paperDollSourcePath", "");
+            boolean paperDollDerivedIcon = properties.containsKey(prefix + "paperDollDerivedIcon")
+                    ? Boolean.parseBoolean(properties.getProperty(prefix + "paperDollDerivedIcon", "false"))
+                    : LEGACY_GENERATED_LIMB_ICON.equals(iconPath) && !paperDollSourcePath.isBlank();
+            CustomMob sourceMob = customMobs.stream()
+                    .filter(mob -> sourceCreatureId.equals(mob.mobId()))
+                    .findFirst()
+                    .orElse(null);
+            int migratedBaseGoldValue = sourceMob == null
+                    ? 25
+                    : butcheryProductValue(sourceMob, limbSlot);
+            int limbBaseGoldValue = readInt(
+                    properties,
+                    prefix + "baseGoldValue",
+                    migratedBaseGoldValue);
             String firstPersonModelPath = properties.getProperty(prefix + "firstPersonModelPath", "");
             String firstPersonRigId = properties.getProperty(prefix + "firstPersonRigId", "");
             List<String> skillIds = readSkillIds(properties.getProperty(prefix + "skillIds", ""));
@@ -955,7 +1028,7 @@ public final class MapDesignLibrary {
             if (!limbId.isBlank() && !limbName.isBlank()) {
                 customLimbs.add(new CustomLimb(limbId, limbName, limbSlot, iconPath, condition,
                         limbDescription, sourceCreatureId, paperDollSourcePath, statBonuses, skillIds,
-                        firstPersonModelPath, firstPersonRigId));
+                        firstPersonModelPath, firstPersonRigId, paperDollDerivedIcon, limbBaseGoldValue));
             }
         }
 
@@ -1000,6 +1073,27 @@ public final class MapDesignLibrary {
             if (!npcId.isBlank() && !npcName.isBlank()) {
                 customNpcs.add(new CustomNpc(
                         npcId, npcName, imagePath, talkSoundPath, interactionId, shop, characterModel, questIds));
+            }
+        }
+        for (int mobIndex = 0; mobIndex < customMobs.size(); mobIndex++) {
+            CustomMob mob = customMobs.get(mobIndex);
+            if (mob.butcheryProfile().type() != EnemyButcheryProfile.Type.HUMANOID_LIMBS
+                    || mob.butcheryProfile().limbProductIds().size() == LimbSlot.values().length) {
+                continue;
+            }
+            EnumMap<LimbSlot, String> migratedIds = new EnumMap<>(LimbSlot.class);
+            migratedIds.putAll(mob.butcheryProfile().limbProductIds());
+            for (CustomLimb limb : customLimbs) {
+                if (mob.mobId().equals(limb.sourceCreatureId())) {
+                    migratedIds.putIfAbsent(limb.limbSlot(), limb.limbId());
+                }
+            }
+            if (!migratedIds.isEmpty()) {
+                customMobs.set(mobIndex, mob.withButcheryProfile(new EnemyButcheryProfile(
+                        EnemyButcheryProfile.Type.HUMANOID_LIMBS,
+                        migratedIds,
+                        "",
+                        mob.butcheryProfile().baseValueOverride())));
             }
         }
 
@@ -2484,6 +2578,17 @@ public final class MapDesignLibrary {
         }
     }
 
+    private static int butcheryProductValue(CustomMob mob, LimbSlot slot) {
+        int baseValue = mob.butcheryProfile().hasValueOverride()
+                ? mob.butcheryProfile().baseValueOverride()
+                : 10 + 5 * DifficultyResolver.rateMonsterProfile(
+                        mob.displayName(),
+                        mob.statValues(),
+                        mob.skillIds()).level();
+        double multiplier = slot == LimbSlot.BODY ? 1.25 : slot == LimbSlot.HEAD ? 1.5 : 1.0;
+        return Math.max(1, (int) Math.round(baseValue * multiplier));
+    }
+
     private static <T extends Enum<T>> T readEnum(Properties properties, String key, T fallback) {
         if (fallback == null) {
             throw new IllegalArgumentException("Fallback enum is required.");
@@ -3550,7 +3655,9 @@ public final class MapDesignLibrary {
             int magicAccuracyBonus,
             int magicPowerBonus,
             String firstPersonModelPath,
-            EquipmentViewModelProfile viewModelProfile
+            EquipmentViewModelProfile viewModelProfile,
+            String sourceEnemyId,
+            ItemModelIconProfile modelIconProfile
     ) {
         public CustomItem {
             itemId = itemId == null ? "" : itemId;
@@ -3578,6 +3685,8 @@ public final class MapDesignLibrary {
                     ? ""
                     : firstPersonModelPath.trim().replace('\\', '/');
             viewModelProfile = viewModelProfile == null ? EquipmentViewModelProfile.defaults() : viewModelProfile;
+            sourceEnemyId = sourceEnemyId == null ? "" : sourceEnemyId.trim();
+            modelIconProfile = modelIconProfile == null ? ItemModelIconProfile.defaults() : modelIconProfile;
         }
 
         public InventorySystem.Item createItem() {
@@ -3600,7 +3709,152 @@ public final class MapDesignLibrary {
             ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus)
                     .withContentId(itemId)
                     .withFirstPersonModel(firstPersonModelPath)
-                    .withViewModelProfile(viewModelProfile);
+                    .withViewModelProfile(viewModelProfile)
+                    .withModelIconProfile(modelIconProfile);
+        }
+
+        public CustomItem withSourceEnemyId(String sourceId) {
+            return new CustomItem(
+                    itemId,
+                    displayName,
+                    itemType,
+                    iconPath,
+                    paperDollOverlayPath,
+                    useSoundPath,
+                    weaponType,
+                    twoHanded,
+                    material,
+                    healAmount,
+                    baseGoldValue,
+                    examineText,
+                    statBonusTarget,
+                    stackable,
+                    smithingRecipeEnabled,
+                    smithingRequiredBars,
+                    smithingRequiredLevel,
+                    smithingXpReward,
+                    magicAccuracyBonus,
+                    magicPowerBonus,
+                    firstPersonModelPath,
+                    viewModelProfile,
+                    sourceId,
+                    modelIconProfile);
+        }
+
+        public CustomItem(
+                String itemId,
+                String displayName,
+                InventorySystem.ItemType itemType,
+                String iconPath,
+                String paperDollOverlayPath,
+                String useSoundPath,
+                WeaponType weaponType,
+                boolean twoHanded,
+                GearMaterial material,
+                int healAmount,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                boolean stackable,
+                boolean smithingRecipeEnabled,
+                int smithingRequiredBars,
+                int smithingRequiredLevel,
+                int smithingXpReward,
+                int magicAccuracyBonus,
+                int magicPowerBonus,
+                String firstPersonModelPath,
+                EquipmentViewModelProfile viewModelProfile,
+                String sourceEnemyId
+        ) {
+            this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath,
+                    weaponType, twoHanded, material, healAmount, baseGoldValue, examineText,
+                    statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
+                    smithingRequiredLevel, smithingXpReward, magicAccuracyBonus, magicPowerBonus,
+                    firstPersonModelPath, viewModelProfile, sourceEnemyId,
+                    ItemModelIconProfile.defaults());
+        }
+
+        public CustomItem(
+                String itemId,
+                String displayName,
+                InventorySystem.ItemType itemType,
+                String iconPath,
+                String paperDollOverlayPath,
+                String useSoundPath,
+                WeaponType weaponType,
+                boolean twoHanded,
+                GearMaterial material,
+                int healAmount,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                boolean stackable,
+                boolean smithingRecipeEnabled,
+                int smithingRequiredBars,
+                int smithingRequiredLevel,
+                int smithingXpReward,
+                int magicAccuracyBonus,
+                int magicPowerBonus,
+                String firstPersonModelPath,
+                EquipmentViewModelProfile viewModelProfile
+        ) {
+            this(
+                    itemId,
+                    displayName,
+                    itemType,
+                    iconPath,
+                    paperDollOverlayPath,
+                    useSoundPath,
+                    weaponType,
+                    twoHanded,
+                    material,
+                    healAmount,
+                    baseGoldValue,
+                    examineText,
+                    statBonusTarget,
+                    stackable,
+                    smithingRecipeEnabled,
+                    smithingRequiredBars,
+                    smithingRequiredLevel,
+                    smithingXpReward,
+                    magicAccuracyBonus,
+                    magicPowerBonus,
+                    firstPersonModelPath,
+                    viewModelProfile,
+                    "",
+                    ItemModelIconProfile.defaults());
+        }
+
+        public CustomItem(
+                String itemId,
+                String displayName,
+                InventorySystem.ItemType itemType,
+                String iconPath,
+                String paperDollOverlayPath,
+                String useSoundPath,
+                WeaponType weaponType,
+                boolean twoHanded,
+                GearMaterial material,
+                int healAmount,
+                int baseGoldValue,
+                String examineText,
+                PlayerStat statBonusTarget,
+                boolean stackable,
+                boolean smithingRecipeEnabled,
+                int smithingRequiredBars,
+                int smithingRequiredLevel,
+                int smithingXpReward,
+                int magicAccuracyBonus,
+                int magicPowerBonus,
+                String firstPersonModelPath,
+                EquipmentViewModelProfile viewModelProfile,
+                ItemModelIconProfile modelIconProfile
+        ) {
+            this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath,
+                    weaponType, twoHanded, material, healAmount, baseGoldValue, examineText,
+                    statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
+                    smithingRequiredLevel, smithingXpReward, magicAccuracyBonus, magicPowerBonus,
+                    firstPersonModelPath, viewModelProfile, "", modelIconProfile);
         }
 
         public CustomItem(
@@ -3731,7 +3985,8 @@ public final class MapDesignLibrary {
             int respawnDelayMs,
             List<String> skillIds,
             List<CustomDropEntry> dropEntries,
-            CharacterModelDefinition characterModel
+            CharacterModelDefinition characterModel,
+            EnemyButcheryProfile butcheryProfile
     ) {
         public CustomMob {
             mobId = mobId == null ? "" : mobId;
@@ -3756,6 +4011,33 @@ public final class MapDesignLibrary {
             skillIds = skillIds == null ? List.of() : List.copyOf(skillIds);
             dropEntries = dropEntries == null ? List.of() : List.copyOf(dropEntries);
             characterModel = characterModel == null ? CharacterModelDefinition.empty() : characterModel;
+            butcheryProfile = butcheryProfile == null
+                    ? EnemyButcheryProfile.defaultHumanoid()
+                    : butcheryProfile;
+        }
+
+        public CustomMob(
+                String mobId,
+                String displayName,
+                String imagePath,
+                String paperDollSourcePath,
+                Map<PlayerStat, Integer> statValues,
+                int xpReward,
+                String description,
+                String attackSoundPath,
+                String damageSoundPath,
+                int combatAiIntelligence,
+                int awarenessRadius,
+                int movementIntervalMs,
+                int respawnDelayMs,
+                List<String> skillIds,
+                List<CustomDropEntry> dropEntries,
+                CharacterModelDefinition characterModel
+        ) {
+            this(mobId, displayName, imagePath, paperDollSourcePath, statValues, xpReward,
+                    description, attackSoundPath, damageSoundPath, combatAiIntelligence,
+                    awarenessRadius, movementIntervalMs, respawnDelayMs, skillIds, dropEntries,
+                    characterModel, EnemyButcheryProfile.defaultHumanoid());
         }
 
         public CustomMob(
@@ -3778,7 +4060,7 @@ public final class MapDesignLibrary {
             this(mobId, displayName, imagePath, paperDollSourcePath, statValues, xpReward,
                     description, attackSoundPath, damageSoundPath, combatAiIntelligence,
                     awarenessRadius, movementIntervalMs, respawnDelayMs, skillIds, dropEntries,
-                    CharacterModelDefinition.empty());
+                    CharacterModelDefinition.empty(), EnemyButcheryProfile.defaultHumanoid());
         }
 
         public CustomMob(
@@ -3797,7 +4079,8 @@ public final class MapDesignLibrary {
         ) {
             this(mobId, displayName, imagePath, paperDollSourcePath, statValues, xpReward,
                     description, attackSoundPath, damageSoundPath, combatAiIntelligence,
-                    4, 3000, 300000, skillIds, dropEntries, CharacterModelDefinition.empty());
+                    4, 3000, 300000, skillIds, dropEntries, CharacterModelDefinition.empty(),
+                    EnemyButcheryProfile.defaultHumanoid());
         }
 
         public Monster createMonster() {
@@ -3816,8 +4099,30 @@ public final class MapDesignLibrary {
                     dropEntries.stream()
                             .map(drop -> new Monster.DropEntry(drop.itemId(), drop.chance()))
                             .toList(),
-                    characterModel
+                    characterModel,
+                    butcheryProfile
             );
+        }
+
+        public CustomMob withButcheryProfile(EnemyButcheryProfile profile) {
+            return new CustomMob(
+                    mobId,
+                    displayName,
+                    imagePath,
+                    paperDollSourcePath,
+                    statValues,
+                    xpReward,
+                    description,
+                    attackSoundPath,
+                    damageSoundPath,
+                    combatAiIntelligence,
+                    awarenessRadius,
+                    movementIntervalMs,
+                    respawnDelayMs,
+                    skillIds,
+                    dropEntries,
+                    characterModel,
+                    profile);
         }
     }
 
@@ -4012,7 +4317,9 @@ public final class MapDesignLibrary {
             Map<PlayerStat, Integer> statBonuses,
             List<String> skillIds,
             String firstPersonModelPath,
-            String firstPersonRigId
+            String firstPersonRigId,
+            boolean paperDollDerivedIcon,
+            int baseGoldValue
     ) {
         public CustomLimb {
             limbId = limbId == null ? "" : limbId;
@@ -4026,6 +4333,7 @@ public final class MapDesignLibrary {
             firstPersonModelPath = firstPersonModelPath == null
                     ? "" : firstPersonModelPath.trim().replace('\\', '/');
             firstPersonRigId = firstPersonRigId == null ? "" : firstPersonRigId.trim();
+            baseGoldValue = Math.max(1, baseGoldValue);
             EnumMap<PlayerStat, Integer> safeStats = new EnumMap<>(PlayerStat.class);
             if (statBonuses != null) {
                 for (PlayerStat stat : PlayerStat.values()) {
@@ -4049,7 +4357,27 @@ public final class MapDesignLibrary {
                 List<String> skillIds
         ) {
             this(limbId, displayName, limbSlot, iconPath, condition, description,
-                    sourceCreatureId, paperDollSourcePath, statBonuses, skillIds, "", "");
+                    sourceCreatureId, paperDollSourcePath, statBonuses, skillIds, "", "",
+                    false, 25);
+        }
+
+        public CustomLimb(
+                String limbId,
+                String displayName,
+                LimbSlot limbSlot,
+                String iconPath,
+                GearDurability condition,
+                String description,
+                String sourceCreatureId,
+                String paperDollSourcePath,
+                Map<PlayerStat, Integer> statBonuses,
+                List<String> skillIds,
+                String firstPersonModelPath,
+                String firstPersonRigId
+        ) {
+            this(limbId, displayName, limbSlot, iconPath, condition, description,
+                    sourceCreatureId, paperDollSourcePath, statBonuses, skillIds,
+                    firstPersonModelPath, firstPersonRigId, false, 25);
         }
 
         public LimbItem createLimb() {
@@ -4063,7 +4391,9 @@ public final class MapDesignLibrary {
                     condition,
                     iconPath,
                     description,
-                    paperDollSourcePath
+                    paperDollSourcePath,
+                    paperDollDerivedIcon,
+                    baseGoldValue
             ).withFirstPersonModel(firstPersonModelPath, firstPersonRigId);
             limb.withContentId(limbId);
             return limb;

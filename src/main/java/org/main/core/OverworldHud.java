@@ -436,15 +436,21 @@ public class OverworldHud {
         g.setColor(new Color(90, 68, 36));
         g.drawRoundRect(x + 2, y + 2, HELD_ITEM_SLOT_SIZE - 4, HELD_ITEM_SLOT_SIZE - 4, 6, 6);
 
+        int heldIconX = x + HELD_ITEM_ICON_PADDING;
+        int heldIconY = y + HELD_ITEM_ICON_PADDING;
+        int heldIconSize = HELD_ITEM_SLOT_SIZE - HELD_ITEM_ICON_PADDING * 2;
         BufferedImage icon = heldItem.getIcon();
-        if (icon != null) {
+        if (ItemModelIconRenderQueue.request(
+                heldItem, heldIconX, heldIconY, heldIconSize, heldIconSize)) {
+            // Drawn as a live mesh after the Java2D overlay.
+        } else if (icon != null) {
             drawImage(
                     g,
                     icon,
-                    x + HELD_ITEM_ICON_PADDING,
-                    y + HELD_ITEM_ICON_PADDING,
-                    HELD_ITEM_SLOT_SIZE - HELD_ITEM_ICON_PADDING * 2,
-                    HELD_ITEM_SLOT_SIZE - HELD_ITEM_ICON_PADDING * 2,
+                    heldIconX,
+                    heldIconY,
+                    heldIconSize,
+                    heldIconSize,
                     false
             );
         } else {
@@ -580,7 +586,9 @@ public class OverworldHud {
 
             g.setColor(state == QuestRuntime.State.COMPLETED
                     ? new Color(92, 225, 112)
-                    : new Color(224, 74, 74));
+                    : state == QuestRuntime.State.ACTIVE
+                            ? new Color(238, 194, 104)
+                            : new Color(224, 74, 74));
             g.setFont(g.getFont().deriveFont(Font.BOLD, 13f));
             g.drawString(quest.displayName(), x + 26, rowY);
             rowY += 28;

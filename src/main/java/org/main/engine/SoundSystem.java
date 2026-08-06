@@ -8,17 +8,28 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
 import javax.sound.sampled.FloatControl;
 import javax.sound.sampled.LineEvent;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class SoundSystem {
     private static final Logger LOGGER = Logger.getLogger(SoundSystem.class.getName());
+    private final ExecutorService audioLoader = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "Aether-Audio-Loader");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     private Clip ambienceClip;
     private String ambiencePath;
+    private String ambienceLoadingPath;
+    private int ambienceRequest;
 
     private Clip musicClip;
     private String musicPath;
+    private String musicLoadingPath;
+    private int musicRequest;
 
     private Clip loopingSoundClip;
     private String loopingSoundPath;
@@ -35,22 +46,19 @@ public class SoundSystem {
         if (isBlank(soundPath)) {
             return;
         }
-
-        Clip clip = loadClip(soundPath);
-
-        if (clip == null) {
-            return;
-        }
-
-        applyVolume(clip, soundEffectVolume);
-
-        clip.addLineListener(event -> {
-            if (event.getType() == LineEvent.Type.STOP) {
-                clip.close();
+        audioLoader.execute(() -> {
+            Clip clip = loadClip(soundPath);
+            if (clip == null) {
+                return;
             }
+            applyVolume(clip, soundEffectVolume);
+            clip.addLineListener(event -> {
+                if (event.getType() == LineEvent.Type.STOP) {
+                    clip.close();
+                }
+            });
+            clip.start();
         });
-
-        clip.start();
     }
 
     public void playLoopingSound(String soundPath) {
@@ -71,40 +79,48 @@ public class SoundSystem {
         loopingSoundPath = null;
     }
 
-    public void playAmbience(String soundPath) {
-        if (samePath(ambiencePath, soundPath) && isClipRunning(ambienceClip)) {
+    public synchronized void playAmbience(String soundPath) {
+        if (samePath(ambiencePath, soundPath)
+                && (isClipRunning(ambienceClip) || samePath(ambienceLoadingPath, soundPath))) {
             return;
         }
-
-        stopAmbience();
-
+        int request = ++ambienceRequest;
+        Clip previous = ambienceClip;
+        ambienceClip = null;
         ambiencePath = soundPath;
-        ambienceClip = loadLoopingClip(soundPath);
-        applyVolume(ambienceClip, ambienceVolume);
+        ambienceLoadingPath = isBlank(soundPath) ? null : soundPath;
+        audioLoader.execute(() -> replaceAmbience(previous, soundPath, request));
     }
 
-    public void stopAmbience() {
-        stopClip(ambienceClip);
+    public synchronized void stopAmbience() {
+        ambienceRequest++;
+        Clip previous = ambienceClip;
         ambienceClip = null;
         ambiencePath = null;
+        ambienceLoadingPath = null;
+        audioLoader.execute(() -> stopClip(previous));
     }
 
-    public void playMusic(String soundPath) {
-        if (samePath(musicPath, soundPath) && isClipRunning(musicClip)) {
+    public synchronized void playMusic(String soundPath) {
+        if (samePath(musicPath, soundPath)
+                && (isClipRunning(musicClip) || samePath(musicLoadingPath, soundPath))) {
             return;
         }
-
-        stopMusic();
-
+        int request = ++musicRequest;
+        Clip previous = musicClip;
+        musicClip = null;
         musicPath = soundPath;
-        musicClip = loadLoopingClip(soundPath);
-        applyVolume(musicClip, musicVolume);
+        musicLoadingPath = isBlank(soundPath) ? null : soundPath;
+        audioLoader.execute(() -> replaceMusic(previous, soundPath, request));
     }
 
-    public void stopMusic() {
-        stopClip(musicClip);
+    public synchronized void stopMusic() {
+        musicRequest++;
+        Clip previous = musicClip;
         musicClip = null;
         musicPath = null;
+        musicLoadingPath = null;
+        audioLoader.execute(() -> stopClip(previous));
     }
 
     public void stopAll() {
@@ -189,6 +205,40 @@ public class SoundSystem {
 
         clip.loop(Clip.LOOP_CONTINUOUSLY);
         return clip;
+    }
+
+    private void replaceAmbience(Clip previous, String requestedPath, int request) {
+        stopClip(previous);
+        Clip loaded = isBlank(requestedPath) ? null : loadClip(requestedPath);
+        synchronized (this) {
+            if (request != ambienceRequest || !samePath(ambiencePath, requestedPath)) {
+                stopClip(loaded);
+                return;
+            }
+            ambienceLoadingPath = null;
+            ambienceClip = loaded;
+            applyVolume(ambienceClip, ambienceVolume);
+            if (ambienceClip != null) {
+                ambienceClip.loop(Clip.LOOP_CONTINUOUSLY);
+            }
+        }
+    }
+
+    private void replaceMusic(Clip previous, String requestedPath, int request) {
+        stopClip(previous);
+        Clip loaded = isBlank(requestedPath) ? null : loadClip(requestedPath);
+        synchronized (this) {
+            if (request != musicRequest || !samePath(musicPath, requestedPath)) {
+                stopClip(loaded);
+                return;
+            }
+            musicLoadingPath = null;
+            musicClip = loaded;
+            applyVolume(musicClip, musicVolume);
+            if (musicClip != null) {
+                musicClip.loop(Clip.LOOP_CONTINUOUSLY);
+            }
+        }
     }
 
     private Clip loadClip(String soundPath) {

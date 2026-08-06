@@ -336,6 +336,10 @@ public final class LwjglStaticModel {
         return (minX + maxX) * 0.5;
     }
 
+    public double centerY() {
+        return (minY + maxY) * 0.5;
+    }
+
     public double baseY() {
         return minY;
     }

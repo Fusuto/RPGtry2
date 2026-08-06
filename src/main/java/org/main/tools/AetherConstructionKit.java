@@ -4,6 +4,7 @@ import org.main.battle.DifficultyResolver;
 import org.main.content.CharacterModelDefinition;
 import org.main.content.FirstPersonCombatLibrary;
 import org.main.content.MapDesignLibrary;
+import org.main.content.EnemyButcheryProfile;
 import org.main.content.PaintBrushLibrary;
 import org.main.core.CraftingSystem;
 import org.main.core.CraftingStationType;
@@ -20,6 +21,7 @@ import org.main.core.GameConfiguration;
 import org.main.core.GearMaterial;
 import org.main.core.GearDurability;
 import org.main.core.InventorySystem;
+import org.main.core.ItemModelIconProfile;
 import org.main.core.InteractionSystem;
 import org.main.core.Library;
 import org.main.core.LimbSlot;
@@ -42,7 +44,10 @@ import org.main.engine.TerrainEdgeKind;
 import org.main.engine.TerrainGeometry;
 import org.main.engine.TextureManager;
 import org.main.experimental.CameraLookState;
+import org.main.experimental.CharacterAnimationMetadataResolver;
+import org.main.experimental.FirstPersonAnimationRuntime;
 import org.main.experimental.LwjglDungeonViewport;
+import org.main.experimental.LwjglSkinnedModel;
 
 import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
@@ -62,6 +67,8 @@ import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
+import javax.swing.JRadioButton;
+import javax.swing.ButtonGroup;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JSpinner;
@@ -159,14 +166,10 @@ public class AetherConstructionKit extends JFrame {
             "assets/images/monster/Nov-2015/dngn/water/shoals_shallow_water_disturbance2.png",
             "assets/images/monster/Nov-2015/dngn/water/shoals_shallow_water_disturbance3.png");
     private static final String DEFAULT_LIMB_ICON = "assets/images/monster/Ancient/Oct-5-2010/player/hand1/misc/head.png";
+    private static final String DEFAULT_LEATHER_ICON =
+            "assets/images/monster/Nov-2015/item/food/beef_jerky.png";
     private static final Path CONFIG_RESOURCE_PATH = Path.of("src", "main", "resources", "assets",
             "configuration.properties");
-    private static final Path FIRST_PERSON_RIG_RESOURCE_PATH = Path.of(
-            "src", "main", "resources", "assets", "editor", "content",
-            "first_person_rig.properties");
-    private static final Path WEAPON_ANIMATION_RESOURCE_PATH = Path.of(
-            "src", "main", "resources", "assets", "editor", "content",
-            "weapon_animation.properties");
     private static final Path AUTOSAVE_PATH = Path.of("data", "editor", "autosave",
             "aether_construction_kit_recovery.properties");
     private static final Path PREFAB_FOLDER = Path.of("src", "main", "resources", "assets", "editor", "prefabs");
@@ -217,6 +220,7 @@ public class AetherConstructionKit extends JFrame {
     private final Timer autosaveTimer = new Timer(AUTOSAVE_INTERVAL_MS, event -> autosaveRecovery());
     private final Map<String, Dimension> popupSizes = new HashMap<>();
     private MapDesignLibrary.AuthoredContent sharedContentBaseline = emptyAuthoredContent();
+    private FirstPersonCombatLibrary.ItemProfile pendingItemFirstPersonProfile;
     private boolean dirty;
     private String pendingTriggerId = "";
     private MapDesignLibrary.TriggerFireMode pendingTriggerFireMode = MapDesignLibrary.TriggerFireMode.ON_ENTRY;
@@ -353,9 +357,52 @@ public class AetherConstructionKit extends JFrame {
         JPopupMenu menu = new JPopupMenu();
         addMenuItem(menu, "Sound Effects", this::manageSoundEffectConfiguration);
         addMenuItem(menu, "Player Battle Model", this::managePlayerBattleModel);
-        addMenuItem(menu, "First-Person Combat Rig", this::manageFirstPersonCombatRig);
-        addMenuItem(menu, "Weapon Animation Sets", this::manageWeaponAnimationSets);
+        addMenuItem(menu, "First-Person Viewmodels", this::openFirstPersonViewmodelEditor);
         return menuButton("Modify", menu);
+    }
+
+    private void openFirstPersonViewmodelEditor() {
+        List<FirstPersonViewmodelEditorWorkspace.ItemOption> items = design.customItems().stream()
+                .filter(item -> item.itemType() == InventorySystem.ItemType.WEAPON
+                        || item.itemType() == InventorySystem.ItemType.SHIELD
+                        || item.itemType() == InventorySystem.ItemType.CHEST_ARMOR)
+                .map(item -> new FirstPersonViewmodelEditorWorkspace.ItemOption(
+                        item.itemId(),
+                        item.displayName(),
+                        item.itemType(),
+                        item.weaponType(),
+                        item.twoHanded(),
+                        item.firstPersonModelPath(),
+                        item.viewModelProfile()))
+                .toList();
+        FirstPersonViewmodelEditorWorkspace workspace =
+                new FirstPersonViewmodelEditorWorkspace(
+                        this,
+                        items,
+                        field -> showAssetBrowser(field, AssetBrowserType.MODELS),
+                        rigRenames -> {
+                            boolean referencesSaved = rewriteFirstPersonRigReferences(rigRenames);
+                            refreshContentBrowser();
+                            if (referencesSaved) setStatus("Applied first-person viewmodel catalog.");
+                        });
+        workspace.setVisible(true);
+    }
+
+    private boolean rewriteFirstPersonRigReferences(Map<String, String> renames) {
+        if (renames == null || renames.isEmpty()) return true;
+        boolean changed = false;
+        for (int index = 0; index < design.customLimbs().size(); index++) {
+            MapDesignLibrary.CustomLimb limb = design.customLimbs().get(index);
+            String replacement = renames.get(FirstPersonCombatLibrary.normalizeId(limb.firstPersonRigId()));
+            if (replacement == null || replacement.equals(limb.firstPersonRigId())) continue;
+            design.customLimbs().set(index, new MapDesignLibrary.CustomLimb(
+                    limb.limbId(), limb.displayName(), limb.limbSlot(), limb.iconPath(), limb.condition(),
+                    limb.description(), limb.sourceCreatureId(), limb.paperDollSourcePath(),
+                    limb.statBonuses(), limb.skillIds(), limb.firstPersonModelPath(), replacement,
+                    limb.paperDollDerivedIcon(), limb.baseGoldValue()));
+            changed = true;
+        }
+        return !changed || persistSharedContent("first-person rig references");
     }
 
     private JSplitPane createEditorBody() {
@@ -561,6 +608,7 @@ public class AetherConstructionKit extends JFrame {
                 BattleSkillEditorWorkspace.Kind.SKILL));
         addMenuItem(menu, "Status", () -> openNewBattleContentEditor(
                 BattleSkillEditorWorkspace.Kind.STATUS));
+        addMenuItem(menu, "First-Person Viewmodel", this::openFirstPersonViewmodelEditor);
         addMenuItem(menu, "Gathering Node", this::createCustomGatheringNode);
         addMenuItem(menu, "Cooking Recipe", this::createCookingRecipe);
         addMenuItem(menu, "Crafting Recipe", this::createCraftingRecipe);
@@ -746,7 +794,8 @@ public class AetherConstructionKit extends JFrame {
                     mob.respawnDelayMs(),
                     updated,
                     mob.dropEntries(),
-                    mob.characterModel()));
+                    mob.characterModel(),
+                    mob.butcheryProfile()));
         }
         for (int index = 0; index < design.customLimbs().size(); index++) {
             MapDesignLibrary.CustomLimb limb = design.customLimbs().get(index);
@@ -764,7 +813,9 @@ public class AetherConstructionKit extends JFrame {
                     limb.statBonuses(),
                     updated,
                     limb.firstPersonModelPath(),
-                    limb.firstPersonRigId()));
+                    limb.firstPersonRigId(),
+                    limb.paperDollDerivedIcon(),
+                    limb.baseGoldValue()));
         }
     }
 
@@ -802,6 +853,7 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void showAssetBrowser(JTextField targetField, AssetBrowserType initialType) {
+        invalidateModelAssetCaches();
         List<AssetBrowserEntry> assets = scanEditorAssets();
         DefaultListModel<AssetBrowserEntry> assetModel = new DefaultListModel<>();
         JList<AssetBrowserEntry> assetList = new JList<>(assetModel);
@@ -884,6 +936,7 @@ public class AetherConstructionKit extends JFrame {
         });
         useButton.setEnabled(targetField != null);
         refreshButton.addActionListener(event -> {
+            invalidateModelAssetCaches();
             assets.clear();
             assets.addAll(scanEditorAssets());
             refreshAssets.run();
@@ -1117,20 +1170,6 @@ public class AetherConstructionKit extends JFrame {
                     PlayerCharacter.defenseRequirementFor(material), 0, 100);
         }
         tabs.addTab("Equipment", new JScrollPane(equipmentFields));
-
-        JPanel butcheryFields = configGridPanel();
-        butcheryFields.add(new JLabel("Butchery Gate"));
-        butcheryFields.add(new JLabel("Required Level"));
-        butcheryFields.add(new JLabel("Key"));
-        addIntConfigRow(butcheryFields, intSpinners, "Legs Unlock", "butchery.targetLegsLevel",
-                GameConfiguration.intValue("butchery.targetLegsLevel", 10), 1, 100);
-        addIntConfigRow(butcheryFields, intSpinners, "Arms Unlock", "butchery.targetArmsLevel",
-                GameConfiguration.intValue("butchery.targetArmsLevel", 20), 1, 100);
-        addIntConfigRow(butcheryFields, intSpinners, "Body Unlock", "butchery.targetBodyLevel",
-                GameConfiguration.intValue("butchery.targetBodyLevel", 30), 1, 100);
-        addIntConfigRow(butcheryFields, intSpinners, "Head Unlock", "butchery.targetHeadLevel",
-                GameConfiguration.intValue("butchery.targetHeadLevel", 40), 1, 100);
-        tabs.addTab("Butchery", new JScrollPane(butcheryFields));
 
         JPanel resourceFields = configGridPanel();
         resourceFields.add(new JLabel("Resource Tuning"));
@@ -1448,288 +1487,10 @@ public class AetherConstructionKit extends JFrame {
         }
     }
 
-    private void manageFirstPersonCombatRig() {
-        Properties properties = loadEditorProperties(FIRST_PERSON_RIG_RESOURCE_PATH);
-        JTextField modelPath = new JTextField(properties.getProperty("rig.modelPath", ""), 28);
-        JTextField rigId = new JTextField(properties.getProperty("rig.rigId", ""), 20);
-        JTextField leftArm = new JTextField(properties.getProperty("rig.defaultLeftArmPath", ""), 28);
-        JTextField rightArm = new JTextField(properties.getProperty("rig.defaultRightArmPath", ""), 28);
-        JTextField leftBone = new JTextField(properties.getProperty("rig.leftHandBone", "Hand.L"), 18);
-        JTextField rightBone = new JTextField(properties.getProperty("rig.rightHandBone", "Hand.R"), 18);
-        JSpinner px = decimalSpinner(readPropertyDouble(properties, "rig.positionX", 0), -10, 10, 0.01);
-        JSpinner py = decimalSpinner(readPropertyDouble(properties, "rig.positionY", 0), -10, 10, 0.01);
-        JSpinner pz = decimalSpinner(readPropertyDouble(properties, "rig.positionZ", -0.75), -10, 10, 0.01);
-        JSpinner rx = decimalSpinner(readPropertyDouble(properties, "rig.rotationX", 0), -360, 360, 1);
-        JSpinner ry = decimalSpinner(readPropertyDouble(properties, "rig.rotationY", 0), -360, 360, 1);
-        JSpinner rz = decimalSpinner(readPropertyDouble(properties, "rig.rotationZ", 0), -360, 360, 1);
-        JSpinner scale = decimalSpinner(readPropertyDouble(properties, "rig.scale", 1), 0.01, 100, 0.01);
-
-        JPanel rigFields = createFormPanel();
-        rigFields.add(formRow("Skeleton / Base Rig", modelPathBrowser(modelPath)));
-        rigFields.add(formRow("Rig ID", rigId));
-        rigFields.add(formRow("Default Left Arm", modelPathBrowser(leftArm)));
-        rigFields.add(formRow("Default Right Arm", modelPathBrowser(rightArm)));
-        rigFields.add(formRow("Left Hand Bone", leftBone));
-        rigFields.add(formRow("Right Hand Bone", rightBone));
-        rigFields.add(formRow("Camera Position X / Y / Z", compactSpinnerRow(px, py, pz)));
-        rigFields.add(formRow("Camera Rotation X / Y / Z", compactSpinnerRow(rx, ry, rz)));
-        rigFields.add(formRow("Rig Scale", scale));
-
-        EnumMap<FirstPersonCombatLibrary.AnimationSlot, JTextField> paths =
-                new EnumMap<>(FirstPersonCombatLibrary.AnimationSlot.class);
-        EnumMap<FirstPersonCombatLibrary.AnimationSlot, JTextField> clips =
-                new EnumMap<>(FirstPersonCombatLibrary.AnimationSlot.class);
-        EnumMap<FirstPersonCombatLibrary.AnimationSlot, JSpinner> speeds =
-                new EnumMap<>(FirstPersonCombatLibrary.AnimationSlot.class);
-        EnumMap<FirstPersonCombatLibrary.AnimationSlot, JSpinner> impacts =
-                new EnumMap<>(FirstPersonCombatLibrary.AnimationSlot.class);
-        JPanel animationFields = createFormPanel();
-        for (FirstPersonCombatLibrary.AnimationSlot slot
-                : FirstPersonCombatLibrary.AnimationSlot.values()) {
-            String prefix = "rig.animation." + slot.name() + ".";
-            JTextField path = new JTextField(properties.getProperty(prefix + "path", ""), 24);
-            JTextField clip = new JTextField(properties.getProperty(prefix + "clipName", ""), 16);
-            JSpinner speed = decimalSpinner(readPropertyDouble(properties, prefix + "speed", 1),
-                    0.05, 10, 0.05);
-            JSpinner impact = decimalSpinner(
-                    readPropertyDouble(properties, prefix + "impactFraction", 0.55),
-                    0.05, 0.95, 0.01);
-            paths.put(slot, path);
-            clips.put(slot, clip);
-            speeds.put(slot, speed);
-            impacts.put(slot, impact);
-            JPanel binding = new JPanel(new BorderLayout(4, 4));
-            binding.add(modelPathBrowser(path), BorderLayout.NORTH);
-            JPanel details = new JPanel(new java.awt.GridLayout(1, 3, 4, 0));
-            details.add(clip);
-            details.add(speed);
-            details.add(impact);
-            binding.add(details, BorderLayout.SOUTH);
-            animationFields.add(formRow(slot.name() + " Path / Clip / Speed / Impact", binding));
-        }
-
-        JTabbedPane tabs = new JTabbedPane();
-        tabs.addTab("Rig & Attachments", new JScrollPane(topAlignedForm(rigFields)));
-        tabs.addTab("Fallback Clips", new JScrollPane(topAlignedForm(animationFields)));
-        if (showScrollableFormDialog(tabs, "First-Person Combat Rig") != JOptionPane.OK_OPTION) return;
-
-        properties.setProperty("rig.modelPath", normalizedPath(modelPath.getText()));
-        properties.setProperty("rig.rigId", safeText(rigId));
-        properties.setProperty("rig.defaultLeftArmPath", normalizedPath(leftArm.getText()));
-        properties.setProperty("rig.defaultRightArmPath", normalizedPath(rightArm.getText()));
-        properties.setProperty("rig.leftHandBone", safeText(leftBone));
-        properties.setProperty("rig.rightHandBone", safeText(rightBone));
-        setNumber(properties, "rig.positionX", number(px));
-        setNumber(properties, "rig.positionY", number(py));
-        setNumber(properties, "rig.positionZ", number(pz));
-        setNumber(properties, "rig.rotationX", number(rx));
-        setNumber(properties, "rig.rotationY", number(ry));
-        setNumber(properties, "rig.rotationZ", number(rz));
-        setNumber(properties, "rig.scale", number(scale));
-        for (FirstPersonCombatLibrary.AnimationSlot slot
-                : FirstPersonCombatLibrary.AnimationSlot.values()) {
-            String prefix = "rig.animation." + slot.name() + ".";
-            properties.setProperty(prefix + "path", normalizedPath(paths.get(slot).getText()));
-            properties.setProperty(prefix + "clipName", safeText(clips.get(slot)));
-            setNumber(properties, prefix + "speed", number(speeds.get(slot)));
-            setNumber(properties, prefix + "impactFraction", number(impacts.get(slot)));
-        }
-        if (saveEditorProperties(FIRST_PERSON_RIG_RESOURCE_PATH, properties,
-                "Aether first-person combat rig")) {
-            FirstPersonCombatLibrary.reload();
-            setStatus("Updated first-person combat rig and fallback clips.");
-        }
-    }
-
-    private void manageWeaponAnimationSets() {
-        Properties properties = loadEditorProperties(WEAPON_ANIMATION_RESOURCE_PATH);
-        String[] columns = {"Set ID", "Display Name", "Slot", "Path", "Clip", "Speed", "Impact"};
-        DefaultTableModel model = new DefaultTableModel(columns, 0) {
-            @Override public Class<?> getColumnClass(int column) {
-                return column >= 5 ? Double.class : String.class;
-            }
-        };
-        int count = readPropertyInt(properties, "animationSet.count", 0);
-        for (int index = 0; index < count; index++) {
-            String prefix = "animationSet." + index + ".";
-            String id = properties.getProperty(prefix + "id", "");
-            String display = properties.getProperty(prefix + "displayName", id);
-            if (id.isBlank()) continue;
-            for (FirstPersonCombatLibrary.AnimationSlot slot
-                    : FirstPersonCombatLibrary.AnimationSlot.values()) {
-                String binding = prefix + "animation." + slot.name() + ".";
-                model.addRow(new Object[] {
-                        id, display, slot.name(),
-                        properties.getProperty(binding + "path", ""),
-                        properties.getProperty(binding + "clipName", ""),
-                        readPropertyDouble(properties, binding + "speed", 1),
-                        readPropertyDouble(properties, binding + "impactFraction", 0.55)
-                });
-            }
-        }
-        JTable table = new JTable(model);
-        table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-        int[] widths = {105, 130, 115, 260, 150, 65, 65};
-        for (int column = 0; column < widths.length; column++) {
-            table.getColumnModel().getColumn(column).setPreferredWidth(widths[column]);
-        }
-        JTextField newSetId = new JTextField(14);
-        JTextField newSetName = new JTextField(16);
-        JButton addSet = new JButton("Add Set");
-        JButton deleteSet = new JButton("Delete Selected Set");
-        JButton browse = new JButton("Browse Selected Path");
-        addSet.addActionListener(event -> {
-            String id = normalizeContentId(newSetId.getText());
-            if (id.isBlank()) return;
-            String display = newSetName.getText() == null || newSetName.getText().isBlank()
-                    ? id : newSetName.getText().trim();
-            for (FirstPersonCombatLibrary.AnimationSlot slot
-                    : FirstPersonCombatLibrary.AnimationSlot.values()) {
-                model.addRow(new Object[] {id, display, slot.name(), "", "", 1.0, 0.55});
-            }
-            newSetId.setText("");
-            newSetName.setText("");
-        });
-        deleteSet.addActionListener(event -> {
-            int row = table.getSelectedRow();
-            if (row < 0) return;
-            String id = String.valueOf(model.getValueAt(row, 0));
-            for (int index = model.getRowCount() - 1; index >= 0; index--) {
-                if (id.equalsIgnoreCase(String.valueOf(model.getValueAt(index, 0)))) {
-                    model.removeRow(index);
-                }
-            }
-        });
-        browse.addActionListener(event -> {
-            int row = table.getSelectedRow();
-            if (row < 0) return;
-            JTextField selected = new JTextField(String.valueOf(model.getValueAt(row, 3)));
-            showAssetBrowser(selected, AssetBrowserType.MODELS);
-            model.setValueAt(selected.getText(), row, 3);
-        });
-
-        JPanel addControls = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 2));
-        addControls.add(new JLabel("New ID"));
-        addControls.add(newSetId);
-        addControls.add(new JLabel("Name"));
-        addControls.add(newSetName);
-        addControls.add(addSet);
-        addControls.add(deleteSet);
-        addControls.add(browse);
-
-        Map<WeaponType, JTextField> defaults = new EnumMap<>(WeaponType.class);
-        JPanel defaultFields = createFormPanel();
-        for (WeaponType type : WeaponType.values()) {
-            if (type == WeaponType.NONE) continue;
-            JTextField field = new JTextField(properties.getProperty(
-                    "weaponDefault." + type.name(),
-                    FirstPersonCombatLibrary.defaultSetId(type)), 18);
-            defaults.put(type, field);
-            defaultFields.add(formRow(type.getDisplayName(), field));
-        }
-        JPanel panel = new JPanel(new BorderLayout(6, 6));
-        panel.add(addControls, BorderLayout.NORTH);
-        panel.add(new JScrollPane(table), BorderLayout.CENTER);
-        panel.add(new JScrollPane(defaultFields), BorderLayout.SOUTH);
-        panel.setPreferredSize(new Dimension(920, 620));
-        if (showScrollableFormDialog(panel, "Weapon Animation Sets") != JOptionPane.OK_OPTION) return;
-
-        removePropertiesWithPrefix(properties, "animationSet.");
-        LinkedHashMap<String, List<Integer>> rowsBySet = new LinkedHashMap<>();
-        for (int row = 0; row < model.getRowCount(); row++) {
-            String id = normalizeContentId(String.valueOf(model.getValueAt(row, 0)));
-            if (!id.isBlank()) rowsBySet.computeIfAbsent(id, ignored -> new ArrayList<>()).add(row);
-        }
-        properties.setProperty("animationSet.count", String.valueOf(rowsBySet.size()));
-        int setIndex = 0;
-        for (Map.Entry<String, List<Integer>> entry : rowsBySet.entrySet()) {
-            String prefix = "animationSet." + setIndex++ + ".";
-            int firstRow = entry.getValue().get(0);
-            properties.setProperty(prefix + "id", entry.getKey());
-            properties.setProperty(prefix + "displayName",
-                    String.valueOf(model.getValueAt(firstRow, 1)));
-            for (int row : entry.getValue()) {
-                FirstPersonCombatLibrary.AnimationSlot slot;
-                try {
-                    slot = FirstPersonCombatLibrary.AnimationSlot.valueOf(
-                            String.valueOf(model.getValueAt(row, 2)));
-                } catch (IllegalArgumentException ignored) {
-                    continue;
-                }
-                String binding = prefix + "animation." + slot.name() + ".";
-                properties.setProperty(binding + "path",
-                        normalizedPath(String.valueOf(model.getValueAt(row, 3))));
-                properties.setProperty(binding + "clipName",
-                        String.valueOf(model.getValueAt(row, 4)).trim());
-                setNumber(properties, binding + "speed",
-                        tableNumber(model.getValueAt(row, 5), 1));
-                setNumber(properties, binding + "impactFraction",
-                        tableNumber(model.getValueAt(row, 6), 0.55));
-            }
-        }
-        defaults.forEach((type, field) -> properties.setProperty(
-                "weaponDefault." + type.name(), normalizeContentId(field.getText())));
-        if (saveEditorProperties(WEAPON_ANIMATION_RESOURCE_PATH, properties,
-                "Aether first-person weapon animation sets")) {
-            FirstPersonCombatLibrary.reload();
-            setStatus("Updated weapon animation sets.");
-        }
-    }
-
     private JPanel modelPathBrowser(JTextField field) {
         JButton browse = new JButton("Browse");
         browse.addActionListener(event -> showAssetBrowser(field, AssetBrowserType.MODELS));
         return pathFieldPanel(field, browse);
-    }
-
-    private Properties loadEditorProperties(Path path) {
-        Properties properties = new Properties();
-        if (!Files.isRegularFile(path)) return properties;
-        try (InputStream input = Files.newInputStream(path)) {
-            properties.load(input);
-        } catch (IOException exception) {
-            setStatus("Content configuration load warning: " + exception.getMessage());
-        }
-        return properties;
-    }
-
-    private boolean saveEditorProperties(Path path, Properties properties, String comment) {
-        try {
-            Files.createDirectories(path.getParent());
-            try (OutputStream output = Files.newOutputStream(path)) {
-                properties.store(output, comment);
-            }
-            return true;
-        } catch (IOException exception) {
-            setStatus("Content configuration save failed: " + exception.getMessage());
-            return false;
-        }
-    }
-
-    private static void removePropertiesWithPrefix(Properties properties, String prefix) {
-        properties.stringPropertyNames().stream()
-                .filter(key -> key.startsWith(prefix)).toList()
-                .forEach(properties::remove);
-    }
-
-    private static double readPropertyDouble(Properties properties, String key, double fallback) {
-        try {
-            return Double.parseDouble(properties.getProperty(key, String.valueOf(fallback)).trim());
-        } catch (NumberFormatException ignored) {
-            return fallback;
-        }
-    }
-
-    private static int readPropertyInt(Properties properties, String key, int fallback) {
-        try {
-            return Integer.parseInt(properties.getProperty(key, String.valueOf(fallback)).trim());
-        } catch (NumberFormatException ignored) {
-            return fallback;
-        }
-    }
-
-    private static void setNumber(Properties properties, String key, double value) {
-        properties.setProperty(key, formatSignedConfigNumber(value));
     }
 
     private static double tableNumber(Object value, double fallback) {
@@ -2426,6 +2187,31 @@ public class AetherConstructionKit extends JFrame {
                     "Status",
                     status));
         }
+        FirstPersonCombatLibrary.Content firstPerson = FirstPersonCombatLibrary.load();
+        for (FirstPersonCombatLibrary.RigDefinition rig : firstPerson.rigs().values()) {
+            entries.add(new ContentEntry(
+                    ContentCategory.FIRST_PERSON_VIEWMODELS,
+                    rig.displayName(),
+                    rig.rigId(),
+                    "First-Person Rig",
+                    rig));
+        }
+        for (FirstPersonCombatLibrary.AnimationSet set : firstPerson.animationSets().values()) {
+            entries.add(new ContentEntry(
+                    ContentCategory.FIRST_PERSON_VIEWMODELS,
+                    set.displayName(),
+                    set.id(),
+                    "First-Person Motion Set",
+                    set));
+        }
+        for (FirstPersonCombatLibrary.ItemProfile profile : firstPerson.itemProfiles().values()) {
+            entries.add(new ContentEntry(
+                    ContentCategory.FIRST_PERSON_VIEWMODELS,
+                    "Equipment " + profile.itemId(),
+                    profile.itemId(),
+                    "First-Person Equipment Profile",
+                    profile));
+        }
         for (MapDesignLibrary.CustomGatheringNode node : design.customGatheringNodes()) {
             entries.add(new ContentEntry(ContentCategory.GATHERING, node.displayName(), node.nodeId(), "Gathering Node",
                     node));
@@ -2561,7 +2347,12 @@ public class AetherConstructionKit extends JFrame {
                         .append(item.smithingRequiredLevel()).append(", ")
                         .append(item.smithingXpReward()).append(" xp\n");
             }
-            builder.append("Icon: ").append(item.iconPath()).append('\n');
+            if (item.itemType() == InventorySystem.ItemType.WEAPON
+                    && !item.firstPersonModelPath().isBlank()) {
+                builder.append("Icon: live model ").append(item.firstPersonModelPath()).append('\n');
+            } else {
+                builder.append("Icon: ").append(item.iconPath()).append('\n');
+            }
         } else if (value instanceof MapDesignLibrary.CustomMob mob) {
             DifficultyResolver.DifficultyRating rating = DifficultyResolver.rateMonsterProfile(mob.displayName(),
                     mob.statValues(), mob.skillIds());
@@ -2965,7 +2756,12 @@ public class AetherConstructionKit extends JFrame {
         List<String> dependencies = new ArrayList<>();
         Object value = entry.value();
         if (value instanceof MapDesignLibrary.CustomItem item) {
-            addAssetDependency(dependencies, "Icon", item.iconPath());
+            if (item.itemType() == InventorySystem.ItemType.WEAPON
+                    && !item.firstPersonModelPath().isBlank()) {
+                addAssetDependency(dependencies, "Live inventory icon model", item.firstPersonModelPath());
+            } else {
+                addAssetDependency(dependencies, "Icon", item.iconPath());
+            }
             addAssetDependency(dependencies, "Paper-doll overlay", item.paperDollOverlayPath());
             addAssetDependency(dependencies, "First-person model", item.firstPersonModelPath());
             addAssetDependency(dependencies, "Use sound", item.useSoundPath());
@@ -3144,15 +2940,37 @@ public class AetherConstructionKit extends JFrame {
             if (id.equals(dialogue.followUpInteractionId())) {
                 references.add("Dialogue " + dialogue.interactionId() + " follows up to this");
             }
+            collectRewardReferences(references, "Dialogue " + dialogue.interactionId(), dialogue.rewards(), id);
             collectChoiceReferences(references, dialogue.interactionId(), dialogue.choices(), id, label);
             for (MapDesignLibrary.AuthoredDialogueNode node : dialogue.nodes()) {
                 collectChoiceReferences(references, dialogue.interactionId() + "::" + node.nodeId(), node.choices(), id,
                         label);
             }
         }
+        for (MapDesignLibrary.AuthoredQuest quest : design.authoredQuests()) {
+            collectRequirementReferences(references, "Quest " + quest.questId(), quest.requirements(), id);
+            collectQuestFlowReferences(references, "Quest " + quest.questId() + " offer", quest.offerFlow(), id);
+            for (MapDesignLibrary.QuestStage stage : quest.stages()) {
+                String owner = "Quest " + quest.questId() + " stage " + stage.stageId();
+                for (MapDesignLibrary.QuestObjective objective : stage.objectives()) {
+                    if (isItemOrLimbObjective(objective.type()) && id.equals(objective.targetId())) {
+                        references.add(owner + " objective " + objective.objectiveId());
+                    }
+                }
+                collectRewardReferences(references, owner, stage.rewards(), id);
+                collectQuestFlowReferences(references, owner + " flow", stage.flow(), id);
+            }
+            collectRewardReferences(references, "Quest " + quest.questId() + " completion",
+                    quest.finalRewards(), id);
+            collectQuestFlowReferences(references, "Quest " + quest.questId() + " epilogue",
+                    quest.epilogueFlow(), id);
+        }
         for (MapDesignLibrary.CustomNpc npc : design.customNpcs()) {
             if (id.equals(npc.interactionId())) {
                 references.add("NPC " + npc.npcId() + " uses this dialogue");
+            }
+            if (npc.shop() != null && npc.shop().stock().stream().anyMatch(stock -> id.equals(stock.itemId()))) {
+                references.add("Shop stock for NPC " + npc.npcId());
             }
         }
         for (MapDesignLibrary.CustomFurnitureDefinition furniture : design.customFurniture()) {
@@ -3184,6 +3002,10 @@ public class AetherConstructionKit extends JFrame {
             }
         }
         for (MapDesignLibrary.CustomMob mob : design.customMobs()) {
+            if (id.equals(mob.butcheryProfile().leatherItemId())
+                    || mob.butcheryProfile().limbProductIds().containsValue(id)) {
+                references.add("Enemy butchery product " + mob.mobId());
+            }
             for (MapDesignLibrary.CustomDropEntry drop : mob.dropEntries()) {
                 if (id.equals(drop.itemId())) {
                     references.add("Enemy drop " + mob.mobId());
@@ -3196,6 +3018,63 @@ public class AetherConstructionKit extends JFrame {
             }
         }
         return references;
+    }
+
+    private void collectQuestFlowReferences(
+            List<String> references,
+            String owner,
+            MapDesignLibrary.QuestFlow flow,
+            String id
+    ) {
+        if (flow == null) {
+            return;
+        }
+        for (MapDesignLibrary.QuestFlowNode node : flow.nodes()) {
+            for (MapDesignLibrary.QuestFlowChoice choice : node.choices()) {
+                if (id.equals(choice.requiredItemId()) || id.equals(choice.takeItemId())) {
+                    references.add(owner + " choice " + choice.choiceId());
+                }
+                collectRequirementReferences(references, owner + " choice " + choice.choiceId(),
+                        choice.conditions(), id);
+                collectRewardReferences(references, owner + " choice " + choice.choiceId(),
+                        choice.rewards(), id);
+            }
+        }
+    }
+
+    private void collectRequirementReferences(
+            List<String> references,
+            String owner,
+            List<MapDesignLibrary.QuestRequirement> requirements,
+            String id
+    ) {
+        for (MapDesignLibrary.QuestRequirement requirement : requirements == null
+                ? List.<MapDesignLibrary.QuestRequirement>of()
+                : requirements) {
+            if ((requirement.type() == MapDesignLibrary.QuestRequirementType.POSSESS_ITEM
+                    || requirement.type() == MapDesignLibrary.QuestRequirementType.EQUIPPED_ITEM_OR_LIMB)
+                    && id.equals(requirement.targetId())) {
+                references.add(owner + " requirement");
+            }
+        }
+    }
+
+    private void collectRewardReferences(
+            List<String> references,
+            String owner,
+            List<MapDesignLibrary.RewardDefinition> rewards,
+            String id
+    ) {
+        if (rewards != null && rewards.stream().anyMatch(reward ->
+                reward.type() == MapDesignLibrary.QuestRewardType.ITEM && id.equals(reward.itemId()))) {
+            references.add(owner + " reward");
+        }
+    }
+
+    private boolean isItemOrLimbObjective(MapDesignLibrary.QuestObjectiveType type) {
+        return type == MapDesignLibrary.QuestObjectiveType.POSSESS_ITEM
+                || type == MapDesignLibrary.QuestObjectiveType.TURN_IN_ITEM
+                || type == MapDesignLibrary.QuestObjectiveType.EQUIPPED_ITEM_OR_LIMB;
     }
 
     private String alternateReferenceId(Object value) {
@@ -3242,6 +3121,10 @@ public class AetherConstructionKit extends JFrame {
             openBattleContentEditor(BattleSkillEditorWorkspace.Kind.SKILL, skill.id());
         } else if (value instanceof StatusDefinition status) {
             openBattleContentEditor(BattleSkillEditorWorkspace.Kind.STATUS, status.id());
+        } else if (value instanceof FirstPersonCombatLibrary.RigDefinition
+                || value instanceof FirstPersonCombatLibrary.AnimationSet
+                || value instanceof FirstPersonCombatLibrary.ItemProfile) {
+            openFirstPersonViewmodelEditor();
         } else if (value instanceof MapDesignLibrary.CustomGatheringNode node) {
             editCustomGatheringNode(node);
         } else if (value instanceof MapDesignLibrary.CustomCookingRecipe recipe) {
@@ -3282,6 +3165,11 @@ public class AetherConstructionKit extends JFrame {
         } else if (value instanceof StatusDefinition status) {
             openBattleContentEditor(BattleSkillEditorWorkspace.Kind.STATUS, status.id());
             return;
+        } else if (value instanceof FirstPersonCombatLibrary.RigDefinition
+                || value instanceof FirstPersonCombatLibrary.AnimationSet
+                || value instanceof FirstPersonCombatLibrary.ItemProfile) {
+            openFirstPersonViewmodelEditor();
+            return;
         }
         if (value instanceof MapDesignLibrary.CustomItem item) {
             design.customItems().add(new MapDesignLibrary.CustomItem(
@@ -3306,27 +3194,11 @@ public class AetherConstructionKit extends JFrame {
                     item.magicAccuracyBonus(),
                     item.magicPowerBonus(),
                     item.firstPersonModelPath(),
-                    item.viewModelProfile()));
+                    item.viewModelProfile(),
+                    item.modelIconProfile()));
             persistSharedContent("custom item");
         } else if (value instanceof MapDesignLibrary.CustomMob mob) {
-            design.customMobs().add(new MapDesignLibrary.CustomMob(
-                    nextCustomMobId(copiedName),
-                    copiedName,
-                    mob.imagePath(),
-                    mob.paperDollSourcePath(),
-                    mob.statValues(),
-                    mob.xpReward(),
-                    mob.description(),
-                    mob.attackSoundPath(),
-                    mob.damageSoundPath(),
-                    mob.combatAiIntelligence(),
-                    mob.awarenessRadius(),
-                    mob.movementIntervalMs(),
-                    mob.respawnDelayMs(),
-                    mob.skillIds(),
-                    mob.dropEntries(),
-                    mob.characterModel()));
-            persistSharedContent("custom enemy");
+            duplicateEnemyWithProducts(mob, copiedName);
         } else if (value instanceof MapDesignLibrary.CustomNpc npc) {
             design.customNpcs().add(new MapDesignLibrary.CustomNpc(
                     nextCustomNpcId(copiedName),
@@ -3362,7 +3234,9 @@ public class AetherConstructionKit extends JFrame {
                     limb.statBonuses(),
                     limb.skillIds(),
                     limb.firstPersonModelPath(),
-                    limb.firstPersonRigId()));
+                    limb.firstPersonRigId(),
+                    limb.paperDollDerivedIcon(),
+                    limb.baseGoldValue()));
             persistSharedContent("custom limb");
         } else if (value instanceof MapDesignLibrary.CustomGatheringNode node) {
             design.customGatheringNodes().add(new MapDesignLibrary.CustomGatheringNode(
@@ -4418,6 +4292,12 @@ public class AetherConstructionKit extends JFrame {
             return;
         } else if (value instanceof StatusDefinition status) {
             openBattleContentEditor(BattleSkillEditorWorkspace.Kind.STATUS, status.id());
+            return;
+        } else if (value instanceof FirstPersonCombatLibrary.RigDefinition
+                || value instanceof FirstPersonCombatLibrary.AnimationSet
+                || value instanceof FirstPersonCombatLibrary.ItemProfile) {
+            openFirstPersonViewmodelEditor();
+            setStatus("Use the First-Person Viewmodels workspace Delete action so references are rewritten.");
             return;
         }
         if (value instanceof MapDesignLibrary.CustomItem item) {
@@ -5520,13 +5400,17 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void createCustomItem() {
+        pendingItemFirstPersonProfile = null;
         MapDesignLibrary.CustomItem item = showCustomItemDialog("Create Item", null);
         if (item == null) {
             return;
         }
 
         design.customItems().add(item);
-        persistSharedContent("custom item");
+        if (persistSharedContent("custom item") && pendingItemFirstPersonProfile != null) {
+            persistItemFirstPersonProfile(pendingItemFirstPersonProfile);
+        }
+        pendingItemFirstPersonProfile = null;
         populatePlaceables();
         setStatus("Created custom item " + item.displayName() + ".");
     }
@@ -5543,18 +5427,23 @@ public class AetherConstructionKit extends JFrame {
         EquipmentViewModelProfile existingPose = existing == null
                 ? EquipmentViewModelProfile.defaults()
                 : existing.viewModelProfile();
+        ItemModelIconProfile[] modelIconProfile = {
+                existing == null ? ItemModelIconProfile.defaults() : existing.modelIconProfile()
+        };
         FirstPersonCombatLibrary.ItemProfile[] firstPersonProfile = {
                 existing == null ? null
                         : FirstPersonCombatLibrary.load().itemProfiles().get(
                                 normalizeContentId(existing.itemId()))
         };
-        JSpinner viewX = decimalSpinner(existingPose.positionX(), -10, 10, 0.01);
-        JSpinner viewY = decimalSpinner(existingPose.positionY(), -10, 10, 0.01);
-        JSpinner viewZ = decimalSpinner(existingPose.positionZ(), -10, 10, 0.01);
-        JSpinner viewRotX = decimalSpinner(existingPose.rotationX(), -360, 360, 1);
-        JSpinner viewRotY = decimalSpinner(existingPose.rotationY(), -360, 360, 1);
-        JSpinner viewRotZ = decimalSpinner(existingPose.rotationZ(), -360, 360, 1);
-        JSpinner viewHeight = decimalSpinner(existingPose.normalizedHeight(), 0.02, 20, 0.02);
+        EquipmentViewModelProfile editableSocket = firstPersonProfile[0] == null
+                ? existingPose : firstPersonProfile[0].socketTransform();
+        JSpinner viewX = decimalSpinner(editableSocket.positionX(), -10, 10, 0.01);
+        JSpinner viewY = decimalSpinner(editableSocket.positionY(), -10, 10, 0.01);
+        JSpinner viewZ = decimalSpinner(editableSocket.positionZ(), -10, 10, 0.01);
+        JSpinner viewRotX = decimalSpinner(editableSocket.rotationX(), -360, 360, 1);
+        JSpinner viewRotY = decimalSpinner(editableSocket.rotationY(), -360, 360, 1);
+        JSpinner viewRotZ = decimalSpinner(editableSocket.rotationZ(), -360, 360, 1);
+        JSpinner viewHeight = decimalSpinner(editableSocket.normalizedHeight(), 0.02, 20, 0.02);
         JSpinner swingX = decimalSpinner(existingPose.swingAxisX(), -1, 1, 0.05);
         JSpinner swingY = decimalSpinner(existingPose.swingAxisY(), -1, 1, 0.05);
         JSpinner swingZ = decimalSpinner(existingPose.swingAxisZ(), -1, 1, 0.05);
@@ -5563,7 +5452,9 @@ public class AetherConstructionKit extends JFrame {
         JButton paperDollBrowseButton = new JButton("Browse");
         JButton firstPersonModelBrowseButton = new JButton("Browse");
         JButton useSoundBrowseButton = new JButton("Browse");
-        JButton firstPersonAuthoringButton = new JButton("Edit Socket, Hand, Armor & Clip Overrides");
+        JButton firstPersonAuthoringButton = new JButton("Edit Rig, Hand, Armor & Clip Overrides");
+        JButton setIconButton = new JButton("Set Icon");
+        JLabel modelIconSummary = new JLabel();
         JComboBox<ItemTemplateOption> templateBox = new JComboBox<>(itemTemplateOptions());
         JComboBox<InventorySystem.ItemType> typeBox = new JComboBox<>(new InventorySystem.ItemType[] {
                 InventorySystem.ItemType.MISC,
@@ -5631,16 +5522,6 @@ public class AetherConstructionKit extends JFrame {
         firstPersonModelBrowseButton
                 .addActionListener(event -> showAssetBrowser(firstPersonModelField, AssetBrowserType.MODELS));
         useSoundBrowseButton.addActionListener(event -> browsePathInto(useSoundField));
-        firstPersonAuthoringButton.addActionListener(event -> {
-            String provisionalId = existing == null
-                    ? normalizeContentId(nameField.getText())
-                    : existing.itemId();
-            FirstPersonCombatLibrary.ItemProfile edited = showItemFirstPersonProfileDialog(
-                    provisionalId,
-                    firstPersonProfile[0],
-                    (InventorySystem.ItemType) typeBox.getSelectedItem());
-            if (edited != null) firstPersonProfile[0] = edited;
-        });
         weaponTypeBox.addActionListener(event -> {
             if (typeBox.getSelectedItem() == InventorySystem.ItemType.WEAPON
                     && weaponTypeBox.getSelectedItem() == WeaponType.GREATSWORD) {
@@ -5657,7 +5538,11 @@ public class AetherConstructionKit extends JFrame {
             iconPathField.setText(item.iconPath());
             paperDollOverlayField.setText(item.paperDollOverlayPath());
             firstPersonModelField.setText(item.firstPersonModelPath());
-            EquipmentViewModelProfile pose = item.viewModelProfile();
+            modelIconProfile[0] = item.modelIconProfile();
+            firstPersonProfile[0] = FirstPersonCombatLibrary.load()
+                    .itemProfiles().get(normalizeContentId(item.itemId()));
+            EquipmentViewModelProfile pose = firstPersonProfile[0] == null
+                    ? item.viewModelProfile() : firstPersonProfile[0].socketTransform();
             viewX.setValue(pose.positionX());
             viewY.setValue(pose.positionY());
             viewZ.setValue(pose.positionZ());
@@ -5695,17 +5580,55 @@ public class AetherConstructionKit extends JFrame {
         paperDollPanel.add(paperDollBrowseButton, BorderLayout.EAST);
         JPanel nameRow = formRow("Name", nameField);
         JPanel imageRow = formRow("Image", imagePanel);
+        JPanel modelIconPanel = new JPanel(new BorderLayout(6, 4));
+        modelIconPanel.add(modelIconSummary, BorderLayout.CENTER);
+        modelIconPanel.add(setIconButton, BorderLayout.EAST);
+        JPanel modelIconRow = formRow("Weapon Inventory Icon", modelIconPanel);
         JPanel paperDollRow = formRow("Paper Doll Sprite", paperDollPanel);
         JPanel firstPersonModelRow = formRow(
                 "First-Person Model",
                 pathFieldPanel(firstPersonModelField, firstPersonModelBrowseButton));
         JPanel useSoundRow = formRow("Use Sound", pathFieldPanel(useSoundField, useSoundBrowseButton));
-        JPanel viewPositionRow = formRow("View Position X / Y / Z", compactSpinnerRow(viewX, viewY, viewZ));
-        JPanel viewRotationRow = formRow("View Rotation X / Y / Z", compactSpinnerRow(viewRotX, viewRotY, viewRotZ));
-        JPanel viewHeightRow = formRow("Normalized Height", viewHeight);
-        JPanel swingAxisRow = formRow("Swing Axis X / Y / Z", compactSpinnerRow(swingX, swingY, swingZ));
+        JPanel viewPositionRow = formRow("Hand Socket Position X / Y / Z",
+                compactSpinnerRow(viewX, viewY, viewZ));
+        JPanel viewRotationRow = formRow("Hand Socket Rotation X / Y / Z",
+                compactSpinnerRow(viewRotX, viewRotY, viewRotZ));
+        JPanel viewHeightRow = formRow("Socket Model Height", viewHeight);
+        JPanel swingAxisRow = formRow("Legacy Fallback Swing Axis X / Y / Z",
+                compactSpinnerRow(swingX, swingY, swingZ));
         JPanel pairedHandsRow = formRow("Chest Hands", pairedHands);
         JPanel firstPersonAuthoringRow = formRow("Skeletal First-Person", firstPersonAuthoringButton);
+        FirstPersonCombatLibrary.Content itemFirstPersonContent = FirstPersonCombatLibrary.load();
+        Supplier<FirstPersonCombatLibrary.ItemProfile> workingFirstPersonProfile = () -> {
+            FirstPersonCombatLibrary.ItemProfile base = firstPersonProfile[0];
+            String provisionalId = existing == null
+                    ? normalizeContentId(nameField.getText()) : existing.itemId();
+            WeaponType selectedWeaponType = (WeaponType) weaponTypeBox.getSelectedItem();
+            String rigId = base == null || base.rigId().isBlank()
+                    ? itemFirstPersonContent.defaultRigId() : base.rigId();
+            String animationSetId = base == null || base.animationSetId().isBlank()
+                    ? itemFirstPersonContent.weaponDefaults().getOrDefault(
+                    selectedWeaponType, FirstPersonCombatLibrary.defaultSetId(selectedWeaponType))
+                    : base.animationSetId();
+            EquipmentViewModelProfile socket = new EquipmentViewModelProfile(
+                    number(viewX), number(viewY), number(viewZ),
+                    number(viewRotX), number(viewRotY), number(viewRotZ), number(viewHeight),
+                    0, 0, 1, false);
+            return new FirstPersonCombatLibrary.ItemProfile(
+                    provisionalId, rigId,
+                    base == null && typeBox.getSelectedItem() == InventorySystem.ItemType.SHIELD
+                            ? FirstPersonCombatLibrary.WieldHand.LEFT
+                            : base == null ? FirstPersonCombatLibrary.WieldHand.RIGHT : base.wieldHand(),
+                    animationSetId, socket,
+                    base == null ? 0 : base.secondaryGripX(),
+                    base == null ? 0 : base.secondaryGripY(),
+                    base == null ? 0 : base.secondaryGripZ(),
+                    base == null ? "" : base.leftArmorPath(),
+                    base == null ? "" : base.rightArmorPath(),
+                    base == null ? FirstPersonCombatLibrary.ArmCoverage.OVERLAY : base.leftCoverage(),
+                    base == null ? FirstPersonCombatLibrary.ArmCoverage.OVERLAY : base.rightCoverage(),
+                    base == null ? Map.of() : base.overrides());
+        };
         EquipmentCombinationPreviewPanel equipmentPreview = new EquipmentCombinationPreviewPanel(
                 firstPersonModelField::getText,
                 () -> new EquipmentViewModelProfile(number(viewX), number(viewY), number(viewZ),
@@ -5713,8 +5636,43 @@ public class AetherConstructionKit extends JFrame {
                         number(swingX), number(swingY), number(swingZ), pairedHands.isSelected()),
                 () -> (InventorySystem.ItemType) typeBox.getSelectedItem(),
                 twoHandedBox::isSelected,
-                () -> firstPersonProfile[0],
+                workingFirstPersonProfile,
                 () -> (WeaponType) weaponTypeBox.getSelectedItem());
+        Runnable updateModelIconSummary = () -> {
+            ItemModelIconProfile framing = modelIconProfile[0];
+            String path = firstPersonModelField.getText() == null
+                    ? "" : firstPersonModelField.getText().trim();
+            modelIconSummary.setText(path.isBlank()
+                    ? "Select a First-Person Model, then set its inventory view."
+                    : String.format(Locale.US,
+                    "Live model · rot %.0f / %.0f / %.0f · zoom %.2fx",
+                    framing.rotationX(), framing.rotationY(), framing.rotationZ(), framing.zoom()));
+        };
+        setIconButton.addActionListener(event -> {
+            String modelPath = firstPersonModelField.getText() == null
+                    ? "" : firstPersonModelField.getText().trim();
+            if (modelPath.isBlank()) {
+                showAssetBrowser(firstPersonModelField, AssetBrowserType.MODELS);
+                modelPath = firstPersonModelField.getText() == null
+                        ? "" : firstPersonModelField.getText().trim();
+                updateModelIconSummary.run();
+                equipmentPreview.reloadPreview();
+                if (modelPath.isBlank()) return;
+            }
+            if (!isSupportedCharacterModelAsset(modelPath)) {
+                showAdaptiveTextMessageDialog(
+                        "Weapon model icons require a .glb or .fbx model.",
+                        "Set Weapon Icon",
+                        JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            ItemModelIconProfile edited = showWeaponModelIconDialog(
+                    modelPath, modelIconProfile[0]);
+            if (edited != null) {
+                modelIconProfile[0] = edited;
+                updateModelIconSummary.run();
+            }
+        });
         for (JSpinner poseSpinner : new JSpinner[] {
                 viewX, viewY, viewZ, viewRotX, viewRotY, viewRotZ,
                 viewHeight, swingX, swingY, swingZ
@@ -5724,6 +5682,38 @@ public class AetherConstructionKit extends JFrame {
         pairedHands.addActionListener(event -> equipmentPreview.refreshPose());
         twoHandedBox.addActionListener(event -> equipmentPreview.refreshPose());
         typeBox.addActionListener(event -> equipmentPreview.refreshPose());
+        weaponTypeBox.addActionListener(event -> equipmentPreview.reloadPreview());
+        firstPersonModelBrowseButton.addActionListener(
+                event -> SwingUtilities.invokeLater(() -> {
+                    equipmentPreview.reloadPreview();
+                    updateModelIconSummary.run();
+                }));
+        templateBox.addActionListener(
+                event -> SwingUtilities.invokeLater(() -> {
+                    equipmentPreview.reloadPreview();
+                    updateModelIconSummary.run();
+                }));
+        firstPersonAuthoringButton.addActionListener(event -> {
+            String provisionalId = existing == null
+                    ? normalizeContentId(nameField.getText())
+                    : existing.itemId();
+            FirstPersonCombatLibrary.ItemProfile edited = showItemFirstPersonProfileDialog(
+                    provisionalId,
+                    workingFirstPersonProfile.get(),
+                    (InventorySystem.ItemType) typeBox.getSelectedItem());
+            if (edited != null) {
+                firstPersonProfile[0] = edited;
+                EquipmentViewModelProfile editedSocket = edited.socketTransform();
+                viewX.setValue(editedSocket.positionX());
+                viewY.setValue(editedSocket.positionY());
+                viewZ.setValue(editedSocket.positionZ());
+                viewRotX.setValue(editedSocket.rotationX());
+                viewRotY.setValue(editedSocket.rotationY());
+                viewRotZ.setValue(editedSocket.rotationZ());
+                viewHeight.setValue(editedSocket.normalizedHeight());
+                equipmentPreview.reloadPreview();
+            }
+        });
         JPanel equipmentPreviewRow = formRow("Equipment Preview", equipmentPreview);
         JPanel typeRow = formRow("Type", typeBox);
         JPanel materialRow = formRow("Material", materialBox);
@@ -5750,15 +5740,19 @@ public class AetherConstructionKit extends JFrame {
         basicFields.add(nameRow);
         basicFields.add(typeRow);
         basicFields.add(imageRow);
+        basicFields.add(modelIconRow);
         basicFields.add(valueRow);
         basicFields.add(stackableRow);
         JPanel examineBox = new JPanel(new BorderLayout(4, 4));
         examineBox.setBorder(BorderFactory.createTitledBorder("Examine Description"));
-        examineBox.add(new JScrollPane(examineArea), BorderLayout.CENTER);
+        JScrollPane examineScroll = new JScrollPane(examineArea);
+        examineScroll.setPreferredSize(new Dimension(420, 86));
+        examineBox.setMaximumSize(new Dimension(Integer.MAX_VALUE, 112));
+        examineBox.add(examineScroll, BorderLayout.CENTER);
+        basicFields.add(examineBox);
 
         JPanel basicPanel = new JPanel(new BorderLayout(6, 6));
         basicPanel.add(basicFields, BorderLayout.NORTH);
-        basicPanel.add(examineBox, BorderLayout.CENTER);
 
         JPanel equipmentFields = createFormPanel();
         equipmentFields.add(materialRow);
@@ -5816,6 +5810,8 @@ public class AetherConstructionKit extends JFrame {
                 twoHandedBox.setSelected(false);
             }
             paperDollRow.setVisible(paperDollAllowed);
+            imageRow.setVisible(!weapon);
+            modelIconRow.setVisible(weapon);
             firstPersonModelRow.setVisible(firstPersonModelAllowed);
             viewPositionRow.setVisible(firstPersonModelAllowed);
             viewRotationRow.setVisible(firstPersonModelAllowed);
@@ -5845,6 +5841,7 @@ public class AetherConstructionKit extends JFrame {
             }
             itemTabs.revalidate();
             itemTabs.repaint();
+            updateModelIconSummary.run();
         };
         typeBox.addActionListener(event -> {
             updateSmithingRecipeControls.run();
@@ -5861,6 +5858,7 @@ public class AetherConstructionKit extends JFrame {
         templateBox.addActionListener(event -> updateItemTypeRows.run());
         updateSmithingRecipeControls.run();
         updateItemTypeRows.run();
+        updateModelIconSummary.run();
 
         int result = showScrollableFormDialog(itemTabs, title);
         if (result != JOptionPane.OK_OPTION) {
@@ -5907,12 +5905,18 @@ public class AetherConstructionKit extends JFrame {
             setStatus("First-person equipment models must be .glb or .fbx assets.");
             return null;
         }
+        if (selectedWeapon && firstPersonModelPath.isBlank()) {
+            setStatus("Weapons need a 3D model for their live inventory icon.");
+            return null;
+        }
 
         String resultItemId = existing == null ? nextCustomItemId(name) : existing.itemId();
-        if (firstPersonProfile[0] != null) {
-            FirstPersonCombatLibrary.ItemProfile profile = firstPersonProfile[0];
-            persistItemFirstPersonProfile(new FirstPersonCombatLibrary.ItemProfile(
+        if (selectedFirstPersonModelAllowed
+                && (!firstPersonModelPath.isBlank() || firstPersonProfile[0] != null)) {
+            FirstPersonCombatLibrary.ItemProfile profile = workingFirstPersonProfile.get();
+            pendingItemFirstPersonProfile = new FirstPersonCombatLibrary.ItemProfile(
                     resultItemId,
+                    profile.rigId(),
                     profile.wieldHand(),
                     profile.animationSetId(),
                     profile.socketTransform(),
@@ -5923,7 +5927,7 @@ public class AetherConstructionKit extends JFrame {
                     profile.rightArmorPath(),
                     profile.leftCoverage(),
                     profile.rightCoverage(),
-                    profile.overrides()));
+                    profile.overrides());
         }
         return new MapDesignLibrary.CustomItem(
                 resultItemId,
@@ -5954,7 +5958,36 @@ public class AetherConstructionKit extends JFrame {
                 firstPersonModelPath,
                 new EquipmentViewModelProfile(number(viewX), number(viewY), number(viewZ),
                         number(viewRotX), number(viewRotY), number(viewRotZ), number(viewHeight),
-                        number(swingX), number(swingY), number(swingZ), pairedHands.isSelected()));
+                        number(swingX), number(swingY), number(swingZ), pairedHands.isSelected()),
+                modelIconProfile[0])
+                .withSourceEnemyId(existing == null ? "" : existing.sourceEnemyId());
+    }
+
+    private ItemModelIconProfile showWeaponModelIconDialog(
+            String modelPath,
+            ItemModelIconProfile existing
+    ) {
+        WeaponModelIconEditorPanel preview = new WeaponModelIconEditorPanel(modelPath, existing);
+        JButton reset = new JButton("Reset View");
+        reset.addActionListener(event -> preview.resetView());
+        JPanel toolbar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 2));
+        toolbar.add(reset);
+        toolbar.add(new JLabel("The game renders this model directly; no image file is created."));
+        JPanel content = new JPanel(new BorderLayout(6, 6));
+        content.add(toolbar, BorderLayout.NORTH);
+        content.add(preview, BorderLayout.CENTER);
+        int result = showResizableOptionDialog(
+                this,
+                content,
+                "Set Weapon Inventory Icon",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE);
+        if (result != JOptionPane.OK_OPTION) return null;
+        if (!preview.hasUsableModel()) {
+            setStatus("Weapon icon model failed to load: " + preview.loadError());
+            return null;
+        }
+        return preview.profile();
     }
 
     private FirstPersonCombatLibrary.ItemProfile showItemFirstPersonProfileDialog(
@@ -5965,7 +5998,9 @@ public class AetherConstructionKit extends JFrame {
         FirstPersonCombatLibrary.ItemProfile base = existing == null
                 ? new FirstPersonCombatLibrary.ItemProfile(
                         itemId,
-                        FirstPersonCombatLibrary.WieldHand.RIGHT,
+                        itemType == InventorySystem.ItemType.SHIELD
+                                ? FirstPersonCombatLibrary.WieldHand.LEFT
+                                : FirstPersonCombatLibrary.WieldHand.RIGHT,
                         "",
                         FirstPersonCombatLibrary.ItemProfile.socketDefaults(),
                         0, 0, 0, "", "",
@@ -5976,29 +6011,25 @@ public class AetherConstructionKit extends JFrame {
         JComboBox<FirstPersonCombatLibrary.WieldHand> wieldHand =
                 new JComboBox<>(FirstPersonCombatLibrary.WieldHand.values());
         wieldHand.setSelectedItem(base.wieldHand());
-        List<String> setIds = new ArrayList<>(FirstPersonCombatLibrary.load().animationSets().keySet());
+        FirstPersonCombatLibrary.Content firstPersonContent = FirstPersonCombatLibrary.load();
+        List<String> rigIds = new ArrayList<>(firstPersonContent.rigs().keySet());
+        rigIds.sort(String::compareToIgnoreCase);
+        JComboBox<String> rig = new JComboBox<>(rigIds.toArray(String[]::new));
+        rig.setEditable(true);
+        rig.setSelectedItem(base.rigId().isBlank() ? firstPersonContent.defaultRigId() : base.rigId());
+        List<String> setIds = new ArrayList<>(firstPersonContent.animationSets().keySet());
         setIds.sort(String::compareToIgnoreCase);
         JComboBox<String> animationSet = new JComboBox<>(setIds.toArray(String[]::new));
         animationSet.setEditable(true);
         animationSet.setSelectedItem(base.animationSetId());
-        EquipmentViewModelProfile transform = base.socketTransform();
-        JSpinner px = decimalSpinner(transform.positionX(), -10, 10, 0.01);
-        JSpinner py = decimalSpinner(transform.positionY(), -10, 10, 0.01);
-        JSpinner pz = decimalSpinner(transform.positionZ(), -10, 10, 0.01);
-        JSpinner rx = decimalSpinner(transform.rotationX(), -360, 360, 1);
-        JSpinner ry = decimalSpinner(transform.rotationY(), -360, 360, 1);
-        JSpinner rz = decimalSpinner(transform.rotationZ(), -360, 360, 1);
-        JSpinner socketScale = decimalSpinner(transform.normalizedHeight(), 0.001, 100, 0.01);
         JSpinner secondaryX = decimalSpinner(base.secondaryGripX(), -10, 10, 0.01);
         JSpinner secondaryY = decimalSpinner(base.secondaryGripY(), -10, 10, 0.01);
         JSpinner secondaryZ = decimalSpinner(base.secondaryGripZ(), -10, 10, 0.01);
 
         JPanel socketFields = createFormPanel();
-        socketFields.add(formRow("Wield Hand", wieldHand));
+        socketFields.add(formRow("Rig", rig));
+        socketFields.add(formRow("Attachment Hand", wieldHand));
         socketFields.add(formRow("Animation Set", animationSet));
-        socketFields.add(formRow("Socket Position X / Y / Z", compactSpinnerRow(px, py, pz)));
-        socketFields.add(formRow("Socket Rotation X / Y / Z", compactSpinnerRow(rx, ry, rz)));
-        socketFields.add(formRow("Socket Scale", socketScale));
         socketFields.add(formRow("Secondary Grip X / Y / Z",
                 compactSpinnerRow(secondaryX, secondaryY, secondaryZ)));
 
@@ -6052,7 +6083,7 @@ public class AetherConstructionKit extends JFrame {
         overridePanel.add(new JScrollPane(overrides), BorderLayout.CENTER);
 
         JTabbedPane tabs = new JTabbedPane();
-        tabs.addTab("Hand Socket", new JScrollPane(topAlignedForm(socketFields)));
+        tabs.addTab("Rig & Grip", new JScrollPane(topAlignedForm(socketFields)));
         tabs.addTab("Armor Attachments", new JScrollPane(topAlignedForm(armorFields)));
         tabs.addTab("Clip Overrides", overridePanel);
         tabs.setPreferredSize(new Dimension(790, 510));
@@ -6077,12 +6108,10 @@ public class AetherConstructionKit extends JFrame {
         }
         return new FirstPersonCombatLibrary.ItemProfile(
                 itemId,
+                normalizeContentId(String.valueOf(rig.getSelectedItem())),
                 (FirstPersonCombatLibrary.WieldHand) wieldHand.getSelectedItem(),
                 normalizeContentId(String.valueOf(animationSet.getSelectedItem())),
-                new EquipmentViewModelProfile(
-                        number(px), number(py), number(pz),
-                        number(rx), number(ry), number(rz), number(socketScale),
-                        0, 0, 1, false),
+                base.socketTransform(),
                 number(secondaryX), number(secondaryY), number(secondaryZ),
                 normalizedPath(leftArmor.getText()), normalizedPath(rightArmor.getText()),
                 (FirstPersonCombatLibrary.ArmCoverage) leftCoverage.getSelectedItem(),
@@ -6092,46 +6121,31 @@ public class AetherConstructionKit extends JFrame {
 
     private void persistItemFirstPersonProfile(FirstPersonCombatLibrary.ItemProfile updated) {
         if (updated == null || updated.itemId().isBlank()) return;
-        Properties properties = loadEditorProperties(WEAPON_ANIMATION_RESOURCE_PATH);
-        LinkedHashMap<String, FirstPersonCombatLibrary.ItemProfile> profiles =
-                new LinkedHashMap<>(FirstPersonCombatLibrary.loadFresh().itemProfiles());
-        profiles.put(normalizeContentId(updated.itemId()), updated);
-        removePropertiesWithPrefix(properties, "itemProfile.");
-        properties.setProperty("itemProfile.count", String.valueOf(profiles.size()));
-        int index = 0;
-        for (FirstPersonCombatLibrary.ItemProfile profile : profiles.values()) {
-            String prefix = "itemProfile." + index++ + ".";
-            properties.setProperty(prefix + "itemId", profile.itemId());
-            properties.setProperty(prefix + "wieldHand", profile.wieldHand().name());
-            properties.setProperty(prefix + "animationSetId", profile.animationSetId());
-            EquipmentViewModelProfile transform = profile.socketTransform();
-            setNumber(properties, prefix + "socket.positionX", transform.positionX());
-            setNumber(properties, prefix + "socket.positionY", transform.positionY());
-            setNumber(properties, prefix + "socket.positionZ", transform.positionZ());
-            setNumber(properties, prefix + "socket.rotationX", transform.rotationX());
-            setNumber(properties, prefix + "socket.rotationY", transform.rotationY());
-            setNumber(properties, prefix + "socket.rotationZ", transform.rotationZ());
-            setNumber(properties, prefix + "socket.scale", transform.normalizedHeight());
-            setNumber(properties, prefix + "secondaryGripX", profile.secondaryGripX());
-            setNumber(properties, prefix + "secondaryGripY", profile.secondaryGripY());
-            setNumber(properties, prefix + "secondaryGripZ", profile.secondaryGripZ());
-            properties.setProperty(prefix + "leftArmorPath", profile.leftArmorPath());
-            properties.setProperty(prefix + "rightArmorPath", profile.rightArmorPath());
-            properties.setProperty(prefix + "leftCoverage", profile.leftCoverage().name());
-            properties.setProperty(prefix + "rightCoverage", profile.rightCoverage().name());
-            for (Map.Entry<FirstPersonCombatLibrary.AnimationSlot,
-                    FirstPersonCombatLibrary.ClipBinding> entry : profile.overrides().entrySet()) {
-                String binding = prefix + "override." + entry.getKey().name() + ".";
-                FirstPersonCombatLibrary.ClipBinding value = entry.getValue();
-                properties.setProperty(binding + "path", value.path());
-                properties.setProperty(binding + "clipName", value.clipName());
-                setNumber(properties, binding + "speed", value.playbackSpeed());
-                setNumber(properties, binding + "impactFraction", value.impactFraction());
-            }
+        FirstPersonCombatLibrary.Content updatedContent =
+                FirstPersonCombatLibrary.loadFresh().withItemProfile(updated);
+        try {
+            FirstPersonCombatLibrary.save(FirstPersonCombatLibrary.RESOURCE_PATH, updatedContent);
+            FirstPersonCombatLibrary.install(updatedContent);
+            FirstPersonAnimationRuntime.clearCaches();
+            CharacterAnimationMetadataResolver.clear();
+            LwjglSkinnedModel.clearSharedCache();
+        } catch (IOException exception) {
+            setStatus("First-person equipment profile save failed: " + exception.getMessage());
         }
-        if (saveEditorProperties(WEAPON_ANIMATION_RESOURCE_PATH, properties,
-                "Aether first-person weapon animation sets and item profiles")) {
-            FirstPersonCombatLibrary.reload();
+    }
+
+    private void removeItemFirstPersonProfile(String itemId) {
+        FirstPersonCombatLibrary.Content current = FirstPersonCombatLibrary.loadFresh();
+        if (!current.itemProfiles().containsKey(FirstPersonCombatLibrary.normalizeId(itemId))) return;
+        FirstPersonCombatLibrary.Content updated = current.withoutItemProfile(itemId);
+        try {
+            FirstPersonCombatLibrary.save(FirstPersonCombatLibrary.RESOURCE_PATH, updated);
+            FirstPersonCombatLibrary.install(updated);
+            FirstPersonAnimationRuntime.clearCaches();
+            CharacterAnimationMetadataResolver.clear();
+            LwjglSkinnedModel.clearSharedCache();
+        } catch (IOException exception) {
+            setStatus("First-person equipment profile removal failed: " + exception.getMessage());
         }
     }
 
@@ -6175,8 +6189,7 @@ public class AetherConstructionKit extends JFrame {
             JTextField damageSoundField,
             JButton damageSoundBrowseButton,
             JButton dropsButton,
-            JButton generateLimbsButton,
-            JTextArea limbDescriptionArea
+            Component butcheryEditor
     ) {
         JTabbedPane tabs = new JTabbedPane();
 
@@ -6218,14 +6231,11 @@ public class AetherConstructionKit extends JFrame {
         addFormRow(audioLootFields, "Attack Sound", pathFieldPanel(attackSoundField, attackSoundBrowseButton));
         addFormRow(audioLootFields, "Hit Sound", pathFieldPanel(damageSoundField, damageSoundBrowseButton));
         addFormRow(audioLootFields, "Loot Table", dropsButton);
-        if (generateLimbsButton != null) {
-            addFormRow(audioLootFields, "Limbs Generator", generateLimbsButton);
-        }
-        if (limbDescriptionArea != null) {
-            JPanel limbBox = new JPanel(new BorderLayout(4, 4));
-            limbBox.setBorder(BorderFactory.createTitledBorder("Limb Description"));
-            limbBox.add(new JScrollPane(limbDescriptionArea), BorderLayout.CENTER);
-            audioLootFields.add(limbBox);
+        if (butcheryEditor != null) {
+            JPanel butcheryBox = new JPanel(new BorderLayout(4, 4));
+            butcheryBox.setBorder(BorderFactory.createTitledBorder("Butchery Products"));
+            butcheryBox.add(butcheryEditor, BorderLayout.CENTER);
+            audioLootFields.add(butcheryBox);
         }
 
         JPanel audioLootPanel = new JPanel(new BorderLayout(6, 6));
@@ -6237,6 +6247,549 @@ public class AetherConstructionKit extends JFrame {
         tabs.addTab("Audio & Loot", audioLootPanel);
 
         return tabs;
+    }
+
+    private final class ButcheryEditorControls {
+        private final JTextField nameField;
+        private final JTextField paperDollSourceField;
+        private final Map<PlayerStat, JSpinner> statSpinners;
+        private final JList<SkillDefinition> skillList;
+        private final String existingMobId;
+        private final EnemyButcheryProfile originalProfile;
+        private final JRadioButton humanoidButton = new JRadioButton("Humanoid Limbs");
+        private final JRadioButton leatherButton = new JRadioButton("Leather");
+        private final JCheckBox valueOverrideCheck = new JCheckBox("Override calculated yield value");
+        private final JSpinner valueOverrideSpinner = new JSpinner(
+                new SpinnerNumberModel(25, 1, 100000, 1));
+        private final JTextField leatherImageField = new JTextField(DEFAULT_LEATHER_ICON, 24);
+        private final JTextArea productDescriptionArea = new JTextArea(3, 28);
+        private final JLabel valuePreviewLabel = new JLabel();
+        private final JLabel productSummaryLabel = new JLabel("No products generated.");
+        private final JButton generateButton = new JButton();
+        private final JPanel panel = new JPanel(new BorderLayout(5, 5));
+        private final List<MapDesignLibrary.CustomLimb> pendingLimbs = new ArrayList<>();
+        private MapDesignLibrary.CustomItem pendingLeather;
+        private String generatedMobId = "";
+
+        private ButcheryEditorControls(
+                MapDesignLibrary.CustomMob existing,
+                JTextField nameField,
+                JTextField paperDollSourceField,
+                Map<PlayerStat, JSpinner> statSpinners,
+                JList<SkillDefinition> skillList,
+                JTextArea descriptionArea
+        ) {
+            this.nameField = nameField;
+            this.paperDollSourceField = paperDollSourceField;
+            this.statSpinners = statSpinners;
+            this.skillList = skillList;
+            this.existingMobId = existing == null ? "" : existing.mobId();
+            this.generatedMobId = this.existingMobId;
+
+            EnemyButcheryProfile profile = existing == null
+                    ? EnemyButcheryProfile.defaultHumanoid()
+                    : existing.butcheryProfile();
+            originalProfile = profile;
+            humanoidButton.setSelected(profile.type() == EnemyButcheryProfile.Type.HUMANOID_LIMBS);
+            leatherButton.setSelected(profile.type() == EnemyButcheryProfile.Type.LEATHER);
+            ButtonGroup group = new ButtonGroup();
+            group.add(humanoidButton);
+            group.add(leatherButton);
+
+            valueOverrideCheck.setSelected(profile.hasValueOverride());
+            valueOverrideSpinner.setValue(profile.baseValueOverride() == null
+                    ? calculatedBaseValue()
+                    : profile.baseValueOverride());
+            valueOverrideSpinner.setEnabled(valueOverrideCheck.isSelected());
+
+            if (existing != null) {
+                for (MapDesignLibrary.CustomLimb limb : design.customLimbs()) {
+                    boolean linkedByProfile = profile.limbProductIds().containsValue(limb.limbId());
+                    boolean inferredLegacyLink = profile.limbProductIds().isEmpty()
+                            && existing.mobId().equals(limb.sourceCreatureId());
+                    if (linkedByProfile || inferredLegacyLink) {
+                        pendingLimbs.add(limb);
+                    }
+                }
+                if (!profile.leatherItemId().isBlank()) {
+                    pendingLeather = design.customItems().stream()
+                            .filter(item -> profile.leatherItemId().equals(item.itemId()))
+                            .findFirst()
+                            .orElse(null);
+                    if (pendingLeather != null) {
+                        leatherImageField.setText(pendingLeather.iconPath());
+                        productDescriptionArea.setText(pendingLeather.examineText());
+                    }
+                }
+            }
+            if (productDescriptionArea.getText().isBlank()) {
+                productDescriptionArea.setText(existing == null
+                        ? "A remnant taken from " + nameField.getText() + "."
+                        : existing.description());
+            }
+            productDescriptionArea.setLineWrap(true);
+            productDescriptionArea.setWrapStyleWord(true);
+
+            JButton leatherBrowse = new JButton("Browse");
+            leatherBrowse.addActionListener(event -> browsePathInto(leatherImageField));
+            JPanel leatherImageRow = pathFieldPanel(leatherImageField, leatherBrowse);
+            leatherImageRow.setName("leatherImageRow");
+
+            JPanel fields = createFormPanel();
+            JPanel typeRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
+            typeRow.add(humanoidButton);
+            typeRow.add(leatherButton);
+            addFormRow(fields, "Enemy Type", typeRow);
+            JPanel overrideRow = new JPanel(new BorderLayout(5, 0));
+            overrideRow.add(valueOverrideCheck, BorderLayout.CENTER);
+            overrideRow.add(valueOverrideSpinner, BorderLayout.EAST);
+            addFormRow(fields, "Yield Value", overrideRow);
+            addFormRow(fields, "Calculated Prices", valuePreviewLabel);
+            addFormRow(fields, "Leather Image", leatherImageRow);
+            addFormRow(fields, "Products", productSummaryLabel);
+            addFormRow(fields, "Generate", generateButton);
+            JPanel descriptionPanel = new JPanel(new BorderLayout());
+            descriptionPanel.setBorder(BorderFactory.createTitledBorder("Product Description"));
+            descriptionPanel.add(new JScrollPane(productDescriptionArea), BorderLayout.CENTER);
+            fields.add(descriptionPanel);
+            panel.add(fields, BorderLayout.NORTH);
+
+            Runnable refresh = () -> {
+                boolean leather = leatherButton.isSelected();
+                generateButton.setText(leather
+                        ? (pendingLeather == null ? "Create Leather" : "Regenerate Leather")
+                        : (pendingLimbs.isEmpty() ? "Create Limbs" : "Regenerate Limbs"));
+                leatherImageRow.setVisible(leather);
+                paperDollSourceField.setEnabled(!leather);
+                valueOverrideSpinner.setEnabled(valueOverrideCheck.isSelected());
+                updatePricePreview();
+                updateProductSummary();
+                panel.revalidate();
+                panel.repaint();
+            };
+            humanoidButton.addActionListener(event -> refresh.run());
+            leatherButton.addActionListener(event -> refresh.run());
+            valueOverrideCheck.addActionListener(event -> refresh.run());
+            valueOverrideSpinner.addChangeListener(event -> updatePricePreview());
+            for (JSpinner spinner : statSpinners.values()) {
+                spinner.addChangeListener(event -> updatePricePreview());
+            }
+            skillList.addListSelectionListener(event -> {
+                if (!event.getValueIsAdjusting()) {
+                    updatePricePreview();
+                }
+            });
+            generateButton.addActionListener(event -> {
+                String name = safeText(nameField);
+                if (name.isBlank()) {
+                    setStatus("Name the enemy before generating butchery products.");
+                    return;
+                }
+                String mobId = existingMobId.isBlank() ? nextCustomMobId(name) : existingMobId;
+                generatedMobId = mobId;
+                if (leatherButton.isSelected()) {
+                    generateLeather(mobId, name);
+                } else {
+                    if (safeText(paperDollSourceField).isBlank()) {
+                        setStatus("Humanoid limb generation requires a paper-doll source.");
+                        return;
+                    }
+                    regenerateLimbs(mobId, name);
+                }
+                refresh.run();
+            });
+            refresh.run();
+        }
+
+        private Component component() {
+            return panel;
+        }
+
+        private boolean confirmTypeSwitchImpact() {
+            if (existingMobId.isBlank() || originalProfile.type() == selectedType()) {
+                return true;
+            }
+            List<String> productIds = originalProductIds();
+            StringBuilder impact = new StringBuilder(
+                    "Changing the butchery type will detach the old generated products.\n\n");
+            for (String productId : productIds) {
+                List<String> references = externalProductReferences(productId);
+                impact.append("- ").append(productId).append(": ");
+                if (references.isEmpty()) {
+                    impact.append("will be removed (no external references).");
+                } else {
+                    impact.append("will remain as standalone content because it is used by ")
+                            .append(String.join(", ", references)).append('.');
+                }
+                impact.append('\n');
+            }
+            impact.append("\nApply this complete catalog change?");
+            return showAdaptiveTextConfirmDialog(
+                    AetherConstructionKit.this,
+                    impact.toString(),
+                    "Change Butchery Type",
+                    JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.WARNING_MESSAGE) == JOptionPane.OK_OPTION;
+        }
+
+        private boolean validateProducts() {
+            String mobId = generatedMobId.isBlank() ? existingMobId : generatedMobId;
+            if (leatherButton.isSelected()) {
+                if (pendingLeather == null) {
+                    setStatus("Create the enemy's leather product before saving.");
+                    return false;
+                }
+                if (!pendingLeather.stackable()
+                        || pendingLeather.itemType() != InventorySystem.ItemType.MISC
+                        || pendingLeather.material() != GearMaterial.LEATHER) {
+                    setStatus("The generated leather product is not a stackable leather material.");
+                    return false;
+                }
+                if (!mobId.equals(pendingLeather.sourceEnemyId())) {
+                    setStatus("The leather product is not linked back to this enemy.");
+                    return false;
+                }
+                MapDesignLibrary.CustomItem collision = design.customItems().stream()
+                        .filter(item -> item.itemId().equals(pendingLeather.itemId()))
+                        .findFirst()
+                        .orElse(null);
+                if (collision != null && !mobId.equals(collision.sourceEnemyId())) {
+                    setStatus("Generated leather ID " + pendingLeather.itemId()
+                            + " belongs to unrelated content.");
+                    return false;
+                }
+                if (AssetLoader.loadImage(pendingLeather.iconPath()) == null) {
+                    setStatus("The leather image cannot be resolved: " + pendingLeather.iconPath());
+                    return false;
+                }
+                return true;
+            }
+            if (safeText(paperDollSourceField).isBlank()) {
+                setStatus("Humanoid enemies require a paper-doll source.");
+                return false;
+            }
+            if (AssetLoader.loadImage(safeText(paperDollSourceField)) == null) {
+                setStatus("The paper-doll source cannot be resolved: " + safeText(paperDollSourceField));
+                return false;
+            }
+            Set<LimbSlot> slots = new HashSet<>();
+            Set<String> ids = new HashSet<>();
+            for (MapDesignLibrary.CustomLimb limb : pendingLimbs) {
+                slots.add(limb.limbSlot());
+                if (!ids.add(limb.limbId())) {
+                    setStatus("Generated limb IDs must be unique.");
+                    return false;
+                }
+                if (!mobId.equals(limb.sourceCreatureId())) {
+                    setStatus("Generated limb " + limb.limbId() + " is linked to the wrong enemy.");
+                    return false;
+                }
+                MapDesignLibrary.CustomLimb collision = design.customLimbs().stream()
+                        .filter(existing -> existing.limbId().equals(limb.limbId()))
+                        .findFirst()
+                        .orElse(null);
+                if (collision != null && !mobId.equals(collision.sourceCreatureId())) {
+                    setStatus("Generated limb ID " + limb.limbId() + " belongs to unrelated content.");
+                    return false;
+                }
+            }
+            if (slots.size() != LimbSlot.values().length) {
+                setStatus("Humanoid enemies require one generated product for every limb slot.");
+                return false;
+            }
+            return true;
+        }
+
+        private EnemyButcheryProfile profile() {
+            Integer override = valueOverrideCheck.isSelected()
+                    ? ((Number) valueOverrideSpinner.getValue()).intValue()
+                    : null;
+            if (leatherButton.isSelected()) {
+                return new EnemyButcheryProfile(
+                        EnemyButcheryProfile.Type.LEATHER,
+                        Map.of(),
+                        pendingLeather == null ? "" : pendingLeather.itemId(),
+                        override);
+            }
+            EnumMap<LimbSlot, String> ids = new EnumMap<>(LimbSlot.class);
+            for (MapDesignLibrary.CustomLimb limb : pendingLimbs) {
+                ids.put(limb.limbSlot(), limb.limbId());
+            }
+            return new EnemyButcheryProfile(
+                    EnemyButcheryProfile.Type.HUMANOID_LIMBS,
+                    ids,
+                    "",
+                    override);
+        }
+
+        private String mobIdForSave(String name) {
+            return generatedMobId.isBlank() ? nextCustomMobId(name) : generatedMobId;
+        }
+
+        private boolean applyProducts(String appliedMobId) {
+            String mobId = appliedMobId == null || appliedMobId.isBlank()
+                    ? existingMobId
+                    : appliedMobId;
+            if (leatherButton.isSelected()) {
+                try {
+                    leatherImageField.setText(normalizeCustomItemImagePath(
+                            safeText(leatherImageField),
+                            safeText(nameField) + "_leather"));
+                } catch (IOException exception) {
+                    setStatus("Leather image import failed: " + exception.getMessage());
+                    return false;
+                }
+                generateLeather(mobId, safeText(nameField));
+            } else {
+                regenerateLimbs(mobId, safeText(nameField));
+            }
+            if (leatherButton.isSelected() && pendingLeather != null) {
+                replaceCustomItem(pendingLeather);
+            }
+            if (humanoidButton.isSelected()) {
+                for (MapDesignLibrary.CustomLimb limb : pendingLimbs) {
+                    replaceCustomLimb(limb);
+                }
+            }
+            cleanupObsoleteProducts();
+            return true;
+        }
+
+        private EnemyButcheryProfile.Type selectedType() {
+            return leatherButton.isSelected()
+                    ? EnemyButcheryProfile.Type.LEATHER
+                    : EnemyButcheryProfile.Type.HUMANOID_LIMBS;
+        }
+
+        private List<String> originalProductIds() {
+            if (originalProfile.type() == EnemyButcheryProfile.Type.LEATHER) {
+                return originalProfile.leatherItemId().isBlank()
+                        ? List.of()
+                        : List.of(originalProfile.leatherItemId());
+            }
+            return java.util.Arrays.stream(LimbSlot.values())
+                    .map(originalProfile::productId)
+                    .filter(id -> !id.isBlank())
+                    .distinct()
+                    .toList();
+        }
+
+        private List<String> externalProductReferences(String productId) {
+            MapDesignLibrary.CustomItem item = design.customItems().stream()
+                    .filter(candidate -> productId.equals(candidate.itemId()))
+                    .findFirst()
+                    .orElse(null);
+            MapDesignLibrary.CustomLimb limb = design.customLimbs().stream()
+                    .filter(candidate -> productId.equals(candidate.limbId()))
+                    .findFirst()
+                    .orElse(null);
+            ContentEntry entry = item != null
+                    ? new ContentEntry(ContentCategory.ITEMS, item.displayName(), item.itemId(), "Item", item)
+                    : limb != null
+                            ? new ContentEntry(ContentCategory.LIMBS, limb.displayName(), limb.limbId(), "Limb", limb)
+                            : null;
+            if (entry == null) {
+                return List.of();
+            }
+            String ownLink = "Enemy butchery product " + existingMobId;
+            return findReferences(entry).stream()
+                    .filter(reference -> !ownLink.equals(reference))
+                    .distinct()
+                    .toList();
+        }
+
+        private void cleanupObsoleteProducts() {
+            if (existingMobId.isBlank() || originalProfile.type() == selectedType()) {
+                return;
+            }
+            for (String productId : originalProductIds()) {
+                List<String> externalReferences = externalProductReferences(productId);
+                if (originalProfile.type() == EnemyButcheryProfile.Type.LEATHER) {
+                    if (externalReferences.isEmpty()) {
+                        design.customItems().removeIf(item -> productId.equals(item.itemId()));
+                    } else {
+                        for (int index = 0; index < design.customItems().size(); index++) {
+                            MapDesignLibrary.CustomItem item = design.customItems().get(index);
+                            if (productId.equals(item.itemId())) {
+                                design.customItems().set(index, item.withSourceEnemyId(""));
+                                break;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if (externalReferences.isEmpty()) {
+                    design.customLimbs().removeIf(limb -> productId.equals(limb.limbId()));
+                } else {
+                    for (int index = 0; index < design.customLimbs().size(); index++) {
+                        MapDesignLibrary.CustomLimb limb = design.customLimbs().get(index);
+                        if (!productId.equals(limb.limbId())) {
+                            continue;
+                        }
+                        design.customLimbs().set(index, new MapDesignLibrary.CustomLimb(
+                                limb.limbId(),
+                                limb.displayName(),
+                                limb.limbSlot(),
+                                limb.iconPath(),
+                                limb.condition(),
+                                limb.description(),
+                                "",
+                                limb.paperDollSourcePath(),
+                                limb.statBonuses(),
+                                limb.skillIds(),
+                                limb.firstPersonModelPath(),
+                                limb.firstPersonRigId(),
+                                limb.paperDollDerivedIcon(),
+                                limb.baseGoldValue()));
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void regenerateLimbs(String mobId, String name) {
+            Map<LimbSlot, MapDesignLibrary.CustomLimb> existingBySlot = new EnumMap<>(LimbSlot.class);
+            pendingLimbs.forEach(limb -> existingBySlot.put(limb.limbSlot(), limb));
+            List<MapDesignLibrary.CustomLimb> generated = generateLimbsForEnemy(
+                    mobId,
+                    name,
+                    statValuesFromSpinners(statSpinners),
+                    productDescriptionArea.getText(),
+                    safeText(paperDollSourceField),
+                    skillList.getSelectedValuesList());
+            pendingLimbs.clear();
+            for (MapDesignLibrary.CustomLimb limb : generated) {
+                MapDesignLibrary.CustomLimb previous = existingBySlot.get(limb.limbSlot());
+                if (previous == null) {
+                    pendingLimbs.add(new MapDesignLibrary.CustomLimb(
+                            limb.limbId(),
+                            limb.displayName(),
+                            limb.limbSlot(),
+                            "",
+                            limb.condition(),
+                            limb.description(),
+                            mobId,
+                            safeText(paperDollSourceField),
+                            limb.statBonuses(),
+                            limb.skillIds(),
+                            limb.firstPersonModelPath(),
+                            limb.firstPersonRigId(),
+                            true,
+                            productValue(limb.limbSlot())));
+                    continue;
+                }
+                pendingLimbs.add(new MapDesignLibrary.CustomLimb(
+                        previous.limbId(),
+                        limb.displayName(),
+                        limb.limbSlot(),
+                        previous.paperDollDerivedIcon() ? "" : previous.iconPath(),
+                        previous.condition(),
+                        previous.description(),
+                        mobId,
+                        safeText(paperDollSourceField),
+                        limb.statBonuses(),
+                        previous.skillIds(),
+                        previous.firstPersonModelPath(),
+                        previous.firstPersonRigId(),
+                        previous.paperDollDerivedIcon()
+                                || DEFAULT_LIMB_ICON.equals(previous.iconPath()),
+                        productValue(limb.limbSlot())));
+            }
+        }
+
+        private void generateLeather(String mobId, String name) {
+            String itemId = pendingLeather == null
+                    ? "item_" + limbSlugFromMobId(mobId) + "_leather"
+                    : pendingLeather.itemId();
+            String examineText = pendingLeather == null
+                    ? productDescriptionArea.getText()
+                    : pendingLeather.examineText();
+            pendingLeather = new MapDesignLibrary.CustomItem(
+                    itemId,
+                    name + " Leather",
+                    InventorySystem.ItemType.MISC,
+                    safeText(leatherImageField).isBlank() ? DEFAULT_LEATHER_ICON : safeText(leatherImageField),
+                    "",
+                    "",
+                    WeaponType.NONE,
+                    false,
+                    GearMaterial.LEATHER,
+                    0,
+                    productValue(null),
+                    examineText,
+                    null,
+                    true,
+                    false,
+                    1,
+                    1,
+                    0,
+                    0,
+                    0,
+                    "")
+                    .withSourceEnemyId(mobId);
+        }
+
+        private int calculatedLevel() {
+            return DifficultyResolver.rateMonsterProfile(
+                    safeText(nameField),
+                    statValuesFromSpinners(statSpinners),
+                    selectedSkillIds(skillList)).level();
+        }
+
+        private int calculatedBaseValue() {
+            return 10 + 5 * calculatedLevel();
+        }
+
+        private int selectedBaseValue() {
+            return valueOverrideCheck.isSelected()
+                    ? ((Number) valueOverrideSpinner.getValue()).intValue()
+                    : calculatedBaseValue();
+        }
+
+        private int productValue(LimbSlot slot) {
+            double multiplier = slot == LimbSlot.BODY ? 1.25 : slot == LimbSlot.HEAD ? 1.5 : 1.0;
+            return Math.max(1, (int) Math.round(selectedBaseValue() * multiplier));
+        }
+
+        private void updatePricePreview() {
+            int base = selectedBaseValue();
+            String prices = leatherButton.isSelected()
+                    ? "Leather " + productValue(null) + "g"
+                    : "Head " + productValue(LimbSlot.HEAD)
+                            + "g, Body " + productValue(LimbSlot.BODY)
+                            + "g, Left Arm " + productValue(LimbSlot.LEFT_ARM)
+                            + "g, Right Arm " + productValue(LimbSlot.RIGHT_ARM)
+                            + "g, Legs " + productValue(LimbSlot.LEGS) + "g";
+            valuePreviewLabel.setText("<html><div style='width:360px'>Level " + calculatedLevel()
+                    + ", base " + base + "g<br>" + prices + "</div></html>");
+        }
+
+        private void updateProductSummary() {
+            productSummaryLabel.setText(leatherButton.isSelected()
+                    ? pendingLeather == null ? "Leather not generated" : pendingLeather.displayName()
+                    : pendingLimbs.size() + " / " + LimbSlot.values().length + " limbs linked");
+        }
+
+    }
+
+    private void replaceCustomItem(MapDesignLibrary.CustomItem replacement) {
+        for (int index = 0; index < design.customItems().size(); index++) {
+            if (design.customItems().get(index).itemId().equals(replacement.itemId())) {
+                design.customItems().set(index, replacement);
+                return;
+            }
+        }
+        design.customItems().add(replacement);
+    }
+
+    private void replaceCustomLimb(MapDesignLibrary.CustomLimb replacement) {
+        for (int index = 0; index < design.customLimbs().size(); index++) {
+            if (design.customLimbs().get(index).limbId().equals(replacement.limbId())) {
+                design.customLimbs().set(index, replacement);
+                return;
+            }
+        }
+        design.customLimbs().add(replacement);
     }
 
     private void createCustomMob() {
@@ -6253,7 +6806,6 @@ public class AetherConstructionKit extends JFrame {
         JSpinner xpSpinner = new JSpinner(new SpinnerNumberModel(10, 0, 100000, 1));
         JButton browseButton = new JButton("Browse");
         JButton paperDollBrowseButton = new JButton("Browse");
-        JButton generateLimbsButton = new JButton("Generate Default Limbs");
         JTextField attackSoundField = new JTextField("", 24);
         JTextField damageSoundField = new JTextField("", 24);
         JButton attackSoundBrowseButton = new JButton("Browse");
@@ -6266,13 +6818,8 @@ public class AetherConstructionKit extends JFrame {
         JTextArea descriptionArea = new JTextArea("A custom enemy.", 4, 30);
         descriptionArea.setLineWrap(true);
         descriptionArea.setWrapStyleWord(true);
-        JTextArea limbDescriptionArea = new JTextArea("A remnant taken from " + nameField.getText() + ".", 3, 30);
-        limbDescriptionArea.setLineWrap(true);
-        limbDescriptionArea.setWrapStyleWord(true);
         JLabel difficultyPreviewLabel = new JLabel();
-        List<MapDesignLibrary.CustomLimb> generatedLimbs = new ArrayList<>();
         List<MapDesignLibrary.CustomDropEntry> dropEntries = new ArrayList<>();
-        String[] generatedMobId = { "" };
 
         browseButton.addActionListener(event -> browsePathInto(imagePathField));
         paperDollBrowseButton.addActionListener(event -> browsePathInto(paperDollSourceField));
@@ -6299,25 +6846,13 @@ public class AetherConstructionKit extends JFrame {
         });
         dropsButton.addActionListener(event -> editDropEntries(dropEntries));
         updateDifficultyPreview.run();
-        generateLimbsButton.addActionListener(event -> {
-            String name = nameField.getText() == null ? "" : nameField.getText().trim();
-            if (name.isBlank()) {
-                setStatus("Name the enemy before generating limbs.");
-                return;
-            }
-
-            String mobId = nextCustomMobId(name);
-            generatedMobId[0] = mobId;
-            generatedLimbs.clear();
-            generatedLimbs.addAll(generateLimbsForEnemy(
-                    mobId,
-                    name,
-                    statValuesFromSpinners(statSpinners),
-                    limbDescriptionArea.getText() == null ? "" : limbDescriptionArea.getText().trim(),
-                    paperDollSourceField.getText() == null ? "" : paperDollSourceField.getText().trim(),
-                    skillList.getSelectedValuesList()));
-            editGeneratedLimbs(generatedLimbs);
-        });
+        ButcheryEditorControls butcheryControls = new ButcheryEditorControls(
+                null,
+                nameField,
+                paperDollSourceField,
+                statSpinners,
+                skillList,
+                descriptionArea);
 
         Component formTabs = buildMobTabbedForm(
                 nameField, imagePathField, browseButton, paperDollSourceField, paperDollBrowseButton,
@@ -6325,7 +6860,7 @@ public class AetherConstructionKit extends JFrame {
                 meleeMaxDamageLabel, spellBaseDamageSpinner, spellMaxDamageLabel, combatAiSpinner,
                 awarenessRadiusSpinner, movementIntervalSpinner, respawnDelaySpinner, characterModelFields,
                 attackSoundField, attackSoundBrowseButton, damageSoundField, damageSoundBrowseButton,
-                dropsButton, generateLimbsButton, limbDescriptionArea
+                dropsButton, butcheryControls.component()
         );
 
         int result = showScrollableFormDialog(formTabs, "Create Enemy");
@@ -6342,8 +6877,11 @@ public class AetherConstructionKit extends JFrame {
         if (!validateCharacterModelDefinition(characterModel, "enemy")) {
             return;
         }
+        if (!butcheryControls.validateProducts()) {
+            return;
+        }
 
-        String mobId = generatedMobId[0].isBlank() ? nextCustomMobId(name) : generatedMobId[0];
+        String mobId = butcheryControls.mobIdForSave(name);
         MapDesignLibrary.CustomMob mob = new MapDesignLibrary.CustomMob(
                 mobId,
                 name,
@@ -6360,17 +6898,26 @@ public class AetherConstructionKit extends JFrame {
                 ((Number) respawnDelaySpinner.getValue()).intValue() * 1000,
                 selectedSkillIds(skillList),
                 dropEntries,
-                characterModel);
+                characterModel,
+                butcheryControls.profile());
+        List<MapDesignLibrary.CustomMob> mobsBefore = new ArrayList<>(design.customMobs());
+        List<MapDesignLibrary.CustomItem> itemsBefore = new ArrayList<>(design.customItems());
+        List<MapDesignLibrary.CustomLimb> limbsBefore = new ArrayList<>(design.customLimbs());
         design.customMobs().add(mob);
-        for (MapDesignLibrary.CustomLimb limb : generatedLimbs) {
-            if (!hasCustomLimbId(limb.limbId())) {
-                design.customLimbs().add(limb);
-            }
+        if (!butcheryControls.applyProducts(mobId)) {
+            restoreEnemyCatalogDraft(mobsBefore, itemsBefore, limbsBefore);
+            return;
         }
-        persistSharedContent("custom enemy");
+        if (!confirmAppliedButcheryValidation(mob)) {
+            restoreEnemyCatalogDraft(mobsBefore, itemsBefore, limbsBefore);
+            return;
+        }
+        if (!persistSharedContent("custom enemy")) {
+            restoreEnemyCatalogDraft(mobsBefore, itemsBefore, limbsBefore);
+            return;
+        }
         populatePlaceables();
-        setStatus("Created custom enemy " + mob.displayName()
-                + (generatedLimbs.isEmpty() ? "." : " with " + generatedLimbs.size() + " limbs."));
+        setStatus("Created custom enemy " + mob.displayName() + " with authored butchery products.");
     }
 
     private String customEnemyDifficultyPreview(
@@ -6887,7 +7434,9 @@ public class AetherConstructionKit extends JFrame {
                 emptyStatMap(),
                 List.of(),
                 "",
-                "");
+                "",
+                false,
+                25);
         if (limb == null) {
             return;
         }
@@ -7806,6 +8355,7 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void editCustomItem(MapDesignLibrary.CustomItem selected) {
+        pendingItemFirstPersonProfile = null;
         MapDesignLibrary.CustomItem edited = showCustomItemDialog("Edit Item", selected);
         if (edited == null) {
             return;
@@ -7814,19 +8364,33 @@ public class AetherConstructionKit extends JFrame {
         int index = design.customItems().indexOf(selected);
         if (index >= 0) {
             design.customItems().set(index, edited);
-            persistSharedContent("custom item");
+            if (persistSharedContent("custom item") && pendingItemFirstPersonProfile != null) {
+                persistItemFirstPersonProfile(pendingItemFirstPersonProfile);
+            }
+            pendingItemFirstPersonProfile = null;
             populatePlaceables();
             setStatus("Updated custom item " + edited.displayName() + ".");
         }
     }
 
     private void deleteCustomItem(MapDesignLibrary.CustomItem selected) {
+        List<String> linkedEnemies = linkedEnemyProductOwners(selected.itemId());
+        if (!linkedEnemies.isEmpty()) {
+            showAdaptiveTextMessageDialog(
+                    "This item cannot be deleted while it is linked as a butchery product by:\n- "
+                            + String.join("\n- ", linkedEnemies),
+                    "Linked Butchery Product",
+                    JOptionPane.ERROR_MESSAGE);
+            return;
+        }
         if (!confirmDelete("item", selected.displayName(), ContentCategory.ITEMS, selected.itemId(), selected)) {
             return;
         }
 
         design.customItems().remove(selected);
-        persistSharedContent("custom item");
+        if (persistSharedContent("custom item")) {
+            removeItemFirstPersonProfile(selected.itemId());
+        }
         populatePlaceables();
         setStatus("Deleted custom item " + selected.displayName() + ".");
     }
@@ -7844,7 +8408,9 @@ public class AetherConstructionKit extends JFrame {
                 selected.statBonuses(),
                 selected.skillIds(),
                 selected.firstPersonModelPath(),
-                selected.firstPersonRigId());
+                selected.firstPersonRigId(),
+                selected.paperDollDerivedIcon(),
+                selected.baseGoldValue());
         if (edited == null) {
             return;
         }
@@ -7859,6 +8425,15 @@ public class AetherConstructionKit extends JFrame {
     }
 
     private void deleteCustomLimb(MapDesignLibrary.CustomLimb selected) {
+        List<String> linkedEnemies = linkedEnemyProductOwners(selected.limbId());
+        if (!linkedEnemies.isEmpty()) {
+            showAdaptiveTextMessageDialog(
+                    "This limb cannot be deleted while it is linked as a butchery product by:\n- "
+                            + String.join("\n- ", linkedEnemies),
+                    "Linked Butchery Product",
+                    JOptionPane.ERROR_MESSAGE);
+            return;
+        }
         if (!confirmDelete("limb", selected.displayName(), ContentCategory.LIMBS, selected.limbId(), selected)) {
             return;
         }
@@ -7867,6 +8442,17 @@ public class AetherConstructionKit extends JFrame {
         persistSharedContent("custom limb");
         populatePlaceables();
         setStatus("Deleted custom limb " + selected.displayName() + ".");
+    }
+
+    private List<String> linkedEnemyProductOwners(String productId) {
+        if (productId == null || productId.isBlank()) {
+            return List.of();
+        }
+        return design.customMobs().stream()
+                .filter(mob -> productId.equals(mob.butcheryProfile().leatherItemId())
+                        || mob.butcheryProfile().limbProductIds().containsValue(productId))
+                .map(mob -> mob.displayName() + " [" + mob.mobId() + "]")
+                .toList();
     }
 
     private void deleteCustomGatheringNode(MapDesignLibrary.CustomGatheringNode selected) {
@@ -8239,6 +8825,13 @@ public class AetherConstructionKit extends JFrame {
         descriptionArea.setWrapStyleWord(true);
         List<MapDesignLibrary.CustomDropEntry> dropEntries = new ArrayList<>(selected.dropEntries());
         JButton dropsButton = new JButton("Drops");
+        ButcheryEditorControls butcheryControls = new ButcheryEditorControls(
+                selected,
+                nameField,
+                paperDollSourceField,
+                statSpinners,
+                skillList,
+                descriptionArea);
 
         browseButton.addActionListener(event -> browsePathInto(imagePathField));
         paperDollBrowseButton.addActionListener(event -> browsePathInto(paperDollSourceField));
@@ -8272,7 +8865,7 @@ public class AetherConstructionKit extends JFrame {
                 meleeMaxDamageLabel, spellBaseDamageSpinner, spellMaxDamageLabel, combatAiSpinner,
                 awarenessRadiusSpinner, movementIntervalSpinner, respawnDelaySpinner, characterModelFields,
                 attackSoundField, attackSoundBrowseButton, damageSoundField, damageSoundBrowseButton,
-                dropsButton, null, null
+                dropsButton, butcheryControls.component()
         );
 
         int result = showScrollableFormDialog(formTabs, "Edit Enemy");
@@ -8287,6 +8880,12 @@ public class AetherConstructionKit extends JFrame {
         }
         CharacterModelDefinition characterModel = characterModelFields.toDefinition();
         if (!validateCharacterModelDefinition(characterModel, "enemy")) {
+            return;
+        }
+        if (!butcheryControls.confirmTypeSwitchImpact()) {
+            return;
+        }
+        if (!butcheryControls.validateProducts()) {
             return;
         }
 
@@ -8306,14 +8905,200 @@ public class AetherConstructionKit extends JFrame {
                 ((Number) respawnDelaySpinner.getValue()).intValue() * 1000,
                 selectedSkillIds(skillList),
                 dropEntries,
-                characterModel);
+                characterModel,
+                butcheryControls.profile());
         int index = design.customMobs().indexOf(selected);
         if (index >= 0) {
+            List<MapDesignLibrary.CustomMob> mobsBefore = new ArrayList<>(design.customMobs());
+            List<MapDesignLibrary.CustomItem> itemsBefore = new ArrayList<>(design.customItems());
+            List<MapDesignLibrary.CustomLimb> limbsBefore = new ArrayList<>(design.customLimbs());
             design.customMobs().set(index, edited);
-            persistSharedContent("custom enemy");
+            if (!butcheryControls.applyProducts(edited.mobId())) {
+                restoreEnemyCatalogDraft(mobsBefore, itemsBefore, limbsBefore);
+                return;
+            }
+            if (!confirmAppliedButcheryValidation(edited)) {
+                restoreEnemyCatalogDraft(mobsBefore, itemsBefore, limbsBefore);
+                return;
+            }
+            if (!persistSharedContent("custom enemy")) {
+                restoreEnemyCatalogDraft(mobsBefore, itemsBefore, limbsBefore);
+                return;
+            }
             populatePlaceables();
             setStatus("Updated custom enemy " + edited.displayName() + ".");
         }
+    }
+
+    private void restoreEnemyCatalogDraft(
+            List<MapDesignLibrary.CustomMob> mobs,
+            List<MapDesignLibrary.CustomItem> items,
+            List<MapDesignLibrary.CustomLimb> limbs
+    ) {
+        design.customMobs().clear();
+        design.customMobs().addAll(mobs);
+        design.customItems().clear();
+        design.customItems().addAll(items);
+        design.customLimbs().clear();
+        design.customLimbs().addAll(limbs);
+        refreshContentBrowser();
+    }
+
+    private boolean confirmAppliedButcheryValidation(MapDesignLibrary.CustomMob mob) {
+        if (mob == null) {
+            return false;
+        }
+        Set<String> relatedIds = new HashSet<>();
+        relatedIds.add(mob.mobId());
+        relatedIds.addAll(mob.butcheryProfile().limbProductIds().values());
+        if (!mob.butcheryProfile().leatherItemId().isBlank()) {
+            relatedIds.add(mob.butcheryProfile().leatherItemId());
+        }
+        List<MapDesignLibrary.ValidationIssue> issues = MapDesignLibrary.validate(design).stream()
+                .filter(issue -> relatedIds.stream().anyMatch(id -> issue.message().contains(id)))
+                .toList();
+        if (issues.isEmpty()) {
+            return true;
+        }
+        String message = validationMessage(issues);
+        if (hasValidationError(issues)) {
+            showAdaptiveTextMessageDialog(
+                    message,
+                    "Enemy Product Validation",
+                    JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+        return showAdaptiveTextConfirmDialog(
+                this,
+                message + "\n\nApply with these warnings?",
+                "Enemy Product Validation",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.WARNING_MESSAGE) == JOptionPane.OK_OPTION;
+    }
+
+    private void duplicateEnemyWithProducts(MapDesignLibrary.CustomMob source, String copiedName) {
+        String copiedMobId = nextCustomMobId(copiedName);
+        EnemyButcheryProfile copiedProfile;
+        List<MapDesignLibrary.CustomItem> copiedItems = new ArrayList<>();
+        List<MapDesignLibrary.CustomLimb> copiedLimbs = new ArrayList<>();
+        if (source.butcheryProfile().type() == EnemyButcheryProfile.Type.LEATHER) {
+            MapDesignLibrary.CustomItem sourceLeather = design.customItems().stream()
+                    .filter(item -> source.butcheryProfile().leatherItemId().equals(item.itemId()))
+                    .findFirst()
+                    .orElse(null);
+            if (sourceLeather == null) {
+                setStatus("Cannot duplicate enemy: its linked leather product is missing.");
+                return;
+            }
+            String leatherId = "item_" + limbSlugFromMobId(copiedMobId) + "_leather";
+            if (design.customItems().stream().anyMatch(item -> leatherId.equals(item.itemId()))) {
+                setStatus("Cannot duplicate enemy: generated leather ID already exists: " + leatherId + ".");
+                return;
+            }
+            copiedItems.add(new MapDesignLibrary.CustomItem(
+                    leatherId,
+                    copiedName + " Leather",
+                    InventorySystem.ItemType.MISC,
+                    sourceLeather.iconPath(),
+                    "",
+                    "",
+                    WeaponType.NONE,
+                    false,
+                    GearMaterial.LEATHER,
+                    0,
+                    sourceLeather.baseGoldValue(),
+                    sourceLeather.examineText(),
+                    null,
+                    true,
+                    false,
+                    1,
+                    1,
+                    0,
+                    0,
+                    0,
+                    "",
+                    EquipmentViewModelProfile.defaults())
+                    .withSourceEnemyId(copiedMobId));
+            copiedProfile = new EnemyButcheryProfile(
+                    EnemyButcheryProfile.Type.LEATHER,
+                    Map.of(),
+                    leatherId,
+                    source.butcheryProfile().baseValueOverride());
+        } else {
+            EnumMap<LimbSlot, String> copiedIds = new EnumMap<>(LimbSlot.class);
+            for (LimbSlot slot : LimbSlot.values()) {
+                MapDesignLibrary.CustomLimb sourceLimb = design.customLimbs().stream()
+                        .filter(limb -> source.butcheryProfile().productId(slot).equals(limb.limbId()))
+                        .findFirst()
+                        .orElse(null);
+                if (sourceLimb == null) {
+                    setStatus("Cannot duplicate enemy: its " + slot.getDisplayName() + " product is missing.");
+                    return;
+                }
+                String limbId = "limb_" + limbSlugFromMobId(copiedMobId)
+                        + "_" + slot.name().toLowerCase(Locale.ROOT);
+                if (design.customLimbs().stream().anyMatch(limb -> limbId.equals(limb.limbId()))) {
+                    setStatus("Cannot duplicate enemy: generated limb ID already exists: " + limbId + ".");
+                    return;
+                }
+                copiedIds.put(slot, limbId);
+                copiedLimbs.add(new MapDesignLibrary.CustomLimb(
+                        limbId,
+                        copiedName + " " + slot.getDisplayName(),
+                        slot,
+                        sourceLimb.iconPath(),
+                        sourceLimb.condition(),
+                        sourceLimb.description(),
+                        copiedMobId,
+                        sourceLimb.paperDollSourcePath(),
+                        sourceLimb.statBonuses(),
+                        sourceLimb.skillIds(),
+                        sourceLimb.firstPersonModelPath(),
+                        sourceLimb.firstPersonRigId(),
+                        sourceLimb.paperDollDerivedIcon(),
+                        sourceLimb.baseGoldValue()));
+            }
+            copiedProfile = new EnemyButcheryProfile(
+                    EnemyButcheryProfile.Type.HUMANOID_LIMBS,
+                    copiedIds,
+                    "",
+                    source.butcheryProfile().baseValueOverride());
+        }
+
+        MapDesignLibrary.CustomMob copied = new MapDesignLibrary.CustomMob(
+                copiedMobId,
+                copiedName,
+                source.imagePath(),
+                source.paperDollSourcePath(),
+                source.statValues(),
+                source.xpReward(),
+                source.description(),
+                source.attackSoundPath(),
+                source.damageSoundPath(),
+                source.combatAiIntelligence(),
+                source.awarenessRadius(),
+                source.movementIntervalMs(),
+                source.respawnDelayMs(),
+                source.skillIds(),
+                source.dropEntries(),
+                source.characterModel(),
+                copiedProfile);
+        List<MapDesignLibrary.CustomMob> mobsBefore = new ArrayList<>(design.customMobs());
+        List<MapDesignLibrary.CustomItem> itemsBefore = new ArrayList<>(design.customItems());
+        List<MapDesignLibrary.CustomLimb> limbsBefore = new ArrayList<>(design.customLimbs());
+        design.customMobs().add(copied);
+        design.customItems().addAll(copiedItems);
+        design.customLimbs().addAll(copiedLimbs);
+        if (!confirmAppliedButcheryValidation(copied)) {
+            restoreEnemyCatalogDraft(mobsBefore, itemsBefore, limbsBefore);
+            return;
+        }
+        if (!persistSharedContent("custom enemy")) {
+            restoreEnemyCatalogDraft(mobsBefore, itemsBefore, limbsBefore);
+            return;
+        }
+        populatePlaceables();
+        setStatus("Duplicated enemy " + copiedName + " with independent butchery products.");
     }
 
     private void deleteCustomMob(MapDesignLibrary.CustomMob selected) {
@@ -8601,7 +9386,9 @@ public class AetherConstructionKit extends JFrame {
                     selected.statBonuses(),
                     selected.skillIds(),
                     selected.firstPersonModelPath(),
-                    selected.firstPersonRigId());
+                    selected.firstPersonRigId(),
+                    selected.paperDollDerivedIcon(),
+                    selected.baseGoldValue());
             if (edited != null) {
                 limbs.set(index, edited);
                 limbList.setListData(limbs.toArray(new MapDesignLibrary.CustomLimb[0]));
@@ -9057,15 +9844,39 @@ public class AetherConstructionKit extends JFrame {
             Map<PlayerStat, Integer> statValues,
             List<String> selectedSkills,
             String firstPersonModelPath,
-            String firstPersonRigId) {
+            String firstPersonRigId,
+            boolean paperDollDerivedIcon,
+            int baseGoldValue) {
         JTextField nameField = new JTextField(displayName, 24);
         JTextField iconPathField = new JTextField(iconPath, 28);
         JTextField sourceCreatureIdField = new JTextField(sourceCreatureId == null ? "" : sourceCreatureId, 28);
         JTextField paperDollSourceField = new JTextField(paperDollSourcePath == null ? "" : paperDollSourcePath, 28);
         JTextField firstPersonModelField = new JTextField(
                 firstPersonModelPath == null ? "" : firstPersonModelPath, 28);
-        JTextField firstPersonRigField = new JTextField(
-                firstPersonRigId == null ? "" : firstPersonRigId, 18);
+        record RigOption(String id, String label) {
+            @Override public String toString() {
+                return id.isBlank() ? label : label + "  [" + id + "]";
+            }
+        }
+        FirstPersonCombatLibrary.Content firstPersonContent = FirstPersonCombatLibrary.load();
+        JComboBox<RigOption> firstPersonRigBox = new JComboBox<>();
+        firstPersonRigBox.addItem(new RigOption("", "Use equipment/default rig"));
+        firstPersonContent.rigs().values().forEach(rig -> firstPersonRigBox.addItem(
+                new RigOption(rig.rigId(), rig.displayName())));
+        String selectedRigId = FirstPersonCombatLibrary.normalizeId(firstPersonRigId);
+        boolean foundRig = selectedRigId.isBlank();
+        for (int index = 0; index < firstPersonRigBox.getItemCount(); index++) {
+            if (firstPersonRigBox.getItemAt(index).id().equals(selectedRigId)) {
+                firstPersonRigBox.setSelectedIndex(index);
+                foundRig = true;
+                break;
+            }
+        }
+        if (!foundRig) {
+            RigOption unavailable = new RigOption(selectedRigId, "Unavailable rig");
+            firstPersonRigBox.addItem(unavailable);
+            firstPersonRigBox.setSelectedItem(unavailable);
+        }
         JTextArea descriptionArea = new JTextArea(description == null ? "" : description, 4, 30);
         descriptionArea.setLineWrap(true);
         descriptionArea.setWrapStyleWord(true);
@@ -9073,6 +9884,9 @@ public class AetherConstructionKit extends JFrame {
         JButton paperDollBrowseButton = new JButton("Browse");
         JButton firstPersonBrowseButton = new JButton("Browse");
         JComboBox<LimbSlot> slotBox = new JComboBox<>(LimbSlot.values());
+        JCheckBox derivedIconBox = new JCheckBox("Use paper-doll slice", paperDollDerivedIcon);
+        JSpinner baseValueSpinner = new JSpinner(
+                new SpinnerNumberModel(Math.max(1, baseGoldValue), 1, 100000, 1));
         slotBox.setSelectedItem(limbSlot == null ? LimbSlot.HEAD : limbSlot);
         Map<PlayerStat, JSpinner> statSpinners = new EnumMap<>(PlayerStat.class);
         Map<String, JCheckBox> skillBoxes = new LinkedHashMap<>();
@@ -9090,10 +9904,14 @@ public class AetherConstructionKit extends JFrame {
         fields.add(pathFieldPanel(iconPathField, browseButton));
         fields.add(new JLabel("Paper-Doll Source"));
         fields.add(pathFieldPanel(paperDollSourceField, paperDollBrowseButton));
+        fields.add(new JLabel("Inventory Icon"));
+        fields.add(derivedIconBox);
+        fields.add(new JLabel("Base Gold Value"));
+        fields.add(baseValueSpinner);
         fields.add(new JLabel("First-Person Arm Model"));
         fields.add(pathFieldPanel(firstPersonModelField, firstPersonBrowseButton));
         fields.add(new JLabel("First-Person Rig ID"));
-        fields.add(firstPersonRigField);
+        fields.add(firstPersonRigBox);
         fields.add(new JLabel("Source Creature Id"));
         fields.add(sourceCreatureIdField);
         fields.add(new JLabel("Slot"));
@@ -9153,6 +9971,7 @@ public class AetherConstructionKit extends JFrame {
             }
         }
 
+        RigOption selectedRig = (RigOption) firstPersonRigBox.getSelectedItem();
         return new MapDesignLibrary.CustomLimb(
                 limbId == null || limbId.isBlank() ? nextCustomLimbId(name) : limbId,
                 name,
@@ -9165,7 +9984,9 @@ public class AetherConstructionKit extends JFrame {
                 stats,
                 skills,
                 firstPersonPath,
-                firstPersonRigField.getText() == null ? "" : firstPersonRigField.getText().trim());
+                selectedRig == null ? "" : selectedRig.id(),
+                derivedIconBox.isSelected(),
+                ((Number) baseValueSpinner.getValue()).intValue());
     }
 
     private void addCharacterModelRows(JPanel fields, CharacterModelEditorFields editor) {
@@ -9232,6 +10053,35 @@ public class AetherConstructionKit extends JFrame {
             setStatus("Choose a base 3D character model before assigning animation clips.");
             return false;
         }
+        if (!definition.hasModel()) {
+            return true;
+        }
+        try {
+            CharacterAnimationMetadataResolver.ModelMetadata metadata =
+                    CharacterAnimationMetadataResolver.resolve(definition);
+            for (CharacterModelDefinition.AnimationSlot slot
+                    : CharacterModelDefinition.AnimationSlot.values()) {
+                CharacterModelDefinition.AnimationBinding binding =
+                        definition.animationBinding(slot);
+                CharacterAnimationMetadataResolver.SlotMetadata resolved =
+                        metadata.slot(slot);
+                if (binding.isPresent() && !resolved.available()) {
+                    String requestedClip = binding.clipName().isBlank()
+                            ? "(automatic)"
+                            : binding.clipName();
+                    String detail = resolved.diagnostic().isBlank()
+                            ? slot.displayName() + " clip is unavailable."
+                            : resolved.diagnostic();
+                    setStatus("Cannot apply " + contentType + ": " + requestedClip
+                            + " in " + binding.path() + " is invalid. " + detail);
+                    return false;
+                }
+            }
+        } catch (Exception exception) {
+            setStatus("Cannot inspect the " + contentType + " 3D model: "
+                    + exception.getMessage());
+            return false;
+        }
         return true;
     }
 
@@ -9290,12 +10140,19 @@ public class AetherConstructionKit extends JFrame {
         try {
             Files.createDirectories(targetFolder);
             Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+            invalidateModelAssetCaches();
             String assetPath = "assets/3D/generated/" + safeFolder + "/" + safeFileName;
             pathField.setText(assetPath);
             setStatus("Imported model " + assetPath + ".");
         } catch (IOException exception) {
             setStatus("Model import failed: " + exception.getMessage());
         }
+    }
+
+    private void invalidateModelAssetCaches() {
+        CharacterAnimationMetadataResolver.clear();
+        LwjglSkinnedModel.clearSharedCache();
+        FirstPersonAnimationRuntime.clearCaches();
     }
 
     private JPanel createFormPanel() {

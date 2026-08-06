@@ -2,14 +2,11 @@ package org.main.engine;
 
 import org.main.core.GameConfiguration;
 
-import java.awt.Point;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-
 public final class TerrainGeometry {
+    private static volatile long cachedConfigurationRevision = Long.MIN_VALUE;
+    private static volatile double cachedHeightStep = 0.35;
+    private static volatile int cachedMaxWalkableDelta = 1;
+
     public enum Corner {
         NORTH_WEST,
         NORTH_EAST,
@@ -64,53 +61,75 @@ public final class TerrainGeometry {
             return MapGeometryData.DEFAULT_HEIGHT_LEVEL;
         }
 
-        List<Point> candidates = vertexTiles(map, vertexX, vertexY);
-        Point owner = new Point(ownerX, ownerY);
-        if (!candidates.contains(owner)) {
+        int ownerIndex = candidateIndex(vertexX, vertexY, ownerX, ownerY);
+        if (ownerIndex < 0) {
             return heightLevel(map, ownerX, ownerY);
         }
 
         boolean ownerWallLike = map.isWallLike(ownerX, ownerY);
-        ArrayDeque<Point> queue = new ArrayDeque<>();
-        Set<Point> visited = new HashSet<>();
-        queue.add(owner);
-        visited.add(owner);
-
-        while (!queue.isEmpty()) {
-            Point current = queue.removeFirst();
-            for (Point candidate : candidates) {
-                if (visited.contains(candidate)
-                        || !isCardinalNeighbor(current.x, current.y, candidate.x, candidate.y)
-                        || map.isWallLike(candidate.x, candidate.y) != ownerWallLike
-                        || edgeKind(map, current.x, current.y, candidate.x, candidate.y) == TerrainEdgeKind.CLIFF) {
+        int visitedMask = 1 << ownerIndex;
+        boolean changed;
+        do {
+            changed = false;
+            for (int currentIndex = 0; currentIndex < 4; currentIndex++) {
+                if ((visitedMask & (1 << currentIndex)) == 0
+                        || !candidateInBounds(map, vertexX, vertexY, currentIndex)) {
                     continue;
                 }
-                visited.add(candidate);
-                queue.addLast(candidate);
+                int currentX = candidateX(vertexX, currentIndex);
+                int currentY = candidateY(vertexY, currentIndex);
+                for (int candidateIndex = 0; candidateIndex < 4; candidateIndex++) {
+                    int candidateBit = 1 << candidateIndex;
+                    if ((visitedMask & candidateBit) != 0
+                            || !candidateInBounds(map, vertexX, vertexY, candidateIndex)) {
+                        continue;
+                    }
+                    int candidateX = candidateX(vertexX, candidateIndex);
+                    int candidateY = candidateY(vertexY, candidateIndex);
+                    if (!isCardinalNeighbor(currentX, currentY, candidateX, candidateY)
+                            || map.isWallLike(candidateX, candidateY) != ownerWallLike
+                            || edgeKind(map, currentX, currentY, candidateX, candidateY)
+                            == TerrainEdgeKind.CLIFF) {
+                        continue;
+                    }
+                    visitedMask |= candidateBit;
+                    changed = true;
+                }
             }
-        }
+        } while (changed);
 
         int total = 0;
-        for (Point point : visited) {
-            total += heightLevel(map, point.x, point.y);
+        int count = 0;
+        for (int index = 0; index < 4; index++) {
+            if ((visitedMask & (1 << index)) == 0
+                    || !candidateInBounds(map, vertexX, vertexY, index)) {
+                continue;
+            }
+            total += heightLevel(map, candidateX(vertexX, index), candidateY(vertexY, index));
+            count++;
         }
-        return visited.isEmpty() ? heightLevel(map, ownerX, ownerY) : total / (double) visited.size();
+        return count == 0 ? heightLevel(map, ownerX, ownerY) : total / (double) count;
     }
 
-    private static List<Point> vertexTiles(DungeonMap map, int vertexX, int vertexY) {
-        int[][] positions = {
-                {vertexX - 1, vertexY - 1},
-                {vertexX, vertexY - 1},
-                {vertexX, vertexY},
-                {vertexX - 1, vertexY}
-        };
-        List<Point> points = new ArrayList<>();
-        for (int[] position : positions) {
-            if (!map.isOutOfBounds(position[0], position[1])) {
-                points.add(new Point(position[0], position[1]));
+    private static int candidateIndex(int vertexX, int vertexY, int tileX, int tileY) {
+        for (int index = 0; index < 4; index++) {
+            if (candidateX(vertexX, index) == tileX && candidateY(vertexY, index) == tileY) {
+                return index;
             }
         }
-        return points;
+        return -1;
+    }
+
+    private static boolean candidateInBounds(DungeonMap map, int vertexX, int vertexY, int index) {
+        return !map.isOutOfBounds(candidateX(vertexX, index), candidateY(vertexY, index));
+    }
+
+    private static int candidateX(int vertexX, int index) {
+        return index == 0 || index == 3 ? vertexX - 1 : vertexX;
+    }
+
+    private static int candidateY(int vertexY, int index) {
+        return index == 0 || index == 1 ? vertexY - 1 : vertexY;
     }
 
     public static TerrainEdgeKind edgeKind(DungeonMap map, int x1, int y1, int x2, int y2) {
@@ -147,11 +166,13 @@ public final class TerrainGeometry {
     }
 
     public static double heightStep() {
-        return Math.max(0.01, GameConfiguration.doubleValue("terrain.heightStep", 0.35));
+        refreshConfigurationValues();
+        return cachedHeightStep;
     }
 
     public static int maxWalkableDelta() {
-        return Math.max(0, GameConfiguration.intValue("terrain.maxWalkableDelta", 1));
+        refreshConfigurationValues();
+        return cachedMaxWalkableDelta;
     }
 
     public static String cliffTexturePath() {
@@ -175,5 +196,22 @@ public final class TerrainGeometry {
 
     private static double lerp(double a, double b, double t) {
         return a + (b - a) * t;
+    }
+
+    private static void refreshConfigurationValues() {
+        long revision = GameConfiguration.revision();
+        if (revision == cachedConfigurationRevision) {
+            return;
+        }
+        synchronized (TerrainGeometry.class) {
+            if (revision == cachedConfigurationRevision) {
+                return;
+            }
+            cachedHeightStep = Math.max(0.01,
+                    GameConfiguration.doubleValue("terrain.heightStep", 0.35));
+            cachedMaxWalkableDelta = Math.max(0,
+                    GameConfiguration.intValue("terrain.maxWalkableDelta", 1));
+            cachedConfigurationRevision = revision;
+        }
     }
 }

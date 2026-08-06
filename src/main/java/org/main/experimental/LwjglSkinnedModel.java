@@ -27,6 +27,7 @@ import static org.lwjgl.assimp.Assimp.*;
 public final class LwjglSkinnedModel {
     public static final int MAX_BONES_PER_VERTEX = 4;
     public static final int EXCESSIVE_VERTEX_WARNING = 100_000;
+    private static final Map<CharacterModelDefinition, LwjglSkinnedModel> SHARED_CACHE = new HashMap<>();
 
     public record Material(BufferedImage texture, float red, float green, float blue, float alpha) { }
 
@@ -57,17 +58,26 @@ public final class LwjglSkinnedModel {
     public record VectorKey(double time, Vector3f value) { }
     public record RotationKey(double time, Quaternionf value) { }
     public record Frame(List<float[]> meshPositions, double normalizedProgress) { }
+    public record Pose(Matrix4f[] boneMatrices, Matrix4f[] nodeMatrices, double normalizedProgress) {
+        public Matrix4f nodeMatrix(int nodeIndex, Matrix4f fallback) {
+            return nodeIndex >= 0 && nodeIndex < nodeMatrices.length
+                    ? nodeMatrices[nodeIndex]
+                    : fallback;
+        }
+    }
 
     private record Node(String name, int parent, Matrix4f bindLocal, int[] meshIndices) { }
     private record Bone(String name, int nodeIndex, Matrix4f inverseBind) { }
     private record ImportedScene(List<Node> nodes, Map<String, Integer> nodeIndexByName,
                                  List<SkinnedMesh> meshes, List<Bone> bones,
                                  List<AnimationClip> clips, String signature) { }
+    private record ModelBounds(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) { }
 
     private final CharacterModelDefinition definition;
     private final List<Node> nodes;
     private final List<SkinnedMesh> meshes;
     private final List<Bone> bones;
+    private final List<float[]> bindPosePositions;
     private final Map<CharacterModelDefinition.AnimationSlot, ClipBinding> bindings;
     private final Map<String, AnimationClip> embeddedClipsByName;
     private final String skeletonSignature;
@@ -78,11 +88,13 @@ public final class LwjglSkinnedModel {
     private final float minY;
     private final float maxY;
     private final float minX, maxX, minZ, maxZ;
+    private final ThreadLocal<SkinWorkspaceRing> skinWorkspaces;
+    private final ThreadLocal<PoseWorkspaceRing> poseWorkspaces;
+    private final Pose bindPose;
 
     private LwjglSkinnedModel(CharacterModelDefinition definition, ImportedScene base,
                               Map<CharacterModelDefinition.AnimationSlot, ClipBinding> bindings,
-                              Set<String> availableClipNames, List<String> diagnostics, float minX, float minY, float minZ,
-                              float maxX, float maxY, float maxZ) {
+                              Set<String> availableClipNames, List<String> diagnostics) {
         this.definition = definition;
         this.nodes = base.nodes();
         this.meshes = base.meshes();
@@ -99,9 +111,18 @@ public final class LwjglSkinnedModel {
         this.inverseRoot = base.nodes().isEmpty() ? new Matrix4f()
                 : new Matrix4f(base.nodes().get(0).bindLocal()).invert();
         this.rootMotionNodeIndex = findRootMotionNode(base.nodes(), base.bones());
-        this.minY = minY;
-        this.maxY = maxY;
-        this.minX = minX; this.maxX = maxX; this.minZ = minZ; this.maxZ = maxZ;
+        this.skinWorkspaces = ThreadLocal.withInitial(() -> new SkinWorkspaceRing(this.meshes));
+        this.poseWorkspaces = ThreadLocal.withInitial(() ->
+                new PoseWorkspaceRing(this.nodes.size(), this.bones.size()));
+        this.bindPose = copyPose(poseFromGlobals(bindGlobals(), 0.0));
+        this.bindPosePositions = copyPositions(skinPositions(bindPose));
+        ModelBounds bounds = boundsOf(bindPosePositions);
+        this.minY = bounds.minY();
+        this.maxY = bounds.maxY();
+        this.minX = bounds.minX();
+        this.maxX = bounds.maxX();
+        this.minZ = bounds.minZ();
+        this.maxZ = bounds.maxZ();
     }
 
     public static LwjglSkinnedModel load(CharacterModelDefinition definition) throws IOException {
@@ -158,18 +179,26 @@ public final class LwjglSkinnedModel {
             bindings.put(slot, new ClipBinding(clip, authored.playbackSpeed(), authored.impactFraction(), slot.looping()));
         }
 
-        float minX = Float.POSITIVE_INFINITY, minY = Float.POSITIVE_INFINITY, minZ = Float.POSITIVE_INFINITY;
-        float maxX = Float.NEGATIVE_INFINITY, maxY = Float.NEGATIVE_INFINITY, maxZ = Float.NEGATIVE_INFINITY;
-        for (SkinnedMesh mesh : base.meshes()) {
-            for (int index = 0; index < mesh.bindPositions().length; index += 3) {
-                minX = Math.min(minX, mesh.bindPositions()[index]); maxX = Math.max(maxX, mesh.bindPositions()[index]);
-                minY = Math.min(minY, mesh.bindPositions()[index + 1]); maxY = Math.max(maxY, mesh.bindPositions()[index + 1]);
-                minZ = Math.min(minZ, mesh.bindPositions()[index + 2]); maxZ = Math.max(maxZ, mesh.bindPositions()[index + 2]);
-            }
+        return new LwjglSkinnedModel(safe, base, bindings, availableClipNames, diagnostics);
+    }
+
+    public static synchronized LwjglSkinnedModel loadCached(
+            CharacterModelDefinition definition
+    ) throws IOException {
+        CharacterModelDefinition safe = definition == null
+                ? CharacterModelDefinition.empty()
+                : definition;
+        LwjglSkinnedModel cached = SHARED_CACHE.get(safe);
+        if (cached != null) {
+            return cached;
         }
-        if (!Float.isFinite(minY)) { minX = minZ = minY = 0f; maxX = maxZ = 0f; maxY = 1f; }
-        return new LwjglSkinnedModel(safe, base, bindings, availableClipNames, diagnostics,
-                minX, minY, minZ, maxX, maxY, maxZ);
+        LwjglSkinnedModel loaded = load(safe);
+        SHARED_CACHE.put(safe, loaded);
+        return loaded;
+    }
+
+    public static synchronized void clearSharedCache() {
+        SHARED_CACHE.clear();
     }
 
     public CharacterModelDefinition definition() { return definition; }
@@ -178,6 +207,12 @@ public final class LwjglSkinnedModel {
     public List<String> diagnostics() { return diagnostics; }
     public Set<String> clipNames() {
         return availableClipNames;
+    }
+    public List<String> nodeNames() {
+        return nodes.stream().map(Node::name).toList();
+    }
+    public List<String> meshNames() {
+        return meshes.stream().map(SkinnedMesh::name).toList();
     }
     public boolean hasClip(CharacterModelDefinition.AnimationSlot slot) { return bindings.containsKey(slot); }
     public double clipDurationSeconds(CharacterModelDefinition.AnimationSlot slot) {
@@ -198,60 +233,265 @@ public final class LwjglSkinnedModel {
     public double centerZ() { return (minZ + maxZ) * 0.5; }
 
     public Frame skin(CharacterModelDefinition.AnimationSlot slot, double elapsedSeconds) {
+        Pose pose = pose(slot, elapsedSeconds);
+        return new Frame(skinPositions(pose), pose.normalizedProgress());
+    }
+
+    public Pose pose(CharacterModelDefinition.AnimationSlot slot, double elapsedSeconds) {
         ClipBinding binding = bindings.get(slot);
         if (binding == null) {
-            return new Frame(meshes.stream().map(mesh -> mesh.bindPositions().clone()).toList(), 0.0);
+            return bindPose;
         }
-        return skin(binding, elapsedSeconds);
+        return pose(binding, elapsedSeconds);
     }
 
     private Frame skin(ClipBinding binding, double elapsedSeconds) {
+        Pose pose = pose(binding, elapsedSeconds);
+        return new Frame(skinPositions(pose), pose.normalizedProgress());
+    }
+
+    private Pose pose(ClipBinding binding, double elapsedSeconds) {
         AnimationClip clip = binding.clip();
         double duration = Math.max(0.0001, clip.durationTicks());
         double ticks = Math.max(0.0, elapsedSeconds) * Math.max(0.0001, clip.ticksPerSecond()) * binding.speed();
         double time = binding.looping() ? ticks % duration : Math.min(duration, ticks);
-        Matrix4f[] globals = new Matrix4f[nodes.size()];
+        PoseWorkspace workspace = poseWorkspaces.get().next();
+        Matrix4f[] globals = workspace.globals;
         for (int index = 0; index < nodes.size(); index++) {
             Node node = nodes.get(index);
-            Matrix4f local = evaluateLocal(node, clip.channels().get(node.name()), time,
-                    index == rootMotionNodeIndex);
-            globals[index] = node.parent() < 0 ? local : new Matrix4f(globals[node.parent()]).mul(local);
+            Matrix4f local = evaluateLocal(
+                    node, clip.channels().get(node.name()), time,
+                    index == rootMotionNodeIndex, workspace.locals[index],
+                    workspace.translation, workspace.scale, workspace.rotation);
+            if (node.parent() < 0) {
+                globals[index].set(local);
+            } else {
+                globals[index].set(globals[node.parent()]).mul(local);
+            }
         }
-        Matrix4f[] skinMatrices = new Matrix4f[bones.size()];
+        return poseFromGlobals(globals, time / duration, workspace);
+    }
+
+    private Pose poseFromGlobals(Matrix4f[] globals, double normalizedProgress) {
+        return poseFromGlobals(globals, normalizedProgress, poseWorkspaces.get().next());
+    }
+
+    private Pose poseFromGlobals(
+            Matrix4f[] globals,
+            double normalizedProgress,
+            PoseWorkspace workspace
+    ) {
+        Matrix4f[] skinMatrices = workspace.skinMatrices;
         for (int index = 0; index < bones.size(); index++) {
             Bone bone = bones.get(index);
-            skinMatrices[index] = new Matrix4f(inverseRoot).mul(globals[bone.nodeIndex()]).mul(bone.inverseBind());
+            skinMatrices[index].set(inverseRoot)
+                    .mul(globals[bone.nodeIndex()])
+                    .mul(bone.inverseBind());
         }
-        List<float[]> positions = new ArrayList<>(meshes.size());
-        Vector3f source = new Vector3f();
-        Vector3f transformed = new Vector3f();
-        for (SkinnedMesh mesh : meshes) {
-            float[] output = new float[mesh.bindPositions().length];
+        Matrix4f[] rootedNodes = workspace.rootedNodes;
+        for (int index = 0; index < globals.length; index++) {
+            rootedNodes[index].set(inverseRoot).mul(globals[index]);
+        }
+        return new Pose(skinMatrices, rootedNodes, normalizedProgress);
+    }
+
+    private List<float[]> skinPositions(Pose pose) {
+        Matrix4f[] skinMatrices = pose.boneMatrices();
+        Matrix4f[] rootedNodes = pose.nodeMatrices();
+        SkinWorkspace workspace = skinWorkspaces.get().next();
+        for (int meshIndex = 0; meshIndex < meshes.size(); meshIndex++) {
+            SkinnedMesh mesh = meshes.get(meshIndex);
+            float[] output = workspace.positions[meshIndex];
+            Matrix4f nodeMatrix = mesh.nodeIndex() >= 0 && mesh.nodeIndex() < rootedNodes.length
+                    ? rootedNodes[mesh.nodeIndex()]
+                    : mesh.nodeTransform();
             for (int vertex = 0; vertex < mesh.vertexCount(); vertex++) {
                 int p = vertex * 3;
-                source.set(mesh.bindPositions()[p], mesh.bindPositions()[p + 1], mesh.bindPositions()[p + 2]);
-                transformed.zero();
+                float sourceX = mesh.bindPositions()[p];
+                float sourceY = mesh.bindPositions()[p + 1];
+                float sourceZ = mesh.bindPositions()[p + 2];
+                float transformedX = 0f;
+                float transformedY = 0f;
+                float transformedZ = 0f;
                 float total = 0f;
                 for (int influence = 0; influence < MAX_BONES_PER_VERTEX; influence++) {
                     int offset = vertex * MAX_BONES_PER_VERTEX + influence;
                     float weight = mesh.boneWeights()[offset];
                     int boneIndex = mesh.boneIndices()[offset];
                     if (weight <= 0f || boneIndex < 0 || boneIndex >= skinMatrices.length) continue;
-                    Vector3f weighted = skinMatrices[boneIndex].transformPosition(new Vector3f(source)).mul(weight);
-                    transformed.add(weighted);
+                    Matrix4f matrix = skinMatrices[boneIndex];
+                    transformedX += (matrix.m00() * sourceX + matrix.m10() * sourceY
+                            + matrix.m20() * sourceZ + matrix.m30()) * weight;
+                    transformedY += (matrix.m01() * sourceX + matrix.m11() * sourceY
+                            + matrix.m21() * sourceZ + matrix.m31()) * weight;
+                    transformedZ += (matrix.m02() * sourceX + matrix.m12() * sourceY
+                            + matrix.m22() * sourceZ + matrix.m32()) * weight;
                     total += weight;
                 }
                 if (total <= 0f) {
-                    Matrix4f nodeMatrix = mesh.nodeIndex() >= 0 && mesh.nodeIndex() < globals.length
-                            ? new Matrix4f(inverseRoot).mul(globals[mesh.nodeIndex()])
-                            : mesh.nodeTransform();
-                    nodeMatrix.transformPosition(source, transformed);
+                    transformedX = nodeMatrix.m00() * sourceX + nodeMatrix.m10() * sourceY
+                            + nodeMatrix.m20() * sourceZ + nodeMatrix.m30();
+                    transformedY = nodeMatrix.m01() * sourceX + nodeMatrix.m11() * sourceY
+                            + nodeMatrix.m21() * sourceZ + nodeMatrix.m31();
+                    transformedZ = nodeMatrix.m02() * sourceX + nodeMatrix.m12() * sourceY
+                            + nodeMatrix.m22() * sourceZ + nodeMatrix.m32();
                 }
-                output[p] = transformed.x; output[p + 1] = transformed.y; output[p + 2] = transformed.z;
+                output[p] = transformedX;
+                output[p + 1] = transformedY;
+                output[p + 2] = transformedZ;
             }
-            positions.add(output);
         }
-        return new Frame(List.copyOf(positions), time / duration);
+        return workspace.view;
+    }
+
+    private static List<float[]> copyPositions(List<float[]> source) {
+        return source.stream().map(float[]::clone).toList();
+    }
+
+    private static Pose copyPose(Pose source) {
+        Matrix4f[] bones = new Matrix4f[source.boneMatrices().length];
+        Matrix4f[] nodes = new Matrix4f[source.nodeMatrices().length];
+        for (int index = 0; index < bones.length; index++) {
+            bones[index] = new Matrix4f(source.boneMatrices()[index]);
+        }
+        for (int index = 0; index < nodes.length; index++) {
+            nodes[index] = new Matrix4f(source.nodeMatrices()[index]);
+        }
+        return new Pose(bones, nodes, source.normalizedProgress());
+    }
+
+    private static final class PoseWorkspaceRing {
+        private static final int RING_SIZE = 8;
+        private final PoseWorkspace[] workspaces = new PoseWorkspace[RING_SIZE];
+        private int cursor;
+
+        private PoseWorkspaceRing(int nodeCount, int boneCount) {
+            for (int index = 0; index < workspaces.length; index++) {
+                workspaces[index] = new PoseWorkspace(nodeCount, boneCount);
+            }
+        }
+
+        private PoseWorkspace next() {
+            PoseWorkspace result = workspaces[cursor];
+            cursor = (cursor + 1) % workspaces.length;
+            return result;
+        }
+    }
+
+    private static final class PoseWorkspace {
+        private final Matrix4f[] globals;
+        private final Matrix4f[] locals;
+        private final Matrix4f[] skinMatrices;
+        private final Matrix4f[] rootedNodes;
+        private final Vector3f translation = new Vector3f();
+        private final Vector3f scale = new Vector3f();
+        private final Quaternionf rotation = new Quaternionf();
+
+        private PoseWorkspace(int nodeCount, int boneCount) {
+            globals = matrices(nodeCount);
+            locals = matrices(nodeCount);
+            skinMatrices = matrices(boneCount);
+            rootedNodes = matrices(nodeCount);
+        }
+
+        private static Matrix4f[] matrices(int count) {
+            Matrix4f[] result = new Matrix4f[Math.max(0, count)];
+            for (int index = 0; index < result.length; index++) {
+                result[index] = new Matrix4f();
+            }
+            return result;
+        }
+    }
+
+    private static final class SkinWorkspaceRing {
+        private static final int RING_SIZE = 4;
+        private final SkinWorkspace[] workspaces = new SkinWorkspace[RING_SIZE];
+        private int cursor;
+
+        private SkinWorkspaceRing(List<SkinnedMesh> meshes) {
+            for (int index = 0; index < workspaces.length; index++) {
+                workspaces[index] = new SkinWorkspace(meshes);
+            }
+        }
+
+        private SkinWorkspace next() {
+            SkinWorkspace value = workspaces[cursor];
+            cursor = (cursor + 1) % workspaces.length;
+            return value;
+        }
+    }
+
+    private static final class SkinWorkspace {
+        private final float[][] positions;
+        private final List<float[]> view;
+
+        private SkinWorkspace(List<SkinnedMesh> meshes) {
+            positions = new float[meshes.size()][];
+            for (int index = 0; index < meshes.size(); index++) {
+                positions[index] = new float[meshes.get(index).bindPositions().length];
+            }
+            view = Collections.unmodifiableList(Arrays.asList(positions));
+        }
+    }
+
+    public static Frame blendFrames(Frame from, Frame to, double amount) {
+        if (to == null) {
+            return from;
+        }
+        if (from == null) {
+            return to;
+        }
+        float blend = (float) smoothStep(amount);
+        for (int mesh = 0; mesh < to.meshPositions().size(); mesh++) {
+            float[] target = to.meshPositions().get(mesh);
+            float[] source = mesh < from.meshPositions().size()
+                    ? from.meshPositions().get(mesh)
+                    : target;
+            float[] output = target;
+            for (int index = 0; index < output.length && index < source.length; index++) {
+                output[index] = source[index] + (target[index] - source[index]) * blend;
+            }
+        }
+        return new Frame(to.meshPositions(), to.normalizedProgress());
+    }
+
+    private static double smoothStep(double value) {
+        double clamped = Math.max(0.0, Math.min(1.0, value));
+        return clamped * clamped * (3.0 - 2.0 * clamped);
+    }
+
+    private static ModelBounds boundsOf(List<float[]> positions) {
+        float minX = Float.POSITIVE_INFINITY;
+        float minY = Float.POSITIVE_INFINITY;
+        float minZ = Float.POSITIVE_INFINITY;
+        float maxX = Float.NEGATIVE_INFINITY;
+        float maxY = Float.NEGATIVE_INFINITY;
+        float maxZ = Float.NEGATIVE_INFINITY;
+
+        for (float[] meshPositions : positions) {
+            if (meshPositions == null) {
+                continue;
+            }
+            for (int index = 0; index + 2 < meshPositions.length; index += 3) {
+                float x = meshPositions[index];
+                float y = meshPositions[index + 1];
+                float z = meshPositions[index + 2];
+                if (!Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(z)) {
+                    continue;
+                }
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                minZ = Math.min(minZ, z);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+                maxZ = Math.max(maxZ, z);
+            }
+        }
+
+        if (!Float.isFinite(minY)) {
+            return new ModelBounds(0f, 0f, 0f, 0f, 1f, 0f);
+        }
+        return new ModelBounds(minX, minY, minZ, maxX, maxY, maxZ);
     }
 
     public Frame skinNormalized(CharacterModelDefinition.AnimationSlot slot, double normalizedProgress) {
@@ -259,6 +499,16 @@ public final class LwjglSkinnedModel {
         if (binding == null) return skin(slot, 0.0);
         double progress = Math.max(0.0, Math.min(1.0, normalizedProgress));
         return skin(binding, progress * binding.clip().durationSeconds() / Math.max(0.0001, binding.speed()));
+    }
+
+    public Pose poseNormalized(CharacterModelDefinition.AnimationSlot slot, double normalizedProgress) {
+        ClipBinding binding = bindings.get(slot);
+        if (binding == null) {
+            return pose(slot, 0.0);
+        }
+        double progress = Math.max(0.0, Math.min(1.0, normalizedProgress));
+        return pose(binding,
+                progress * binding.clip().durationSeconds() / Math.max(0.0001, binding.speed()));
     }
 
     /** Returns an animated node/socket transform in model space. */
@@ -269,16 +519,10 @@ public final class LwjglSkinnedModel {
     ) {
         Integer nodeIndex = nodeName == null ? null : baseNodeIndex(nodeName);
         if (nodeIndex == null) return null;
-        ClipBinding binding = bindings.get(slot);
-        if (binding == null) {
-            Matrix4f[] globals = bindGlobals();
-            return new Matrix4f(inverseRoot).mul(globals[nodeIndex]);
-        }
-        double progress = Math.max(0.0, Math.min(1.0, normalizedProgress));
-        double elapsed = progress * binding.clip().durationSeconds()
-                / Math.max(0.0001, binding.speed());
-        Matrix4f[] globals = evaluateGlobals(binding, elapsed);
-        return new Matrix4f(inverseRoot).mul(globals[nodeIndex]);
+        Pose pose = poseNormalized(slot, normalizedProgress);
+        return nodeIndex < pose.nodeMatrices().length
+                ? new Matrix4f(pose.nodeMatrices()[nodeIndex])
+                : null;
     }
 
     public boolean hasNode(String nodeName) {
@@ -300,24 +544,6 @@ public final class LwjglSkinnedModel {
             globals[index] = node.parent() < 0
                     ? new Matrix4f(node.bindLocal())
                     : new Matrix4f(globals[node.parent()]).mul(node.bindLocal());
-        }
-        return globals;
-    }
-
-    private Matrix4f[] evaluateGlobals(ClipBinding binding, double elapsedSeconds) {
-        AnimationClip clip = binding.clip();
-        double duration = Math.max(0.0001, clip.durationTicks());
-        double ticks = Math.max(0.0, elapsedSeconds)
-                * Math.max(0.0001, clip.ticksPerSecond()) * binding.speed();
-        double time = binding.looping() ? ticks % duration : Math.min(duration, ticks);
-        Matrix4f[] globals = new Matrix4f[nodes.size()];
-        for (int index = 0; index < nodes.size(); index++) {
-            Node node = nodes.get(index);
-            Matrix4f local = evaluateLocal(node, clip.channels().get(node.name()), time,
-                    index == rootMotionNodeIndex);
-            globals[index] = node.parent() < 0
-                    ? local
-                    : new Matrix4f(globals[node.parent()]).mul(local);
         }
         return globals;
     }
@@ -347,13 +573,30 @@ public final class LwjglSkinnedModel {
                 progress * clip.durationSeconds() / Math.max(0.0001, previewBinding.speed()));
     }
 
-    private static Matrix4f evaluateLocal(Node node, NodeChannel channel, double time, boolean stripRootMotion) {
-        if (channel == null) return new Matrix4f(node.bindLocal());
-        Vector3f translation = interpolateVector(channel.positions(), time, new Vector3f(node.bindLocal().m30(), node.bindLocal().m31(), node.bindLocal().m32()));
-        if (stripRootMotion) { translation.x = node.bindLocal().m30(); translation.z = node.bindLocal().m32(); }
-        Vector3f scale = interpolateVector(channel.scales(), time, node.bindLocal().getScale(new Vector3f()));
-        Quaternionf rotation = interpolateRotation(channel.rotations(), time, node.bindLocal().getUnnormalizedRotation(new Quaternionf()).normalize());
-        return new Matrix4f().translationRotateScale(translation, rotation, scale);
+    private static Matrix4f evaluateLocal(
+            Node node,
+            NodeChannel channel,
+            double time,
+            boolean stripRootMotion,
+            Matrix4f destination,
+            Vector3f translation,
+            Vector3f scale,
+            Quaternionf rotation
+    ) {
+        if (channel == null) {
+            return destination.set(node.bindLocal());
+        }
+        translation.set(node.bindLocal().m30(), node.bindLocal().m31(), node.bindLocal().m32());
+        interpolateVector(channel.positions(), time, translation, translation);
+        if (stripRootMotion) {
+            translation.x = node.bindLocal().m30();
+            translation.z = node.bindLocal().m32();
+        }
+        node.bindLocal().getScale(scale);
+        interpolateVector(channel.scales(), time, scale, scale);
+        node.bindLocal().getUnnormalizedRotation(rotation).normalize();
+        interpolateRotation(channel.rotations(), time, rotation, rotation);
+        return destination.translationRotateScale(translation, rotation, scale);
     }
 
     private static int findRootMotionNode(List<Node> nodes, List<Bone> bones) {
@@ -363,30 +606,66 @@ public final class LwjglSkinnedModel {
         return index;
     }
 
-    private static Vector3f interpolateVector(List<VectorKey> keys, double time, Vector3f fallback) {
-        if (keys == null || keys.isEmpty()) return fallback;
-        if (keys.size() == 1 || time <= keys.get(0).time()) return new Vector3f(keys.get(0).value());
-        for (int i = 0; i < keys.size() - 1; i++) {
-            VectorKey a = keys.get(i), b = keys.get(i + 1);
-            if (time <= b.time()) {
-                float t = (float) ((time - a.time()) / Math.max(0.0001, b.time() - a.time()));
-                return new Vector3f(a.value()).lerp(b.value(), t);
-            }
+    private static Vector3f interpolateVector(
+            List<VectorKey> keys,
+            double time,
+            Vector3f fallback,
+            Vector3f destination
+    ) {
+        if (keys == null || keys.isEmpty()) return destination.set(fallback);
+        if (keys.size() == 1 || time <= keys.get(0).time()) return destination.set(keys.get(0).value());
+        int upper = upperVectorKey(keys, time);
+        if (upper < keys.size()) {
+            VectorKey a = keys.get(upper - 1), b = keys.get(upper);
+            float t = (float) ((time - a.time()) / Math.max(0.0001, b.time() - a.time()));
+            return destination.set(a.value()).lerp(b.value(), t);
         }
-        return new Vector3f(keys.get(keys.size() - 1).value());
+        return destination.set(keys.get(keys.size() - 1).value());
     }
 
-    private static Quaternionf interpolateRotation(List<RotationKey> keys, double time, Quaternionf fallback) {
-        if (keys == null || keys.isEmpty()) return fallback;
-        if (keys.size() == 1 || time <= keys.get(0).time()) return new Quaternionf(keys.get(0).value());
-        for (int i = 0; i < keys.size() - 1; i++) {
-            RotationKey a = keys.get(i), b = keys.get(i + 1);
-            if (time <= b.time()) {
-                float t = (float) ((time - a.time()) / Math.max(0.0001, b.time() - a.time()));
-                return new Quaternionf(a.value()).slerp(b.value(), t).normalize();
+    private static Quaternionf interpolateRotation(
+            List<RotationKey> keys,
+            double time,
+            Quaternionf fallback,
+            Quaternionf destination
+    ) {
+        if (keys == null || keys.isEmpty()) return destination.set(fallback);
+        if (keys.size() == 1 || time <= keys.get(0).time()) return destination.set(keys.get(0).value());
+        int upper = upperRotationKey(keys, time);
+        if (upper < keys.size()) {
+            RotationKey a = keys.get(upper - 1), b = keys.get(upper);
+            float t = (float) ((time - a.time()) / Math.max(0.0001, b.time() - a.time()));
+            return destination.set(a.value()).slerp(b.value(), t).normalize();
+        }
+        return destination.set(keys.get(keys.size() - 1).value());
+    }
+
+    private static int upperVectorKey(List<VectorKey> keys, double time) {
+        int low = 1;
+        int high = keys.size();
+        while (low < high) {
+            int middle = (low + high) >>> 1;
+            if (keys.get(middle).time() < time) {
+                low = middle + 1;
+            } else {
+                high = middle;
             }
         }
-        return new Quaternionf(keys.get(keys.size() - 1).value());
+        return low;
+    }
+
+    private static int upperRotationKey(List<RotationKey> keys, double time) {
+        int low = 1;
+        int high = keys.size();
+        while (low < high) {
+            int middle = (low + high) >>> 1;
+            if (keys.get(middle).time() < time) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        return low;
     }
 
     private static ImportedScene importScene(String assetPath, boolean includeMeshes) throws IOException {

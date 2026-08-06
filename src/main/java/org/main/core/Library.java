@@ -10,7 +10,8 @@ public final class Library {
         NPC,
         CHEST,
         TRAP,
-        ITEM
+        ITEM,
+        CORPSE
     }
 
     public enum TileType {

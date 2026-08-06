@@ -48,6 +48,9 @@ public final class AetherGameRuntime {
     private final WorldCreatureSystem worldCreatureSystem = new WorldCreatureSystem();
     private boolean gameOverMusicStarted = false;
     private String lastChunkAmbienceKey = "";
+    private long lastUiPresentationSignature = Long.MIN_VALUE;
+    private Path cachedActiveMapDesignPath;
+    private MapDesignLibrary.MapDesign cachedActiveMapDesign;
 
     public AetherGameRuntime() {
         battleRenderer.setAssets(BattleAssets.loadDefault());
@@ -85,17 +88,10 @@ public final class AetherGameRuntime {
             List<EnvironmentTheme> worldThemes = gameState.getOpenWorldEnvironmentThemes();
             return worldThemes.isEmpty() ? environment.getThemes() : worldThemes;
         }
-        Path mapDesignPath = gameState.getCurrentMapDesignPath();
-        if (mapDesignPath == null) {
-            return environment.getThemes();
-        }
-
-        try {
-            MapDesignLibrary.MapDesign mapDesign = MapDesignLibrary.load(mapDesignPath);
-            return List.of(mapDesign.primaryTheme().getTheme(), mapDesign.alternateTheme().getTheme());
-        } catch (IOException exception) {
-            return environment.getThemes();
-        }
+        MapDesignLibrary.MapDesign mapDesign = activeMapDesign();
+        return mapDesign == null
+                ? environment.getThemes()
+                : List.of(mapDesign.primaryTheme().getTheme(), mapDesign.alternateTheme().getTheme());
     }
 
     public void startNewGame(String characterName, PlayerRegionLibrary playerRegion) {
@@ -122,6 +118,7 @@ public final class AetherGameRuntime {
             Path tutorialPath = findTutorialMapPath();
             MapDesignLibrary.MapDesign mapDesign = MapDesignLibrary.load(tutorialPath);
             gameState.changeDungeon(mapDesign, tutorialPath);
+            cacheActiveMapDesign(tutorialPath, mapDesign);
             return true;
         } catch (IOException exception) {
             return false;
@@ -177,10 +174,13 @@ public final class AetherGameRuntime {
         MapDesignLibrary.MapDesign mapDesign;
         if (WorldManifestLibrary.isWorldManifest(mapPath)) {
             gameState.openWorld(mapPath);
-            mapDesign = MapDesignLibrary.load(gameState.getCurrentMapDesignPath());
+            Path activePath = gameState.getCurrentMapDesignPath();
+            mapDesign = MapDesignLibrary.load(activePath);
+            cacheActiveMapDesign(activePath, mapDesign);
         } else {
             mapDesign = MapDesignLibrary.load(mapPath);
             gameState.changeDungeon(mapDesign, mapPath);
+            cacheActiveMapDesign(mapPath, mapDesign);
         }
         gameState.setGameMode(GameState.GameMode.DUNGEON);
         gameOverMusicStarted = false;
@@ -192,6 +192,7 @@ public final class AetherGameRuntime {
     public void loadGame() throws IOException {
         gameState.getWorldMessageLog().clear();
         SaveSystem.load(gameState);
+        invalidateActiveMapDesignCache();
         gameOverMusicStarted = false;
         soundSystem.stopAll();
         lastChunkAmbienceKey = "";
@@ -219,6 +220,7 @@ public final class AetherGameRuntime {
         gameState.getWorldMessageLog().advance(deltaMs);
 
         if (gameState.isGameplayPaused()) {
+            refreshUiPresentationRevision();
             return;
         }
 
@@ -231,13 +233,21 @@ public final class AetherGameRuntime {
         gameState.updateCooking(deltaMs);
         gameState.updateSmelting(deltaMs);
         gameState.updateTemporaryStations(deltaMs);
-        gameState.getQuestRuntime().refreshAutomaticProgression();
         worldCreatureSystem.update(gameState, deltaMs, dungeonController::engageEnemy);
         battleController.update(deltaMs);
         refreshChunkAmbienceIfNeeded();
 
         for (MapEntity entity : gameState.getEntities()) {
             entity.update(deltaMs);
+        }
+        refreshUiPresentationRevision();
+    }
+
+    private void refreshUiPresentationRevision() {
+        long signature = gameState.uiPresentationSignature();
+        if (signature != lastUiPresentationSignature || gameState.hasContinuouslyAnimatedUi()) {
+            gameState.advanceUiPresentationRevision();
+            lastUiPresentationSignature = signature;
         }
     }
 
@@ -254,6 +264,14 @@ public final class AetherGameRuntime {
     }
 
     public DungeonRenderContext renderContext(int viewportWidth, int viewportHeight) {
+        return renderContext(viewportWidth, viewportHeight, 0.0);
+    }
+
+    public DungeonRenderContext renderContext(
+            int viewportWidth,
+            int viewportHeight,
+            double interpolationAlpha
+    ) {
         return new DungeonRenderContext(
                 gameState.getDungeonMap(),
                 gameState.getEntities(),
@@ -263,9 +281,9 @@ public final class AetherGameRuntime {
                 gameState.getDirection(),
                 viewportWidth,
                 viewportHeight,
-                gameState.getCameraOffsetForward(),
-                gameState.getCameraOffsetSide(),
-                gameState.getCameraRotationRadians()
+                gameState.getCameraOffsetForward(interpolationAlpha),
+                gameState.getCameraOffsetSide(interpolationAlpha),
+                gameState.getCameraRotationRadians(interpolationAlpha)
         );
     }
 
@@ -285,14 +303,39 @@ public final class AetherGameRuntime {
     private MapDesignLibrary.MapDesign activeMapDesign() {
         Path mapDesignPath = gameState.getCurrentMapDesignPath();
         if (mapDesignPath == null) {
+            invalidateActiveMapDesignCache();
             return null;
         }
 
+        Path normalizedPath = mapDesignPath.toAbsolutePath().normalize();
+        MapDesignLibrary.MapDesign openWorldDesign = gameState.getCurrentOpenWorldCenterDesign();
+        if (openWorldDesign != null) {
+            cacheActiveMapDesign(mapDesignPath, openWorldDesign);
+            return openWorldDesign;
+        }
+        if (normalizedPath.equals(cachedActiveMapDesignPath)) {
+            return cachedActiveMapDesign;
+        }
+
         try {
-            return MapDesignLibrary.load(mapDesignPath);
+            MapDesignLibrary.MapDesign loaded = MapDesignLibrary.load(mapDesignPath);
+            cacheActiveMapDesign(mapDesignPath, loaded);
+            return loaded;
         } catch (IOException exception) {
+            cachedActiveMapDesignPath = normalizedPath;
+            cachedActiveMapDesign = null;
             return null;
         }
+    }
+
+    private void cacheActiveMapDesign(Path path, MapDesignLibrary.MapDesign design) {
+        cachedActiveMapDesignPath = path == null ? null : path.toAbsolutePath().normalize();
+        cachedActiveMapDesign = design;
+    }
+
+    private void invalidateActiveMapDesignCache() {
+        cachedActiveMapDesignPath = null;
+        cachedActiveMapDesign = null;
     }
 
     private void refreshChunkAmbienceIfNeeded() {

@@ -114,6 +114,9 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
     private String dialogueFirstTalkNodeId = "";
     private String dialogueRepeatTalkNodeId = "";
     private FlowSlot loadedFlowSlot;
+    private String questInspectorOwnerId = "";
+    private String stageEditorQuestId = "";
+    private String stageEditorStageId = "";
     private boolean dirty;
     private boolean loading;
 
@@ -692,6 +695,9 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
             }
         });
         remove.addActionListener(event -> {
+            if (!canEditInspectorModel(model)) {
+                return;
+            }
             int index = list.getSelectedIndex();
             if (index >= 0) {
                 model.remove(index);
@@ -705,6 +711,18 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
         buttons.add(remove);
         panel.add(buttons, BorderLayout.SOUTH);
         return panel;
+    }
+
+    private boolean canEditInspectorModel(DefaultListModel<?> model) {
+        if (model == objectiveModel && !hasSelectedStage()) {
+            stateLabel.setText("Select a journal-stage section on the Flow Map before editing objectives.");
+            return false;
+        }
+        if (model == requirementModel && !hasOwnedQuestInspector()) {
+            stateLabel.setText("Select a quest before editing its requirements.");
+            return false;
+        }
+        return true;
     }
 
     private JPanel buildFooter() {
@@ -780,6 +798,13 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
 
     private void loadEntry(String id) {
         loading = true;
+        loadedFlowSlot = null;
+        questInspectorOwnerId = "";
+        clearStageEditorOwnership();
+        requirementModel.clear();
+        objectiveModel.clear();
+        stageRewardModel.clear();
+        finalRewardModel.clear();
         loadedId = id == null ? "" : id;
         flowSlotModel.clear();
         if (kind == Kind.QUEST) {
@@ -795,6 +820,7 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
             quest.requirements().forEach(requirementModel::addElement);
             finalRewardModel.clear();
             quest.finalRewards().forEach(finalRewardModel::addElement);
+            questInspectorOwnerId = quest.questId();
             refreshAssignments();
             flowSlotModel.addElement(new FlowSlot(FlowSlotKind.OFFER, -1, "Starting Dialogue / Offer"));
             for (int index = 0; index < quest.stages().size(); index++) {
@@ -902,15 +928,17 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
         }
         if (slot.kind() == FlowSlotKind.STAGE && slot.index() >= 0 && slot.index() < stages.size()) {
             MapDesignLibrary.QuestStage old = stages.get(slot.index());
-            stages.set(slot.index(), new MapDesignLibrary.QuestStage(
-                    old.stageId(),
-                    text(stageTitleField, old.title()),
-                    areaText(stageJournalArea, old.journalText()),
-                    (MapDesignLibrary.QuestCompletionMode) completionMode.getSelectedItem(),
-                    list(objectiveModel),
-                    list(stageRewardModel),
-                    old.flow()
-            ));
+            if (stageEditorOwns(loadedId, old)) {
+                stages.set(slot.index(), new MapDesignLibrary.QuestStage(
+                        old.stageId(),
+                        text(stageTitleField, old.title()),
+                        areaText(stageJournalArea, old.journalText()),
+                        (MapDesignLibrary.QuestCompletionMode) completionMode.getSelectedItem(),
+                        list(objectiveModel),
+                        list(stageRewardModel),
+                        old.flow()
+                ));
+            }
         }
         quests.put(loadedId, copyQuest(quest, offer, stages, epilogue));
     }
@@ -966,7 +994,7 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
         }
         if (kind == Kind.QUEST) {
             MapDesignLibrary.AuthoredQuest quest = quests.get(loadedId);
-            if (quest != null) {
+            if (quest != null && loadedId.equals(questInspectorOwnerId)) {
                 quests.put(loadedId, new MapDesignLibrary.AuthoredQuest(
                         loadedId,
                         text(nameField, quest.displayName()),
@@ -1019,6 +1047,10 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
             return;
         }
         commitCurrentFlow();
+        quest = quests.get(loadedId);
+        if (quest == null) {
+            return;
+        }
         for (int index = 0; index < flowSlotModel.size(); index++) {
             FlowSlot candidate = flowSlotModel.get(index);
             if (!activeSection.equals(sectionId(candidate, quest))) {
@@ -1065,6 +1097,8 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
     }
 
     private void loadStageFields(MapDesignLibrary.QuestStage stage) {
+        stageEditorQuestId = loadedId;
+        stageEditorStageId = stage.stageId();
         selectedStageLabel.setText(stage.title() + "  [" + stage.stageId() + "]");
         stageTitleField.setEnabled(true);
         stageJournalArea.setEnabled(true);
@@ -1080,6 +1114,7 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
     }
 
     private void clearStageFields(FlowSlot slot) {
+        clearStageEditorOwnership();
         String section = slot != null && slot.kind() == FlowSlotKind.EPILOGUE
                 ? "Completed Epilogue"
                 : "Starting Dialogue / Offer";
@@ -1105,7 +1140,39 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
     }
 
     private boolean hasSelectedStage() {
-        return loadedFlowSlot != null && loadedFlowSlot.kind() == FlowSlotKind.STAGE;
+        if (loadedFlowSlot == null
+                || loadedFlowSlot.kind() != FlowSlotKind.STAGE
+                || !loadedId.equals(stageEditorQuestId)) {
+            return false;
+        }
+        MapDesignLibrary.AuthoredQuest quest = quests.get(loadedId);
+        return quest != null
+                && loadedFlowSlot.index() >= 0
+                && loadedFlowSlot.index() < quest.stages().size()
+                && quest.stages().get(loadedFlowSlot.index()).stageId()
+                        .equals(stageEditorStageId);
+    }
+
+    private boolean hasOwnedQuestInspector() {
+        return kind == Kind.QUEST
+                && !loadedId.isBlank()
+                && loadedId.equals(questInspectorOwnerId)
+                && quests.containsKey(loadedId);
+    }
+
+    private boolean stageEditorOwns(
+            String questId,
+            MapDesignLibrary.QuestStage stage
+    ) {
+        return stage != null
+                && questId != null
+                && questId.equals(stageEditorQuestId)
+                && stage.stageId().equals(stageEditorStageId);
+    }
+
+    private void clearStageEditorOwnership() {
+        stageEditorQuestId = "";
+        stageEditorStageId = "";
     }
 
     private void saveNode() {
@@ -1409,6 +1476,7 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
         loadQuestCanvas(updated);
         flagDraftDirty();
         loadedFlowSlot = null;
+        clearStageEditorOwnership();
         rebuildFlowSlots();
         flowSlotList.setSelectedIndex(stages.size());
     }
@@ -1434,6 +1502,7 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
         loadQuestCanvas(updated);
         flagDraftDirty();
         loadedFlowSlot = null;
+        clearStageEditorOwnership();
         rebuildFlowSlots();
         flowSlotList.setSelectedIndex(Math.min(slot.index() + 1, flowSlotModel.size() - 2));
     }
@@ -1460,6 +1529,7 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
         loadQuestCanvas(updated);
         flagDraftDirty();
         loadedFlowSlot = null;
+        clearStageEditorOwnership();
         rebuildFlowSlots();
         flowSlotList.setSelectedIndex(target + 1);
     }
@@ -1544,6 +1614,10 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
     }
 
     private void addRequirement() {
+        if (!hasOwnedQuestInspector()) {
+            stateLabel.setText("Select a quest before adding requirements.");
+            return;
+        }
         MapDesignLibrary.QuestRequirement value = showRequirementDialog(null);
         if (value != null) {
             requirementModel.addElement(value);
@@ -1552,7 +1626,7 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
     }
 
     private void editRequirement(int index) {
-        if (index < 0) {
+        if (index < 0 || !hasOwnedQuestInspector()) {
             return;
         }
         MapDesignLibrary.QuestRequirement value = showRequirementDialog(requirementModel.get(index));
@@ -2347,6 +2421,9 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
         quests.clear();
         dialogues.clear();
         npcs.clear();
+        loadedFlowSlot = null;
+        questInspectorOwnerId = "";
+        clearStageEditorOwnership();
         host.quests().forEach(quest -> quests.put(quest.questId(), quest));
         host.dialogues().forEach(dialogue -> dialogues.put(dialogue.interactionId(), dialogue));
         npcs.addAll(host.npcs());
@@ -2401,14 +2478,17 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
             List<MapDesignLibrary.QuestStage> stages,
             MapDesignLibrary.QuestFlow epilogue
     ) {
+        boolean ownsInspector = quest != null
+                && quest.questId().equals(loadedId)
+                && loadedId.equals(questInspectorOwnerId);
         return new MapDesignLibrary.AuthoredQuest(
                 quest.questId(),
                 quest.displayName(),
                 quest.summary(),
-                list(requirementModel),
+                ownsInspector ? list(requirementModel) : quest.requirements(),
                 offer,
                 stages,
-                list(finalRewardModel),
+                ownsInspector ? list(finalRewardModel) : quest.finalRewards(),
                 epilogue
         );
     }

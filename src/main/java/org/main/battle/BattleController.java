@@ -3,7 +3,7 @@ package org.main.battle;
 import org.main.core.GameState;
 import org.main.core.GameConfiguration;
 import org.main.core.InventorySystem;
-import org.main.core.InteractionSystem;
+import org.main.core.CorpseState;
 import org.main.core.Library;
 import org.main.core.GameEnvironment;
 import org.main.engine.MapEntity;
@@ -12,6 +12,7 @@ import org.main.monsters.Monster;
 
 import java.awt.Point;
 import java.awt.event.KeyEvent;
+import java.util.ArrayList;
 import java.util.List;
 
 public class BattleController {
@@ -471,23 +472,24 @@ public class BattleController {
     }
 
     private void endBattle(boolean removeEnemy) {
-        int experienceReward = 0;
-        Monster defeatedMonster = null;
-
-        if (removeEnemy && gameState.getCurrentEncounter() != null) {
-            experienceReward = gameState.getCurrentEncounter().getDefeatedEnemyExperienceReward();
-        }
-
-        int hpBeforeBattle = gameState.getPlayerCharacter().getCurrHp();
         syncPlayerCharacterHp();
-        int hpLost = Math.max(0, hpBeforeBattle - gameState.getPlayerCharacter().getCurrHp());
 
         if (removeEnemy && gameState.getCurrentEnemyEntity() != null) {
             MapEntity defeatedEnemy = gameState.getCurrentEnemyEntity();
-            defeatedMonster = defeatedEnemy.getMonster();
-
+            Monster defeatedMonster = defeatedEnemy.getMonster();
+            List<InventorySystem.Item> corpseLoot = rollLootDrops(defeatedEnemy);
+            String sourceSpawnId = defeatedEnemy.getEnemySpawnId();
+            int corpseX = defeatedEnemy.getX();
+            int corpseY = defeatedEnemy.getY();
             gameState.defeatEnemy(defeatedEnemy);
-            spawnLootDrops(defeatedEnemy);
+            if (defeatedMonster != null) {
+                MapEntity corpse = new MapEntity(
+                        new CorpseState(defeatedMonster.freshCopy(), sourceSpawnId, corpseLoot),
+                        corpseX,
+                        corpseY);
+                corpse.setWorldFacingYawDegrees(defeatedEnemy.getPersistenceFacingYawDegrees());
+                gameState.addEntity(corpse);
+            }
         }
 
         // Class leveling is intentionally paused while the limb progression system replaces classes.
@@ -504,10 +506,6 @@ public class BattleController {
             gameState.enterGameOver();
         } else {
             gameState.clearBattleState();
-
-            if (removeEnemy && defeatedMonster != null) {
-                gameState.openInteraction(InteractionSystem.postBattleMenu(gameState, defeatedMonster, experienceReward, hpLost));
-            }
         }
 
         if (soundSystem != null) {
@@ -531,9 +529,10 @@ public class BattleController {
         gameState.getPlayerCharacter().setCurrHp(playerActor.getCurrentHp());
     }
 
-    private void spawnLootDrops(MapEntity defeatedEnemy) {
+    private List<InventorySystem.Item> rollLootDrops(MapEntity defeatedEnemy) {
+        List<InventorySystem.Item> loot = new ArrayList<>();
         if (defeatedEnemy == null || defeatedEnemy.getMonster() == null) {
-            return;
+            return loot;
         }
 
         Monster monster = defeatedEnemy.getMonster();
@@ -543,8 +542,9 @@ public class BattleController {
             }
             InventorySystem.Item item = gameState.createItemByNameOrId(drop.itemId());
             if (item != null) {
-                gameState.addEntity(new MapEntity(item, defeatedEnemy.getX(), defeatedEnemy.getY()));
+                loot.add(item);
             }
         }
+        return List.copyOf(loot);
     }
 }

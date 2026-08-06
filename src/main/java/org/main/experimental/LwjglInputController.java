@@ -489,6 +489,7 @@ public final class LwjglInputController {
 
             if (shopWindow.handleKeyPressed(keyEvent(awtKey), gameState)) {
                 consumedKeys.add(key);
+                gameState.evaluateLiveQuestConditions();
                 return true;
             }
         }

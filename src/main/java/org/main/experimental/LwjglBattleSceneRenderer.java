@@ -2,6 +2,8 @@ package org.main.experimental;
 
 import org.lwjgl.BufferUtils;
 import org.joml.Matrix4f;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.main.battle.BattleActor;
 import org.main.battle.BattleEncounter;
 import org.main.battle.BattlePresentationDirector;
@@ -14,6 +16,7 @@ import org.main.core.EquipmentViewModelProfile;
 import org.main.core.FirstPersonEquipmentRig;
 import org.main.core.LimbItem;
 import org.main.core.LimbSlot;
+import org.main.core.WeaponType;
 import org.main.engine.DungeonRenderContext;
 
 import java.awt.Point;
@@ -48,17 +51,28 @@ final class LwjglBattleSceneRenderer {
     private final Set<String> failedStaticModels = new HashSet<>();
     private final Set<String> warnedFirstPersonFallbacks = new HashSet<>();
     private final IdentityHashMap<LwjglSkinnedModel.SkinnedMesh, MeshBuffers> buffers = new IdentityHashMap<>();
+    private final IdentityHashMap<LwjglStaticModel.Mesh, MeshBuffers> staticBuffers = new IdentityHashMap<>();
     private final Map<BattleActor, Point> projectedActors = new IdentityHashMap<>();
     private final Map<BattleActor, FirstPersonTransition> firstPersonTransitions =
             new IdentityHashMap<>();
+    private final float[] encounterLight = {1f, 1f, 1f};
+    private FixedFunctionPrimitives fixedPrimitives;
+    private long firstPersonCatalogRevision = -1;
 
     LwjglBattleSceneRenderer(LwjglTextureCache textureCache) {
         this.textureCache = textureCache;
     }
 
     Map<BattleActor, Point> render(DungeonRenderContext context, CameraLookState lookState,
-                                   AetherGameRuntime runtime, int width, int height) {
+                                   AetherGameRuntime runtime, int width, int height,
+                                   float[] lightTint) {
         projectedActors.clear();
+        if (fixedPrimitives == null) {
+            fixedPrimitives = new FixedFunctionPrimitives();
+        }
+        encounterLight[0] = lightTint == null || lightTint.length < 3 ? 1f : clampLight(lightTint[0]);
+        encounterLight[1] = lightTint == null || lightTint.length < 3 ? 1f : clampLight(lightTint[1]);
+        encounterLight[2] = lightTint == null || lightTint.length < 3 ? 1f : clampLight(lightTint[2]);
         BattleEncounter encounter = runtime == null || runtime.gameState() == null
                 ? null : runtime.gameState().getCurrentEncounter();
         if (encounter == null) return Map.of();
@@ -86,15 +100,17 @@ final class LwjglBattleSceneRenderer {
         }
         for (BattleActor actor : encounter.getAllies()) {
             if (actor == player || (!actor.isAlive() && !hasDeathPresentation(actor, actions))) continue;
-            drawActor(actor, relative(formationPosition(actor, true), playerCell), playerCell, actions);
+            drawActor(actor, relative(formationPosition(actor, true), playerCell),
+                    playerCell, actions, encounter);
         }
         for (BattleActor actor : encounter.getEnemies()) {
             if (!actor.isAlive() && !hasDeathPresentation(actor, actions)) continue;
-            drawActor(actor, relative(formationPosition(actor, false), playerCell), playerCell, actions);
+            drawActor(actor, relative(formationPosition(actor, false), playerCell),
+                    playerCell, actions, encounter);
         }
         projectActors(encounter, player, playerCell, look, width, height);
 
-        renderEquipment(player, actions);
+        renderEquipment(player, actions, width, height);
         renderEffects(actions, playerCell, look);
         glEnable(GL_TEXTURE_2D);
         glEnable(GL_DEPTH_TEST);
@@ -103,16 +119,17 @@ final class LwjglBattleSceneRenderer {
     }
 
     private void drawActor(BattleActor actor, Position base, Position playerCell,
-                           List<BattlePresentationDirector.ActionSnapshot> actions) {
+                           List<BattlePresentationDirector.ActionSnapshot> actions,
+                           BattleEncounter encounter) {
         Position animated = animatePosition(actor, base, playerCell, actions);
         CharacterModelDefinition.AnimationSlot slot = animationSlot(actor, actions);
-        double progress = animationProgress(actor, actions);
         CharacterModelDefinition definition = actor.getCharacterModel();
         LwjglSkinnedModel skinned = getSkinnedModel(definition);
+        double progress = animationProgress(actor, actions, skinned, slot);
         glPushMatrix();
         glTranslated(animated.x(), animated.y() + definition.verticalOffset(), animated.z());
-        glRotated(actor.isEnemy() ? 180.0 + definition.facingRotationDegrees()
-                : definition.facingRotationDegrees(), 0, 1, 0);
+        glRotated(facingYaw(actor, animated, playerCell, encounter)
+                + definition.facingRotationDegrees(), 0, 1, 0);
         if (skinned == null || !skinned.hasClip(slot)) applyProceduralWholeModel(actor, slot, actions);
         if (skinned != null) {
             double scale = skinned.normalizedScaleForHeight(STANDARD_ACTOR_HEIGHT) * definition.scale();
@@ -153,9 +170,11 @@ final class LwjglBattleSceneRenderer {
             LwjglSkinnedModel.SkinnedMesh mesh = model.meshes().get(meshIndex);
             if (!visible.test(mesh)) continue;
             MeshBuffers gpu = buffers.computeIfAbsent(mesh, this::createBuffers);
-            FloatBuffer positions = BufferUtils.createFloatBuffer(frame.meshPositions().get(meshIndex).length);
+            FloatBuffer positions = gpu.positionStaging();
+            positions.clear();
             positions.put(frame.meshPositions().get(meshIndex)).flip();
             glBindBuffer(GL_ARRAY_BUFFER, gpu.positionVbo());
+            glBufferData(GL_ARRAY_BUFFER, (long) positions.remaining() * Float.BYTES, GL_DYNAMIC_DRAW);
             glBufferSubData(GL_ARRAY_BUFFER, 0, positions);
             glEnableClientState(GL_VERTEX_ARRAY);
             glVertexPointer(3, GL_FLOAT, 0, 0L);
@@ -169,7 +188,7 @@ final class LwjglBattleSceneRenderer {
             } else {
                 glDisable(GL_TEXTURE_2D); glDisableClientState(GL_TEXTURE_COORD_ARRAY);
             }
-            glColor4f(material.red(), material.green(), material.blue(), material.alpha());
+            setLitColor(material.red(), material.green(), material.blue(), material.alpha());
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gpu.indexBuffer());
             glDrawElements(GL_TRIANGLES, mesh.indices().length, GL_UNSIGNED_INT, 0L);
             glDisableClientState(GL_VERTEX_ARRAY);
@@ -187,123 +206,273 @@ final class LwjglBattleSceneRenderer {
         int indices = glGenBuffers(); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices);
         IntBuffer indexData = BufferUtils.createIntBuffer(mesh.indices().length).put(mesh.indices()).flip();
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexData, GL_STATIC_DRAW);
-        return new MeshBuffers(position, uv, indices);
+        return new MeshBuffers(
+                position,
+                uv,
+                indices,
+                BufferUtils.createFloatBuffer(mesh.bindPositions().length),
+                mesh.indices().length);
     }
 
     private void drawStaticMesh(LwjglStaticModel.Mesh mesh) {
-        if (mesh.texture() == null) glDisable(GL_TEXTURE_2D);
-        else { glEnable(GL_TEXTURE_2D); textureCache.bind(mesh.texture()); }
-        glColor4f(mesh.red(), mesh.green(), mesh.blue(), mesh.alpha());
-        glBegin(GL_TRIANGLES);
-        for (int index : mesh.indices()) {
-            if (mesh.texture() != null) glTexCoord2f(mesh.texCoords()[index * 2], mesh.texCoords()[index * 2 + 1]);
-            glVertex3f(mesh.positions()[index * 3], mesh.positions()[index * 3 + 1], mesh.positions()[index * 3 + 2]);
+        MeshBuffers gpu = staticBuffers.computeIfAbsent(mesh, this::createStaticBuffers);
+        glBindBuffer(GL_ARRAY_BUFFER, gpu.positionVbo());
+        glEnableClientState(GL_VERTEX_ARRAY);
+        glVertexPointer(3, GL_FLOAT, 0, 0L);
+        if (mesh.texture() == null) {
+            glDisable(GL_TEXTURE_2D);
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        } else {
+            glEnable(GL_TEXTURE_2D);
+            textureCache.bind(mesh.texture());
+            glBindBuffer(GL_ARRAY_BUFFER, gpu.uvVbo());
+            glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+            glTexCoordPointer(2, GL_FLOAT, 0, 0L);
         }
-        glEnd();
+        setLitColor(mesh.red(), mesh.green(), mesh.blue(), mesh.alpha());
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gpu.indexBuffer());
+        glDrawElements(GL_TRIANGLES, gpu.indexCount(), GL_UNSIGNED_INT, 0L);
+        glDisableClientState(GL_VERTEX_ARRAY);
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    }
+
+    private MeshBuffers createStaticBuffers(LwjglStaticModel.Mesh mesh) {
+        int position = glGenBuffers();
+        glBindBuffer(GL_ARRAY_BUFFER, position);
+        FloatBuffer positionData = BufferUtils.createFloatBuffer(mesh.positions().length)
+                .put(mesh.positions()).flip();
+        glBufferData(GL_ARRAY_BUFFER, positionData, GL_STATIC_DRAW);
+        int uv = glGenBuffers();
+        glBindBuffer(GL_ARRAY_BUFFER, uv);
+        FloatBuffer uvData = BufferUtils.createFloatBuffer(mesh.texCoords().length)
+                .put(mesh.texCoords()).flip();
+        glBufferData(GL_ARRAY_BUFFER, uvData, GL_STATIC_DRAW);
+        int indices = glGenBuffers();
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices);
+        IntBuffer indexData = BufferUtils.createIntBuffer(mesh.indices().length)
+                .put(mesh.indices()).flip();
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexData, GL_STATIC_DRAW);
+        return new MeshBuffers(position, uv, indices, null, mesh.indices().length);
     }
 
     private void drawBillboard(BufferedImage image, double width, double height) {
-        if (image != null) { glEnable(GL_TEXTURE_2D); textureCache.bind(image); glColor4f(1, 1, 1, 1); }
-        else { glDisable(GL_TEXTURE_2D); glColor4f(0.55f, 0.18f, 0.65f, 1f); }
-        glBegin(GL_QUADS);
-        glTexCoord2d(0, 1); glVertex3d(-width / 2, 0, 0);
-        glTexCoord2d(1, 1); glVertex3d(width / 2, 0, 0);
-        glTexCoord2d(1, 0); glVertex3d(width / 2, height, 0);
-        glTexCoord2d(0, 0); glVertex3d(-width / 2, height, 0);
-        glEnd();
+        if (image != null) {
+            glEnable(GL_TEXTURE_2D);
+            textureCache.bind(image);
+            setLitColor(1, 1, 1, 1);
+        } else {
+            glDisable(GL_TEXTURE_2D);
+            setLitColor(0.55f, 0.18f, 0.65f, 1f);
+        }
+        fixedPrimitives.drawBillboard(width, height, image != null);
     }
 
     private boolean renderSkeletalEquipment(
             BattleActor player,
-            List<BattlePresentationDirector.ActionSnapshot> actions
+            List<BattlePresentationDirector.ActionSnapshot> actions,
+            int viewportWidth,
+            int viewportHeight
     ) {
+        refreshFirstPersonCachesIfNeeded();
         FirstPersonAnimationRuntime.ResolvedRig resolved =
                 FirstPersonAnimationRuntime.resolve(player);
         if (!resolved.usable()) return false;
-        FirstPersonCombatLibrary.RigDefinition rig = resolved.content().rig();
+        FirstPersonCombatLibrary.RigDefinition rig = resolved.rig();
         InventorySystem.Inventory inventory = player.getSourcePlayer().getInventory();
         InventorySystem.Item weapon = inventory.getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
         InventorySystem.Item shield = inventory.getEquippedItem(InventorySystem.EquipmentSlot.SHIELD);
         InventorySystem.Item chest = inventory.getEquippedItem(InventorySystem.EquipmentSlot.CHEST);
         FirstPersonCombatLibrary.ItemProfile weaponProfile = resolved.itemProfile();
-        FirstPersonCombatLibrary.ItemProfile shieldProfile = resolved.content().itemProfile(shield);
-        FirstPersonCombatLibrary.ItemProfile armorProfile = resolved.content().itemProfile(chest);
+        FirstPersonCombatLibrary.ItemProfile shieldProfile = compatibleProfile(
+                resolved.content().itemProfile(shield), rig, "shield");
+        FirstPersonCombatLibrary.ItemProfile armorProfile = compatibleProfile(
+                resolved.content().itemProfile(chest), rig, "chest armor");
 
         // Authored camera-space models stay on their dedicated rendering path
         // until a socket/attachment profile is created for them.
         if (weapon != null && weapon.hasFirstPersonModel() && weaponProfile == null) return false;
-        if (shield != null && shield.hasFirstPersonModel() && shieldProfile == null) return false;
-        if (chest != null && chest.hasFirstPersonModel()
-                && (armorProfile == null
+        if (shield != null && shield.hasFirstPersonModel() && shieldProfile == null) {
+            warnFirstPersonFallback("profile:shield",
+                    "Shield has no profile compatible with the active rig; other viewmodel components remain active.");
+        }
+        if (chest != null && chest.hasFirstPersonModel() && (armorProfile == null
                 || (armorProfile.leftArmorPath().isBlank()
-                && armorProfile.rightArmorPath().isBlank()))) return false;
+                && armorProfile.rightArmorPath().isBlank()))) {
+            warnFirstPersonFallback("profile:chest",
+                    "Chest armor has no compatible sleeve attachments; other viewmodel components remain active.");
+        }
 
         CharacterModelDefinition.AnimationSlot slot = firstPersonSlot(player, actions);
         if (!resolved.model().hasClip(slot)) {
             warnFirstPersonFallback("clip:" + slot,
                     "First-person " + slot.displayName()
-                            + " clip is unavailable; using procedural equipment animation.");
-            return false;
+                            + " clip is unavailable; retaining the lit skeletal rig in idle/bind pose.");
+            slot = CharacterModelDefinition.AnimationSlot.IDLE;
         }
-        double progress = firstPersonProgress(player, actions, slot);
-        FirstPersonAnimationView animation = firstPersonAnimationView(player, slot, progress);
+        double progress = firstPersonProgress(player, actions, slot, resolved.model());
+        FirstPersonAnimationView animation = firstPersonAnimationView(
+                player, slot, progress, rig.crossfadeMs());
 
         LimbItem leftLimb = player.getSourcePlayer().getEquippedLimb(LimbSlot.LEFT_ARM);
         LimbItem rightLimb = player.getSourcePlayer().getEquippedLimb(LimbSlot.RIGHT_ARM);
-        String leftPath = leftLimb != null && leftLimb.hasFirstPersonModel()
-                ? leftLimb.getFirstPersonModelPath() : rig.defaultLeftArmPath();
-        String rightPath = rightLimb != null && rightLimb.hasFirstPersonModel()
-                ? rightLimb.getFirstPersonModelPath() : rig.defaultRightArmPath();
-        if (leftPath.isBlank() && rightPath.isBlank()) {
-            warnFirstPersonFallback("arms",
-                    "First-person rig has no default or grafted arm attachments; using procedural hands.");
-            return false;
-        }
-
+        String leftPath = compatibleLimbPath(leftLimb, rig, rig.defaultLeftArmPath());
+        String rightPath = compatibleLimbPath(rightLimb, rig, rig.defaultRightArmPath());
         LwjglSkinnedModel leftArm = attachmentModel(resolved, leftPath);
         LwjglSkinnedModel rightArm = attachmentModel(resolved, rightPath);
+        if (leftArm == null && !leftPath.equals(rig.defaultLeftArmPath())) {
+            leftArm = attachmentModel(resolved, rig.defaultLeftArmPath());
+        }
+        if (rightArm == null && !rightPath.equals(rig.defaultRightArmPath())) {
+            rightArm = attachmentModel(resolved, rig.defaultRightArmPath());
+        }
+        if (leftArm == null && !rig.leftVisibleMeshes().isEmpty()) leftArm = resolved.model();
+        if (rightArm == null && !rig.rightVisibleMeshes().isEmpty()) rightArm = resolved.model();
         LwjglSkinnedModel leftArmor = attachmentModel(
                 resolved, armorProfile == null ? "" : armorProfile.leftArmorPath());
         LwjglSkinnedModel rightArmor = attachmentModel(
                 resolved, armorProfile == null ? "" : armorProfile.rightArmorPath());
-        if ((leftArm == null && !leftPath.isBlank()) || (rightArm == null && !rightPath.isBlank())) {
-            warnFirstPersonFallback("arm-signature",
-                    "A first-person arm attachment is missing or has an incompatible skeleton; "
-                            + "using procedural hands.");
-            return false;
+        if (leftArm == null) warnFirstPersonFallback("arm-signature:left",
+                "The left first-person arm is unavailable; other valid viewmodel components remain active.");
+        if (rightArm == null) warnFirstPersonFallback("arm-signature:right",
+                "The right first-person arm is unavailable; other valid viewmodel components remain active.");
+        if (leftArm == null && rightArm == null) {
+            warnFirstPersonFallback("arms",
+                    "First-person rig has no usable arm attachments or base-model arm mesh selections; "
+                            + "socketed equipment will remain visible.");
+            boolean hasSocketedEquipment = weapon != null && weapon.hasFirstPersonModel()
+                    && weaponProfile != null
+                    || shield != null && shield.hasFirstPersonModel() && shieldProfile != null
+                    || leftArmor != null || rightArmor != null;
+            if (!hasSocketedEquipment) return false;
         }
 
+        pushViewmodelProjection(rig, viewportWidth, viewportHeight);
         glClear(GL_DEPTH_BUFFER_BIT);
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
-        applyRigRoot(rig);
+        FirstPersonCombatLibrary.CameraFraming cameraFraming = cameraFraming(
+                resolved,
+                weapon == null ? WeaponType.NONE : weapon.getWeaponType(),
+                shieldProfile,
+                animation);
+        applyRigRoot(rig, resolved.model(), animation, cameraFraming);
 
         FirstPersonCombatLibrary.ArmCoverage leftCoverage = armorProfile == null
                 ? FirstPersonCombatLibrary.ArmCoverage.OVERLAY : armorProfile.leftCoverage();
         FirstPersonCombatLibrary.ArmCoverage rightCoverage = armorProfile == null
                 ? FirstPersonCombatLibrary.ArmCoverage.OVERLAY : armorProfile.rightCoverage();
-        drawArmAttachment(leftArm, animation, FirstPersonCombatLibrary.WieldHand.LEFT, leftCoverage);
-        drawArmAttachment(rightArm, animation, FirstPersonCombatLibrary.WieldHand.RIGHT, rightCoverage);
-        drawArmAttachment(leftArmor, animation, FirstPersonCombatLibrary.WieldHand.LEFT,
-                FirstPersonCombatLibrary.ArmCoverage.OVERLAY);
-        drawArmAttachment(rightArmor, animation, FirstPersonCombatLibrary.WieldHand.RIGHT,
-                FirstPersonCombatLibrary.ArmCoverage.OVERLAY);
-
         FirstPersonCombatLibrary.WieldHand weaponHand = resolved.wieldHand();
+        Vector3f secondaryGripOffset = weapon != null && weapon.isTwoHanded()
+                ? secondaryGripOffset(resolved, weapon, weaponProfile, weaponHand, animation)
+                : new Vector3f();
+        drawArmAttachment(leftArm, animation, FirstPersonCombatLibrary.WieldHand.LEFT,
+                leftCoverage, rig.leftVisibleMeshes(),
+                weaponHand == FirstPersonCombatLibrary.WieldHand.RIGHT
+                        ? secondaryGripOffset : new Vector3f());
+        drawArmAttachment(rightArm, animation, FirstPersonCombatLibrary.WieldHand.RIGHT,
+                rightCoverage, rig.rightVisibleMeshes(),
+                weaponHand == FirstPersonCombatLibrary.WieldHand.LEFT
+                        ? secondaryGripOffset : new Vector3f());
+        drawArmAttachment(leftArmor, animation, FirstPersonCombatLibrary.WieldHand.LEFT,
+                FirstPersonCombatLibrary.ArmCoverage.OVERLAY, Set.of(),
+                weaponHand == FirstPersonCombatLibrary.WieldHand.RIGHT
+                        ? secondaryGripOffset : new Vector3f());
+        drawArmAttachment(rightArmor, animation, FirstPersonCombatLibrary.WieldHand.RIGHT,
+                FirstPersonCombatLibrary.ArmCoverage.OVERLAY, Set.of(),
+                weaponHand == FirstPersonCombatLibrary.WieldHand.LEFT
+                        ? secondaryGripOffset : new Vector3f());
+
         if (weapon != null && weapon.hasFirstPersonModel()) {
             drawSocketEquipment(weapon, weaponProfile.socketTransform(), resolved.model(),
                     rig.handBone(weaponHand), animation);
         }
-        if (shield != null && shield.hasFirstPersonModel()
+        if (shield != null && shield.hasFirstPersonModel() && shieldProfile != null
                 && (weapon == null || !weapon.isTwoHanded())) {
-            FirstPersonCombatLibrary.WieldHand shieldHand = weaponHand.opposite();
+            FirstPersonCombatLibrary.WieldHand shieldHand = shieldProfile.wieldHand();
             drawSocketEquipment(shield, shieldProfile.socketTransform(), resolved.model(),
                     rig.handBone(shieldHand), animation);
         }
         glEnable(GL_TEXTURE_2D);
         glEnable(GL_DEPTH_TEST);
         glColor4f(1, 1, 1, 1);
+        popViewmodelProjection();
         return true;
+    }
+
+    private FirstPersonCombatLibrary.ItemProfile compatibleProfile(
+            FirstPersonCombatLibrary.ItemProfile profile,
+            FirstPersonCombatLibrary.RigDefinition rig,
+            String label
+    ) {
+        if (profile == null || profile.rigId().isBlank() || profile.rigId().equals(rig.rigId())) {
+            return profile;
+        }
+        warnFirstPersonFallback("profile-rig:" + label + ":" + profile.itemId(),
+                "The " + label + " profile targets rig " + profile.rigId()
+                        + " and cannot attach to active rig " + rig.rigId() + ".");
+        return null;
+    }
+
+    private void refreshFirstPersonCachesIfNeeded() {
+        long current = FirstPersonCombatLibrary.revision();
+        if (firstPersonCatalogRevision == current) return;
+        for (MeshBuffers mesh : buffers.values()) {
+            glDeleteBuffers(mesh.positionVbo());
+            glDeleteBuffers(mesh.uvVbo());
+            glDeleteBuffers(mesh.indexBuffer());
+        }
+        for (MeshBuffers mesh : staticBuffers.values()) {
+            glDeleteBuffers(mesh.positionVbo());
+            glDeleteBuffers(mesh.uvVbo());
+            glDeleteBuffers(mesh.indexBuffer());
+        }
+        buffers.clear();
+        staticBuffers.clear();
+        skinnedModels.clear();
+        failedSkinnedModels.clear();
+        staticModels.clear();
+        failedStaticModels.clear();
+        firstPersonTransitions.clear();
+        warnedFirstPersonFallbacks.clear();
+        firstPersonCatalogRevision = current;
+    }
+
+    private void pushViewmodelProjection(
+            FirstPersonCombatLibrary.RigDefinition rig,
+            int viewportWidth,
+            int viewportHeight
+    ) {
+        double near = Math.max(0.001, rig.nearPlane());
+        double top = near * Math.tan(Math.toRadians(rig.fieldOfViewDegrees()) * 0.5);
+        double aspect = Math.max(1, viewportWidth) / (double) Math.max(1, viewportHeight);
+        double right = top * aspect;
+        glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
+        glLoadIdentity();
+        glFrustum(-right, right, -top, top, near, 100.0);
+        glMatrixMode(GL_MODELVIEW);
+    }
+
+    private void popViewmodelProjection() {
+        glMatrixMode(GL_PROJECTION);
+        glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
+    }
+
+    private String compatibleLimbPath(
+            LimbItem limb,
+            FirstPersonCombatLibrary.RigDefinition rig,
+            String fallback
+    ) {
+        if (limb == null || !limb.hasFirstPersonModel()) return fallback;
+        String limbRig = FirstPersonCombatLibrary.normalizeId(limb.getFirstPersonRigId());
+        if (!limbRig.isBlank() && !limbRig.equals(rig.rigId())) {
+            warnFirstPersonFallback("limb-rig:" + limb.getName(),
+                    limb.getName() + " targets first-person rig " + limbRig
+                            + ", so the " + rig.displayName() + " default arm is used instead.");
+            return fallback;
+        }
+        return limb.getFirstPersonModelPath();
     }
 
     private LwjglSkinnedModel attachmentModel(
@@ -313,7 +482,7 @@ final class LwjglBattleSceneRenderer {
         if (path == null || path.isBlank()) return null;
         CharacterModelDefinition attachmentDefinition = new CharacterModelDefinition(
                 path,
-                resolved.content().rig().rigId(),
+                resolved.rig().rigId(),
                 1.0,
                 0.0,
                 0.0,
@@ -330,19 +499,106 @@ final class LwjglBattleSceneRenderer {
         if (warnedFirstPersonFallbacks.add(key)) LOGGER.warning(message);
     }
 
-    private void applyRigRoot(FirstPersonCombatLibrary.RigDefinition rig) {
-        glTranslated(rig.positionX(), rig.positionY(), rig.positionZ());
-        glRotated(rig.rotationX(), 1, 0, 0);
-        glRotated(rig.rotationY(), 0, 1, 0);
-        glRotated(rig.rotationZ(), 0, 0, 1);
+    private void applyRigRoot(
+            FirstPersonCombatLibrary.RigDefinition rig,
+            LwjglSkinnedModel model,
+            FirstPersonAnimationView animation,
+            FirstPersonCombatLibrary.CameraFraming camera
+    ) {
+        FirstPersonCombatLibrary.CameraFraming framing = camera == null
+                ? FirstPersonCombatLibrary.CameraFraming.identity() : camera;
+        glTranslated(
+                rig.positionX() + framing.positionX(),
+                rig.positionY() + framing.positionY(),
+                rig.positionZ() + framing.positionZ());
+        glRotated(rig.rotationX() + framing.rotationX(), 1, 0, 0);
+        glRotated(rig.rotationY() + framing.rotationY(), 0, 1, 0);
+        glRotated(rig.rotationZ() + framing.rotationZ(), 0, 0, 1);
         glScaled(rig.scale(), rig.scale(), rig.scale());
+        if (!rig.cameraAnchorBone().isBlank()) {
+            Matrix4f anchor = animatedNodeTransform(model, rig.cameraAnchorBone(), animation);
+            if (anchor != null) {
+                Vector3f position = anchor.getTranslation(new Vector3f());
+                glTranslated(-position.x, -position.y, -position.z);
+            }
+        }
+    }
+
+    private FirstPersonCombatLibrary.CameraFraming cameraFraming(
+            FirstPersonAnimationRuntime.ResolvedRig resolved,
+            WeaponType weaponType,
+            FirstPersonCombatLibrary.ItemProfile shieldProfile,
+            FirstPersonAnimationView animation
+    ) {
+        FirstPersonCombatLibrary.CameraFraming target = cameraFraming(
+                resolved, weaponType, shieldProfile, animation.slot());
+        if (animation.fromSlot() == null || animation.blend() >= 1.0) return target;
+        FirstPersonCombatLibrary.CameraFraming source = cameraFraming(
+                resolved, weaponType, shieldProfile, animation.fromSlot());
+        double amount = smooth(animation.blend());
+        return new FirstPersonCombatLibrary.CameraFraming(
+                lerp(source.positionX(), target.positionX(), amount),
+                lerp(source.positionY(), target.positionY(), amount),
+                lerp(source.positionZ(), target.positionZ(), amount),
+                lerpAngle(source.rotationX(), target.rotationX(), amount),
+                lerpAngle(source.rotationY(), target.rotationY(), amount),
+                lerpAngle(source.rotationZ(), target.rotationZ(), amount));
+    }
+
+    private FirstPersonCombatLibrary.CameraFraming cameraFraming(
+            FirstPersonAnimationRuntime.ResolvedRig resolved,
+            WeaponType weaponType,
+            FirstPersonCombatLibrary.ItemProfile shieldProfile,
+            CharacterModelDefinition.AnimationSlot slot
+    ) {
+        FirstPersonCombatLibrary.AnimationSlot authoredSlot = switch (slot) {
+            case IDLE -> resolved.wieldHand() == FirstPersonCombatLibrary.WieldHand.LEFT
+                    ? FirstPersonCombatLibrary.AnimationSlot.IDLE_LEFT
+                    : FirstPersonCombatLibrary.AnimationSlot.IDLE_RIGHT;
+            case ATTACK -> resolved.wieldHand() == FirstPersonCombatLibrary.WieldHand.LEFT
+                    ? FirstPersonCombatLibrary.AnimationSlot.ATTACK_LEFT
+                    : FirstPersonCombatLibrary.AnimationSlot.ATTACK_RIGHT;
+            case BLOCK -> (shieldProfile == null
+                    ? resolved.wieldHand().opposite()
+                    : shieldProfile.wieldHand()) == FirstPersonCombatLibrary.WieldHand.LEFT
+                    ? FirstPersonCombatLibrary.AnimationSlot.BLOCK_LEFT
+                    : FirstPersonCombatLibrary.AnimationSlot.BLOCK_RIGHT;
+            case CAST -> FirstPersonCombatLibrary.AnimationSlot.CAST;
+            case HIT -> FirstPersonCombatLibrary.AnimationSlot.HIT;
+            case DODGE -> FirstPersonCombatLibrary.AnimationSlot.DODGE;
+            default -> null;
+        };
+        if (authoredSlot == null) return FirstPersonCombatLibrary.CameraFraming.identity();
+        FirstPersonCombatLibrary.ItemProfile animationProfile = slot
+                == CharacterModelDefinition.AnimationSlot.BLOCK && shieldProfile != null
+                ? shieldProfile : resolved.itemProfile();
+        WeaponType animationWeaponType = slot == CharacterModelDefinition.AnimationSlot.BLOCK
+                && shieldProfile != null ? WeaponType.NONE : weaponType;
+        FirstPersonCombatLibrary.ClipBinding binding = resolved.content().resolveBinding(
+                animationWeaponType, animationProfile, resolved.rig(), authoredSlot);
+        return binding == null
+                ? FirstPersonCombatLibrary.CameraFraming.identity()
+                : binding.cameraFraming();
+    }
+
+    private static double lerp(double source, double target, double amount) {
+        return source + (target - source) * Math.max(0.0, Math.min(1.0, amount));
+    }
+
+    private static double lerpAngle(double source, double target, double amount) {
+        double difference = (target - source) % 360.0;
+        if (difference > 180.0) difference -= 360.0;
+        if (difference < -180.0) difference += 360.0;
+        return source + difference * Math.max(0.0, Math.min(1.0, amount));
     }
 
     private void drawArmAttachment(
             LwjglSkinnedModel model,
             FirstPersonAnimationView animation,
             FirstPersonCombatLibrary.WieldHand side,
-            FirstPersonCombatLibrary.ArmCoverage coverage
+            FirstPersonCombatLibrary.ArmCoverage coverage,
+            Set<String> selectedMeshes,
+            Vector3f offset
     ) {
         if (model == null || coverage == FirstPersonCombatLibrary.ArmCoverage.HIDE_FULL_ARM) return;
         LwjglSkinnedModel.Frame frame = model.skinNormalized(animation.slot(), animation.progress());
@@ -351,7 +607,72 @@ final class LwjglBattleSceneRenderer {
                     animation.fromSlot(), animation.fromProgress());
             frame = blendFrames(from, frame, animation.blend());
         }
-        drawSkinnedModel(model, frame, mesh -> regionVisible(mesh.name(), side, coverage));
+        glPushMatrix();
+        if (offset != null) glTranslated(offset.x, offset.y, offset.z);
+        drawSkinnedModel(model, frame, mesh -> (selectedMeshes == null || selectedMeshes.isEmpty()
+                || selectedMeshes.stream().anyMatch(name -> name.equalsIgnoreCase(mesh.name())))
+                && regionVisible(mesh.name(), side, coverage));
+        glPopMatrix();
+    }
+
+    private Vector3f secondaryGripOffset(
+            FirstPersonAnimationRuntime.ResolvedRig resolved,
+            InventorySystem.Item weapon,
+            FirstPersonCombatLibrary.ItemProfile profile,
+            FirstPersonCombatLibrary.WieldHand weaponHand,
+            FirstPersonAnimationView animation
+    ) {
+        if (profile == null || (Math.abs(profile.secondaryGripX()) < 0.0001
+                && Math.abs(profile.secondaryGripY()) < 0.0001
+                && Math.abs(profile.secondaryGripZ()) < 0.0001)) return new Vector3f();
+        Matrix4f weaponSocket = animatedNodeTransform(resolved.model(),
+                resolved.rig().handBone(weaponHand), animation);
+        Matrix4f offHandSocket = animatedNodeTransform(resolved.model(),
+                resolved.rig().handBone(weaponHand.opposite()), animation);
+        LwjglStaticModel weaponModel = weapon == null
+                ? null : getStaticModel(weapon.getFirstPersonModelPath());
+        if (weaponSocket == null || offHandSocket == null || weaponModel == null) return new Vector3f();
+        EquipmentViewModelProfile socket = profile.socketTransform();
+        float modelScale = (float) weaponModel.normalizedScaleForHeight(socket.normalizedHeight());
+        Matrix4f gripTransform = new Matrix4f(weaponSocket)
+                .translate((float) socket.positionX(), (float) socket.positionY(),
+                        (float) socket.positionZ())
+                .rotateXYZ((float) Math.toRadians(socket.rotationX()),
+                        (float) Math.toRadians(socket.rotationY()),
+                        (float) Math.toRadians(socket.rotationZ()))
+                .scale(modelScale)
+                .translate((float) -weaponModel.centerX(), (float) -weaponModel.baseY(),
+                        (float) -weaponModel.centerZ());
+        Vector3f target = gripTransform.transformPosition(new Vector3f(
+                (float) profile.secondaryGripX(), (float) profile.secondaryGripY(),
+                (float) profile.secondaryGripZ()));
+        Vector3f current = offHandSocket.getTranslation(new Vector3f());
+        Vector3f delta = target.sub(current, new Vector3f());
+        if (delta.length() > 0.65f) delta.normalize().mul(0.65f);
+        return delta;
+    }
+
+    private Matrix4f animatedNodeTransform(
+            LwjglSkinnedModel model,
+            String node,
+            FirstPersonAnimationView animation
+    ) {
+        Matrix4f transform = socketTransformWithoutScale(model.nodeTransformNormalized(
+                animation.slot(), animation.progress(), node));
+        if (transform != null && animation.blend() < 1.0 && animation.fromSlot() != null) {
+            Matrix4f from = socketTransformWithoutScale(model.nodeTransformNormalized(
+                    animation.fromSlot(), animation.fromProgress(), node));
+            if (from != null) transform = from.lerp(transform,
+                    (float) smooth(animation.blend()), new Matrix4f());
+        }
+        return transform;
+    }
+
+    private Matrix4f socketTransformWithoutScale(Matrix4f source) {
+        if (source == null) return null;
+        Vector3f translation = source.getTranslation(new Vector3f());
+        Quaternionf rotation = source.getUnnormalizedRotation(new Quaternionf()).normalize();
+        return new Matrix4f().translation(translation).rotate(rotation);
     }
 
     private LwjglSkinnedModel.Frame blendFrames(
@@ -360,18 +681,16 @@ final class LwjglBattleSceneRenderer {
             double amount
     ) {
         float blend = (float) smooth(amount);
-        List<float[]> positions = new ArrayList<>(to.meshPositions().size());
         for (int mesh = 0; mesh < to.meshPositions().size(); mesh++) {
             float[] target = to.meshPositions().get(mesh);
             float[] source = mesh < from.meshPositions().size()
                     ? from.meshPositions().get(mesh) : target;
-            float[] output = target.clone();
+            float[] output = target;
             for (int index = 0; index < output.length && index < source.length; index++) {
                 output[index] = source[index] + (target[index] - source[index]) * blend;
             }
-            positions.add(output);
         }
-        return new LwjglSkinnedModel.Frame(List.copyOf(positions), to.normalizedProgress());
+        return new LwjglSkinnedModel.Frame(to.meshPositions(), to.normalizedProgress());
     }
 
     private boolean regionVisible(
@@ -404,14 +723,7 @@ final class LwjglBattleSceneRenderer {
     ) {
         if (item == null || transform == null || rigModel == null) return;
         LwjglStaticModel model = getStaticModel(item.getFirstPersonModelPath());
-        Matrix4f socket = rigModel.nodeTransformNormalized(
-                animation.slot(), animation.progress(), handBone);
-        if (socket != null && animation.blend() < 1.0 && animation.fromSlot() != null) {
-            Matrix4f from = rigModel.nodeTransformNormalized(
-                    animation.fromSlot(), animation.fromProgress(), handBone);
-            if (from != null) socket = from.lerp(socket, (float) smooth(animation.blend()),
-                    new Matrix4f());
-        }
+        Matrix4f socket = animatedNodeTransform(rigModel, handBone, animation);
         if (model == null || socket == null) return;
         FloatBuffer matrix = BufferUtils.createFloatBuffer(16);
         socket.get(matrix);
@@ -421,8 +733,9 @@ final class LwjglBattleSceneRenderer {
         glRotated(transform.rotationX(), 1, 0, 0);
         glRotated(transform.rotationY(), 0, 1, 0);
         glRotated(transform.rotationZ(), 0, 0, 1);
-        double scale = transform.normalizedHeight();
+        double scale = model.normalizedScaleForHeight(transform.normalizedHeight());
         glScaled(scale, scale, scale);
+        glTranslated(-model.centerX(), -model.baseY(), -model.centerZ());
         for (LwjglStaticModel.Mesh mesh : model.meshes()) drawStaticMesh(mesh);
         glPopMatrix();
     }
@@ -451,7 +764,8 @@ final class LwjglBattleSceneRenderer {
     private double firstPersonProgress(
             BattleActor player,
             List<BattlePresentationDirector.ActionSnapshot> actions,
-            CharacterModelDefinition.AnimationSlot slot
+            CharacterModelDefinition.AnimationSlot slot,
+            LwjglSkinnedModel model
     ) {
         for (BattlePresentationDirector.ActionSnapshot action : actions) {
             if (action.attacker() == player
@@ -459,14 +773,21 @@ final class LwjglBattleSceneRenderer {
                 return action.overallProgress();
             }
         }
-        return slot == CharacterModelDefinition.AnimationSlot.IDLE
-                ? (System.nanoTime() / 1_000_000_000.0) % 1.0 : 0.0;
+        if (slot != CharacterModelDefinition.AnimationSlot.IDLE) {
+            return 0.0;
+        }
+        double duration = model != null && model.hasClip(slot)
+                ? model.clipDurationSeconds(slot)
+                : 1.0;
+        return (System.nanoTime() / 1_000_000_000.0)
+                / Math.max(0.001, duration) % 1.0;
     }
 
     private FirstPersonAnimationView firstPersonAnimationView(
             BattleActor player,
             CharacterModelDefinition.AnimationSlot requestedSlot,
-            double requestedProgress
+            double requestedProgress,
+            int crossfadeMs
     ) {
         long now = System.nanoTime();
         FirstPersonTransition state = firstPersonTransitions.computeIfAbsent(
@@ -480,7 +801,8 @@ final class LwjglBattleSceneRenderer {
         state.progress = requestedProgress;
         double blend = state.startedNanos == 0
                 ? 1.0
-                : Math.min(1.0, (now - state.startedNanos) / 120_000_000.0);
+                : Math.min(1.0, (now - state.startedNanos)
+                        / Math.max(1_000_000.0, crossfadeMs * 1_000_000.0));
         if (blend >= 1.0) {
             state.fromSlot = null;
             state.startedNanos = 0;
@@ -489,9 +811,14 @@ final class LwjglBattleSceneRenderer {
                 state.slot, state.progress, state.fromSlot, state.fromProgress, blend);
     }
 
-    private void renderEquipment(BattleActor player, List<BattlePresentationDirector.ActionSnapshot> actions) {
+    private void renderEquipment(
+            BattleActor player,
+            List<BattlePresentationDirector.ActionSnapshot> actions,
+            int viewportWidth,
+            int viewportHeight
+    ) {
         if (player == null || player.getSourcePlayer() == null) return;
-        if (renderSkeletalEquipment(player, actions)) return;
+        if (renderSkeletalEquipment(player, actions, viewportWidth, viewportHeight)) return;
         InventorySystem.Inventory inventory = player.getSourcePlayer().getInventory();
         InventorySystem.Item weapon = inventory.getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
         InventorySystem.Item shield = inventory.getEquippedItem(InventorySystem.EquipmentSlot.SHIELD);
@@ -607,35 +934,16 @@ final class LwjglBattleSceneRenderer {
         glRotated(pose.rotationY(), 0, 1, 0);
         glRotated(pose.rotationZ(), 0, 0, 1);
 
-        glColor4f(0.68f, 0.46f, 0.31f, 1f);
+        setLitColor(0.68f, 0.46f, 0.31f, 1f);
         drawBox(0.075, 0.095, 0.105);
         glTranslated(0, -0.135, 0.045);
-        glColor4f(0.60f, 0.39f, 0.26f, 1f);
+        setLitColor(0.60f, 0.39f, 0.26f, 1f);
         drawBox(0.052, 0.075, 0.070);
         glPopMatrix();
     }
 
     private void drawBox(double halfWidth, double halfHeight, double halfDepth) {
-        double left = -halfWidth;
-        double right = halfWidth;
-        double bottom = -halfHeight;
-        double top = halfHeight;
-        double near = halfDepth;
-        double far = -halfDepth;
-        glBegin(GL_QUADS);
-        glVertex3d(left, bottom, near); glVertex3d(right, bottom, near);
-        glVertex3d(right, top, near); glVertex3d(left, top, near);
-        glVertex3d(right, bottom, far); glVertex3d(left, bottom, far);
-        glVertex3d(left, top, far); glVertex3d(right, top, far);
-        glVertex3d(left, bottom, far); glVertex3d(left, bottom, near);
-        glVertex3d(left, top, near); glVertex3d(left, top, far);
-        glVertex3d(right, bottom, near); glVertex3d(right, bottom, far);
-        glVertex3d(right, top, far); glVertex3d(right, top, near);
-        glVertex3d(left, top, near); glVertex3d(right, top, near);
-        glVertex3d(right, top, far); glVertex3d(left, top, far);
-        glVertex3d(left, bottom, far); glVertex3d(right, bottom, far);
-        glVertex3d(right, bottom, near); glVertex3d(left, bottom, near);
-        glEnd();
+        fixedPrimitives.drawBox(halfWidth, halfHeight, halfDepth);
     }
 
     private void renderEffects(List<BattlePresentationDirector.ActionSnapshot> actions,
@@ -657,10 +965,8 @@ final class LwjglBattleSceneRenderer {
                 glColor4f(action.actionType() == BattlePresentationDirector.ActionType.HEAL ? 0.35f : 0.45f,
                         action.actionType() == BattlePresentationDirector.ActionType.HEAL ? 1.0f : 0.72f,
                         1f, 0.78f);
-                glBegin(GL_QUADS);
-                glVertex3d(-0.28, -0.28, 0); glVertex3d(0.28, -0.28, 0);
-                glVertex3d(0.28, 0.28, 0); glVertex3d(-0.28, 0.28, 0);
-                glEnd(); glPopMatrix();
+                fixedPrimitives.drawCenteredQuad(0.56, 0.56, false);
+                glPopMatrix();
             }
         }
     }
@@ -677,7 +983,11 @@ final class LwjglBattleSceneRenderer {
     private void applyProceduralWholeModel(BattleActor actor,
                                            CharacterModelDefinition.AnimationSlot slot,
                                            List<BattlePresentationDirector.ActionSnapshot> actions) {
-        double amount = animationProgress(actor, actions);
+        double amount = animationProgress(
+                actor,
+                actions,
+                null,
+                animationSlot(actor, actions));
         switch (slot) {
             case DEATH -> { glTranslated(0, -0.55 * amount, 0); glRotated(78 * amount, 0, 0, 1); }
             case ATTACK -> glRotated(-16 * Math.sin(Math.PI * amount), 1, 0, 0);
@@ -746,13 +1056,59 @@ final class LwjglBattleSceneRenderer {
         return actor.isAlive() ? CharacterModelDefinition.AnimationSlot.IDLE : CharacterModelDefinition.AnimationSlot.DEATH;
     }
 
-    private static double animationProgress(BattleActor actor, List<BattlePresentationDirector.ActionSnapshot> actions) {
+    private static double animationProgress(
+            BattleActor actor,
+            List<BattlePresentationDirector.ActionSnapshot> actions,
+            LwjglSkinnedModel model,
+            CharacterModelDefinition.AnimationSlot slot
+    ) {
         for (BattlePresentationDirector.ActionSnapshot action : actions) {
             if (action.attacker() == actor || action.targets().stream().anyMatch(target -> target.target() == actor)) {
                 return action.overallProgress();
             }
         }
-        return (System.nanoTime() / 1_000_000_000.0) % 1.0;
+        if (slot != CharacterModelDefinition.AnimationSlot.IDLE) {
+            return 0.0;
+        }
+        double duration = model != null && model.hasClip(slot)
+                ? model.clipDurationSeconds(slot)
+                : 1.0;
+        return (System.nanoTime() / 1_000_000_000.0)
+                / Math.max(0.001, duration) % 1.0;
+    }
+
+    private static double facingYaw(
+            BattleActor actor,
+            Position actorPosition,
+            Position playerCell,
+            BattleEncounter encounter
+    ) {
+        List<BattleActor> opponents = actor.isEnemy()
+                ? encounter.getAllies()
+                : encounter.getEnemies();
+        Position nearest = null;
+        double nearestDistance = Double.POSITIVE_INFINITY;
+        for (BattleActor opponent : opponents) {
+            if (opponent == null || !opponent.isAlive()) {
+                continue;
+            }
+            Position opponentPosition = relative(
+                    formationPosition(opponent, !opponent.isEnemy()),
+                    playerCell);
+            double deltaX = opponentPosition.x() - actorPosition.x();
+            double deltaZ = opponentPosition.z() - actorPosition.z();
+            double distance = deltaX * deltaX + deltaZ * deltaZ;
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearest = opponentPosition;
+            }
+        }
+        if (nearest == null) {
+            return actor.isEnemy() ? 0.0 : 180.0;
+        }
+        double deltaX = nearest.x() - actorPosition.x();
+        double deltaZ = nearest.z() - actorPosition.z();
+        return Math.toDegrees(Math.atan2(deltaX, deltaZ));
     }
 
     private static boolean hasDeathPresentation(BattleActor actor,
@@ -798,10 +1154,22 @@ final class LwjglBattleSceneRenderer {
     }
     private static double smooth(double v) { v = Math.max(0, Math.min(1, v)); return v * v * (3 - 2 * v); }
 
+    private void setLitColor(float red, float green, float blue, float alpha) {
+        glColor4f(
+                red * encounterLight[0],
+                green * encounterLight[1],
+                blue * encounterLight[2],
+                alpha);
+    }
+
+    private static float clampLight(float value) {
+        return Math.max(0.02f, Math.min(4.0f, value));
+    }
+
     private LwjglSkinnedModel getSkinnedModel(CharacterModelDefinition definition) {
         if (definition == null || !definition.hasModel() || failedSkinnedModels.contains(definition)) return null;
         LwjglSkinnedModel cached = skinnedModels.get(definition); if (cached != null) return cached;
-        try { LwjglSkinnedModel loaded = LwjglSkinnedModel.load(definition); skinnedModels.put(definition, loaded); return loaded; }
+        try { LwjglSkinnedModel loaded = LwjglSkinnedModel.loadCached(definition); skinnedModels.put(definition, loaded); return loaded; }
         catch (Exception exception) { failedSkinnedModels.add(definition); LOGGER.log(Level.WARNING, "Character model fallback: " + definition.modelPath(), exception); return null; }
     }
     private LwjglStaticModel getStaticModel(String path) {
@@ -812,8 +1180,13 @@ final class LwjglBattleSceneRenderer {
     }
 
     void shutdown() {
+        if (fixedPrimitives != null) {
+            fixedPrimitives.shutdown();
+            fixedPrimitives = null;
+        }
         for (MeshBuffers mesh : buffers.values()) { glDeleteBuffers(mesh.positionVbo()); glDeleteBuffers(mesh.uvVbo()); glDeleteBuffers(mesh.indexBuffer()); }
-        buffers.clear(); skinnedModels.clear(); staticModels.clear(); firstPersonTransitions.clear();
+        for (MeshBuffers mesh : staticBuffers.values()) { glDeleteBuffers(mesh.positionVbo()); glDeleteBuffers(mesh.uvVbo()); glDeleteBuffers(mesh.indexBuffer()); }
+        buffers.clear(); staticBuffers.clear(); skinnedModels.clear(); staticModels.clear(); firstPersonTransitions.clear();
         warnedFirstPersonFallbacks.clear();
     }
 
@@ -842,5 +1215,11 @@ final class LwjglBattleSceneRenderer {
     ) { }
 
     private record Position(double x, double y, double z) { }
-    private record MeshBuffers(int positionVbo, int uvVbo, int indexBuffer) { }
+    private record MeshBuffers(
+            int positionVbo,
+            int uvVbo,
+            int indexBuffer,
+            FloatBuffer positionStaging,
+            int indexCount
+    ) { }
 }

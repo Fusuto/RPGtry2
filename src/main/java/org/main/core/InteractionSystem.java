@@ -254,40 +254,13 @@ public final class InteractionSystem {
         return new Interaction(new AnvilInteractionContent(gameState)).allowCharacterMenuOverlay();
     }
 
-    public static Interaction postBattleMenu(GameState gameState, Monster monster, int experienceReward, int hpLost) {
-        List<InteractionOption> options = new ArrayList<>();
-        PlayerCharacter player = gameState == null ? null : gameState.getPlayerCharacter();
-
-        options.add(option("Butcher Random Limb", () -> resolveButchery(gameState, monster, null)));
-
-        if (player != null) {
-            for (LimbSlot slot : ButcherySystem.unlockedButcheryTargets(player)) {
-                options.add(option("Target " + slot.getDisplayName(), () -> resolveButchery(gameState, monster, slot)));
-            }
+    public static Interaction corpseLoot(GameState gameState, MapEntity corpseEntity) {
+        if (gameState == null || corpseEntity == null || !corpseEntity.isCorpse()) {
+            return null;
         }
-
-        options.add(closeOption("Leave Remains"));
-
-        String bodyText = "Victory.\nXP earned: "
-                + Math.max(0, experienceReward)
-                + "\nHP lost: "
-                + Math.max(0, hpLost)
-                + "\nYou can attempt to butcher the "
-                + (monster == null ? "creature" : monster.getName())
-                + " for a graftable limb.";
-
-        InteractionModel model = new InteractionModel(
-                "Battle Results",
-                bodyText,
-                null,
-                null,
-                null,
-                null,
-                true,
-                options
-        );
-
-        return new Interaction(new StaticInteractionContent(model));
+        gameState.setActiveCorpseEntity(corpseEntity);
+        return new Interaction(new CorpseLootInteractionContent(gameState, corpseEntity))
+                .onClose(() -> gameState.discardCorpse(corpseEntity));
     }
 
     public static Interaction graftMenu(GameState gameState, LimbItem limb, Runnable removeLimbFromInventory) {
@@ -325,30 +298,6 @@ public final class InteractionSystem {
                 true,
                 options
         )));
-    }
-
-    private static void resolveButchery(GameState gameState, Monster monster, LimbSlot requestedSlot) {
-        if (gameState == null || gameState.getPlayerCharacter() == null) {
-            return;
-        }
-
-        var result = ButcherySystem.butcher(gameState.getPlayerCharacter(), monster, requestedSlot);
-        String message;
-
-        if (result.isPresent()) {
-            LimbItem limb = result.get();
-            boolean stored = gameState.getInventory().addItem(limb);
-            if (!stored) {
-                gameState.addEntity(new MapEntity(limb, gameState.getPlayerX(), gameState.getPlayerY()));
-            }
-            message = stored
-                    ? "Recovered " + limb.getCondition().getDisplayName() + " " + limb.getName() + "."
-                    : "Recovered " + limb.getName() + ", but your inventory is full. It falls to the floor.";
-        } else {
-            message = "The butchery fails and no usable limb remains.";
-        }
-
-        gameState.openInteraction(prompt("Butchery", message, closeOption("Continue")));
     }
 
     private static void resolveGraft(
@@ -398,6 +347,8 @@ public final class InteractionSystem {
         private boolean characterMenuOverlayAllowed = false;
         private boolean gameplayPaused = false;
         private boolean opensOverlay = true;
+        private Runnable closeAction;
+        private Runnable afterSelectionAction;
 
         private Interaction(InteractionContent content) {
             this.content = content;
@@ -416,7 +367,13 @@ public final class InteractionSystem {
                 return;
             }
 
-            content.selectOption(optionIndex, this, alternateAction);
+            try {
+                content.selectOption(optionIndex, this, alternateAction);
+            } finally {
+                if (afterSelectionAction != null) {
+                    afterSelectionAction.run();
+                }
+            }
         }
 
         public String getSelectionSoundPath() {
@@ -473,6 +430,14 @@ public final class InteractionSystem {
             return content.handleMousePressed(e, this, windowBounds);
         }
 
+        public boolean handleMouseDragged(MouseEvent e, Rectangle windowBounds) {
+            return content.handleMouseDragged(e, this, windowBounds);
+        }
+
+        public boolean handleMouseReleased(MouseEvent e, Rectangle windowBounds) {
+            return content.handleMouseReleased(e, this, windowBounds);
+        }
+
         public boolean handleMouseMoved(Point point, Rectangle windowBounds) {
             return content.handleMouseMoved(point, this, windowBounds);
         }
@@ -482,7 +447,23 @@ public final class InteractionSystem {
         }
 
         public void close() {
+            if (closed) {
+                return;
+            }
             closed = true;
+            if (closeAction != null) {
+                closeAction.run();
+            }
+        }
+
+        public Interaction onClose(Runnable action) {
+            closeAction = action;
+            return this;
+        }
+
+        public Interaction onAfterSelection(Runnable action) {
+            afterSelectionAction = action;
+            return this;
         }
 
         public boolean isClosed() {
@@ -500,6 +481,14 @@ public final class InteractionSystem {
         }
 
         default boolean handleMousePressed(MouseEvent e, Interaction interaction, Rectangle windowBounds) {
+            return false;
+        }
+
+        default boolean handleMouseDragged(MouseEvent e, Interaction interaction, Rectangle windowBounds) {
+            return false;
+        }
+
+        default boolean handleMouseReleased(MouseEvent e, Interaction interaction, Rectangle windowBounds) {
             return false;
         }
 
@@ -958,6 +947,18 @@ public final class InteractionSystem {
             }
 
             return false;
+        }
+
+        public boolean handleMouseDragged(MouseEvent e, Interaction interaction) {
+            return interaction != null
+                    && !interaction.isClosed()
+                    && interaction.handleMouseDragged(e, lastWindowBounds);
+        }
+
+        public boolean handleMouseReleased(MouseEvent e, Interaction interaction) {
+            return interaction != null
+                    && !interaction.isClosed()
+                    && interaction.handleMouseReleased(e, lastWindowBounds);
         }
 
         public boolean handleMouseWheelMoved(MouseWheelEvent e, Interaction interaction) {
@@ -1531,6 +1532,9 @@ public final class InteractionSystem {
         }
 
         public Interaction create(String interactionId, GameState gameState, MapEntity entity, int tileX, int tileY) {
+            if (entity != null && entity.isCorpse()) {
+                return corpseLoot(gameState, entity);
+            }
             refreshAuthoredNpcContent(gameState, entity);
             if (entity != null
                     && gameState != null
@@ -2312,7 +2316,8 @@ public final class InteractionSystem {
             StringBuilder rewardText = new StringBuilder();
             InventorySystem.Inventory.Snapshot commitSnapshot = inventory.snapshot();
             try {
-                if (!takeItemId.isBlank() && !removeAuthoredItem(gameState, takeItemId, 1)) {
+                if (!takeItemId.isBlank()
+                        && !removeAuthoredItem(gameState, takeItemId, takeItemAmount)) {
                     throw new IllegalStateException("Item removal failed.");
                 }
                 for (Map.Entry<String, MapDesignLibrary.RewardDefinition> entry : pending) {
@@ -2808,8 +2813,12 @@ public final class InteractionSystem {
                 g.setColor(canCraft ? new Color(218, 196, 126) : new Color(150, 55, 55));
                 g.drawRoundRect(slot.x, slot.y, slot.width, slot.height, 6, 6);
 
-                BufferedImage icon = recipe.previewItem() == null ? null : recipe.previewItem().getIcon();
-                if (icon != null) {
+                InventorySystem.Item previewItem = recipe.previewItem();
+                BufferedImage icon = previewItem == null ? null : previewItem.getIcon();
+                if (ItemModelIconRenderQueue.request(
+                        previewItem, slot.x + 7, slot.y + 7, slot.width - 14, slot.height - 14)) {
+                    // Drawn as a live mesh after the Java2D overlay.
+                } else if (icon != null) {
                     g.drawImage(icon, slot.x + 7, slot.y + 7, slot.width - 14, slot.height - 14, null);
                 }
 
@@ -3331,6 +3340,343 @@ public final class InteractionSystem {
         }
     }
 
+    private static final class CorpseLootInteractionContent implements InteractionContent {
+        private static final int GRID_COLUMNS = 5;
+        private static final int SLOT_SIZE = 30;
+        private static final int SLOT_GAP = 3;
+        private static final int BUTTON_HEIGHT = 30;
+
+        private final GameState gameState;
+        private final MapEntity corpseEntity;
+        private final CorpseState corpse;
+        private final InteractionModel model;
+        private final List<Rectangle> corpseSlots = new ArrayList<>();
+        private final List<Rectangle> inventorySlots = new ArrayList<>();
+        private final List<Rectangle> methodBounds = new ArrayList<>();
+        private Rectangle closeBounds = new Rectangle();
+        private Rectangle butcherLastBounds = new Rectangle();
+        private Rectangle butcherBounds = new Rectangle();
+        private Point mousePoint;
+        private int draggedCorpseIndex = -1;
+        private boolean methodPickerOpen;
+        private String examineTitle = "";
+        private String examineText = "";
+
+        private CorpseLootInteractionContent(GameState gameState, MapEntity corpseEntity) {
+            this.gameState = gameState;
+            this.corpseEntity = corpseEntity;
+            this.corpse = corpseEntity.getCorpseState();
+            this.model = new InteractionModel(
+                    corpseEntity.getName(),
+                    "",
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    true,
+                    List.of());
+        }
+
+        @Override
+        public InteractionModel getModel() {
+            return model;
+        }
+
+        @Override
+        public void selectOption(int optionIndex, Interaction interaction, boolean alternateAction) {
+        }
+
+        @Override
+        public boolean handleKeyPressed(KeyEvent e, Interaction interaction) {
+            if (e.getKeyCode() == KeyEvent.VK_ESCAPE && methodPickerOpen) {
+                methodPickerOpen = false;
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public boolean handleMousePressed(MouseEvent e, Interaction interaction, Rectangle windowBounds) {
+            Point point = e.getPoint();
+            mousePoint = point;
+
+            if (methodPickerOpen) {
+                List<ButcherySystem.ButcheryMethod> methods =
+                        ButcherySystem.unlockedMethods(gameState.getPlayerCharacter(), corpse.monster());
+                for (int index = 0; index < methodBounds.size() && index < methods.size(); index++) {
+                    if (methodBounds.get(index).contains(point)) {
+                        methodPickerOpen = false;
+                        executeButchery(methods.get(index), interaction);
+                        return true;
+                    }
+                }
+                methodPickerOpen = false;
+                return true;
+            }
+
+            if (closeBounds.contains(point)) {
+                interaction.close();
+                return true;
+            }
+
+            if (!corpse.butcheryAttempted() && butcherLastBounds.contains(point)) {
+                executeButchery(gameState.getLastButcheryMethod(), interaction);
+                return true;
+            }
+            if (!corpse.butcheryAttempted() && butcherBounds.contains(point)) {
+                methodPickerOpen = true;
+                return true;
+            }
+
+            for (int index = 0; index < corpseSlots.size(); index++) {
+                if (!corpseSlots.get(index).contains(point)) {
+                    continue;
+                }
+                InventorySystem.Item item = corpse.itemAt(index);
+                if (item == null) {
+                    return true;
+                }
+                if (SwingUtilities.isRightMouseButton(e)) {
+                    examineTitle = item.getName();
+                    examineText = item.getExamineText();
+                    if (item instanceof LimbItem limb) {
+                        examineText = (examineText == null ? "" : examineText)
+                                + "\nCondition: " + limb.getCondition().getDisplayName();
+                    }
+                    return true;
+                }
+                if (e.isShiftDown()) {
+                    transfer(index, null, interaction);
+                    return true;
+                }
+                draggedCorpseIndex = index;
+                return true;
+            }
+            return windowBounds.contains(point);
+        }
+
+        @Override
+        public boolean handleMouseDragged(MouseEvent e, Interaction interaction, Rectangle windowBounds) {
+            if (draggedCorpseIndex < 0) {
+                return false;
+            }
+            mousePoint = e.getPoint();
+            return true;
+        }
+
+        @Override
+        public boolean handleMouseReleased(MouseEvent e, Interaction interaction, Rectangle windowBounds) {
+            if (draggedCorpseIndex < 0) {
+                return false;
+            }
+            mousePoint = e.getPoint();
+            for (int index = 0; index < inventorySlots.size(); index++) {
+                if (inventorySlots.get(index).contains(mousePoint)) {
+                    transfer(draggedCorpseIndex, index, interaction);
+                    draggedCorpseIndex = -1;
+                    return true;
+                }
+            }
+            draggedCorpseIndex = -1;
+            return true;
+        }
+
+        @Override
+        public boolean handleMouseMoved(Point point, Interaction interaction, Rectangle windowBounds) {
+            mousePoint = point;
+            return windowBounds.contains(point);
+        }
+
+        private void transfer(int corpseIndex, Integer inventoryIndex, Interaction interaction) {
+            boolean transferred = corpse.transferTo(gameState.getInventory(), corpseIndex, inventoryIndex);
+            corpse.restoreButcheryState(
+                    corpse.butcheryAttempted(),
+                    transferred ? "Item moved to your inventory." : "Your inventory cannot hold that item there.");
+            if (corpse.butcheryAttempted() && corpse.isEmpty()) {
+                interaction.close();
+            }
+        }
+
+        private void executeButchery(ButcherySystem.ButcheryMethod requested, Interaction interaction) {
+            ButcherySystem.ButcheryMethod method = ButcherySystem.compatibleMethod(
+                    gameState.getPlayerCharacter(),
+                    corpse.monster(),
+                    requested);
+            gameState.setLastButcheryMethod(method);
+            ButcherySystem.ButcheryResult result = ButcherySystem.butcher(
+                    gameState,
+                    gameState.getPlayerCharacter(),
+                    corpse.monster(),
+                    method);
+            corpse.markButcheryAttempted(result.message());
+            if (result.output() != null) {
+                corpse.append(result.output());
+            }
+            if (corpse.isEmpty()) {
+                interaction.close();
+            }
+        }
+
+        @Override
+        public void drawCustom(Graphics2D g, Interaction interaction, Rectangle windowBounds) {
+            corpseSlots.clear();
+            inventorySlots.clear();
+            methodBounds.clear();
+
+            int gridWidth = GRID_COLUMNS * SLOT_SIZE + (GRID_COLUMNS - 1) * SLOT_GAP;
+            int leftX = windowBounds.x + 28;
+            int rightX = windowBounds.x + windowBounds.width - 28 - gridWidth;
+            int gridY = windowBounds.y + 66;
+            int availableRows = Math.max(2, Math.min(5,
+                    (windowBounds.height - 132) / (SLOT_SIZE + SLOT_GAP)));
+
+            g.setFont(g.getFont().deriveFont(Font.BOLD, 14f));
+            g.setColor(new Color(236, 224, 190));
+            g.drawString("Remains", leftX, gridY - 10);
+            g.drawString("Inventory", rightX, gridY - 10);
+
+            int visibleSlots = GRID_COLUMNS * availableRows;
+            for (int index = 0; index < visibleSlots; index++) {
+                Rectangle corpseSlot = gridSlot(leftX, gridY, index);
+                Rectangle inventorySlot = gridSlot(rightX, gridY, index);
+                corpseSlots.add(corpseSlot);
+                inventorySlots.add(inventorySlot);
+                drawSlot(g, corpseSlot, corpse.itemAt(index), index == draggedCorpseIndex);
+                drawSlot(g, inventorySlot, gameState.getInventory().getItem(index), false);
+            }
+
+            int bottomY = windowBounds.y + windowBounds.height - 44;
+            closeBounds = new Rectangle(windowBounds.x + windowBounds.width - 34, windowBounds.y + 10, 22, 22);
+            butcherLastBounds = new Rectangle(leftX, bottomY, 142, BUTTON_HEIGHT);
+            butcherBounds = new Rectangle(leftX + 150, bottomY, 112, BUTTON_HEIGHT);
+            drawButton(g, butcherLastBounds, "Butcher Last", !corpse.butcheryAttempted());
+            drawButton(g, butcherBounds, "Butcher", !corpse.butcheryAttempted());
+            drawButton(g, closeBounds, "X", true);
+
+            String status = corpse.statusMessage();
+            if (status != null && !status.isBlank()) {
+                g.setFont(g.getFont().deriveFont(Font.PLAIN, 12f));
+                g.setColor(new Color(220, 210, 185));
+                g.drawString(trimForWidth(g, status, Math.max(120, rightX - leftX - 18)),
+                        leftX, bottomY - 10);
+            }
+
+            if (!examineTitle.isBlank()) {
+                int tooltipWidth = Math.min(260, windowBounds.width / 3);
+                Rectangle tooltip = new Rectangle(
+                        rightX,
+                        bottomY - 72,
+                        tooltipWidth,
+                        58);
+                g.setColor(new Color(18, 20, 24, 240));
+                g.fillRoundRect(tooltip.x, tooltip.y, tooltip.width, tooltip.height, 8, 8);
+                g.setColor(new Color(226, 205, 145));
+                g.setFont(g.getFont().deriveFont(Font.BOLD, 12f));
+                g.drawString(trimForWidth(g, examineTitle, tooltip.width - 12), tooltip.x + 6, tooltip.y + 18);
+                g.setFont(g.getFont().deriveFont(Font.PLAIN, 11f));
+                g.setColor(Color.WHITE);
+                g.drawString(trimForWidth(g, examineText, tooltip.width - 12), tooltip.x + 6, tooltip.y + 38);
+            }
+
+            if (draggedCorpseIndex >= 0 && mousePoint != null) {
+                InventorySystem.Item dragged = corpse.itemAt(draggedCorpseIndex);
+                if (ItemModelIconRenderQueue.request(
+                        dragged, mousePoint.x - 16, mousePoint.y - 16, 32, 32)) {
+                    // Drawn as a live mesh after the Java2D overlay.
+                } else if (dragged != null && dragged.getIcon() != null) {
+                    g.drawImage(dragged.getIcon(), mousePoint.x - 16, mousePoint.y - 16, 32, 32, null);
+                }
+            }
+
+            if (methodPickerOpen) {
+                drawMethodPicker(g, windowBounds);
+            }
+        }
+
+        private void drawMethodPicker(Graphics2D g, Rectangle windowBounds) {
+            List<ButcherySystem.ButcheryMethod> methods =
+                    ButcherySystem.unlockedMethods(gameState.getPlayerCharacter(), corpse.monster());
+            int width = 230;
+            int rowHeight = 30;
+            int height = 40 + methods.size() * rowHeight;
+            int x = windowBounds.x + (windowBounds.width - width) / 2;
+            int y = windowBounds.y + (windowBounds.height - height) / 2;
+            g.setColor(new Color(20, 22, 27, 248));
+            g.fillRoundRect(x, y, width, height, 10, 10);
+            g.setColor(new Color(190, 160, 94));
+            g.drawRoundRect(x, y, width, height, 10, 10);
+            g.setFont(g.getFont().deriveFont(Font.BOLD, 13f));
+            g.drawString("Choose butchery method", x + 12, y + 24);
+            for (int index = 0; index < methods.size(); index++) {
+                ButcherySystem.ButcheryMethod method = methods.get(index);
+                Rectangle bounds = new Rectangle(x + 8, y + 34 + index * rowHeight, width - 16, rowHeight - 4);
+                methodBounds.add(bounds);
+                drawButton(g, bounds,
+                        method.displayName() + "  (Lv " + method.requiredLevel() + ")",
+                        true);
+            }
+        }
+
+        private Rectangle gridSlot(int x, int y, int index) {
+            int column = index % GRID_COLUMNS;
+            int row = index / GRID_COLUMNS;
+            return new Rectangle(
+                    x + column * (SLOT_SIZE + SLOT_GAP),
+                    y + row * (SLOT_SIZE + SLOT_GAP),
+                    SLOT_SIZE,
+                    SLOT_SIZE);
+        }
+
+        private void drawSlot(Graphics2D g, Rectangle bounds, InventorySystem.Item item, boolean dragged) {
+            g.setColor(dragged ? new Color(96, 78, 45) : new Color(38, 42, 48));
+            g.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+            g.setColor(new Color(116, 102, 72));
+            g.drawRect(bounds.x, bounds.y, bounds.width, bounds.height);
+            if (item == null) {
+                return;
+            }
+            if (ItemModelIconRenderQueue.request(
+                    item, bounds.x + 3, bounds.y + 3, bounds.width - 6, bounds.height - 6)) {
+                // Drawn as a live mesh after the Java2D overlay.
+            } else if (item.getIcon() != null) {
+                g.drawImage(item.getIcon(), bounds.x + 3, bounds.y + 3, bounds.width - 6, bounds.height - 6, null);
+            }
+            if (item.isStackable() && item.getQuantity() > 1) {
+                String quantity = String.valueOf(item.getQuantity());
+                g.setFont(g.getFont().deriveFont(Font.BOLD, 10f));
+                g.setColor(Color.WHITE);
+                g.drawString(quantity,
+                        bounds.x + bounds.width - g.getFontMetrics().stringWidth(quantity) - 3,
+                        bounds.y + bounds.height - 3);
+            }
+        }
+
+        private void drawButton(Graphics2D g, Rectangle bounds, String label, boolean enabled) {
+            g.setColor(enabled ? new Color(82, 66, 40) : new Color(48, 48, 48));
+            g.fillRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 7, 7);
+            g.setColor(enabled ? new Color(205, 172, 104) : new Color(100, 100, 100));
+            g.drawRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 7, 7);
+            g.setFont(g.getFont().deriveFont(Font.BOLD, 12f));
+            int textX = bounds.x + (bounds.width - g.getFontMetrics().stringWidth(label)) / 2;
+            int textY = bounds.y + (bounds.height + g.getFontMetrics().getAscent()) / 2 - 2;
+            g.drawString(label, textX, textY);
+        }
+
+        private String trimForWidth(Graphics2D g, String text, int width) {
+            String safe = text == null ? "" : text.replace('\n', ' ').trim();
+            if (g.getFontMetrics().stringWidth(safe) <= width) {
+                return safe;
+            }
+            String suffix = "…";
+            while (!safe.isEmpty()
+                    && g.getFontMetrics().stringWidth(safe + suffix) > width) {
+                safe = safe.substring(0, safe.length() - 1);
+            }
+            return safe + suffix;
+        }
+    }
+
     private static class ViewInteractionContent extends SettingsMenuContent {
         private static final int FOV_STEP = 5;
         private static final int MIN_FOV = 45;
@@ -3342,6 +3688,9 @@ public final class InteractionSystem {
         private static final int DEFAULT_DEPTH = 12;
         private static final boolean DEFAULT_LIGHTING_ENABLED = true;
         private static final boolean DEFAULT_FOG_ENABLED = true;
+        private static final boolean DEFAULT_VSYNC_ENABLED = true;
+        private static final RenderSettings.FrameLimit DEFAULT_FRAME_LIMIT = RenderSettings.FrameLimit.DISPLAY;
+        private static final boolean DEFAULT_PERFORMANCE_OVERLAY_VISIBLE = false;
 
         private ViewInteractionContent(
                 SoundSystem soundSystem,
@@ -3381,6 +3730,10 @@ public final class InteractionSystem {
                             ),
                             stayOpenOption(toggleLabel("Lighting", lightingEnabled()), this::toggleLighting),
                             stayOpenOption(toggleLabel("Fog", fogEnabled()), this::toggleFog),
+                            stayOpenOption(toggleLabel("VSync", vSyncEnabled()), this::toggleVSync),
+                            stayOpenOption("Frame Limit [" + frameLimit().displayName() + "]", this::cycleFrameLimit),
+                            stayOpenOption(toggleLabel("Performance Overlay", performanceOverlayVisible()),
+                                    this::togglePerformanceOverlay),
                             stayOpenOption("Reset View Defaults", this::resetDefaults),
                             backToSettingsOption(),
                             closeOption("Close")
@@ -3415,6 +3768,22 @@ public final class InteractionSystem {
             return GameConfiguration.booleanValue("lighting.fog.enabled", DEFAULT_FOG_ENABLED);
         }
 
+        private boolean vSyncEnabled() {
+            return GameConfiguration.booleanValue("renderer.vsync.enabled", DEFAULT_VSYNC_ENABLED);
+        }
+
+        private RenderSettings.FrameLimit frameLimit() {
+            return RenderSettings.FrameLimit.parse(
+                    GameConfiguration.stringValue("renderer.frameLimit", DEFAULT_FRAME_LIMIT.name()));
+        }
+
+        private boolean performanceOverlayVisible() {
+            return gameState() == null
+                    ? GameConfiguration.booleanValue(
+                            "renderer.performanceOverlay.visible", DEFAULT_PERFORMANCE_OVERLAY_VISIBLE)
+                    : gameState().isPerformanceOverlayVisible();
+        }
+
         private void adjustFov(int delta) {
             GameConfiguration.setValue("renderer.prototype.fovDegrees", String.valueOf(clamp(fovValue() + delta, MIN_FOV, MAX_FOV)));
         }
@@ -3431,11 +3800,33 @@ public final class InteractionSystem {
             GameConfiguration.setValue("lighting.fog.enabled", String.valueOf(!fogEnabled()));
         }
 
+        private void toggleVSync() {
+            RenderSettings.saveVSync(!vSyncEnabled());
+        }
+
+        private void cycleFrameLimit() {
+            RenderSettings.saveFrameLimit(frameLimit().next());
+        }
+
+        private void togglePerformanceOverlay() {
+            boolean visible = !performanceOverlayVisible();
+            RenderSettings.savePerformanceOverlayVisible(visible);
+            if (gameState() != null) {
+                gameState().setPerformanceOverlayVisible(visible);
+            }
+        }
+
         private void resetDefaults() {
             GameConfiguration.setValue("renderer.prototype.fovDegrees", String.valueOf(DEFAULT_FOV));
             GameConfiguration.setValue("renderer.prototype.maxDepth", String.valueOf(DEFAULT_DEPTH));
             GameConfiguration.setValue("lighting.enabled", String.valueOf(DEFAULT_LIGHTING_ENABLED));
             GameConfiguration.setValue("lighting.fog.enabled", String.valueOf(DEFAULT_FOG_ENABLED));
+            RenderSettings.saveVSync(DEFAULT_VSYNC_ENABLED);
+            RenderSettings.saveFrameLimit(DEFAULT_FRAME_LIMIT);
+            RenderSettings.savePerformanceOverlayVisible(DEFAULT_PERFORMANCE_OVERLAY_VISIBLE);
+            if (gameState() != null) {
+                gameState().setPerformanceOverlayVisible(DEFAULT_PERFORMANCE_OVERLAY_VISIBLE);
+            }
         }
 
         private String rangeLabel(String label, int value, int min, int max, String suffix) {

@@ -1,20 +1,15 @@
 package org.main.core;
 
 import org.main.battle.BattleSkill;
-import org.main.content.BattleContentCatalog;
+import org.main.content.EnemyButcheryProfile;
+import org.main.battle.DifficultyResolver;
 import org.main.monsters.Monster;
 
 import java.util.ArrayList;
-import java.util.EnumMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
 public final class ButcherySystem {
-    private static final String DEFAULT_LIMB_ICON = "assets/images/monster/Ancient/Oct-5-2010/player/hand1/misc/head.png";
-    private static final double NO_STAT_ALLOCATION = 0.0;
-
     private ButcherySystem() {
     }
 
@@ -38,57 +33,152 @@ public final class ButcherySystem {
         }
     }
 
-    public static List<LimbSlot> unlockedButcheryTargets(PlayerCharacter player) {
-        int level = player == null ? 1 : player.getSkillLevel(CharacterSkill.BUTCHERING);
-        List<LimbSlot> slots = new ArrayList<>();
+    public enum ButcheryMethod {
+        BASIC("Basic / Random", 1, null),
+        TARGET_LEGS("Target Legs", 10, LimbSlot.LEGS),
+        TARGET_LEFT_ARM("Target Left Arm", 20, LimbSlot.LEFT_ARM),
+        TARGET_RIGHT_ARM("Target Right Arm", 20, LimbSlot.RIGHT_ARM),
+        TARGET_BODY("Target Body", 30, LimbSlot.BODY),
+        TARGET_HEAD("Target Head", 40, LimbSlot.HEAD);
 
-        if (level >= targetLegsLevel()) {
-            slots.add(LimbSlot.LEGS);
+        private final String displayName;
+        private final int requiredLevel;
+        private final LimbSlot targetSlot;
+
+        ButcheryMethod(String displayName, int requiredLevel, LimbSlot targetSlot) {
+            this.displayName = displayName;
+            this.requiredLevel = requiredLevel;
+            this.targetSlot = targetSlot;
         }
 
-        if (level >= targetArmsLevel()) {
-            slots.add(LimbSlot.LEFT_ARM);
-            slots.add(LimbSlot.RIGHT_ARM);
+        public String displayName() {
+            return displayName;
         }
 
-        if (level >= targetBodyLevel()) {
-            slots.add(LimbSlot.BODY);
+        public int requiredLevel() {
+            return requiredLevel;
         }
 
-        if (level >= targetHeadLevel()) {
-            slots.add(LimbSlot.HEAD);
+        public LimbSlot targetSlot() {
+            return targetSlot;
         }
-
-        return slots;
     }
 
-    public static Optional<LimbItem> butcher(PlayerCharacter player, Monster monster, LimbSlot requestedSlot) {
-        if (monster == null) {
-            return Optional.empty();
+    public static List<ButcheryMethod> unlockedMethods(PlayerCharacter player, Monster monster) {
+        int level = player == null ? 1 : player.getSkillLevel(CharacterSkill.BUTCHERING);
+        if (monster != null
+                && monster.getButcheryProfile().type() == EnemyButcheryProfile.Type.LEATHER) {
+            return List.of(ButcheryMethod.BASIC);
+        }
+        List<ButcheryMethod> methods = new ArrayList<>();
+        for (ButcheryMethod method : ButcheryMethod.values()) {
+            if (level >= method.requiredLevel()) {
+                methods.add(method);
+            }
+        }
+        return List.copyOf(methods);
+    }
+
+    public static ButcheryMethod compatibleMethod(
+            PlayerCharacter player,
+            Monster monster,
+            ButcheryMethod requested
+    ) {
+        ButcheryMethod candidate = requested == null ? ButcheryMethod.BASIC : requested;
+        return unlockedMethods(player, monster).contains(candidate) ? candidate : ButcheryMethod.BASIC;
+    }
+
+    /**
+     * Executes the authored corpse yield. The caller owns the corpse and is
+     * responsible for enforcing the one-attempt rule.
+     */
+    public static ButcheryResult butcher(
+            GameState gameState,
+            PlayerCharacter player,
+            Monster monster,
+            ButcheryMethod requestedMethod
+    ) {
+        if (gameState == null || player == null || monster == null) {
+            return ButcheryResult.failure("There is nothing usable to butcher.");
         }
 
-        if (player == null) {
-            return Optional.empty();
-        }
-
+        ButcheryMethod method = compatibleMethod(player, monster, requestedMethod);
         int butcheringLevel = Math.max(1, player.getSkillLevel(CharacterSkill.BUTCHERING));
-        double difficulty = monsterDifficulty(monster);
-        double successChance = clamp(
-                butcheryBaseSuccess()
-                        + butcheringLevel * butcherySuccessPerLevel()
-                        - difficulty * butcheryDifficultyPenalty(),
-                butcheryMinSuccess(),
-                butcheryMaxSuccess()
-        );
+        int enemyLevel = DifficultyResolver.rateMonster(monster).level();
+        int difference = butcheringLevel - enemyLevel;
+        double successChance = successChanceForDifference(difference);
         player.addSkillExperience(CharacterSkill.BUTCHERING, butcheryBaseXp() + monster.getXpReward());
 
         if (ThreadLocalRandom.current().nextDouble() > successChance) {
-            return Optional.empty();
+            return ButcheryResult.failure("The butchery fails and no usable material remains.");
         }
 
-        LimbSlot slot = requestedSlot == null ? randomSlot() : requestedSlot;
-        GearDurability condition = rollCondition(butcheringLevel, difficulty);
-        return Optional.of(createCustomLimb(monster, slot, condition));
+        EnemyButcheryProfile profile = monster.getButcheryProfile();
+        if (profile.type() == EnemyButcheryProfile.Type.LEATHER) {
+            InventorySystem.Item leather = gameState.createItemByNameOrId(profile.leatherItemId());
+            if (leather == null) {
+                return ButcheryResult.failure("The authored leather yield is unavailable.");
+            }
+            int quantity = leatherQuantity(difference);
+            if (leather.isStackable() && quantity > 1) {
+                leather.addQuantity(quantity - 1);
+            }
+            return ButcheryResult.success(
+                    leather,
+                    "Recovered " + quantity + " " + leather.getName() + ".");
+        }
+
+        LimbSlot slot = method.targetSlot() == null ? randomSlot() : method.targetSlot();
+        String limbId = profile.productId(slot);
+        InventorySystem.Item authored = gameState.createItemByNameOrId(limbId);
+        if (!(authored instanceof LimbItem limb)) {
+            return ButcheryResult.failure("The authored " + slot.getDisplayName() + " yield is unavailable.");
+        }
+        GearDurability condition = rollCondition(butcheringLevel, monsterDifficulty(monster));
+        LimbItem recovered = limb.withCondition(condition).withSkills(inheritedSkills(limb));
+        return ButcheryResult.success(
+                recovered,
+                "Recovered " + condition.getDisplayName() + " " + recovered.getName() + ".");
+    }
+
+    public static double successChanceForDifference(int difference) {
+        if (difference <= -4) {
+            return 0.01;
+        }
+        if (difference <= 0) {
+            return (50 + difference * 10) / 100.0;
+        }
+        if (difference >= 10) {
+            return 1.0;
+        }
+        return (50 + difference * 5) / 100.0;
+    }
+
+    public static int leatherQuantity(int difference) {
+        int quantity = 1;
+        double secondChance = clamp(0.25 + difference * 0.05, 0.05, 0.75);
+        if (ThreadLocalRandom.current().nextDouble() > secondChance) {
+            return quantity;
+        }
+        quantity++;
+        double thirdChance = clamp(0.05 + difference * 0.05, 0.0, 0.50);
+        if (ThreadLocalRandom.current().nextDouble() <= thirdChance) {
+            quantity++;
+        }
+        return quantity;
+    }
+
+    private static List<BattleSkill> inheritedSkills(LimbItem limb) {
+        if (limb == null || limb.getSkills().isEmpty()) {
+            return List.of();
+        }
+        List<BattleSkill> inherited = new ArrayList<>();
+        for (BattleSkill skill : limb.getSkills()) {
+            if (ThreadLocalRandom.current().nextDouble() <= skillInheritChance()) {
+                inherited.add(skill);
+            }
+        }
+        return List.copyOf(inherited);
     }
 
     public static GraftResult graft(PlayerCharacter player, LimbItem limb, GraftApproach approach) {
@@ -118,115 +208,6 @@ public final class ButcherySystem {
 
         player.equipLimb(graftedLimb);
         return new GraftResult(true, "Grafted " + graftedLimb.getName() + " onto " + graftedLimb.getLimbSlot().getDisplayName() + ".");
-    }
-
-    public static LimbItem recreateLimb(Monster monster, LimbSlot slot, GearDurability condition) {
-        return createCustomLimb(monster, slot, condition, false);
-    }
-
-    private static LimbItem createCustomLimb(Monster monster, LimbSlot slot, GearDurability condition) {
-        return createCustomLimb(monster, slot, condition, true);
-    }
-
-    private static LimbItem createCustomLimb(Monster monster, LimbSlot slot, GearDurability condition, boolean rollSkills) {
-        EnumMap<PlayerStat, Integer> stats = statsFor(monster.getStatsView(), slot);
-        String name = monster.getName() + " " + slot.getDisplayName();
-
-        return new LimbItem(
-                name,
-                monster.getCustomId(),
-                monster.getName(),
-                slot,
-                stats,
-                rollSkills ? skillsFor(monster, slot) : List.of(),
-                condition,
-                DEFAULT_LIMB_ICON,
-                monster.getDescription(),
-                monster.getPaperDollSourcePath()
-        );
-    }
-
-    private static EnumMap<PlayerStat, Integer> statsFor(Map<PlayerStat, Integer> sourceStats, LimbSlot slot) {
-        EnumMap<PlayerStat, Integer> stats = emptyStats();
-
-        for (PlayerStat stat : PlayerStat.values()) {
-            stats.put(stat, allocatedStat(sourceStats.getOrDefault(stat, 0), stat, slot));
-        }
-
-        return stats;
-    }
-
-
-    private static EnumMap<PlayerStat, Integer> emptyStats() {
-        EnumMap<PlayerStat, Integer> stats = new EnumMap<>(PlayerStat.class);
-        for (PlayerStat stat : PlayerStat.values()) {
-            stats.put(stat, 0);
-        }
-
-        return stats;
-    }
-
-    private static int allocatedStat(int total, PlayerStat stat, LimbSlot slot) {
-        if (total <= 0) {
-            return 0;
-        }
-
-        double weight = allocationWeight(stat, slot);
-        if (weight <= 0.0) {
-            return 0;
-        }
-
-        int allocated = (int) Math.floor(total * weight);
-        return allocated == 0 ? 1 : allocated;
-    }
-
-    private static double allocationWeight(PlayerStat stat, LimbSlot slot) {
-        return switch (stat) {
-            case ATTACK -> switch (slot) {
-                case LEFT_ARM, RIGHT_ARM, HEAD -> configuredDouble("butchery.weight.attackArmOrHead", 0.35);
-                default -> NO_STAT_ALLOCATION;
-            };
-            case STRENGTH -> switch (slot) {
-                case LEFT_ARM, RIGHT_ARM -> configuredDouble("butchery.weight.strengthArm", 0.50);
-                default -> NO_STAT_ALLOCATION;
-            };
-            case DEFENSE -> switch (slot) {
-                case BODY -> configuredDouble("butchery.weight.defenseBody", 0.80);
-                case HEAD -> configuredDouble("butchery.weight.defenseHead", 0.20);
-                default -> NO_STAT_ALLOCATION;
-            };
-            case AGILITY -> switch (slot) {
-                case LEGS -> configuredDouble("butchery.weight.agilityLegs", 0.70);
-                case LEFT_ARM, RIGHT_ARM -> configuredDouble("butchery.weight.agilityArm", 0.15);
-                default -> NO_STAT_ALLOCATION;
-            };
-            case INTELLIGENCE -> slot == LimbSlot.HEAD ? configuredDouble("butchery.weight.intelligenceHead", 1.0) : NO_STAT_ALLOCATION;
-            case WILLPOWER -> switch (slot) {
-                case HEAD -> configuredDouble("butchery.weight.willpowerHead", 0.55);
-                case BODY -> configuredDouble("butchery.weight.willpowerBody", 0.35);
-                default -> NO_STAT_ALLOCATION;
-            };
-            case VITALITY -> switch (slot) {
-                case BODY -> configuredDouble("butchery.weight.vitalityBody", 0.80);
-                case LEGS -> configuredDouble("butchery.weight.vitalityLegs", 0.20);
-                default -> NO_STAT_ALLOCATION;
-            };
-        };
-    }
-
-    private static List<BattleSkill> skillsFor(Monster monster, LimbSlot slot) {
-        if (monster == null || slot != LimbSlot.HEAD) {
-            return List.of();
-        }
-
-        List<BattleSkill> skills = new ArrayList<>();
-        for (String skillId : monster.getSkillIds()) {
-            if (ThreadLocalRandom.current().nextDouble() <= skillInheritChance()) {
-                skills.add(BattleContentCatalog.createSkill(skillId));
-            }
-        }
-
-        return skills;
     }
 
     private static LimbSlot randomSlot() {
@@ -292,15 +273,6 @@ public final class ButcherySystem {
         return Math.max(min, Math.min(max, value));
     }
 
-    private static int targetLegsLevel() { return GameConfiguration.intValue("butchery.targetLegsLevel", 10); }
-    private static int targetArmsLevel() { return GameConfiguration.intValue("butchery.targetArmsLevel", 20); }
-    private static int targetBodyLevel() { return GameConfiguration.intValue("butchery.targetBodyLevel", 30); }
-    private static int targetHeadLevel() { return GameConfiguration.intValue("butchery.targetHeadLevel", 40); }
-    private static double butcheryBaseSuccess() { return configuredDouble("butchery.baseSuccess", 0.28); }
-    private static double butcherySuccessPerLevel() { return configuredDouble("butchery.successPerLevel", 0.025); }
-    private static double butcheryDifficultyPenalty() { return configuredDouble("butchery.difficultyPenalty", 0.006); }
-    private static double butcheryMinSuccess() { return configuredDouble("butchery.minSuccess", 0.08); }
-    private static double butcheryMaxSuccess() { return configuredDouble("butchery.maxSuccess", 0.90); }
     private static int butcheryBaseXp() { return GameConfiguration.intValue("butchery.baseXp", 12); }
     private static double graftConditionHelpMultiplier() { return configuredDouble("grafting.conditionHelpMultiplier", 0.20); }
     private static double graftBaseSuccess() { return configuredDouble("grafting.baseSuccess", 0.25); }
@@ -326,5 +298,19 @@ public final class ButcherySystem {
     }
 
     public record GraftResult(boolean success, String message) {
+    }
+
+    public record ButcheryResult(boolean success, InventorySystem.Item output, String message) {
+        public ButcheryResult {
+            message = message == null ? "" : message;
+        }
+
+        public static ButcheryResult success(InventorySystem.Item output, String message) {
+            return new ButcheryResult(output != null, output, message);
+        }
+
+        public static ButcheryResult failure(String message) {
+            return new ButcheryResult(false, null, message);
+        }
     }
 }

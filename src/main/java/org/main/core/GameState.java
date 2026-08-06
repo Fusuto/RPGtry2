@@ -50,6 +50,7 @@ public class GameState {
     private final Set<String> removedEntityKeys = new HashSet<>();
     private final Set<String> firedMapTriggerIds = new HashSet<>();
     private final QuestRuntime questRuntime = new QuestRuntime(this);
+    private boolean evaluatingLiveQuestConditions;
     private final InputBindings inputBindings = new InputBindings();
     private final WorldMessageLog worldMessageLog = new WorldMessageLog();
 
@@ -75,6 +76,7 @@ public class GameState {
     private MiniMapMode miniMapMode = MiniMapMode.DISCOVERED;
     private boolean[][] discoveredMiniMapTiles = new boolean[0][0];
     private boolean performanceOverlayVisible = false;
+    private long uiPresentationRevision;
 
     // 0 = north, 1 = east, 2 = south, 3 = west
     private int direction = 1;
@@ -133,6 +135,8 @@ public class GameState {
     private InteractionSystem.Interaction activeInteraction;
     private InteractionSystem.Interaction suspendedInteraction;
     private ShopSystem.ShopSession activeShop;
+    private MapEntity activeCorpseEntity;
+    private ButcherySystem.ButcheryMethod lastButcheryMethod;
 
     public enum GatheringToolType {
         MINING("mining"),
@@ -219,6 +223,7 @@ public class GameState {
         if (interaction == null) {
             return;
         }
+        interaction.onAfterSelection(this::evaluateLiveQuestConditions);
 
         InteractionSystem.Interaction current = getActiveInteraction();
         if (current == null && interaction.pausesGameplay() && isFirstPersonGatheringActive()) {
@@ -289,6 +294,28 @@ public class GameState {
     public boolean isFirstPersonGatheringAt(int x, int y) {
         return (miningActive && miningX == x && miningY == y)
                 || (fishingActive && fishingX == x && fishingY == y);
+    }
+
+    public ButcherySystem.ButcheryMethod getLastButcheryMethod() {
+        return lastButcheryMethod;
+    }
+
+    public void setLastButcheryMethod(ButcherySystem.ButcheryMethod method) {
+        lastButcheryMethod = method;
+    }
+
+    public void setActiveCorpseEntity(MapEntity corpse) {
+        activeCorpseEntity = corpse;
+    }
+
+    public void discardCorpse(MapEntity corpse) {
+        if (corpse == null) {
+            return;
+        }
+        entities.remove(corpse);
+        if (activeCorpseEntity == corpse) {
+            activeCorpseEntity = null;
+        }
     }
 
     public void cancelFirstPersonGathering() {
@@ -652,6 +679,7 @@ public class GameState {
         setCustomCookingRecipes(generatedDungeon.customCookingRecipes());
         setCraftingRecipes(generatedDungeon.craftingRecipes());
         setMapTriggers(generatedDungeon.mapTriggers());
+        evaluateLiveQuestConditions();
         currentMapDesignPath = null;
     }
 
@@ -726,6 +754,10 @@ public class GameState {
 
     public WorldManifestLibrary.ChunkCoordinate getCurrentChunkCoordinate() {
         return currentOpenWorldSession == null ? null : currentOpenWorldSession.center();
+    }
+
+    public MapDesignLibrary.MapDesign getCurrentOpenWorldCenterDesign() {
+        return currentOpenWorldSession == null ? null : currentOpenWorldSession.centerDesign();
     }
 
     public int getGlobalPlayerX() {
@@ -945,18 +977,35 @@ public class GameState {
         removedEntityKeys.clear();
         removedEntityKeys.addAll(window.removedEntityKeys());
         currentMapDesignPath = window.centerChunkPath();
-        setAuthoredDialogues(window.dialogues());
-        setAuthoredQuests(window.quests());
-        setCustomItems(window.items());
-        setCustomLimbs(window.limbs());
-        setCustomFurniture(window.furniture());
-        setCustomGatheringNodes(window.gatheringNodes());
-        setCustomCookingRecipes(window.cookingRecipes());
-        setCraftingRecipes(window.craftingRecipes());
+        if (!sameCatalog(authoredDialogues, window.dialogues(), MapDesignLibrary.AuthoredDialogue::interactionId)) {
+            setAuthoredDialogues(window.dialogues());
+        }
+        if (!sameCatalog(authoredQuests, window.quests(), MapDesignLibrary.AuthoredQuest::questId)) {
+            setAuthoredQuests(window.quests());
+        }
+        if (!sameCatalog(customItems, window.items(), MapDesignLibrary.CustomItem::itemId)) {
+            setCustomItems(window.items());
+        }
+        if (!sameCatalog(customLimbs, window.limbs(), MapDesignLibrary.CustomLimb::limbId)) {
+            setCustomLimbs(window.limbs());
+        }
+        if (!sameCatalog(customFurniture, window.furniture(), MapDesignLibrary.CustomFurnitureDefinition::furnitureId)) {
+            setCustomFurniture(window.furniture());
+        }
+        if (!sameCatalog(customGatheringNodes, window.gatheringNodes(), MapDesignLibrary.CustomGatheringNode::nodeId)) {
+            setCustomGatheringNodes(window.gatheringNodes());
+        }
+        if (!sameCatalog(customCookingRecipes, window.cookingRecipes(), MapDesignLibrary.CustomCookingRecipe::recipeId)) {
+            setCustomCookingRecipes(window.cookingRecipes());
+        }
+        if (!sameCatalog(craftingRecipes, window.craftingRecipes(), MapDesignLibrary.CraftingRecipe::recipeId)) {
+            setCraftingRecipes(window.craftingRecipes());
+        }
         restoreResourceNodeSnapshots(window.resourceNodeStates());
         restoreEnemyRespawnSnapshots(window.enemyRespawns());
         resetMiniMapDiscovery();
         setDiscoveredMiniMapTileKeys(window.discoveredTiles());
+        evaluateLiveQuestConditions();
 
         if (resetPanels) {
             setPlayerPosition(window.playerX(), window.playerY());
@@ -1031,8 +1080,8 @@ public class GameState {
     private void restoreRuntimeState(MapRuntimeState state, Path targetPath, int targetX, int targetY)
             throws IOException {
         Path contentPath = state.mapPath() == null ? targetPath : state.mapPath();
-        MapDesignLibrary.AuthoredContent content =
-                MapDesignLibrary.authoredContentOf(MapDesignLibrary.load(contentPath));
+        MapDesignLibrary.MapDesign authoredDesign = MapDesignLibrary.load(contentPath);
+        MapDesignLibrary.AuthoredContent content = MapDesignLibrary.authoredContentOf(authoredDesign);
         dungeonMap = copyDungeonMap(state.dungeonMap());
         entities.clear();
         entities.addAll(state.entities());
@@ -1043,9 +1092,10 @@ public class GameState {
         tileInteractionIds.clear();
         tileInteractionIds.putAll(state.tileInteractionIds());
         mapTriggers.clear();
-        mapTriggers.addAll(state.mapTriggers());
+        mapTriggers.addAll(authoredDesign.triggers());
         firedMapTriggerIds.clear();
         firedMapTriggerIds.addAll(state.firedTriggerIds());
+        retainKnownFiredTriggerIds();
         removedEntityKeys.clear();
         removedEntityKeys.addAll(state.removedEntityKeys());
         restoreResourceNodeSnapshots(state.resourceNodeStates());
@@ -1071,6 +1121,120 @@ public class GameState {
         closeShop();
         clearInteractionsAndStopActivities();
         clearBattleState();
+        evaluateLiveQuestConditions();
+    }
+
+    public long uiPresentationRevision() {
+        return uiPresentationRevision;
+    }
+
+    public void advanceUiPresentationRevision() {
+        uiPresentationRevision++;
+    }
+
+    /**
+     * Compact state key used by the cached Java2D overlay.  It deliberately reads live
+     * gameplay state rather than relying on callers to remember to invalidate the HUD.
+     */
+    public long uiPresentationSignature() {
+        return 31L * hudPresentationSignature() + minimapPresentationSignature();
+    }
+
+    public long hudPresentationSignature() {
+        long result = gameMode.ordinal();
+        result = 31L * result + currentFloor;
+        result = 31L * result + (performanceOverlayVisible ? 1 : 0);
+        result = 31L * result + (inventoryOpen ? 1 : 0);
+        result = 31L * result + (skillsOpen ? 1 : 0);
+        result = 31L * result + (questsOpen ? 1 : 0);
+        result = 31L * result + (statsOpen ? 1 : 0);
+        result = 31L * result + (levelUpPending ? 1 : 0);
+        result = 31L * result + (fishingActive ? 1 : 0);
+        result = 31L * result + (miningActive ? 1 : 0);
+        result = 31L * result + (cookingActive ? 1 : 0);
+        result = 31L * result + (smeltingActive ? 1 : 0);
+        result = 31L * result + stringHash(selectedQuestId);
+        result = 31L * result + stringHash(fishingMessage);
+        result = 31L * result + stringHash(miningMessage);
+        result = 31L * result + stringHash(cookingMessage);
+        result = 31L * result + stringHash(smeltingMessage);
+        result = 31L * result + stringHash(smithingMessage);
+        result = 31L * result + (activeInteraction == null ? 0 : activeInteraction.hashCode());
+        result = 31L * result + System.identityHashCode(activeShop);
+        result = 31L * result + System.identityHashCode(activeCorpseEntity);
+        result = 31L * result + (selectedWorldItem == null ? 0 : selectedWorldItem.getQuantity());
+        result = 31L * result + (playerCharacter == null ? 0 : playerCharacter.presentationSignature());
+        result = 31L * result + questRuntime.presentationSignature();
+        result = 31L * result + worldMessageLog.presentationSignature();
+        return result;
+    }
+
+    public long minimapPresentationSignature() {
+        long result = gameMode.ordinal();
+        result = 31L * result + playerX;
+        result = 31L * result + playerY;
+        result = 31L * result + direction;
+        result = 31L * result + (miniMapUnlocked ? 1 : 0);
+        result = 31L * result + miniMapMode.ordinal();
+        result = 31L * result + (dungeonMap == null ? 0L : dungeonMap.renderRevision());
+        if (dungeonMap == null) {
+            return result;
+        }
+        int minX = Math.max(0, playerX - 5);
+        int maxX = Math.min(dungeonMap.getWidth() - 1, playerX + 5);
+        int minY = Math.max(0, playerY - 5);
+        int maxY = Math.min(dungeonMap.getHeight() - 1, playerY + 5);
+        for (int y = minY; y <= maxY; y++) {
+            for (int x = minX; x <= maxX; x++) {
+                result = 31L * result + dungeonMap.getTile(x, y).ordinal();
+                result = 31L * result + (isMiniMapTileDiscovered(x, y) ? 1 : 0);
+            }
+        }
+        for (MapEntity entity : entities) {
+            if (entity != null
+                    && Math.abs(entity.getX() - playerX) <= 5
+                    && Math.abs(entity.getY() - playerY) <= 5) {
+                result = 31L * result + System.identityHashCode(entity);
+                result = 31L * result + entity.getX();
+                result = 31L * result + entity.getY();
+                result = 31L * result + entity.getType().ordinal();
+            }
+        }
+        return result;
+    }
+
+    public boolean hasContinuouslyAnimatedUi() {
+        return isBattleMode()
+                || fishingActive
+                || miningActive
+                || cookingActive
+                || smeltingActive
+                || worldMessageLog.hasRecentMessages()
+                || performanceOverlayVisible;
+    }
+
+    private static int stringHash(String value) {
+        return value == null ? 0 : value.hashCode();
+    }
+
+    private static <T> boolean sameCatalog(
+            Map<String, T> installed,
+            List<T> incoming,
+            java.util.function.Function<T, String> idResolver
+    ) {
+        if (installed.size() != incoming.size()) {
+            return false;
+        }
+        for (T value : incoming) {
+            if (value == null) {
+                return false;
+            }
+            String id = idResolver.apply(value);
+            if (!value.equals(installed.get(id))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void applySavedRuntimeState(MapRuntimeState state) {
@@ -1080,12 +1244,9 @@ public class GameState {
         Point currentPosition = new Point(playerX, playerY);
         tileInteractionIds.clear();
         tileInteractionIds.putAll(state.tileInteractionIds());
-        if (!state.mapTriggers().isEmpty()) {
-            mapTriggers.clear();
-            mapTriggers.addAll(state.mapTriggers());
-        }
         firedMapTriggerIds.clear();
         firedMapTriggerIds.addAll(state.firedTriggerIds());
+        retainKnownFiredTriggerIds();
         removedEntityKeys.clear();
         removedEntityKeys.addAll(state.removedEntityKeys());
         entities.removeIf(this::isEntityRemoved);
@@ -1097,6 +1258,7 @@ public class GameState {
         );
         setDiscoveredMiniMapTileKeys(state.discoveredMiniMapTiles());
         revealMiniMapTile(currentPosition.x, currentPosition.y);
+        evaluateLiveQuestConditions();
     }
 
     private Point resolveTarget(int targetX, int targetY) {
@@ -1162,7 +1324,6 @@ public class GameState {
                 mapTriggers.add(trigger);
             }
         }
-        evaluateQuestStageTriggers();
     }
 
     public void setFiredMapTriggerIds(Set<String> triggerIds) {
@@ -1228,6 +1389,26 @@ public class GameState {
             }
         }
         return doorChanged;
+    }
+
+    public boolean evaluateLiveQuestConditions() {
+        if (evaluatingLiveQuestConditions) {
+            return false;
+        }
+        evaluatingLiveQuestConditions = true;
+        try {
+            questRuntime.refreshAutomaticProgression();
+            return evaluateQuestStageTriggers();
+        } finally {
+            evaluatingLiveQuestConditions = false;
+        }
+    }
+
+    private void retainKnownFiredTriggerIds() {
+        Set<String> knownIds = mapTriggers.stream()
+                .map(MapDesignLibrary.MapTrigger::id)
+                .collect(java.util.stream.Collectors.toSet());
+        firedMapTriggerIds.retainAll(knownIds);
     }
 
     private boolean runTriggerAction(MapDesignLibrary.TriggerAction action) {
@@ -1508,6 +1689,28 @@ public class GameState {
         return entities;
     }
 
+    public Set<String> getPrefetchedOpenWorldModelPaths() {
+        return currentOpenWorldSession == null
+                ? Set.of()
+                : currentOpenWorldSession.prefetchedModelPathsView();
+    }
+
+    public Set<org.main.content.CharacterModelDefinition> getPrefetchedOpenWorldCharacterModels() {
+        return currentOpenWorldSession == null
+                ? Set.of()
+                : currentOpenWorldSession.prefetchedCharacterModelsView();
+    }
+
+    public long getPreparedOpenWorldTerrainRevision() {
+        return currentOpenWorldSession == null ? 0L : currentOpenWorldSession.preparedTerrainRevision();
+    }
+
+    public List<OpenWorldSession.TerrainPrefetch> getPreparedOpenWorldTerrainPrefetches() {
+        return currentOpenWorldSession == null
+                ? List.of()
+                : currentOpenWorldSession.preparedTerrainPrefetches();
+    }
+
     public void addEntity(MapEntity entity) {
         if (entity != null) {
             entities.add(entity);
@@ -1658,35 +1861,58 @@ public class GameState {
     }
 
     public double getCameraOffsetForward() {
+        return getCameraOffsetForward(0.0);
+    }
+
+    public double getCameraOffsetForward(double interpolationAlpha) {
         if (!isFluidCameraMovement()) {
             return 0.0;
         }
 
-        double renderX = interpolate(movementStartX, playerX, movementProgress);
-        double renderY = interpolate(movementStartY, playerY, movementProgress);
+        double progress = interpolatedMovementProgress(interpolationAlpha);
+        double renderX = interpolate(movementStartX, playerX, progress);
+        double renderY = interpolate(movementStartY, playerY, progress);
         double offsetX = renderX - playerX;
         double offsetY = renderY - playerY;
         return offsetX * forwardX() + offsetY * forwardY();
     }
 
     public double getCameraOffsetSide() {
+        return getCameraOffsetSide(0.0);
+    }
+
+    public double getCameraOffsetSide(double interpolationAlpha) {
         if (!isFluidCameraMovement()) {
             return 0.0;
         }
 
-        double renderX = interpolate(movementStartX, playerX, movementProgress);
-        double renderY = interpolate(movementStartY, playerY, movementProgress);
+        double progress = interpolatedMovementProgress(interpolationAlpha);
+        double renderX = interpolate(movementStartX, playerX, progress);
+        double renderY = interpolate(movementStartY, playerY, progress);
         double offsetX = renderX - playerX;
         double offsetY = renderY - playerY;
         return offsetX * rightX() + offsetY * rightY();
     }
 
     public double getCameraRotationRadians() {
+        return getCameraRotationRadians(0.0);
+    }
+
+    public double getCameraRotationRadians(double interpolationAlpha) {
         if (!isFluidCameraMovement()) {
             return 0.0;
         }
 
-        return interpolate(rotationStartOffsetRadians, 0.0, rotationProgress);
+        double progress = Math.min(1.0, rotationProgress
+                + Math.max(0.0, Math.min(1.0, interpolationAlpha))
+                * (1000.0 / 60.0) / rotationAnimationDurationMs());
+        return interpolate(rotationStartOffsetRadians, 0.0, progress);
+    }
+
+    private double interpolatedMovementProgress(double interpolationAlpha) {
+        return Math.min(1.0, movementProgress
+                + Math.max(0.0, Math.min(1.0, interpolationAlpha))
+                * (1000.0 / 60.0) / movementAnimationDurationMs());
     }
 
     private double interpolate(double start, double end, double progress) {
@@ -2371,8 +2597,11 @@ public class GameState {
                 continue;
             }
             state.remainingMs = Math.max(0, state.remainingMs - Math.max(0, deltaMs));
-            if (state.remainingMs == 0 && canRespawnEnemy(state)) {
-                ready.add(state.spawnId);
+            if (state.remainingMs == 0) {
+                expireCorpseForSpawn(state.spawnId);
+                if (canRespawnEnemy(state)) {
+                    ready.add(state.spawnId);
+                }
             }
         }
         for (String spawnId : ready) {
@@ -2400,7 +2629,8 @@ public class GameState {
             return false;
         }
         for (MapEntity entity : entities) {
-            if (entity.blocksMovement() && entity.isAt(state.spawnX, state.spawnY)) {
+            if (entity.blocksMovement()
+                    && entity.occupiesOrReserves(state.spawnX, state.spawnY)) {
                 return false;
             }
         }
@@ -2576,6 +2806,25 @@ public class GameState {
         }
     }
 
+    private void expireCorpseForSpawn(String spawnId) {
+        if (spawnId == null || spawnId.isBlank()) {
+            return;
+        }
+        List<MapEntity> expiredCorpses = entities.stream()
+                .filter(MapEntity::isCorpse)
+                .filter(entity -> spawnId.equals(entity.getCorpseState().sourceSpawnId()))
+                .toList();
+        if (expiredCorpses.isEmpty()) {
+            return;
+        }
+        if (expiredCorpses.contains(activeCorpseEntity)) {
+            closeInteraction();
+            worldMessageLog.post(WorldMessageLog.Category.WARNING, "The remains decay.");
+        }
+        entities.removeAll(expiredCorpses);
+        activeCorpseEntity = null;
+    }
+
     private MapEntity getGatheringEntityAt(int x, int y) {
         for (MapEntity entity : entities) {
             if (!entity.isAt(x, y)) {
@@ -2609,7 +2858,7 @@ public class GameState {
 
     private MapEntity getEntityAt(int x, int y) {
         for (MapEntity entity : entities) {
-            if (entity.isAt(x, y)) {
+            if (entity.occupiesOrReserves(x, y)) {
                 return entity;
             }
         }

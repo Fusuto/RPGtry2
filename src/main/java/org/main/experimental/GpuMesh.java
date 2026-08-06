@@ -11,9 +11,11 @@ import static org.lwjgl.opengl.GL11.GL_UNSIGNED_INT;
 import static org.lwjgl.opengl.GL11.glDrawElements;
 import static org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER;
 import static org.lwjgl.opengl.GL15.GL_DYNAMIC_DRAW;
+import static org.lwjgl.opengl.GL15.GL_STATIC_DRAW;
 import static org.lwjgl.opengl.GL15.GL_ELEMENT_ARRAY_BUFFER;
 import static org.lwjgl.opengl.GL15.glBindBuffer;
 import static org.lwjgl.opengl.GL15.glBufferData;
+import static org.lwjgl.opengl.GL15.glBufferSubData;
 import static org.lwjgl.opengl.GL15.glDeleteBuffers;
 import static org.lwjgl.opengl.GL15.glGenBuffers;
 import static org.lwjgl.opengl.GL20.glEnableVertexAttribArray;
@@ -29,9 +31,21 @@ final class GpuMesh {
     private final int vao;
     private final int vertexBuffer;
     private final int indexBuffer;
+    private final int usage;
+    private FloatBuffer vertexStaging;
+    private IntBuffer indexStaging;
+    private int vertexCapacityBytes;
+    private int indexCapacityBytes;
+    private int uploadedIndexCount = -1;
+    private long uploadedBytes;
     private int indexCount;
 
     GpuMesh() {
+        this(false);
+    }
+
+    GpuMesh(boolean immutable) {
+        usage = immutable ? GL_STATIC_DRAW : GL_DYNAMIC_DRAW;
         vao = glGenVertexArrays();
         vertexBuffer = glGenBuffers();
         indexBuffer = glGenBuffers();
@@ -49,17 +63,45 @@ final class GpuMesh {
 
     void update(float[] vertices, int[] indices, int indexCount) {
         this.indexCount = indexCount;
-        FloatBuffer vertexData = BufferUtils.createFloatBuffer(vertices.length);
-        vertexData.put(vertices).flip();
-        IntBuffer indexData = BufferUtils.createIntBuffer(indices.length);
-        indexData.put(indices).flip();
+        vertexStaging = ensureFloatCapacity(vertexStaging, vertices.length);
+        vertexStaging.clear();
+        vertexStaging.put(vertices).flip();
 
         glBindVertexArray(vao);
         glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
-        glBufferData(GL_ARRAY_BUFFER, vertexData, GL_DYNAMIC_DRAW);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexData, GL_DYNAMIC_DRAW);
+        int requiredVertexBytes = vertices.length * Float.BYTES;
+        if (requiredVertexBytes > vertexCapacityBytes || usage == GL_STATIC_DRAW) {
+            glBufferData(GL_ARRAY_BUFFER, vertexStaging, usage);
+            vertexCapacityBytes = requiredVertexBytes;
+        } else {
+            glBufferData(GL_ARRAY_BUFFER, vertexCapacityBytes, usage);
+            glBufferSubData(GL_ARRAY_BUFFER, 0L, vertexStaging);
+        }
+        uploadedBytes += requiredVertexBytes;
+
+        if (uploadedIndexCount != indices.length) {
+            indexStaging = ensureIntCapacity(indexStaging, indices.length);
+            indexStaging.clear();
+            indexStaging.put(indices).flip();
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+            int requiredIndexBytes = indices.length * Integer.BYTES;
+            if (requiredIndexBytes > indexCapacityBytes || usage == GL_STATIC_DRAW) {
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexStaging, usage);
+                indexCapacityBytes = requiredIndexBytes;
+            } else {
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexCapacityBytes, usage);
+                glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0L, indexStaging);
+            }
+            uploadedIndexCount = indices.length;
+            uploadedBytes += requiredIndexBytes;
+        }
         glBindVertexArray(0);
+    }
+
+    long consumeUploadedBytes() {
+        long value = uploadedBytes;
+        uploadedBytes = 0L;
+        return value;
     }
 
     void draw() {
@@ -80,5 +122,27 @@ final class GpuMesh {
     private static void enableAttribute(int index, int size, int floatOffset) {
         glEnableVertexAttribArray(index);
         glVertexAttribPointer(index, size, GL_FLOAT, false, STRIDE_BYTES, (long) floatOffset * Float.BYTES);
+    }
+
+    private static FloatBuffer ensureFloatCapacity(FloatBuffer buffer, int required) {
+        if (buffer != null && buffer.capacity() >= required) {
+            return buffer;
+        }
+        return BufferUtils.createFloatBuffer(growCapacity(buffer == null ? 0 : buffer.capacity(), required));
+    }
+
+    private static IntBuffer ensureIntCapacity(IntBuffer buffer, int required) {
+        if (buffer != null && buffer.capacity() >= required) {
+            return buffer;
+        }
+        return BufferUtils.createIntBuffer(growCapacity(buffer == null ? 0 : buffer.capacity(), required));
+    }
+
+    private static int growCapacity(int current, int required) {
+        int capacity = Math.max(16, current);
+        while (capacity < required) {
+            capacity = Math.max(required, capacity + (capacity >> 1));
+        }
+        return capacity;
     }
 }

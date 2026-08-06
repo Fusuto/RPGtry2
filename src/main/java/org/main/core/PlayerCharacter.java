@@ -352,6 +352,22 @@ public class PlayerCharacter {
         return inventory;
     }
 
+    /** Allocation-free fingerprint for HUD/menu cache invalidation. */
+    public int presentationSignature() {
+        int result = name == null ? 0 : name.hashCode();
+        result = 31 * result + maxHp;
+        result = 31 * result + currHp;
+        result = 31 * result + level;
+        result = 31 * result + classExperience;
+        result = 31 * result + availableStatPoints;
+        result = 31 * result + skills.hashCode();
+        result = 31 * result + skillExperience.hashCode();
+        result = 31 * result + stats.hashCode();
+        result = 31 * result + equippedLimbs.hashCode();
+        result = 31 * result + inventory.presentationSignature();
+        return result;
+    }
+
     public Map<LimbSlot, LimbItem> getEquippedLimbsView() {
         return Map.copyOf(equippedLimbs);
     }

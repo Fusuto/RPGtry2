@@ -1,6 +1,7 @@
 package org.main.core;
 
 import org.main.content.MapDesignLibrary;
+import org.main.content.CharacterModelDefinition;
 import org.main.content.ThemeLibrary;
 import org.main.content.WorldManifestLibrary;
 import org.main.content.WorldManifestLibrary.ChunkCoordinate;
@@ -20,18 +21,41 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public final class OpenWorldSession {
+    private static final Logger LOGGER = Logger.getLogger(OpenWorldSession.class.getName());
     public static final int WINDOW_RADIUS = 1;
     public static final int WINDOW_DIAMETER = WINDOW_RADIUS * 2 + 1;
 
     private final Path manifestPath;
     private final WorldManifest manifest;
-    private final Map<ChunkCoordinate, ChunkState> chunkStates = new HashMap<>();
+    private final Map<ChunkCoordinate, ChunkState> chunkStates = new ConcurrentHashMap<>();
+    private final Map<ChunkCoordinate, Future<?>> chunkPrefetches = new ConcurrentHashMap<>();
+    private final Map<ChunkCoordinate, Future<?>> terrainPreparationTasks = new ConcurrentHashMap<>();
+    private final Map<ChunkCoordinate, PreparedTerrainWindow> preparedTerrainWindows = new ConcurrentHashMap<>();
+    private final AtomicLong preparedTerrainRevision = new AtomicLong();
+    private final Set<String> prefetchedModelPaths = ConcurrentHashMap.newKeySet();
+    private final Set<CharacterModelDefinition> prefetchedCharacterModels = ConcurrentHashMap.newKeySet();
+    private final Set<String> prefetchedModelPathsView = java.util.Collections.unmodifiableSet(prefetchedModelPaths);
+    private final Set<CharacterModelDefinition> prefetchedCharacterModelsView =
+            java.util.Collections.unmodifiableSet(prefetchedCharacterModels);
+    private final ExecutorService chunkPrefetchExecutor = Executors.newFixedThreadPool(2, runnable -> {
+        Thread thread = new Thread(runnable, "Aether-Chunk-Prefetch");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final Object chunkLoadLock = new Object();
     private final Set<ChunkCoordinate> loadedCoordinates = new HashSet<>();
     private MapDesignLibrary.AuthoredContent worldContent;
     private ChunkCoordinate center;
@@ -134,6 +158,7 @@ public final class OpenWorldSession {
         center = requestedCenter;
         setResumePosition(globalX, globalY);
         WindowState state = materializeWindow();
+        prefetchAround(center);
         return state.withPlayer(windowXForGlobal(globalX), windowYForGlobal(globalY));
     }
 
@@ -153,6 +178,7 @@ public final class OpenWorldSession {
         setResumePosition(globalX, globalY);
         WindowState state = materializeWindow()
                 .withPlayer(windowXForGlobal(globalX), windowYForGlobal(globalY));
+        prefetchAround(center);
         return new RecenterResult(state, globalX, globalY);
     }
 
@@ -163,6 +189,7 @@ public final class OpenWorldSession {
         long now = System.currentTimeMillis();
         int chunkWidth = manifest.chunkWidth();
         int chunkHeight = manifest.chunkHeight();
+        Set<ChunkCoordinate> tileDirtyChunks = dirtyTileChunks(capture.map(), chunkWidth, chunkHeight);
 
         for (ChunkCoordinate coordinate : loadedCoordinates) {
             ChunkState state = chunkStates.get(coordinate);
@@ -171,9 +198,11 @@ public final class OpenWorldSession {
             }
             int offsetX = windowOffsetX(coordinate);
             int offsetY = windowOffsetY(coordinate);
-            for (int y = 0; y < chunkHeight; y++) {
-                for (int x = 0; x < chunkWidth; x++) {
-                    state.map.setTile(x, y, capture.map().getTile(offsetX + x, offsetY + y));
+            if (tileDirtyChunks.contains(coordinate)) {
+                for (int y = 0; y < chunkHeight; y++) {
+                    for (int x = 0; x < chunkWidth; x++) {
+                        state.map.setTile(x, y, capture.map().getTile(offsetX + x, offsetY + y));
+                    }
                 }
             }
             state.entities.clear();
@@ -197,9 +226,9 @@ public final class OpenWorldSession {
             }
             MapEntity localEntity = entity.copy();
             localEntity.leaveWorldWindow(windowOffsetX(coordinate), windowOffsetY(coordinate));
-            localEntity.setPosition(
-                    localEntity.getX() - windowOffsetX(coordinate),
-                    localEntity.getY() - windowOffsetY(coordinate)
+            localEntity.translateWorldPosition(
+                    -windowOffsetX(coordinate),
+                    -windowOffsetY(coordinate)
             );
             state.entities.add(localEntity);
         }
@@ -246,6 +275,21 @@ public final class OpenWorldSession {
         windowMaterialized = false;
     }
 
+    private Set<ChunkCoordinate> dirtyTileChunks(DungeonMap map, int chunkWidth, int chunkHeight) {
+        if (map == null || center == null) {
+            return Set.of();
+        }
+        Set<ChunkCoordinate> result = new HashSet<>();
+        for (DungeonMap.TileCoordinate tile : map.dirtyTilesView()) {
+            int relativeChunkX = Math.floorDiv(tile.x(), Math.max(1, chunkWidth));
+            int relativeChunkY = Math.floorDiv(tile.y(), Math.max(1, chunkHeight));
+            result.add(new ChunkCoordinate(
+                    center.x() + relativeChunkX - WINDOW_RADIUS,
+                    center.y() + relativeChunkY - WINDOW_RADIUS));
+        }
+        return result;
+    }
+
     public Map<ChunkCoordinate, PersistedChunkState> snapshotChunkStates(WindowCapture capture) {
         captureWindow(capture);
         Map<ChunkCoordinate, PersistedChunkState> snapshots = new LinkedHashMap<>();
@@ -289,8 +333,6 @@ public final class OpenWorldSession {
             state.enemyRespawns.putAll(snapshot.enemyRespawns());
             state.discoveredTiles.clear();
             state.discoveredTiles.addAll(snapshot.discoveredTiles());
-            state.triggers.clear();
-            state.triggers.addAll(snapshot.triggers());
             state.firedTriggerIds.clear();
             state.firedTriggerIds.addAll(snapshot.firedTriggerIds());
             state.lastUpdatedEpochMs = snapshot.lastUpdatedEpochMs();
@@ -314,6 +356,19 @@ public final class OpenWorldSession {
                                 snapshot.temporaryStationRemainingMs(),
                                 snapshot.temporaryStationPendingExpiry()
                         );
+            } else if (snapshot.type() == Library.EntityType.CORPSE && !snapshot.monsterId().isBlank()) {
+                var monster = MapDesignLibrary.createEnemyById(snapshot.monsterId());
+                if (monster != null) {
+                    CorpseState corpse = new CorpseState(
+                            monster,
+                            snapshot.corpseSourceSpawnId(),
+                            snapshot.corpseItems());
+                    corpse.restoreButcheryState(
+                            snapshot.corpseButcheryAttempted(),
+                            snapshot.corpseStatus());
+                    entity = new MapEntity(corpse, snapshot.x(), snapshot.y());
+                    entity.finishCorpseDeathAnimation();
+                }
             } else if (snapshot.item() != null) {
                 entity = new MapEntity(snapshot.item(), snapshot.x(), snapshot.y());
             } else {
@@ -343,6 +398,7 @@ public final class OpenWorldSession {
                 }
             }
             entity.setPosition(snapshot.x(), snapshot.y());
+            entity.setWorldFacingYawDegrees(snapshot.worldFacingYawDegrees());
             if (!authoredEntity) {
                 entity.setInteractionId(snapshot.interactionId());
                 entity.withContentId(snapshot.contentId());
@@ -387,7 +443,7 @@ public final class OpenWorldSession {
         return value == null ? "" : value;
     }
 
-    private WindowState materializeWindow() throws IOException {
+    private PreparedTerrainWindow buildPreparedTerrainWindow(ChunkCoordinate requestedCenter) throws IOException {
         int width = manifest.chunkWidth() * WINDOW_DIAMETER;
         int height = manifest.chunkHeight() * WINDOW_DIAMETER;
         Library.TileType[][] tiles = new Library.TileType[height][width];
@@ -398,13 +454,101 @@ public final class OpenWorldSession {
         for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
             paintLayers.put(layer, new String[height][width]);
         }
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                tiles[y][x] = Library.TileType.WALL;
+        for (Library.TileType[] row : tiles) {
+            java.util.Arrays.fill(row, Library.TileType.WALL);
+        }
+        List<EnvironmentTheme> environmentThemes = new ArrayList<>();
+        List<MapLight> lights = new ArrayList<>();
+        Map<ChunkCoordinate, PreparedChunkRevision> revisions = new HashMap<>();
+        MapLightingSettings lightingSettings = MapLightingSettings.defaultSettings();
+
+        for (int dy = -WINDOW_RADIUS; dy <= WINDOW_RADIUS; dy++) {
+            for (int dx = -WINDOW_RADIUS; dx <= WINDOW_RADIUS; dx++) {
+                ChunkCoordinate coordinate = new ChunkCoordinate(
+                        requestedCenter.x() + dx, requestedCenter.y() + dy);
+                if (!manifest.chunks().containsKey(coordinate)) {
+                    continue;
+                }
+                ChunkState chunk = loadChunk(coordinate, false);
+                if (chunk == null) {
+                    continue;
+                }
+                revisions.put(coordinate, PreparedChunkRevision.of(chunk.map));
+                int offsetX = (dx + WINDOW_RADIUS) * manifest.chunkWidth();
+                int offsetY = (dy + WINDOW_RADIUS) * manifest.chunkHeight();
+                int primaryIndex = themeIndex(environmentThemes, chunk.design.primaryTheme());
+                int alternateIndex = themeIndex(environmentThemes, chunk.design.alternateTheme());
+                if (coordinate.equals(requestedCenter)) {
+                    lightingSettings = chunk.map.getLightingSettings();
+                }
+                for (int y = 0; y < manifest.chunkHeight(); y++) {
+                    for (int x = 0; x < manifest.chunkWidth(); x++) {
+                        int windowX = offsetX + x;
+                        int windowY = offsetY + y;
+                        tiles[windowY][windowX] = chunk.map.getTile(x, y);
+                        themes[windowY][windowX] = chunk.map.getEnvironmentThemeIndex(x, y) == 0
+                                ? primaryIndex : alternateIndex;
+                        heights[windowY][windowX] = chunk.map.getHeightLevel(x, y);
+                        mobAreas[windowY][windowX] = chunk.map.getMobAreaId(x, y);
+                        for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
+                            paintLayers.get(layer)[windowY][windowX] =
+                                    chunk.map.getPaintBrushId(layer, x, y);
+                        }
+                    }
+                }
+                for (MapLight light : chunk.map.getLightsView()) {
+                    lights.add(light.translated(
+                            offsetX, offsetY,
+                            "chunk[" + coordinate.x() + "," + coordinate.y() + "]::"));
+                }
+            }
+        }
+        DungeonMap map = new DungeonMap(
+                tiles,
+                themes,
+                MapPaintData.of(
+                        width,
+                        height,
+                        paintLayers.get(MapPaintData.Layer.FLOOR),
+                        paintLayers.get(MapPaintData.Layer.WALL),
+                        paintLayers.get(MapPaintData.Layer.DOOR),
+                        paintLayers.get(MapPaintData.Layer.ROOF)),
+                MapGeometryData.of(width, height, heights),
+                MobAreaData.of(width, height, mobAreas),
+                lightingSettings,
+                lights);
+        return new PreparedTerrainWindow(
+                map, List.copyOf(environmentThemes), Map.copyOf(revisions));
+    }
+
+    private WindowState materializeWindow() throws IOException {
+        int width = manifest.chunkWidth() * WINDOW_DIAMETER;
+        int height = manifest.chunkHeight() * WINDOW_DIAMETER;
+        PreparedTerrainWindow preparedTerrain = preparedTerrainWindows.remove(center);
+        if (preparedTerrain != null) {
+            preparedTerrainRevision.incrementAndGet();
+        }
+        if (preparedTerrain != null && !preparedLightingStillValid(preparedTerrain, center)) {
+            preparedTerrain = null;
+        }
+        boolean usePreparedTerrain = preparedTerrain != null;
+        Library.TileType[][] tiles = usePreparedTerrain ? null : new Library.TileType[height][width];
+        int[][] themes = usePreparedTerrain ? null : new int[height][width];
+        int[][] heights = usePreparedTerrain ? null : new int[height][width];
+        String[][] mobAreas = usePreparedTerrain ? null : new String[height][width];
+        Map<MapPaintData.Layer, String[][]> paintLayers = new LinkedHashMap<>();
+        if (!usePreparedTerrain) {
+            for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
+                paintLayers.put(layer, new String[height][width]);
+            }
+            for (Library.TileType[] row : tiles) {
+                java.util.Arrays.fill(row, Library.TileType.WALL);
             }
         }
 
-        List<EnvironmentTheme> environmentThemes = new ArrayList<>();
+        List<EnvironmentTheme> environmentThemes = usePreparedTerrain
+                ? new ArrayList<>(preparedTerrain.environmentThemes())
+                : new ArrayList<>();
         List<MapEntity> entities = new ArrayList<>();
         Map<String, String> tileInteractions = new HashMap<>();
         Map<String, GameState.ResourceNodeSnapshot> resources = new HashMap<>();
@@ -412,10 +556,12 @@ public final class OpenWorldSession {
         Set<String> discovered = new HashSet<>();
         Set<String> removed = new HashSet<>();
         List<MapDesignLibrary.MapTrigger> triggers = new ArrayList<>();
-        List<MapLight> lights = new ArrayList<>();
+        List<MapLight> lights = usePreparedTerrain ? null : new ArrayList<>();
         Set<String> fired = new HashSet<>();
-        ContentAccumulator content = new ContentAccumulator();
-        MapLightingSettings lightingSettings = MapLightingSettings.defaultSettings();
+        MapDesignLibrary.AuthoredContent content = worldContent();
+        MapLightingSettings lightingSettings = usePreparedTerrain
+                ? preparedTerrain.map().getLightingSettings()
+                : MapLightingSettings.defaultSettings();
         loadedCoordinates.clear();
 
         for (int dy = -WINDOW_RADIUS; dy <= WINDOW_RADIUS; dy++) {
@@ -428,24 +574,28 @@ public final class OpenWorldSession {
                 loadedCoordinates.add(coordinate);
                 int offsetX = (dx + WINDOW_RADIUS) * manifest.chunkWidth();
                 int offsetY = (dy + WINDOW_RADIUS) * manifest.chunkHeight();
-                int primaryIndex = themeIndex(environmentThemes, chunk.design.primaryTheme());
-                int alternateIndex = themeIndex(environmentThemes, chunk.design.alternateTheme());
-                if (coordinate.equals(center)) {
-                    lightingSettings = chunk.map.getLightingSettings();
-                }
-
-                for (int y = 0; y < manifest.chunkHeight(); y++) {
-                    for (int x = 0; x < manifest.chunkWidth(); x++) {
-                        int windowX = offsetX + x;
-                        int windowY = offsetY + y;
-                        tiles[windowY][windowX] = chunk.map.getTile(x, y);
-                        themes[windowY][windowX] = chunk.map.getEnvironmentThemeIndex(x, y) == 0
-                                ? primaryIndex
-                                : alternateIndex;
-                        heights[windowY][windowX] = chunk.map.getHeightLevel(x, y);
-                        mobAreas[windowY][windowX] = chunk.map.getMobAreaId(x, y);
-                        for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
-                            paintLayers.get(layer)[windowY][windowX] = chunk.map.getPaintBrushId(layer, x, y);
+                if (usePreparedTerrain) {
+                    patchPreparedTerrainChunk(preparedTerrain, coordinate, chunk, offsetX, offsetY);
+                } else {
+                    int primaryIndex = themeIndex(environmentThemes, chunk.design.primaryTheme());
+                    int alternateIndex = themeIndex(environmentThemes, chunk.design.alternateTheme());
+                    if (coordinate.equals(center)) {
+                        lightingSettings = chunk.map.getLightingSettings();
+                    }
+                    for (int y = 0; y < manifest.chunkHeight(); y++) {
+                        for (int x = 0; x < manifest.chunkWidth(); x++) {
+                            int windowX = offsetX + x;
+                            int windowY = offsetY + y;
+                            tiles[windowY][windowX] = chunk.map.getTile(x, y);
+                            themes[windowY][windowX] = chunk.map.getEnvironmentThemeIndex(x, y) == 0
+                                    ? primaryIndex
+                                    : alternateIndex;
+                            heights[windowY][windowX] = chunk.map.getHeightLevel(x, y);
+                            mobAreas[windowY][windowX] = chunk.map.getMobAreaId(x, y);
+                            for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
+                                paintLayers.get(layer)[windowY][windowX] =
+                                        chunk.map.getPaintBrushId(layer, x, y);
+                            }
                         }
                     }
                 }
@@ -457,7 +607,7 @@ public final class OpenWorldSession {
                             offsetX,
                             offsetY
                     );
-                    windowEntity.setPosition(windowEntity.getX() + offsetX, windowEntity.getY() + offsetY);
+                    windowEntity.translateWorldPosition(offsetX, offsetY);
                     entities.add(windowEntity);
                 }
                 translateStringMap(chunk.tileInteractions, offsetX, offsetY, tileInteractions);
@@ -465,11 +615,13 @@ public final class OpenWorldSession {
                 translateEnemyRespawns(coordinate, chunk.enemyRespawns, offsetX, offsetY, enemyRespawns);
                 translateCoordinateSet(chunk.discoveredTiles, offsetX, offsetY, discovered);
                 translateCoordinateSet(chunk.removedEntityKeys, offsetX, offsetY, removed);
-                for (MapLight light : chunk.map.getLightsView()) {
-                    lights.add(light.translated(
-                            offsetX,
-                            offsetY,
-                            "chunk[" + coordinate.x() + "," + coordinate.y() + "]::"));
+                if (!usePreparedTerrain) {
+                    for (MapLight light : chunk.map.getLightsView()) {
+                        lights.add(light.translated(
+                                offsetX,
+                                offsetY,
+                                "chunk[" + coordinate.x() + "," + coordinate.y() + "]::"));
+                    }
                 }
                 for (MapDesignLibrary.MapTrigger trigger : chunk.triggers) {
                     String runtimeId = runtimeTriggerId(coordinate, trigger.id());
@@ -494,27 +646,32 @@ public final class OpenWorldSession {
                         fired.add(runtimeId);
                     }
                 }
-                content.add(chunk);
             }
         }
 
-        MapPaintData paint = MapPaintData.of(
-                width,
-                height,
-                paintLayers.get(MapPaintData.Layer.FLOOR),
-                paintLayers.get(MapPaintData.Layer.WALL),
-                paintLayers.get(MapPaintData.Layer.DOOR),
-                paintLayers.get(MapPaintData.Layer.ROOF)
-        );
-        DungeonMap map = new DungeonMap(
-                tiles,
-                themes,
-                paint,
-                MapGeometryData.of(width, height, heights),
-                MobAreaData.of(width, height, mobAreas),
-                lightingSettings,
-                lights
-        );
+        DungeonMap map;
+        if (usePreparedTerrain) {
+            map = preparedTerrain.map();
+        } else {
+            MapPaintData paint = MapPaintData.of(
+                    width,
+                    height,
+                    paintLayers.get(MapPaintData.Layer.FLOOR),
+                    paintLayers.get(MapPaintData.Layer.WALL),
+                    paintLayers.get(MapPaintData.Layer.DOOR),
+                    paintLayers.get(MapPaintData.Layer.ROOF)
+            );
+            map = new DungeonMap(
+                    tiles,
+                    themes,
+                    paint,
+                    MapGeometryData.of(width, height, heights),
+                    MobAreaData.of(width, height, mobAreas),
+                    lightingSettings,
+                    lights
+            );
+        }
+        map.clearRenderDirtyTiles();
         currentEnvironmentThemes = List.copyOf(environmentThemes);
         windowMaterialized = true;
         return new WindowState(
@@ -527,14 +684,14 @@ public final class OpenWorldSession {
                 removed,
                 triggers,
                 fired,
-                content.dialogues,
-                content.quests,
-                content.items,
-                content.limbs,
-                content.furniture,
-                content.gatheringNodes,
-                content.cookingRecipes,
-                content.craftingRecipes,
+                content.authoredDialogues(),
+                content.authoredQuests(),
+                content.customItems(),
+                content.customLimbs(),
+                content.customFurniture(),
+                content.customGatheringNodes(),
+                content.customCookingRecipes(),
+                content.craftingRecipes(),
                 environmentThemes,
                 centerChunkPath(),
                 -1,
@@ -550,37 +707,202 @@ public final class OpenWorldSession {
             }
             return existing;
         }
-        String relativePath = manifest.chunks().get(coordinate);
-        if (relativePath == null) {
-            return null;
+        synchronized (chunkLoadLock) {
+            existing = chunkStates.get(coordinate);
+            if (existing != null) {
+                return existing;
+            }
+            String relativePath = manifest.chunks().get(coordinate);
+            if (relativePath == null) {
+                return null;
+            }
+            Path path = WorldManifestLibrary.resolveChunkPath(manifestPath, relativePath);
+            MapDesignLibrary.MapDesign design = MapDesignLibrary.load(path);
+            MapDesignLibrary.mergeAuthoredContent(design, worldContent());
+            if (design.width() != manifest.chunkWidth() || design.height() != manifest.chunkHeight()) {
+                throw new IOException("Chunk " + coordinate + " has incompatible dimensions.");
+            }
+            GeneratedDungeon generated = MapDesignLibrary.toGeneratedDungeon(design);
+            Map<String, String> interactions = new HashMap<>();
+            for (GeneratedDungeon.TileInteraction interaction : generated.tileInteractions()) {
+                interactions.put(key(interaction.x(), interaction.y()), interaction.interactionId());
+            }
+            ChunkState state = new ChunkState(
+                    path,
+                    design,
+                    generated.dungeonMap(),
+                    new ArrayList<>(generated.entities()),
+                    interactions,
+                    new HashSet<>(),
+                    new HashMap<>(),
+                    new HashMap<>(),
+                    new HashSet<>(),
+                    new ArrayList<>(generated.mapTriggers()),
+                    new HashSet<>(),
+                    System.currentTimeMillis()
+            );
+            chunkStates.put(coordinate, state);
+            for (MapEntity entity : state.entities) {
+                if (entity == null) {
+                    continue;
+                }
+                if (entity.hasVisibleStaticModel() && !entity.getStaticModelPath().isBlank()) {
+                    prefetchedModelPaths.add(entity.getStaticModelPath());
+                }
+                if (entity.getCharacterModel() != null && entity.getCharacterModel().hasModel()) {
+                    prefetchedCharacterModels.add(entity.getCharacterModel());
+                }
+            }
+            return state;
         }
-        Path path = WorldManifestLibrary.resolveChunkPath(manifestPath, relativePath);
-        MapDesignLibrary.MapDesign design = MapDesignLibrary.load(path);
-        MapDesignLibrary.mergeAuthoredContent(design, worldContent());
-        if (design.width() != manifest.chunkWidth() || design.height() != manifest.chunkHeight()) {
-            throw new IOException("Chunk " + coordinate + " has incompatible dimensions.");
+    }
+
+    public Set<String> prefetchedModelPathsView() {
+        return prefetchedModelPathsView;
+    }
+
+    public Set<CharacterModelDefinition> prefetchedCharacterModelsView() {
+        return prefetchedCharacterModelsView;
+    }
+
+    public long preparedTerrainRevision() {
+        return preparedTerrainRevision.get();
+    }
+
+    public List<TerrainPrefetch> preparedTerrainPrefetches() {
+        List<TerrainPrefetch> result = new ArrayList<>(preparedTerrainWindows.size());
+        preparedTerrainWindows.forEach((coordinate, prepared) -> result.add(new TerrainPrefetch(
+                coordinate, prepared.map(), prepared.environmentThemes())));
+        return List.copyOf(result);
+    }
+
+    public record TerrainPrefetch(
+            ChunkCoordinate center,
+            DungeonMap map,
+            List<EnvironmentTheme> environmentThemes
+    ) {
+        public TerrainPrefetch {
+            environmentThemes = environmentThemes == null ? List.of() : List.copyOf(environmentThemes);
         }
-        GeneratedDungeon generated = MapDesignLibrary.toGeneratedDungeon(design);
-        Map<String, String> interactions = new HashMap<>();
-        for (GeneratedDungeon.TileInteraction interaction : generated.tileInteractions()) {
-            interactions.put(key(interaction.x(), interaction.y()), interaction.interactionId());
+    }
+
+    private boolean preparedLightingStillValid(
+            PreparedTerrainWindow prepared,
+            ChunkCoordinate requestedCenter
+    ) {
+        for (int dy = -WINDOW_RADIUS; dy <= WINDOW_RADIUS; dy++) {
+            for (int dx = -WINDOW_RADIUS; dx <= WINDOW_RADIUS; dx++) {
+                ChunkCoordinate coordinate = new ChunkCoordinate(
+                        requestedCenter.x() + dx, requestedCenter.y() + dy);
+                ChunkState state = chunkStates.get(coordinate);
+                PreparedChunkRevision revision = prepared.chunkRevisions().get(coordinate);
+                if (state != null && revision != null
+                        && state.map.lightingRevision() != revision.lightingRevision()) {
+                    return false;
+                }
+            }
         }
-        ChunkState state = new ChunkState(
-                path,
-                design,
-                generated.dungeonMap(),
-                new ArrayList<>(generated.entities()),
-                interactions,
-                new HashSet<>(),
-                new HashMap<>(),
-                new HashMap<>(),
-                new HashSet<>(),
-                new ArrayList<>(generated.mapTriggers()),
-                new HashSet<>(),
-                System.currentTimeMillis()
-        );
-        chunkStates.put(coordinate, state);
-        return state;
+        return true;
+    }
+
+    private void patchPreparedTerrainChunk(
+            PreparedTerrainWindow prepared,
+            ChunkCoordinate coordinate,
+            ChunkState chunk,
+            int offsetX,
+            int offsetY
+    ) {
+        PreparedChunkRevision revision = prepared.chunkRevisions().get(coordinate);
+        if (revision == null) {
+            return;
+        }
+        boolean tilesChanged = revision.tileRevision() != chunk.map.tileRevision();
+        boolean paintChanged = revision.paintRevision() != chunk.map.paintRevision();
+        boolean geometryChanged = revision.geometryRevision() != chunk.map.geometryRevision();
+        if (!tilesChanged && !paintChanged && !geometryChanged) {
+            return;
+        }
+        DungeonMap target = prepared.map();
+        for (int y = 0; y < manifest.chunkHeight(); y++) {
+            for (int x = 0; x < manifest.chunkWidth(); x++) {
+                int windowX = offsetX + x;
+                int windowY = offsetY + y;
+                if (tilesChanged) {
+                    target.setTile(windowX, windowY, chunk.map.getTile(x, y));
+                }
+                if (paintChanged) {
+                    for (MapPaintData.Layer layer : MapPaintData.Layer.values()) {
+                        target.getPaintData().set(
+                                layer, windowX, windowY, chunk.map.getPaintBrushId(layer, x, y));
+                    }
+                }
+                if (geometryChanged) {
+                    target.getGeometryData().setHeightLevel(
+                            windowX, windowY, chunk.map.getHeightLevel(x, y));
+                }
+            }
+        }
+    }
+
+    /** Begins CPU-side loading of the 5x5 ring while the current 3x3 remains playable. */
+    private void prefetchAround(ChunkCoordinate requestedCenter) {
+        if (requestedCenter == null) {
+            return;
+        }
+        for (int dy = -2; dy <= 2; dy++) {
+            for (int dx = -2; dx <= 2; dx++) {
+                ChunkCoordinate coordinate = new ChunkCoordinate(
+                        requestedCenter.x() + dx, requestedCenter.y() + dy);
+                if (!manifest.chunks().containsKey(coordinate)
+                        || chunkStates.containsKey(coordinate)
+                        || chunkPrefetches.containsKey(coordinate)) {
+                    continue;
+                }
+                FutureTask<Void> task = new FutureTask<>(() -> {
+                    try {
+                        loadChunk(coordinate, false);
+                    } catch (IOException exception) {
+                        LOGGER.log(Level.WARNING, "Failed to prefetch world chunk " + coordinate + ".", exception);
+                    } finally {
+                        chunkPrefetches.remove(coordinate);
+                    }
+                    return null;
+                });
+                chunkPrefetches.put(coordinate, task);
+                chunkPrefetchExecutor.execute(task);
+            }
+        }
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                if (dx == 0 && dy == 0) {
+                    continue;
+                }
+                ChunkCoordinate candidate = new ChunkCoordinate(
+                        requestedCenter.x() + dx, requestedCenter.y() + dy);
+                if (!manifest.chunks().containsKey(candidate)
+                        || preparedTerrainWindows.containsKey(candidate)
+                        || terrainPreparationTasks.containsKey(candidate)) {
+                    continue;
+                }
+                FutureTask<Void> task = new FutureTask<>(() -> {
+                    try {
+                        PreparedTerrainWindow prepared = buildPreparedTerrainWindow(candidate);
+                        if (prepared != null) {
+                            preparedTerrainWindows.put(candidate, prepared);
+                            preparedTerrainRevision.incrementAndGet();
+                        }
+                    } catch (IOException exception) {
+                        LOGGER.log(Level.WARNING,
+                                "Failed to prepare terrain window around " + candidate + ".", exception);
+                    } finally {
+                        terrainPreparationTasks.remove(candidate);
+                    }
+                    return null;
+                });
+                terrainPreparationTasks.put(candidate, task);
+                chunkPrefetchExecutor.execute(task);
+            }
+        }
     }
 
     private MapDesignLibrary.AuthoredContent worldContent() throws IOException {
@@ -924,6 +1246,7 @@ public final class OpenWorldSession {
             Library.EntityType type,
             int x,
             int y,
+            double worldFacingYawDegrees,
             String interactionId,
             String contentId,
             List<String> questIds,
@@ -952,6 +1275,10 @@ public final class OpenWorldSession {
             int respawnDelayMs,
             int aiCooldownMs,
             boolean alerted,
+            String corpseSourceSpawnId,
+            List<InventorySystem.Item> corpseItems,
+            boolean corpseButcheryAttempted,
+            String corpseStatus,
             String temporaryStationId,
             CraftingStationType temporaryStationType,
             int temporaryStationRemainingMs,
@@ -974,6 +1301,9 @@ public final class OpenWorldSession {
             movementIntervalMs = Math.max(250, movementIntervalMs);
             respawnDelayMs = Math.max(0, respawnDelayMs);
             aiCooldownMs = Math.max(0, aiCooldownMs);
+            corpseSourceSpawnId = corpseSourceSpawnId == null ? "" : corpseSourceSpawnId;
+            corpseItems = corpseItems == null ? List.of() : List.copyOf(corpseItems);
+            corpseStatus = corpseStatus == null ? "" : corpseStatus;
             visualScale = Math.max(0.10, visualScale);
             staticModelScaleMultiplier = Math.max(0.05, staticModelScaleMultiplier);
             staticModelBrightness = Math.max(0.0, Math.min(4.0, staticModelBrightness));
@@ -993,9 +1323,11 @@ public final class OpenWorldSession {
                 double visualScale,
                 InventorySystem.Item item
         ) {
-            this(name, type, x, y, interactionId, "", List.of(), talkSoundPath, blocksMovement, renderOnWall,
+            this(name, type, x, y, 0.0, interactionId, "", List.of(), talkSoundPath,
+                    blocksMovement, renderOnWall,
                     visualScale, "", false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
                     1.0, item, "", "", x, y, "", 4, 3000, 300000, 0, false,
+                    "", List.of(), false, "",
                     "", null, 0, false);
         }
     }
@@ -1076,6 +1408,13 @@ public final class OpenWorldSession {
                 }
                 enemyRespawns.clear();
                 enemyRespawns.putAll(advancedEnemies);
+                Set<String> expiredSpawnIds = advancedEnemies.values().stream()
+                        .filter(snapshot -> snapshot.respawnDelayMs() > 0 && snapshot.remainingMs() == 0)
+                        .map(GameState.EnemyRespawnSnapshot::spawnId)
+                        .collect(java.util.stream.Collectors.toSet());
+                entities.removeIf(entity -> entity.isCorpse()
+                        && expiredSpawnIds.contains(stripRuntimeEnemySpawnPrefix(
+                                entity.getCorpseState().sourceSpawnId())));
 
                 entities.removeIf(entity -> entity.isTemporaryStation()
                         && entity.advanceTemporaryStationTimer(elapsed));
@@ -1091,8 +1430,9 @@ public final class OpenWorldSession {
                             .map(entity -> new PersistedEntityState(
                                     entity.getName(),
                                     entity.getType(),
-                                    entity.getX(),
-                                    entity.getY(),
+                                    entity.getPersistenceX(),
+                                    entity.getPersistenceY(),
+                                    entity.getPersistenceFacingYawDegrees(),
                                     entity.getInteractionId(),
                                     entity.getContentId(),
                                     entity.getQuestIds(),
@@ -1121,6 +1461,10 @@ public final class OpenWorldSession {
                                     entity.getRespawnDelayMs(),
                                     entity.getWorldAiCooldownMs(),
                                     entity.isWorldAlerted(),
+                                    entity.getCorpseState() == null ? "" : entity.getCorpseState().sourceSpawnId(),
+                                    entity.getCorpseState() == null ? List.of() : entity.getCorpseState().contents(),
+                                    entity.getCorpseState() != null && entity.getCorpseState().butcheryAttempted(),
+                                    entity.getCorpseState() == null ? "" : entity.getCorpseState().statusMessage(),
                                     entity.getTemporaryStationId(),
                                     entity.getTemporaryStationType(),
                                     entity.getTemporaryStationRemainingMs(),
@@ -1144,8 +1488,8 @@ public final class OpenWorldSession {
             for (MapEntity entity : entities) {
                 boolean stableEnemy = entity.getType() == Library.EntityType.ENEMY
                         && !entity.getEnemySpawnId().isBlank();
-                int localX = stableEnemy ? entity.getSpawnX() : entity.getX();
-                int localY = stableEnemy ? entity.getSpawnY() : entity.getY();
+                int localX = stableEnemy ? entity.getSpawnX() : entity.getPersistenceX();
+                int localY = stableEnemy ? entity.getSpawnY() : entity.getPersistenceY();
                 if (localX >= 0 && localX < width && localY >= 0 && localY < height) {
                     continue;
                 }
@@ -1154,49 +1498,6 @@ public final class OpenWorldSession {
                                 + " at " + localX + "," + localY
                                 + " for chunk " + path + " (" + width + "x" + height + ")."
                 );
-            }
-        }
-    }
-
-    private static final class ContentAccumulator {
-        private final List<MapDesignLibrary.AuthoredDialogue> dialogues = new ArrayList<>();
-        private final List<MapDesignLibrary.AuthoredQuest> quests = new ArrayList<>();
-        private final List<MapDesignLibrary.CustomItem> items = new ArrayList<>();
-        private final List<MapDesignLibrary.CustomLimb> limbs = new ArrayList<>();
-        private final List<MapDesignLibrary.CustomFurnitureDefinition> furniture = new ArrayList<>();
-        private final List<MapDesignLibrary.CustomGatheringNode> gatheringNodes = new ArrayList<>();
-        private final List<MapDesignLibrary.CustomCookingRecipe> cookingRecipes = new ArrayList<>();
-        private final List<MapDesignLibrary.CraftingRecipe> craftingRecipes = new ArrayList<>();
-        private final Set<String> dialogueIds = new LinkedHashSet<>();
-        private final Set<String> questIds = new LinkedHashSet<>();
-        private final Set<String> itemIds = new LinkedHashSet<>();
-        private final Set<String> limbIds = new LinkedHashSet<>();
-        private final Set<String> furnitureIds = new LinkedHashSet<>();
-        private final Set<String> gatheringIds = new LinkedHashSet<>();
-        private final Set<String> cookingIds = new LinkedHashSet<>();
-        private final Set<String> craftingRecipeIds = new LinkedHashSet<>();
-
-        private void add(ChunkState chunk) {
-            addUnique(dialogues, chunk.design.authoredDialogues(), MapDesignLibrary.AuthoredDialogue::interactionId, dialogueIds);
-            addUnique(quests, chunk.design.authoredQuests(), MapDesignLibrary.AuthoredQuest::questId, questIds);
-            addUnique(items, chunk.design.customItems(), MapDesignLibrary.CustomItem::itemId, itemIds);
-            addUnique(limbs, chunk.design.customLimbs(), MapDesignLibrary.CustomLimb::limbId, limbIds);
-            addUnique(furniture, chunk.design.customFurniture(), MapDesignLibrary.CustomFurnitureDefinition::furnitureId, furnitureIds);
-            addUnique(gatheringNodes, chunk.design.customGatheringNodes(), MapDesignLibrary.CustomGatheringNode::nodeId, gatheringIds);
-            addUnique(cookingRecipes, chunk.design.customCookingRecipes(), MapDesignLibrary.CustomCookingRecipe::recipeId, cookingIds);
-            addUnique(craftingRecipes, chunk.design.craftingRecipes(), MapDesignLibrary.CraftingRecipe::recipeId, craftingRecipeIds);
-        }
-
-        private static <T> void addUnique(
-                List<T> target,
-                List<T> source,
-                java.util.function.Function<T, String> id,
-                Set<String> ids
-        ) {
-            for (T value : source) {
-                if (value != null && ids.add(id.apply(value))) {
-                    target.add(value);
-                }
             }
         }
     }
@@ -1213,5 +1514,25 @@ public final class OpenWorldSession {
     }
 
     private record ParsedTriggerId(ChunkCoordinate coordinate, String localId) {
+    }
+
+    private record PreparedTerrainWindow(
+            DungeonMap map,
+            List<EnvironmentTheme> environmentThemes,
+            Map<ChunkCoordinate, PreparedChunkRevision> chunkRevisions
+    ) {
+    }
+
+    private record PreparedChunkRevision(
+            long tileRevision,
+            long paintRevision,
+            long geometryRevision,
+            long lightingRevision
+    ) {
+        private static PreparedChunkRevision of(DungeonMap map) {
+            return new PreparedChunkRevision(
+                    map.tileRevision(), map.paintRevision(),
+                    map.geometryRevision(), map.lightingRevision());
+        }
     }
 }

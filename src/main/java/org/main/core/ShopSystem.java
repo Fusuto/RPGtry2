@@ -720,6 +720,9 @@ public final class ShopSystem {
             int iconY = bounds.y + padding;
             int iconSize = Math.min(bounds.width, bounds.height) - padding * 2;
 
+            if (ItemModelIconRenderQueue.request(item, iconX, iconY, iconSize, iconSize)) {
+                return;
+            }
             BufferedImage icon = item.getIcon();
 
             if (icon != null) {
