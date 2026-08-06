@@ -1,31 +1,8 @@
 package org.main.content;
 
 import org.main.battle.DifficultyResolver;
-import org.main.core.CharacterSkill;
-import org.main.core.CraftingStationType;
-import org.main.core.GearDurability;
-import org.main.core.GearMaterial;
-import org.main.core.InventorySystem;
-import org.main.core.Library;
-import org.main.core.LimbItem;
-import org.main.core.LimbSlot;
-import org.main.core.PaperDollAssetLibrary;
-import org.main.core.PlayerStat;
-import org.main.core.ShopSystem;
-import org.main.core.WeaponType;
-import org.main.core.GeneratedDungeon;
-import org.main.core.EquipmentViewModelProfile;
-import org.main.core.ItemModelIconProfile;
-import org.main.engine.DungeonMap;
-import org.main.engine.MapEntity;
-import org.main.engine.MapGeometryData;
-import org.main.engine.MapLight;
-import org.main.engine.MapLightingSettings;
-import org.main.engine.MapPaintData;
-import org.main.engine.MobAreaData;
-import org.main.engine.AssetLoader;
-import org.main.engine.SkyboxSpec;
-import org.main.engine.SpriteAnimation;
+import org.main.core.*;
+import org.main.engine.*;
 import org.main.monsters.Monster;
 
 import java.awt.image.BufferedImage;
@@ -34,13 +11,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.EnumMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
@@ -188,293 +159,293 @@ public final class MapDesignLibrary {
         }
 
         if (includeContent) {
-        properties.setProperty("dialogue.schemaVersion", "3");
-        properties.setProperty("dialogue.count", String.valueOf(design.authoredDialogues().size()));
-        for (int i = 0; i < design.authoredDialogues().size(); i++) {
-            AuthoredDialogue authoredDialogue = design.authoredDialogues().get(i);
-            String prefix = "dialogue." + i + ".";
-            properties.setProperty(prefix + "interactionId", authoredDialogue.interactionId());
-            properties.setProperty(prefix + "speakerName", authoredDialogue.speakerName());
-            properties.setProperty(prefix + "bodyText", authoredDialogue.bodyText());
-            properties.setProperty(prefix + "followUpInteractionId", authoredDialogue.followUpInteractionId());
-            properties.setProperty(prefix + "visualPath", authoredDialogue.visualPath());
-            properties.setProperty(prefix + "firstTalkNodeId", authoredDialogue.firstTalkNodeId());
-            properties.setProperty(prefix + "repeatTalkNodeId", authoredDialogue.repeatTalkNodeId());
-            writeQuestRewards(properties, prefix + "reward.", authoredDialogue.rewards());
-            properties.setProperty(prefix + "choice.count", String.valueOf(authoredDialogue.choices().size()));
-            for (int choiceIndex = 0; choiceIndex < authoredDialogue.choices().size(); choiceIndex++) {
-                writeAuthoredDialogueChoice(properties, prefix + "choice." + choiceIndex + ".", authoredDialogue.choices().get(choiceIndex));
-            }
-            properties.setProperty(prefix + "node.count", String.valueOf(authoredDialogue.nodes().size()));
-            for (int nodeIndex = 0; nodeIndex < authoredDialogue.nodes().size(); nodeIndex++) {
-                AuthoredDialogueNode node = authoredDialogue.nodes().get(nodeIndex);
-                String nodePrefix = prefix + "node." + nodeIndex + ".";
-                properties.setProperty(nodePrefix + "nodeId", node.nodeId());
-                properties.setProperty(nodePrefix + "bodyText", node.bodyText());
-                properties.setProperty(nodePrefix + "canvasX", String.valueOf(node.canvasX()));
-                properties.setProperty(nodePrefix + "canvasY", String.valueOf(node.canvasY()));
-                properties.setProperty(nodePrefix + "choice.count", String.valueOf(node.choices().size()));
-                for (int choiceIndex = 0; choiceIndex < node.choices().size(); choiceIndex++) {
-                    writeAuthoredDialogueChoice(properties, nodePrefix + "choice." + choiceIndex + ".", node.choices().get(choiceIndex));
+            properties.setProperty("dialogue.schemaVersion", "3");
+            properties.setProperty("dialogue.count", String.valueOf(design.authoredDialogues().size()));
+            for (int i = 0; i < design.authoredDialogues().size(); i++) {
+                AuthoredDialogue authoredDialogue = design.authoredDialogues().get(i);
+                String prefix = "dialogue." + i + ".";
+                properties.setProperty(prefix + "interactionId", authoredDialogue.interactionId());
+                properties.setProperty(prefix + "speakerName", authoredDialogue.speakerName());
+                properties.setProperty(prefix + "bodyText", authoredDialogue.bodyText());
+                properties.setProperty(prefix + "followUpInteractionId", authoredDialogue.followUpInteractionId());
+                properties.setProperty(prefix + "visualPath", authoredDialogue.visualPath());
+                properties.setProperty(prefix + "firstTalkNodeId", authoredDialogue.firstTalkNodeId());
+                properties.setProperty(prefix + "repeatTalkNodeId", authoredDialogue.repeatTalkNodeId());
+                writeQuestRewards(properties, prefix + "reward.", authoredDialogue.rewards());
+                properties.setProperty(prefix + "choice.count", String.valueOf(authoredDialogue.choices().size()));
+                for (int choiceIndex = 0; choiceIndex < authoredDialogue.choices().size(); choiceIndex++) {
+                    writeAuthoredDialogueChoice(properties, prefix + "choice." + choiceIndex + ".", authoredDialogue.choices().get(choiceIndex));
+                }
+                properties.setProperty(prefix + "node.count", String.valueOf(authoredDialogue.nodes().size()));
+                for (int nodeIndex = 0; nodeIndex < authoredDialogue.nodes().size(); nodeIndex++) {
+                    AuthoredDialogueNode node = authoredDialogue.nodes().get(nodeIndex);
+                    String nodePrefix = prefix + "node." + nodeIndex + ".";
+                    properties.setProperty(nodePrefix + "nodeId", node.nodeId());
+                    properties.setProperty(nodePrefix + "bodyText", node.bodyText());
+                    properties.setProperty(nodePrefix + "canvasX", String.valueOf(node.canvasX()));
+                    properties.setProperty(nodePrefix + "canvasY", String.valueOf(node.canvasY()));
+                    properties.setProperty(nodePrefix + "choice.count", String.valueOf(node.choices().size()));
+                    for (int choiceIndex = 0; choiceIndex < node.choices().size(); choiceIndex++) {
+                        writeAuthoredDialogueChoice(properties, nodePrefix + "choice." + choiceIndex + ".", node.choices().get(choiceIndex));
+                    }
                 }
             }
-        }
 
-        properties.setProperty("quest.schemaVersion", "3");
-        properties.setProperty("quest.count", String.valueOf(design.authoredQuests().size()));
-        for (int i = 0; i < design.authoredQuests().size(); i++) {
-            AuthoredQuest authoredQuest = design.authoredQuests().get(i);
-            String prefix = "quest." + i + ".";
-            properties.setProperty(prefix + "questId", authoredQuest.questId());
-            properties.setProperty(prefix + "displayName", authoredQuest.displayName());
-            properties.setProperty(prefix + "summary", authoredQuest.summary());
-            writeQuestRequirements(properties, prefix + "requirement.", authoredQuest.requirements());
-            writeQuestFlow(properties, prefix + "offer.", authoredQuest.offerFlow());
-            properties.setProperty(prefix + "stage.count", String.valueOf(authoredQuest.stages().size()));
-            for (int stageIndex = 0; stageIndex < authoredQuest.stages().size(); stageIndex++) {
-                QuestStage stage = authoredQuest.stages().get(stageIndex);
-                String stagePrefix = prefix + "stage." + stageIndex + ".";
-                properties.setProperty(stagePrefix + "stageId", stage.stageId());
-                properties.setProperty(stagePrefix + "title", stage.title());
-                properties.setProperty(stagePrefix + "journalText", stage.journalText());
-                properties.setProperty(stagePrefix + "completionMode", stage.completionMode().name());
-                writeQuestObjectives(properties, stagePrefix + "objective.", stage.objectives());
-                writeQuestRewards(properties, stagePrefix + "reward.", stage.rewards());
-                writeQuestFlow(properties, stagePrefix + "flow.", stage.flow());
+            properties.setProperty("quest.schemaVersion", "3");
+            properties.setProperty("quest.count", String.valueOf(design.authoredQuests().size()));
+            for (int i = 0; i < design.authoredQuests().size(); i++) {
+                AuthoredQuest authoredQuest = design.authoredQuests().get(i);
+                String prefix = "quest." + i + ".";
+                properties.setProperty(prefix + "questId", authoredQuest.questId());
+                properties.setProperty(prefix + "displayName", authoredQuest.displayName());
+                properties.setProperty(prefix + "summary", authoredQuest.summary());
+                writeQuestRequirements(properties, prefix + "requirement.", authoredQuest.requirements());
+                writeQuestFlow(properties, prefix + "offer.", authoredQuest.offerFlow());
+                properties.setProperty(prefix + "stage.count", String.valueOf(authoredQuest.stages().size()));
+                for (int stageIndex = 0; stageIndex < authoredQuest.stages().size(); stageIndex++) {
+                    QuestStage stage = authoredQuest.stages().get(stageIndex);
+                    String stagePrefix = prefix + "stage." + stageIndex + ".";
+                    properties.setProperty(stagePrefix + "stageId", stage.stageId());
+                    properties.setProperty(stagePrefix + "title", stage.title());
+                    properties.setProperty(stagePrefix + "journalText", stage.journalText());
+                    properties.setProperty(stagePrefix + "completionMode", stage.completionMode().name());
+                    writeQuestObjectives(properties, stagePrefix + "objective.", stage.objectives());
+                    writeQuestRewards(properties, stagePrefix + "reward.", stage.rewards());
+                    writeQuestFlow(properties, stagePrefix + "flow.", stage.flow());
+                }
+                writeQuestRewards(properties, prefix + "finalReward.", authoredQuest.finalRewards());
+                writeQuestFlow(properties, prefix + "epilogue.", authoredQuest.epilogueFlow());
             }
-            writeQuestRewards(properties, prefix + "finalReward.", authoredQuest.finalRewards());
-            writeQuestFlow(properties, prefix + "epilogue.", authoredQuest.epilogueFlow());
-        }
 
-        properties.setProperty("item.schemaVersion", "3");
-        properties.setProperty("item.count", String.valueOf(design.customItems().size()));
-        for (int i = 0; i < design.customItems().size(); i++) {
-            CustomItem customItem = design.customItems().get(i);
-            String prefix = "item." + i + ".";
-            properties.setProperty(prefix + "itemId", customItem.itemId());
-            properties.setProperty(prefix + "displayName", customItem.displayName());
-            properties.setProperty(prefix + "itemType", customItem.itemType().name());
-            properties.setProperty(prefix + "iconPath", customItem.iconPath());
-            properties.setProperty(prefix + "paperDollOverlayPath", customItem.paperDollOverlayPath());
-            properties.setProperty(prefix + "useSoundPath", customItem.useSoundPath());
-            properties.setProperty(prefix + "weaponType", customItem.weaponType().name());
-            properties.setProperty(prefix + "twoHanded", String.valueOf(customItem.twoHanded()));
-            properties.setProperty(prefix + "material", customItem.material().name());
-            properties.setProperty(prefix + "healAmount", String.valueOf(customItem.healAmount()));
-            properties.setProperty(prefix + "baseGoldValue", String.valueOf(customItem.baseGoldValue()));
-            properties.setProperty(prefix + "examineText", customItem.examineText());
-            properties.setProperty(prefix + "statBonusTarget", customItem.statBonusTarget() == null ? "" : customItem.statBonusTarget().name());
-            properties.setProperty(prefix + "stackable", String.valueOf(customItem.stackable()));
-            properties.setProperty(prefix + "smithingRecipeEnabled", String.valueOf(customItem.smithingRecipeEnabled()));
-            properties.setProperty(prefix + "smithingRequiredBars", String.valueOf(customItem.smithingRequiredBars()));
-            properties.setProperty(prefix + "smithingRequiredLevel", String.valueOf(customItem.smithingRequiredLevel()));
-            properties.setProperty(prefix + "smithingXpReward", String.valueOf(customItem.smithingXpReward()));
-            properties.setProperty(prefix + "magicAccuracyBonus", String.valueOf(customItem.magicAccuracyBonus()));
-            properties.setProperty(prefix + "magicPowerBonus", String.valueOf(customItem.magicPowerBonus()));
-            properties.setProperty(prefix + "firstPersonModelPath", customItem.firstPersonModelPath());
-            properties.setProperty(prefix + "sourceEnemyId", customItem.sourceEnemyId());
-            EquipmentViewModelProfile pose = customItem.viewModelProfile();
-            properties.setProperty(prefix + "viewModel.positionX", String.valueOf(pose.positionX()));
-            properties.setProperty(prefix + "viewModel.positionY", String.valueOf(pose.positionY()));
-            properties.setProperty(prefix + "viewModel.positionZ", String.valueOf(pose.positionZ()));
-            properties.setProperty(prefix + "viewModel.rotationX", String.valueOf(pose.rotationX()));
-            properties.setProperty(prefix + "viewModel.rotationY", String.valueOf(pose.rotationY()));
-            properties.setProperty(prefix + "viewModel.rotationZ", String.valueOf(pose.rotationZ()));
-            properties.setProperty(prefix + "viewModel.normalizedHeight", String.valueOf(pose.normalizedHeight()));
-            properties.setProperty(prefix + "viewModel.swingAxisX", String.valueOf(pose.swingAxisX()));
-            properties.setProperty(prefix + "viewModel.swingAxisY", String.valueOf(pose.swingAxisY()));
-            properties.setProperty(prefix + "viewModel.swingAxisZ", String.valueOf(pose.swingAxisZ()));
-            properties.setProperty(prefix + "viewModel.pairedHands", String.valueOf(pose.pairedHands()));
-            ItemModelIconProfile icon = customItem.modelIconProfile();
-            properties.setProperty(prefix + "modelIcon.rotationX", String.valueOf(icon.rotationX()));
-            properties.setProperty(prefix + "modelIcon.rotationY", String.valueOf(icon.rotationY()));
-            properties.setProperty(prefix + "modelIcon.rotationZ", String.valueOf(icon.rotationZ()));
-            properties.setProperty(prefix + "modelIcon.zoom", String.valueOf(icon.zoom()));
-            properties.setProperty(prefix + "modelIcon.offsetX", String.valueOf(icon.offsetX()));
-            properties.setProperty(prefix + "modelIcon.offsetY", String.valueOf(icon.offsetY()));
-        }
+            properties.setProperty("item.schemaVersion", "3");
+            properties.setProperty("item.count", String.valueOf(design.customItems().size()));
+            for (int i = 0; i < design.customItems().size(); i++) {
+                CustomItem customItem = design.customItems().get(i);
+                String prefix = "item." + i + ".";
+                properties.setProperty(prefix + "itemId", customItem.itemId());
+                properties.setProperty(prefix + "displayName", customItem.displayName());
+                properties.setProperty(prefix + "itemType", customItem.itemType().name());
+                properties.setProperty(prefix + "iconPath", customItem.iconPath());
+                properties.setProperty(prefix + "paperDollOverlayPath", customItem.paperDollOverlayPath());
+                properties.setProperty(prefix + "useSoundPath", customItem.useSoundPath());
+                properties.setProperty(prefix + "weaponType", customItem.weaponType().name());
+                properties.setProperty(prefix + "twoHanded", String.valueOf(customItem.twoHanded()));
+                properties.setProperty(prefix + "material", customItem.material().name());
+                properties.setProperty(prefix + "healAmount", String.valueOf(customItem.healAmount()));
+                properties.setProperty(prefix + "baseGoldValue", String.valueOf(customItem.baseGoldValue()));
+                properties.setProperty(prefix + "examineText", customItem.examineText());
+                properties.setProperty(prefix + "statBonusTarget", customItem.statBonusTarget() == null ? "" : customItem.statBonusTarget().name());
+                properties.setProperty(prefix + "stackable", String.valueOf(customItem.stackable()));
+                properties.setProperty(prefix + "smithingRecipeEnabled", String.valueOf(customItem.smithingRecipeEnabled()));
+                properties.setProperty(prefix + "smithingRequiredBars", String.valueOf(customItem.smithingRequiredBars()));
+                properties.setProperty(prefix + "smithingRequiredLevel", String.valueOf(customItem.smithingRequiredLevel()));
+                properties.setProperty(prefix + "smithingXpReward", String.valueOf(customItem.smithingXpReward()));
+                properties.setProperty(prefix + "magicAccuracyBonus", String.valueOf(customItem.magicAccuracyBonus()));
+                properties.setProperty(prefix + "magicPowerBonus", String.valueOf(customItem.magicPowerBonus()));
+                properties.setProperty(prefix + "firstPersonModelPath", customItem.firstPersonModelPath());
+                properties.setProperty(prefix + "sourceEnemyId", customItem.sourceEnemyId());
+                EquipmentViewModelProfile pose = customItem.viewModelProfile();
+                properties.setProperty(prefix + "viewModel.positionX", String.valueOf(pose.positionX()));
+                properties.setProperty(prefix + "viewModel.positionY", String.valueOf(pose.positionY()));
+                properties.setProperty(prefix + "viewModel.positionZ", String.valueOf(pose.positionZ()));
+                properties.setProperty(prefix + "viewModel.rotationX", String.valueOf(pose.rotationX()));
+                properties.setProperty(prefix + "viewModel.rotationY", String.valueOf(pose.rotationY()));
+                properties.setProperty(prefix + "viewModel.rotationZ", String.valueOf(pose.rotationZ()));
+                properties.setProperty(prefix + "viewModel.normalizedHeight", String.valueOf(pose.normalizedHeight()));
+                properties.setProperty(prefix + "viewModel.swingAxisX", String.valueOf(pose.swingAxisX()));
+                properties.setProperty(prefix + "viewModel.swingAxisY", String.valueOf(pose.swingAxisY()));
+                properties.setProperty(prefix + "viewModel.swingAxisZ", String.valueOf(pose.swingAxisZ()));
+                properties.setProperty(prefix + "viewModel.pairedHands", String.valueOf(pose.pairedHands()));
+                ItemModelIconProfile icon = customItem.modelIconProfile();
+                properties.setProperty(prefix + "modelIcon.rotationX", String.valueOf(icon.rotationX()));
+                properties.setProperty(prefix + "modelIcon.rotationY", String.valueOf(icon.rotationY()));
+                properties.setProperty(prefix + "modelIcon.rotationZ", String.valueOf(icon.rotationZ()));
+                properties.setProperty(prefix + "modelIcon.zoom", String.valueOf(icon.zoom()));
+                properties.setProperty(prefix + "modelIcon.offsetX", String.valueOf(icon.offsetX()));
+                properties.setProperty(prefix + "modelIcon.offsetY", String.valueOf(icon.offsetY()));
+            }
 
-        properties.setProperty("mob.schemaVersion", "2");
-        properties.setProperty("mob.count", String.valueOf(design.customMobs().size()));
-        for (int i = 0; i < design.customMobs().size(); i++) {
-            CustomMob customMob = design.customMobs().get(i);
-            String prefix = "mob." + i + ".";
-            properties.setProperty(prefix + "mobId", customMob.mobId());
-            properties.setProperty(prefix + "displayName", customMob.displayName());
-            properties.setProperty(prefix + "imagePath", customMob.imagePath());
-            properties.setProperty(prefix + "paperDollSourcePath", customMob.paperDollSourcePath());
-            for (PlayerStat stat : PlayerStat.values()) {
-                properties.setProperty(prefix + "stat." + stat.name(), String.valueOf(customMob.statValues().getOrDefault(stat, 0)));
-            }
-            properties.setProperty(prefix + "xpReward", String.valueOf(customMob.xpReward()));
-            properties.setProperty(prefix + "description", customMob.description());
-            properties.setProperty(prefix + "attackSoundPath", customMob.attackSoundPath());
-            properties.setProperty(prefix + "damageSoundPath", customMob.damageSoundPath());
-            properties.setProperty(prefix + "combatAiIntelligence", String.valueOf(customMob.combatAiIntelligence()));
-            properties.setProperty(prefix + "awarenessRadius", String.valueOf(customMob.awarenessRadius()));
-            properties.setProperty(prefix + "movementIntervalMs", String.valueOf(customMob.movementIntervalMs()));
-            properties.setProperty(prefix + "respawnDelayMs", String.valueOf(customMob.respawnDelayMs()));
-            EnemyButcheryProfile butchery = customMob.butcheryProfile();
-            properties.setProperty(prefix + "butchery.type", butchery.type().name());
-            properties.setProperty(prefix + "butchery.leatherItemId", butchery.leatherItemId());
-            properties.setProperty(prefix + "butchery.baseValueOverride",
-                    butchery.baseValueOverride() == null ? "" : String.valueOf(butchery.baseValueOverride()));
-            for (LimbSlot slot : LimbSlot.values()) {
-                properties.setProperty(prefix + "butchery.limb." + slot.name(), butchery.productId(slot));
-            }
-            writeCharacterModel(properties, prefix + "model.", customMob.characterModel());
-            properties.setProperty(prefix + "skillIds", joinSkills(customMob.skillIds()));
-            properties.setProperty(prefix + "drop.count", String.valueOf(customMob.dropEntries().size()));
-            for (int dropIndex = 0; dropIndex < customMob.dropEntries().size(); dropIndex++) {
-                CustomDropEntry drop = customMob.dropEntries().get(dropIndex);
-                String dropPrefix = prefix + "drop." + dropIndex + ".";
-                properties.setProperty(dropPrefix + "itemId", drop.itemId());
-                properties.setProperty(dropPrefix + "chance", String.valueOf(drop.chance()));
-            }
-        }
-
-        properties.setProperty("limb.schemaVersion", "2");
-        properties.setProperty("limb.count", String.valueOf(design.customLimbs().size()));
-        for (int i = 0; i < design.customLimbs().size(); i++) {
-            CustomLimb customLimb = design.customLimbs().get(i);
-            String prefix = "limb." + i + ".";
-            properties.setProperty(prefix + "limbId", customLimb.limbId());
-            properties.setProperty(prefix + "displayName", customLimb.displayName());
-            properties.setProperty(prefix + "limbSlot", customLimb.limbSlot().name());
-            properties.setProperty(prefix + "iconPath", customLimb.iconPath());
-            properties.setProperty(prefix + "paperDollDerivedIcon", String.valueOf(customLimb.paperDollDerivedIcon()));
-            properties.setProperty(prefix + "baseGoldValue", String.valueOf(customLimb.baseGoldValue()));
-            properties.setProperty(prefix + "condition", customLimb.condition().name());
-            properties.setProperty(prefix + "description", customLimb.description());
-            properties.setProperty(prefix + "sourceCreatureId", customLimb.sourceCreatureId());
-            properties.setProperty(prefix + "paperDollSourcePath", customLimb.paperDollSourcePath());
-            properties.setProperty(prefix + "firstPersonModelPath", customLimb.firstPersonModelPath());
-            properties.setProperty(prefix + "firstPersonRigId", customLimb.firstPersonRigId());
-            properties.setProperty(prefix + "skillIds", joinSkills(customLimb.skillIds()));
-            for (PlayerStat stat : PlayerStat.values()) {
-                properties.setProperty(prefix + "stat." + stat.name(), String.valueOf(customLimb.statBonuses().getOrDefault(stat, 0)));
-            }
-        }
-
-        properties.setProperty("npc.schemaVersion", "2");
-        properties.setProperty("npc.count", String.valueOf(design.customNpcs().size()));
-        for (int i = 0; i < design.customNpcs().size(); i++) {
-            CustomNpc customNpc = design.customNpcs().get(i);
-            String prefix = "npc." + i + ".";
-            properties.setProperty(prefix + "npcId", customNpc.npcId());
-            properties.setProperty(prefix + "displayName", customNpc.displayName());
-            properties.setProperty(prefix + "imagePath", customNpc.imagePath());
-            properties.setProperty(prefix + "talkSoundPath", customNpc.talkSoundPath());
-            properties.setProperty(prefix + "interactionId", customNpc.interactionId());
-            properties.setProperty(prefix + "quest.count", String.valueOf(customNpc.questIds().size()));
-            for (int questIndex = 0; questIndex < customNpc.questIds().size(); questIndex++) {
-                properties.setProperty(prefix + "quest." + questIndex, customNpc.questIds().get(questIndex));
-            }
-            writeCharacterModel(properties, prefix + "model.", customNpc.characterModel());
-            CustomShop customShop = customNpc.shop();
-            properties.setProperty(prefix + "shop.enabled", String.valueOf(customShop != null));
-            if (customShop != null) {
-                properties.setProperty(prefix + "shop.name", customShop.shopName());
-                properties.setProperty(prefix + "shop.greeting", customShop.greeting());
-                properties.setProperty(prefix + "shop.stock.count", String.valueOf(customShop.stock().size()));
-                for (int stockIndex = 0; stockIndex < customShop.stock().size(); stockIndex++) {
-                    CustomShopStock stock = customShop.stock().get(stockIndex);
-                    String stockPrefix = prefix + "shop.stock." + stockIndex + ".";
-                    properties.setProperty(stockPrefix + "itemId", stock.itemId());
-                    properties.setProperty(stockPrefix + "quantity", String.valueOf(stock.quantity()));
-                    properties.setProperty(stockPrefix + "buyPrice", String.valueOf(stock.buyPrice()));
-                    properties.setProperty(stockPrefix + "sellPrice", String.valueOf(stock.sellPrice()));
+            properties.setProperty("mob.schemaVersion", "2");
+            properties.setProperty("mob.count", String.valueOf(design.customMobs().size()));
+            for (int i = 0; i < design.customMobs().size(); i++) {
+                CustomMob customMob = design.customMobs().get(i);
+                String prefix = "mob." + i + ".";
+                properties.setProperty(prefix + "mobId", customMob.mobId());
+                properties.setProperty(prefix + "displayName", customMob.displayName());
+                properties.setProperty(prefix + "imagePath", customMob.imagePath());
+                properties.setProperty(prefix + "paperDollSourcePath", customMob.paperDollSourcePath());
+                for (PlayerStat stat : PlayerStat.values()) {
+                    properties.setProperty(prefix + "stat." + stat.name(), String.valueOf(customMob.statValues().getOrDefault(stat, 0)));
+                }
+                properties.setProperty(prefix + "xpReward", String.valueOf(customMob.xpReward()));
+                properties.setProperty(prefix + "description", customMob.description());
+                properties.setProperty(prefix + "attackSoundPath", customMob.attackSoundPath());
+                properties.setProperty(prefix + "damageSoundPath", customMob.damageSoundPath());
+                properties.setProperty(prefix + "combatAiIntelligence", String.valueOf(customMob.combatAiIntelligence()));
+                properties.setProperty(prefix + "awarenessRadius", String.valueOf(customMob.awarenessRadius()));
+                properties.setProperty(prefix + "movementIntervalMs", String.valueOf(customMob.movementIntervalMs()));
+                properties.setProperty(prefix + "respawnDelayMs", String.valueOf(customMob.respawnDelayMs()));
+                EnemyButcheryProfile butchery = customMob.butcheryProfile();
+                properties.setProperty(prefix + "butchery.type", butchery.type().name());
+                properties.setProperty(prefix + "butchery.leatherItemId", butchery.leatherItemId());
+                properties.setProperty(prefix + "butchery.baseValueOverride",
+                        butchery.baseValueOverride() == null ? "" : String.valueOf(butchery.baseValueOverride()));
+                for (LimbSlot slot : LimbSlot.values()) {
+                    properties.setProperty(prefix + "butchery.limb." + slot.name(), butchery.productId(slot));
+                }
+                writeCharacterModel(properties, prefix + "model.", customMob.characterModel());
+                properties.setProperty(prefix + "skillIds", joinSkills(customMob.skillIds()));
+                properties.setProperty(prefix + "drop.count", String.valueOf(customMob.dropEntries().size()));
+                for (int dropIndex = 0; dropIndex < customMob.dropEntries().size(); dropIndex++) {
+                    CustomDropEntry drop = customMob.dropEntries().get(dropIndex);
+                    String dropPrefix = prefix + "drop." + dropIndex + ".";
+                    properties.setProperty(dropPrefix + "itemId", drop.itemId());
+                    properties.setProperty(dropPrefix + "chance", String.valueOf(drop.chance()));
                 }
             }
-        }
 
-        properties.setProperty("furniture.count", String.valueOf(design.customFurniture().size()));
-        for (int i = 0; i < design.customFurniture().size(); i++) {
-            CustomFurnitureDefinition furniture = design.customFurniture().get(i);
-            String prefix = "furniture." + i + ".";
-            properties.setProperty(prefix + "furnitureId", furniture.furnitureId());
-            properties.setProperty(prefix + "displayName", furniture.displayName());
-            properties.setProperty(prefix + "category", furniture.category());
-            properties.setProperty(prefix + "modelPath", furniture.modelPath());
-            properties.setProperty(prefix + "defaultScale", String.valueOf(furniture.defaultScale()));
-            properties.setProperty(prefix + "defaultBlocksMovement", String.valueOf(furniture.defaultBlocksMovement()));
-            properties.setProperty(prefix + "interactionId", furniture.interactionId());
-            writeLightAttachment(properties, prefix + "light.", furniture.lightAttachment());
-        }
-
-        properties.setProperty("gatheringNode.count", String.valueOf(design.customGatheringNodes().size()));
-        for (int i = 0; i < design.customGatheringNodes().size(); i++) {
-            CustomGatheringNode node = design.customGatheringNodes().get(i);
-            String prefix = "gatheringNode." + i + ".";
-            properties.setProperty(prefix + "nodeId", node.nodeId());
-            properties.setProperty(prefix + "displayName", node.displayName());
-            properties.setProperty(prefix + "nodeType", node.nodeType().name());
-            properties.setProperty(prefix + "gatheringSkill", node.gatheringSkill().name());
-            properties.setProperty(prefix + "requiredLevel", String.valueOf(node.requiredLevel()));
-            properties.setProperty(prefix + "outputItemId", node.outputItemId());
-            properties.setProperty(prefix + "gatherXpReward", String.valueOf(node.gatherXpReward()));
-            properties.setProperty(prefix + "smeltOutputItemId", node.smeltOutputItemId());
-            properties.setProperty(prefix + "smeltRequiredLevel", String.valueOf(node.smeltRequiredLevel()));
-            properties.setProperty(prefix + "smeltXpReward", String.valueOf(node.smeltXpReward()));
-            properties.setProperty(prefix + "visualScale", String.valueOf(node.visualScale()));
-            properties.setProperty(prefix + "frameDurationMs", String.valueOf(node.frameDurationMs()));
-            writeLightAttachment(properties, prefix + "light.", node.lightAttachment());
-            properties.setProperty(prefix + "loot.count", String.valueOf(node.lootEntries().size()));
-            for (int lootIndex = 0; lootIndex < node.lootEntries().size(); lootIndex++) {
-                CustomDropEntry loot = node.lootEntries().get(lootIndex);
-                String lootPrefix = prefix + "loot." + lootIndex + ".";
-                properties.setProperty(lootPrefix + "itemId", loot.itemId());
-                properties.setProperty(lootPrefix + "chance", String.valueOf(loot.chance()));
+            properties.setProperty("limb.schemaVersion", "2");
+            properties.setProperty("limb.count", String.valueOf(design.customLimbs().size()));
+            for (int i = 0; i < design.customLimbs().size(); i++) {
+                CustomLimb customLimb = design.customLimbs().get(i);
+                String prefix = "limb." + i + ".";
+                properties.setProperty(prefix + "limbId", customLimb.limbId());
+                properties.setProperty(prefix + "displayName", customLimb.displayName());
+                properties.setProperty(prefix + "limbSlot", customLimb.limbSlot().name());
+                properties.setProperty(prefix + "iconPath", customLimb.iconPath());
+                properties.setProperty(prefix + "paperDollDerivedIcon", String.valueOf(customLimb.paperDollDerivedIcon()));
+                properties.setProperty(prefix + "baseGoldValue", String.valueOf(customLimb.baseGoldValue()));
+                properties.setProperty(prefix + "condition", customLimb.condition().name());
+                properties.setProperty(prefix + "description", customLimb.description());
+                properties.setProperty(prefix + "sourceCreatureId", customLimb.sourceCreatureId());
+                properties.setProperty(prefix + "paperDollSourcePath", customLimb.paperDollSourcePath());
+                properties.setProperty(prefix + "firstPersonModelPath", customLimb.firstPersonModelPath());
+                properties.setProperty(prefix + "firstPersonRigId", customLimb.firstPersonRigId());
+                properties.setProperty(prefix + "skillIds", joinSkills(customLimb.skillIds()));
+                for (PlayerStat stat : PlayerStat.values()) {
+                    properties.setProperty(prefix + "stat." + stat.name(), String.valueOf(customLimb.statBonuses().getOrDefault(stat, 0)));
+                }
             }
-            properties.setProperty(prefix + "frame.count", String.valueOf(node.framePaths().size()));
-            for (int frameIndex = 0; frameIndex < node.framePaths().size(); frameIndex++) {
-                properties.setProperty(prefix + "frame." + frameIndex, node.framePaths().get(frameIndex));
-            }
-            properties.setProperty(prefix + "model.count", String.valueOf(node.modelPaths().size()));
-            for (int modelIndex = 0; modelIndex < node.modelPaths().size(); modelIndex++) {
-                properties.setProperty(prefix + "model." + modelIndex, node.modelPaths().get(modelIndex));
-            }
-        }
 
-        properties.setProperty("cookingRecipe.count", String.valueOf(design.customCookingRecipes().size()));
-        for (int i = 0; i < design.customCookingRecipes().size(); i++) {
-            CustomCookingRecipe recipe = design.customCookingRecipes().get(i);
-            String prefix = "cookingRecipe." + i + ".";
-            properties.setProperty(prefix + "recipeId", recipe.recipeId());
-            properties.setProperty(prefix + "displayName", recipe.displayName());
-            properties.setProperty(prefix + "rawItemId", recipe.rawItemId());
-            properties.setProperty(prefix + "cookedItemId", recipe.cookedItemId());
-            properties.setProperty(prefix + "burntItemId", recipe.burntItemId());
-            properties.setProperty(prefix + "requiredLevel", String.valueOf(recipe.requiredLevel()));
-            properties.setProperty(prefix + "xpReward", String.valueOf(recipe.xpReward()));
-        }
+            properties.setProperty("npc.schemaVersion", "2");
+            properties.setProperty("npc.count", String.valueOf(design.customNpcs().size()));
+            for (int i = 0; i < design.customNpcs().size(); i++) {
+                CustomNpc customNpc = design.customNpcs().get(i);
+                String prefix = "npc." + i + ".";
+                properties.setProperty(prefix + "npcId", customNpc.npcId());
+                properties.setProperty(prefix + "displayName", customNpc.displayName());
+                properties.setProperty(prefix + "imagePath", customNpc.imagePath());
+                properties.setProperty(prefix + "talkSoundPath", customNpc.talkSoundPath());
+                properties.setProperty(prefix + "interactionId", customNpc.interactionId());
+                properties.setProperty(prefix + "quest.count", String.valueOf(customNpc.questIds().size()));
+                for (int questIndex = 0; questIndex < customNpc.questIds().size(); questIndex++) {
+                    properties.setProperty(prefix + "quest." + questIndex, customNpc.questIds().get(questIndex));
+                }
+                writeCharacterModel(properties, prefix + "model.", customNpc.characterModel());
+                CustomShop customShop = customNpc.shop();
+                properties.setProperty(prefix + "shop.enabled", String.valueOf(customShop != null));
+                if (customShop != null) {
+                    properties.setProperty(prefix + "shop.name", customShop.shopName());
+                    properties.setProperty(prefix + "shop.greeting", customShop.greeting());
+                    properties.setProperty(prefix + "shop.stock.count", String.valueOf(customShop.stock().size()));
+                    for (int stockIndex = 0; stockIndex < customShop.stock().size(); stockIndex++) {
+                        CustomShopStock stock = customShop.stock().get(stockIndex);
+                        String stockPrefix = prefix + "shop.stock." + stockIndex + ".";
+                        properties.setProperty(stockPrefix + "itemId", stock.itemId());
+                        properties.setProperty(stockPrefix + "quantity", String.valueOf(stock.quantity()));
+                        properties.setProperty(stockPrefix + "buyPrice", String.valueOf(stock.buyPrice()));
+                        properties.setProperty(stockPrefix + "sellPrice", String.valueOf(stock.sellPrice()));
+                    }
+                }
+            }
 
-        properties.setProperty("craftingRecipe.count", String.valueOf(design.craftingRecipes().size()));
-        for (int i = 0; i < design.craftingRecipes().size(); i++) {
-            CraftingRecipe recipe = design.craftingRecipes().get(i);
-            String prefix = "craftingRecipe." + i + ".";
-            properties.setProperty(prefix + "recipeId", recipe.recipeId());
-            properties.setProperty(prefix + "displayName", recipe.displayName());
-            properties.setProperty(prefix + "category", recipe.category().name());
-            properties.setProperty(prefix + "primaryItemId", recipe.primaryItemId());
-            properties.setProperty(prefix + "secondaryItemId", recipe.secondaryItemId());
-            properties.setProperty(prefix + "outputItemId", recipe.outputItemId());
-            properties.setProperty(prefix + "requiredSkill", recipe.requiredSkill().name());
-            properties.setProperty(prefix + "requiredLevel", String.valueOf(recipe.requiredLevel()));
-            properties.setProperty(prefix + "xpReward", String.valueOf(recipe.xpReward()));
-            properties.setProperty(prefix + "consumePrimary", String.valueOf(recipe.consumePrimary()));
-            properties.setProperty(prefix + "consumeSecondary", String.valueOf(recipe.consumeSecondary()));
-            properties.setProperty(prefix + "smeltOutputItemId", recipe.smeltOutputItemId());
-            properties.setProperty(prefix + "smeltRequiredLevel", String.valueOf(recipe.smeltRequiredLevel()));
-            properties.setProperty(prefix + "smeltXpReward", String.valueOf(recipe.smeltXpReward()));
-            properties.setProperty(prefix + "primaryQuantity", String.valueOf(recipe.primaryQuantity()));
-            properties.setProperty(prefix + "secondaryQuantity", String.valueOf(recipe.secondaryQuantity()));
-            properties.setProperty(prefix + "outputType", recipe.outputType().name());
-            properties.setProperty(prefix + "outputStationType", recipe.outputStationType() == null
-                    ? ""
-                    : recipe.outputStationType().name());
-            properties.setProperty(prefix + "stationLifetimeMs", String.valueOf(recipe.stationLifetimeMs()));
-        }
+            properties.setProperty("furniture.count", String.valueOf(design.customFurniture().size()));
+            for (int i = 0; i < design.customFurniture().size(); i++) {
+                CustomFurnitureDefinition furniture = design.customFurniture().get(i);
+                String prefix = "furniture." + i + ".";
+                properties.setProperty(prefix + "furnitureId", furniture.furnitureId());
+                properties.setProperty(prefix + "displayName", furniture.displayName());
+                properties.setProperty(prefix + "category", furniture.category());
+                properties.setProperty(prefix + "modelPath", furniture.modelPath());
+                properties.setProperty(prefix + "defaultScale", String.valueOf(furniture.defaultScale()));
+                properties.setProperty(prefix + "defaultBlocksMovement", String.valueOf(furniture.defaultBlocksMovement()));
+                properties.setProperty(prefix + "interactionId", furniture.interactionId());
+                writeLightAttachment(properties, prefix + "light.", furniture.lightAttachment());
+            }
+
+            properties.setProperty("gatheringNode.count", String.valueOf(design.customGatheringNodes().size()));
+            for (int i = 0; i < design.customGatheringNodes().size(); i++) {
+                CustomGatheringNode node = design.customGatheringNodes().get(i);
+                String prefix = "gatheringNode." + i + ".";
+                properties.setProperty(prefix + "nodeId", node.nodeId());
+                properties.setProperty(prefix + "displayName", node.displayName());
+                properties.setProperty(prefix + "nodeType", node.nodeType().name());
+                properties.setProperty(prefix + "gatheringSkill", node.gatheringSkill().name());
+                properties.setProperty(prefix + "requiredLevel", String.valueOf(node.requiredLevel()));
+                properties.setProperty(prefix + "outputItemId", node.outputItemId());
+                properties.setProperty(prefix + "gatherXpReward", String.valueOf(node.gatherXpReward()));
+                properties.setProperty(prefix + "smeltOutputItemId", node.smeltOutputItemId());
+                properties.setProperty(prefix + "smeltRequiredLevel", String.valueOf(node.smeltRequiredLevel()));
+                properties.setProperty(prefix + "smeltXpReward", String.valueOf(node.smeltXpReward()));
+                properties.setProperty(prefix + "visualScale", String.valueOf(node.visualScale()));
+                properties.setProperty(prefix + "frameDurationMs", String.valueOf(node.frameDurationMs()));
+                writeLightAttachment(properties, prefix + "light.", node.lightAttachment());
+                properties.setProperty(prefix + "loot.count", String.valueOf(node.lootEntries().size()));
+                for (int lootIndex = 0; lootIndex < node.lootEntries().size(); lootIndex++) {
+                    CustomDropEntry loot = node.lootEntries().get(lootIndex);
+                    String lootPrefix = prefix + "loot." + lootIndex + ".";
+                    properties.setProperty(lootPrefix + "itemId", loot.itemId());
+                    properties.setProperty(lootPrefix + "chance", String.valueOf(loot.chance()));
+                }
+                properties.setProperty(prefix + "frame.count", String.valueOf(node.framePaths().size()));
+                for (int frameIndex = 0; frameIndex < node.framePaths().size(); frameIndex++) {
+                    properties.setProperty(prefix + "frame." + frameIndex, node.framePaths().get(frameIndex));
+                }
+                properties.setProperty(prefix + "model.count", String.valueOf(node.modelPaths().size()));
+                for (int modelIndex = 0; modelIndex < node.modelPaths().size(); modelIndex++) {
+                    properties.setProperty(prefix + "model." + modelIndex, node.modelPaths().get(modelIndex));
+                }
+            }
+
+            properties.setProperty("cookingRecipe.count", String.valueOf(design.customCookingRecipes().size()));
+            for (int i = 0; i < design.customCookingRecipes().size(); i++) {
+                CustomCookingRecipe recipe = design.customCookingRecipes().get(i);
+                String prefix = "cookingRecipe." + i + ".";
+                properties.setProperty(prefix + "recipeId", recipe.recipeId());
+                properties.setProperty(prefix + "displayName", recipe.displayName());
+                properties.setProperty(prefix + "rawItemId", recipe.rawItemId());
+                properties.setProperty(prefix + "cookedItemId", recipe.cookedItemId());
+                properties.setProperty(prefix + "burntItemId", recipe.burntItemId());
+                properties.setProperty(prefix + "requiredLevel", String.valueOf(recipe.requiredLevel()));
+                properties.setProperty(prefix + "xpReward", String.valueOf(recipe.xpReward()));
+            }
+
+            properties.setProperty("craftingRecipe.count", String.valueOf(design.craftingRecipes().size()));
+            for (int i = 0; i < design.craftingRecipes().size(); i++) {
+                CraftingRecipe recipe = design.craftingRecipes().get(i);
+                String prefix = "craftingRecipe." + i + ".";
+                properties.setProperty(prefix + "recipeId", recipe.recipeId());
+                properties.setProperty(prefix + "displayName", recipe.displayName());
+                properties.setProperty(prefix + "category", recipe.category().name());
+                properties.setProperty(prefix + "primaryItemId", recipe.primaryItemId());
+                properties.setProperty(prefix + "secondaryItemId", recipe.secondaryItemId());
+                properties.setProperty(prefix + "outputItemId", recipe.outputItemId());
+                properties.setProperty(prefix + "requiredSkill", recipe.requiredSkill().name());
+                properties.setProperty(prefix + "requiredLevel", String.valueOf(recipe.requiredLevel()));
+                properties.setProperty(prefix + "xpReward", String.valueOf(recipe.xpReward()));
+                properties.setProperty(prefix + "consumePrimary", String.valueOf(recipe.consumePrimary()));
+                properties.setProperty(prefix + "consumeSecondary", String.valueOf(recipe.consumeSecondary()));
+                properties.setProperty(prefix + "smeltOutputItemId", recipe.smeltOutputItemId());
+                properties.setProperty(prefix + "smeltRequiredLevel", String.valueOf(recipe.smeltRequiredLevel()));
+                properties.setProperty(prefix + "smeltXpReward", String.valueOf(recipe.smeltXpReward()));
+                properties.setProperty(prefix + "primaryQuantity", String.valueOf(recipe.primaryQuantity()));
+                properties.setProperty(prefix + "secondaryQuantity", String.valueOf(recipe.secondaryQuantity()));
+                properties.setProperty(prefix + "outputType", recipe.outputType().name());
+                properties.setProperty(prefix + "outputStationType", recipe.outputStationType() == null
+                        ? ""
+                        : recipe.outputStationType().name());
+                properties.setProperty(prefix + "stationLifetimeMs", String.valueOf(recipe.stationLifetimeMs()));
+            }
         }
 
         if (includeContent) {
@@ -1395,7 +1366,8 @@ public final class MapDesignLibrary {
                     dungeonMap.setTile(placement.x(), placement.y(), Library.TileType.FLOOR);
                     entities.add(CraftingStationType.valueOf(placement.id()).createEntity(placement.x(), placement.y()));
                 }
-                case GATHERING_NODE -> hydrateGatheringNode(dungeonMap, entities, tileInteractions, customGatheringNodes, placement);
+                case GATHERING_NODE ->
+                        hydrateGatheringNode(dungeonMap, entities, tileInteractions, customGatheringNodes, placement);
                 case FURNITURE -> {
                     CustomFurnitureDefinition furniture = findCustomFurniture(placement.id(), customFurniture);
                     if (furniture != null) {
@@ -2582,9 +2554,9 @@ public final class MapDesignLibrary {
         int baseValue = mob.butcheryProfile().hasValueOverride()
                 ? mob.butcheryProfile().baseValueOverride()
                 : 10 + 5 * DifficultyResolver.rateMonsterProfile(
-                        mob.displayName(),
-                        mob.statValues(),
-                        mob.skillIds()).level();
+                mob.displayName(),
+                mob.statValues(),
+                mob.skillIds()).level();
         double multiplier = slot == LimbSlot.BODY ? 1.25 : slot == LimbSlot.HEAD ? 1.5 : 1.0;
         return Math.max(1, (int) Math.round(baseValue * multiplier));
     }
@@ -2649,6 +2621,89 @@ public final class MapDesignLibrary {
             System.arraycopy(source[y], 0, copy[y], 0, source[y].length);
         }
         return copy;
+    }
+
+    public enum QuestRequirementType {
+        POSSESS_ITEM,
+        EQUIPPED_ITEM_OR_LIMB,
+        COMPLETED_QUEST,
+        PLAYER_LEVEL,
+        SKILL_LEVEL
+    }
+
+    public enum QuestObjectiveType {
+        POSSESS_ITEM,
+        TURN_IN_ITEM,
+        EQUIPPED_ITEM_OR_LIMB,
+        TALK_TO_NPC,
+        DEFEAT_ENEMY,
+        PLAYER_LEVEL,
+        SKILL_LEVEL,
+        COMPLETE_QUEST
+    }
+
+    public enum QuestRewardType {
+        ITEM,
+        GOLD,
+        SKILL_XP
+    }
+
+    public enum QuestCompletionMode {
+        AUTOMATIC,
+        FLOW_CONFIRMED
+    }
+
+    public enum QuestFlowAction {
+        NONE,
+        ACCEPT_QUEST,
+        ADVANCE_STAGE,
+        COMPLETE_QUEST
+    }
+
+    public enum ValidationSeverity {
+        ERROR,
+        WARNING
+    }
+
+    public enum PlacementKind {
+        CRAFTING_NODE,
+        GATHERING_NODE,
+        FURNITURE,
+        CUSTOM_NPC,
+        ITEM,
+        ENEMY,
+        INTERACTION
+    }
+
+    public enum GatheringNodeType {
+        MINING_ROCK,
+        FISHING_SPOT,
+        TREE,
+        FORAGING
+    }
+
+    public enum CraftingRecipeCategory {
+        METAL,
+        CONSUMABLE,
+        MATERIAL,
+        ARMOR,
+        WEAPON,
+        STATION
+    }
+
+    public enum CraftingOutputType {
+        ITEM,
+        CRAFTING_STATION
+    }
+
+    public enum TriggerFireMode {
+        ON_ENTRY,
+        ON_QUEST_PROGRESS
+    }
+
+    public enum TriggerActionType {
+        CLOSE_DOOR,
+        OPEN_DOOR
     }
 
     public record MapDesign(
@@ -3391,43 +3446,6 @@ public final class MapDesignLibrary {
         }
     }
 
-    public enum QuestRequirementType {
-        POSSESS_ITEM,
-        EQUIPPED_ITEM_OR_LIMB,
-        COMPLETED_QUEST,
-        PLAYER_LEVEL,
-        SKILL_LEVEL
-    }
-
-    public enum QuestObjectiveType {
-        POSSESS_ITEM,
-        TURN_IN_ITEM,
-        EQUIPPED_ITEM_OR_LIMB,
-        TALK_TO_NPC,
-        DEFEAT_ENEMY,
-        PLAYER_LEVEL,
-        SKILL_LEVEL,
-        COMPLETE_QUEST
-    }
-
-    public enum QuestRewardType {
-        ITEM,
-        GOLD,
-        SKILL_XP
-    }
-
-    public enum QuestCompletionMode {
-        AUTOMATIC,
-        FLOW_CONFIRMED
-    }
-
-    public enum QuestFlowAction {
-        NONE,
-        ACCEPT_QUEST,
-        ADVANCE_STAGE,
-        COMPLETE_QUEST
-    }
-
     public record QuestRequirement(
             QuestRequirementType type,
             String targetId,
@@ -3689,58 +3707,6 @@ public final class MapDesignLibrary {
             modelIconProfile = modelIconProfile == null ? ItemModelIconProfile.defaults() : modelIconProfile;
         }
 
-        public InventorySystem.Item createItem() {
-            return new InventorySystem.Item(
-                    displayName,
-                    itemType,
-                    iconPath,
-                    useSoundPath,
-                    healAmount,
-                    material,
-                    GearDurability.PERFECT,
-                    baseGoldValue,
-                    examineText,
-                    statBonusTarget,
-                    stackable,
-                    1,
-                    paperDollOverlayPath,
-                    weaponType,
-                    twoHanded
-            ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus)
-                    .withContentId(itemId)
-                    .withFirstPersonModel(firstPersonModelPath)
-                    .withViewModelProfile(viewModelProfile)
-                    .withModelIconProfile(modelIconProfile);
-        }
-
-        public CustomItem withSourceEnemyId(String sourceId) {
-            return new CustomItem(
-                    itemId,
-                    displayName,
-                    itemType,
-                    iconPath,
-                    paperDollOverlayPath,
-                    useSoundPath,
-                    weaponType,
-                    twoHanded,
-                    material,
-                    healAmount,
-                    baseGoldValue,
-                    examineText,
-                    statBonusTarget,
-                    stackable,
-                    smithingRecipeEnabled,
-                    smithingRequiredBars,
-                    smithingRequiredLevel,
-                    smithingXpReward,
-                    magicAccuracyBonus,
-                    magicPowerBonus,
-                    firstPersonModelPath,
-                    viewModelProfile,
-                    sourceId,
-                    modelIconProfile);
-        }
-
         public CustomItem(
                 String itemId,
                 String displayName,
@@ -3967,6 +3933,58 @@ public final class MapDesignLibrary {
                     0
             );
         }
+
+        public InventorySystem.Item createItem() {
+            return new InventorySystem.Item(
+                    displayName,
+                    itemType,
+                    iconPath,
+                    useSoundPath,
+                    healAmount,
+                    material,
+                    GearDurability.PERFECT,
+                    baseGoldValue,
+                    examineText,
+                    statBonusTarget,
+                    stackable,
+                    1,
+                    paperDollOverlayPath,
+                    weaponType,
+                    twoHanded
+            ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus)
+                    .withContentId(itemId)
+                    .withFirstPersonModel(firstPersonModelPath)
+                    .withViewModelProfile(viewModelProfile)
+                    .withModelIconProfile(modelIconProfile);
+        }
+
+        public CustomItem withSourceEnemyId(String sourceId) {
+            return new CustomItem(
+                    itemId,
+                    displayName,
+                    itemType,
+                    iconPath,
+                    paperDollOverlayPath,
+                    useSoundPath,
+                    weaponType,
+                    twoHanded,
+                    material,
+                    healAmount,
+                    baseGoldValue,
+                    examineText,
+                    statBonusTarget,
+                    stackable,
+                    smithingRecipeEnabled,
+                    smithingRequiredBars,
+                    smithingRequiredLevel,
+                    smithingXpReward,
+                    magicAccuracyBonus,
+                    magicPowerBonus,
+                    firstPersonModelPath,
+                    viewModelProfile,
+                    sourceId,
+                    modelIconProfile);
+        }
     }
 
     public record CustomMob(
@@ -4132,15 +4150,15 @@ public final class MapDesignLibrary {
             chance = Math.max(0.0, Math.min(1.0, chance));
         }
 
-        @Override
-        public String toString() {
-            return itemId + " [" + formatDropChance(chance) + "%]";
-        }
-
         private static String formatDropChance(double chance) {
             String formatted = String.format(Locale.US, "%.3f", chance * 100.0);
             return formatted
                     .replaceFirst("\\.?0+$", "");
+        }
+
+        @Override
+        public String toString() {
+            return itemId + " [" + formatDropChance(chance) + "%]";
         }
     }
 
@@ -4268,7 +4286,6 @@ public final class MapDesignLibrary {
 
         private boolean itemMatches(String configuredId, String itemIdOrName) {
             return configuredId != null
-                    && itemIdOrName != null
                     && !configuredId.isBlank()
                     && configuredId.equalsIgnoreCase(itemIdOrName);
         }
@@ -4553,7 +4570,7 @@ public final class MapDesignLibrary {
             smeltXpReward = Math.max(0, smeltXpReward);
             lootEntries = normalizeGatheringLoot(lootEntries, outputItemId);
             if (outputItemId.isBlank() && !lootEntries.isEmpty()) {
-                outputItemId = lootEntries.get(0).itemId();
+                outputItemId = lootEntries.getFirst().itemId();
             }
             framePaths = framePaths == null ? List.of() : framePaths.stream()
                     .filter(path -> path != null && !path.isBlank())
@@ -4723,51 +4740,5 @@ public final class MapDesignLibrary {
         public String toString() {
             return severity + ": " + message;
         }
-    }
-
-    public enum ValidationSeverity {
-        ERROR,
-        WARNING
-    }
-
-    public enum PlacementKind {
-        CRAFTING_NODE,
-        GATHERING_NODE,
-        FURNITURE,
-        CUSTOM_NPC,
-        ITEM,
-        ENEMY,
-        INTERACTION
-    }
-
-    public enum GatheringNodeType {
-        MINING_ROCK,
-        FISHING_SPOT,
-        TREE,
-        FORAGING
-    }
-
-    public enum CraftingRecipeCategory {
-        METAL,
-        CONSUMABLE,
-        MATERIAL,
-        ARMOR,
-        WEAPON,
-        STATION
-    }
-
-    public enum CraftingOutputType {
-        ITEM,
-        CRAFTING_STATION
-    }
-
-    public enum TriggerFireMode {
-        ON_ENTRY,
-        ON_QUEST_PROGRESS
-    }
-
-    public enum TriggerActionType {
-        CLOSE_DOOR,
-        OPEN_DOOR
     }
 }

@@ -4,25 +4,14 @@ import org.main.battle.BattleEncounter;
 import org.main.battle.BattleSkill;
 import org.main.content.MapDesignLibrary;
 import org.main.content.WorldManifestLibrary;
-import org.main.engine.DungeonMap;
-import org.main.engine.EnvironmentTheme;
-import org.main.engine.MapEntity;
-import org.main.engine.MapGeometryData;
-import org.main.engine.MapPaintData;
-import org.main.engine.MobAreaData;
-import org.main.engine.AssetLoader;
+import org.main.engine.*;
 import org.main.monsters.Monster;
 
-import java.awt.Point;
+import java.awt.*;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 public class GameState {
     private static final String GOLD_ITEM_ID = "GOLD";
@@ -31,7 +20,6 @@ public class GameState {
     private static final String RAW_FISH_ITEM_NAME = "Raw Fish";
     private static final String COOKED_FISH_ITEM_ID = "COOKED_FISH";
     private static final String COPPER_ORE_ITEM_ID = "COPPER_ORE";
-    private DungeonMap dungeonMap;
     private final List<MapEntity> entities = new ArrayList<>();
     private final Map<String, String> tileInteractionIds = new HashMap<>();
     private final List<MapDesignLibrary.MapTrigger> mapTriggers = new ArrayList<>();
@@ -50,16 +38,16 @@ public class GameState {
     private final Set<String> removedEntityKeys = new HashSet<>();
     private final Set<String> firedMapTriggerIds = new HashSet<>();
     private final QuestRuntime questRuntime = new QuestRuntime(this);
-    private boolean evaluatingLiveQuestConditions;
     private final InputBindings inputBindings = new InputBindings();
     private final WorldMessageLog worldMessageLog = new WorldMessageLog();
-
     private final NavigationState navigationState = new NavigationState();
     private final MiniMapState miniMapState = new MiniMapState();
     private final SkillingState skillingState = new SkillingState();
-
+    private final Map<String, ResourceNodeState> resourceNodeStates = new HashMap<>();
+    private final Map<String, EnemyRespawnState> enemyRespawnStates = new HashMap<>();
+    private DungeonMap dungeonMap;
+    private boolean evaluatingLiveQuestConditions;
     private GameMode gameMode = GameMode.START_MENU;
-
     private int playerX = 1;
     private int playerY = 1;
     private int currentFloor = 1;
@@ -71,16 +59,13 @@ public class GameState {
     private double rotationStartOffsetRadians = 0.0;
     private double rotationProgress = 1.0;
     private CameraMovementMode cameraMovementMode = CameraMovementMode.FLUID;
-
     private boolean miniMapUnlocked = false;
     private MiniMapMode miniMapMode = MiniMapMode.DISCOVERED;
     private boolean[][] discoveredMiniMapTiles = new boolean[0][0];
     private boolean performanceOverlayVisible = false;
     private long uiPresentationRevision;
-
     // 0 = north, 1 = east, 2 = south, 3 = west
     private int direction = 1;
-
     private BattleEncounter currentEncounter;
     private MapEntity currentEnemyEntity;
     private PlayerCharacter playerCharacter;
@@ -112,8 +97,6 @@ public class GameState {
     private MiningAttemptOutcome miningRecoveryOutcome = MiningAttemptOutcome.NONE;
     private GatheringImpactEvent pendingGatheringImpactEvent;
     private boolean gatheringSuspendedByPauseOverlay = false;
-    private final Map<String, ResourceNodeState> resourceNodeStates = new HashMap<>();
-    private final Map<String, EnemyRespawnState> enemyRespawnStates = new HashMap<>();
     private boolean cookingActive = false;
     private int cookingX = -1;
     private int cookingY = -1;
@@ -138,73 +121,77 @@ public class GameState {
     private MapEntity activeCorpseEntity;
     private ButcherySystem.ButcheryMethod lastButcheryMethod;
 
-    public enum GatheringToolType {
-        MINING("mining"),
-        FISHING("fishing"),
-        WOODCUTTING("woodcutting");
-
-        private final String configurationPrefix;
-
-        GatheringToolType(String configurationPrefix) {
-            this.configurationPrefix = configurationPrefix;
-        }
-
-        public String configurationPrefix() {
-            return configurationPrefix;
-        }
+    public GameState(DungeonMap dungeonMap) {
+        this(dungeonMap, GameBootstrap.createDefaultPlayerCharacter());
     }
 
-    public enum MiningAttemptOutcome {
-        NONE,
-        SUCCESS,
-        FAILURE
+    public GameState(DungeonMap dungeonMap, PlayerCharacter playerCharacter) {
+        this.dungeonMap = dungeonMap;
+        this.playerCharacter = playerCharacter == null
+                ? GameBootstrap.createDefaultPlayerCharacter()
+                : playerCharacter;
+        resetMiniMapDiscovery();
+        revealMiniMapTile(playerX, playerY);
     }
 
-    public enum MiningViewMotion {
-        REST,
-        WINDUP,
-        SUCCESS_STRIKE,
-        FAILURE_STRIKE,
-        SUCCESS_RECOVERY,
-        FAILURE_RECOVERY
+    private static int stringHash(String value) {
+        return value == null ? 0 : value.hashCode();
     }
 
-    public record MiningViewModelState(
-            GatheringToolType toolType,
-            boolean visible,
-            MiningViewMotion motion,
-            double progress
+    private static <T> boolean sameCatalog(
+            Map<String, T> installed,
+            List<T> incoming,
+            java.util.function.Function<T, String> idResolver
     ) {
-        public MiningViewModelState {
-            toolType = toolType == null ? GatheringToolType.MINING : toolType;
-            progress = Math.max(0.0, Math.min(1.0, progress));
+        if (installed.size() != incoming.size()) {
+            return false;
         }
-
-        public static MiningViewModelState hidden() {
-            return new MiningViewModelState(GatheringToolType.MINING, false, MiningViewMotion.REST, 0.0);
+        for (T value : incoming) {
+            if (value == null) {
+                return false;
+            }
+            String id = idResolver.apply(value);
+            if (!value.equals(installed.get(id))) {
+                return false;
+            }
         }
+        return true;
     }
 
-    public record GatheringImpactEvent(
-            GatheringToolType toolType,
-            MiningAttemptOutcome outcome
-    ) {
+    private static String mapRuntimeKey(Path path) {
+        return path == null ? "" : MapDesignLibrary.resourcePathForMap(path).replace('\\', '/');
     }
 
-    public enum GameMode {
-        START_MENU,
-        CHARACTER_CREATION,
-        DUNGEON,
-        BATTLE,
-        GAME_OVER;
-
-        public boolean isDungeon() {
-            return this == DUNGEON;
+    private static DungeonMap copyDungeonMap(DungeonMap source) {
+        if (source == null) {
+            return null;
         }
 
-        public boolean isBattle() {
-            return this == BATTLE;
+        Library.TileType[][] tiles = new Library.TileType[source.getHeight()][source.getWidth()];
+        int[][] themes = new int[source.getHeight()][source.getWidth()];
+        for (int y = 0; y < source.getHeight(); y++) {
+            for (int x = 0; x < source.getWidth(); x++) {
+                tiles[y][x] = source.getTile(x, y);
+                themes[y][x] = source.getEnvironmentThemeIndex(x, y);
+            }
         }
+        MapPaintData paintData = source.getPaintData() == null
+                ? MapPaintData.blank(source.getWidth(), source.getHeight())
+                : source.getPaintData().copy();
+        MapGeometryData geometryData = source.getGeometryData() == null
+                ? MapGeometryData.blank(source.getWidth(), source.getHeight())
+                : source.getGeometryData().copy();
+        MobAreaData mobAreaData = source.getMobAreaData() == null
+                ? MobAreaData.blank(source.getWidth(), source.getHeight())
+                : source.getMobAreaData().copy();
+        return new DungeonMap(
+                tiles,
+                themes,
+                paintData,
+                geometryData,
+                mobAreaData,
+                source.getLightingSettings(),
+                source.getLightsView());
     }
 
     public InteractionSystem.Interaction getActiveInteraction() {
@@ -369,18 +356,6 @@ public class GameState {
 
     public WorldMessageLog getWorldMessageLog() {
         return worldMessageLog;
-    }
-
-    public NavigationState getNavigationState() {
-        return navigationState;
-    }
-
-    public MiniMapState getMiniMapState() {
-        return miniMapState;
-    }
-
-    public SkillingState getSkillingState() {
-        return skillingState;
     }
 
     private void clearInteractionsAndStopActivities() {
@@ -548,33 +523,12 @@ public class GameState {
         statsOpen = false;
     }
 
-    public boolean isLevelUpPending() {
-        return levelUpPending;
-    }
-
-    public void setLevelUpPending(boolean levelUpPending) {
-        this.levelUpPending = levelUpPending;
-    }
-
     public String getSelectedQuestId() {
         return selectedQuestId;
     }
 
     public void setSelectedQuestId(String selectedQuestId) {
         this.selectedQuestId = selectedQuestId;
-    }
-
-    public GameState(DungeonMap dungeonMap) {
-        this(dungeonMap, GameBootstrap.createDefaultPlayerCharacter());
-    }
-
-    public GameState(DungeonMap dungeonMap, PlayerCharacter playerCharacter) {
-        this.dungeonMap = dungeonMap;
-        this.playerCharacter = playerCharacter == null
-                ? GameBootstrap.createDefaultPlayerCharacter()
-                : playerCharacter;
-        resetMiniMapDiscovery();
-        revealMiniMapTile(playerX, playerY);
     }
 
     public boolean isMiniMapUnlocked() {
@@ -683,10 +637,6 @@ public class GameState {
         currentMapDesignPath = null;
     }
 
-    public void changeDungeon(MapDesignLibrary.MapDesign mapDesign, int playerX, int playerY) {
-        changeDungeon(mapDesign, playerX, playerY, null);
-    }
-
     public void changeDungeon(MapDesignLibrary.MapDesign mapDesign, int playerX, int playerY, Path mapDesignPath) {
         if (mapDesign == null) {
             return;
@@ -695,10 +645,6 @@ public class GameState {
         changeDungeon(MapDesignLibrary.toGeneratedDungeon(mapDesign, playerX, playerY));
         qualifyAuthoredEnemySpawns(mapDesignPath);
         currentMapDesignPath = mapDesignPath;
-    }
-
-    public void changeDungeon(MapDesignLibrary.MapDesign mapDesign) {
-        changeDungeon(mapDesign, null);
     }
 
     public void changeDungeon(MapDesignLibrary.MapDesign mapDesign, Path mapDesignPath) {
@@ -748,10 +694,6 @@ public class GameState {
         return currentOpenWorldSession == null ? null : currentOpenWorldSession.manifestPath();
     }
 
-    public WorldManifestLibrary.WorldManifest getCurrentWorldManifest() {
-        return currentOpenWorldSession == null ? null : currentOpenWorldSession.manifest();
-    }
-
     public WorldManifestLibrary.ChunkCoordinate getCurrentChunkCoordinate() {
         return currentOpenWorldSession == null ? null : currentOpenWorldSession.center();
     }
@@ -770,10 +712,6 @@ public class GameState {
 
     public List<EnvironmentTheme> getOpenWorldEnvironmentThemes() {
         return currentOpenWorldSession == null ? List.of() : currentOpenWorldSession.currentEnvironmentThemes();
-    }
-
-    public void clearCurrentMapDesignPath() {
-        currentMapDesignPath = null;
     }
 
     public void captureCurrentMapState() {
@@ -1026,17 +964,6 @@ public class GameState {
         }
     }
 
-    public enum MiniMapMode {
-        OFF,
-        DISCOVERED,
-        DEBUG
-    }
-
-    public enum CameraMovementMode {
-        STATIC,
-        FLUID
-    }
-
     public void changeDungeon(DungeonMap dungeonMap, int playerX, int playerY, List<MapEntity> newEntities) {
         if (dungeonMap == null) {
             return;
@@ -1213,30 +1140,6 @@ public class GameState {
                 || performanceOverlayVisible;
     }
 
-    private static int stringHash(String value) {
-        return value == null ? 0 : value.hashCode();
-    }
-
-    private static <T> boolean sameCatalog(
-            Map<String, T> installed,
-            List<T> incoming,
-            java.util.function.Function<T, String> idResolver
-    ) {
-        if (installed.size() != incoming.size()) {
-            return false;
-        }
-        for (T value : incoming) {
-            if (value == null) {
-                return false;
-            }
-            String id = idResolver.apply(value);
-            if (!value.equals(installed.get(id))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private void applySavedRuntimeState(MapRuntimeState state) {
         if (state.dungeonMap() != null) {
             dungeonMap = copyDungeonMap(state.dungeonMap());
@@ -1373,8 +1276,8 @@ public class GameState {
                     || trigger.fireMode() != MapDesignLibrary.TriggerFireMode.ON_QUEST_PROGRESS
                     || trigger.requiredQuestId().isBlank()
                     || !hasReachedQuestProgress(
-                            trigger.requiredQuestId(),
-                            trigger.requiredQuestProgress())) {
+                    trigger.requiredQuestId(),
+                    trigger.requiredQuestProgress())) {
                 continue;
             }
             if (trigger.oneShot() && firedMapTriggerIds.contains(trigger.id())) {
@@ -1485,6 +1388,10 @@ public class GameState {
         questRuntime.setDefinitions(quests);
     }
 
+    public List<MapDesignLibrary.CustomItem> getCustomItems() {
+        return List.copyOf(customItems.values());
+    }
+
     public void setCustomItems(List<MapDesignLibrary.CustomItem> items) {
         customItems.clear();
         if (items == null) {
@@ -1498,8 +1405,8 @@ public class GameState {
         }
     }
 
-    public List<MapDesignLibrary.CustomItem> getCustomItems() {
-        return List.copyOf(customItems.values());
+    public List<MapDesignLibrary.CustomLimb> getCustomLimbs() {
+        return List.copyOf(customLimbs.values());
     }
 
     public void setCustomLimbs(List<MapDesignLibrary.CustomLimb> limbs) {
@@ -1511,23 +1418,6 @@ public class GameState {
         for (MapDesignLibrary.CustomLimb limb : limbs) {
             if (limb != null && !limb.limbId().isBlank()) {
                 customLimbs.put(limb.limbId(), limb);
-            }
-        }
-    }
-
-    public List<MapDesignLibrary.CustomLimb> getCustomLimbs() {
-        return List.copyOf(customLimbs.values());
-    }
-
-    public void setCustomFurniture(List<MapDesignLibrary.CustomFurnitureDefinition> furnitureDefinitions) {
-        customFurniture.clear();
-        if (furnitureDefinitions == null) {
-            return;
-        }
-
-        for (MapDesignLibrary.CustomFurnitureDefinition furniture : furnitureDefinitions) {
-            if (furniture != null && !furniture.furnitureId().isBlank()) {
-                customFurniture.put(furniture.furnitureId(), furniture);
             }
         }
     }
@@ -1544,6 +1434,23 @@ public class GameState {
         return List.copyOf(customFurniture.values());
     }
 
+    public void setCustomFurniture(List<MapDesignLibrary.CustomFurnitureDefinition> furnitureDefinitions) {
+        customFurniture.clear();
+        if (furnitureDefinitions == null) {
+            return;
+        }
+
+        for (MapDesignLibrary.CustomFurnitureDefinition furniture : furnitureDefinitions) {
+            if (furniture != null && !furniture.furnitureId().isBlank()) {
+                customFurniture.put(furniture.furnitureId(), furniture);
+            }
+        }
+    }
+
+    public List<MapDesignLibrary.CustomGatheringNode> getCustomGatheringNodes() {
+        return customGatheringNodes.values().stream().distinct().toList();
+    }
+
     public void setCustomGatheringNodes(List<MapDesignLibrary.CustomGatheringNode> nodes) {
         customGatheringNodes.clear();
         if (nodes == null) {
@@ -1558,8 +1465,8 @@ public class GameState {
         }
     }
 
-    public List<MapDesignLibrary.CustomGatheringNode> getCustomGatheringNodes() {
-        return customGatheringNodes.values().stream().distinct().toList();
+    public List<MapDesignLibrary.CustomCookingRecipe> getCustomCookingRecipes() {
+        return List.copyOf(customCookingRecipes.values());
     }
 
     public void setCustomCookingRecipes(List<MapDesignLibrary.CustomCookingRecipe> recipes) {
@@ -1573,10 +1480,6 @@ public class GameState {
                 customCookingRecipes.put(recipe.recipeId(), recipe);
             }
         }
-    }
-
-    public List<MapDesignLibrary.CustomCookingRecipe> getCustomCookingRecipes() {
-        return List.copyOf(customCookingRecipes.values());
     }
 
     public void setCraftingRecipes(List<MapDesignLibrary.CraftingRecipe> recipes) {
@@ -1860,10 +1763,6 @@ public class GameState {
         return isFluidCameraMovement() && (isMovementAnimating() || isRotationAnimating());
     }
 
-    public double getCameraOffsetForward() {
-        return getCameraOffsetForward(0.0);
-    }
-
     public double getCameraOffsetForward(double interpolationAlpha) {
         if (!isFluidCameraMovement()) {
             return 0.0;
@@ -1877,10 +1776,6 @@ public class GameState {
         return offsetX * forwardX() + offsetY * forwardY();
     }
 
-    public double getCameraOffsetSide() {
-        return getCameraOffsetSide(0.0);
-    }
-
     public double getCameraOffsetSide(double interpolationAlpha) {
         if (!isFluidCameraMovement()) {
             return 0.0;
@@ -1892,10 +1787,6 @@ public class GameState {
         double offsetX = renderX - playerX;
         double offsetY = renderY - playerY;
         return offsetX * rightX() + offsetY * rightY();
-    }
-
-    public double getCameraRotationRadians() {
-        return getCameraRotationRadians(0.0);
     }
 
     public double getCameraRotationRadians(double interpolationAlpha) {
@@ -2149,10 +2040,6 @@ public class GameState {
         fishingPendingItem = null;
     }
 
-    public boolean isFishingActive() {
-        return fishingActive;
-    }
-
     public boolean isFishingAt(int x, int y) {
         return fishingActive && fishingX == x && fishingY == y;
     }
@@ -2344,10 +2231,6 @@ public class GameState {
         miningInteractionId = "";
         miningPendingOutcome = MiningAttemptOutcome.NONE;
         miningPendingItem = null;
-    }
-
-    public boolean isMiningActive() {
-        return miningActive;
     }
 
     public boolean isMiningAt(int x, int y) {
@@ -2873,16 +2756,6 @@ public class GameState {
         selectedWorldItemName = item == null ? null : item.getName();
     }
 
-    public boolean useInventoryItemForWorld(int inventoryIndex) {
-        InventorySystem.Item item = getInventory().getItem(inventoryIndex);
-        if (item == null) {
-            return false;
-        }
-
-        selectWorldUseItem(inventoryIndex);
-        return true;
-    }
-
     public boolean equipInventoryItem(int inventoryIndex) {
         InventorySystem.Item item = getInventory().getItem(inventoryIndex);
         if (item == null || !item.isEquippable()) {
@@ -2895,57 +2768,6 @@ public class GameState {
         }
 
         return getInventory().equipFromInventory(inventoryIndex, slot);
-    }
-
-    public boolean unequipInventoryItem(InventorySystem.EquipmentSlot slot) {
-        return slot != null && getInventory().unequipToInventory(slot);
-    }
-
-    public boolean graftInventoryLimb(int inventoryIndex) {
-        InventorySystem.Item item = getInventory().getItem(inventoryIndex);
-        if (!(item instanceof LimbItem limb)) {
-            return false;
-        }
-
-        int indexToRemove = inventoryIndex;
-        openInteraction(InteractionSystem.graftMenu(
-                this,
-                limb,
-                () -> getInventory().removeItem(indexToRemove)
-        ));
-        return true;
-    }
-
-    public boolean dropInventoryItem(int inventoryIndex) {
-        InventorySystem.Item item = getInventory().removeItem(inventoryIndex);
-        if (item == null) {
-            return false;
-        }
-
-        int dropX = playerX + forwardX(direction);
-        int dropY = playerY + forwardY(direction);
-
-        if (dungeonMap == null || !dungeonMap.isWalkable(dropX, dropY)) {
-            dropX = playerX;
-            dropY = playerY;
-        }
-
-        addEntity(new MapEntity(item, dropX, dropY));
-        return true;
-    }
-
-    public String getInventoryExamineTitle(int inventoryIndex) {
-        InventorySystem.Item item = getInventory().getItem(inventoryIndex);
-        return item == null ? "Examine" : item.getName();
-    }
-
-    public String getInventoryExamineText(int inventoryIndex) {
-        InventorySystem.Item item = getInventory().getItem(inventoryIndex);
-        if (item instanceof LimbItem limb) {
-            return limbExamineText(limb);
-        }
-
-        return item == null ? "There is nothing to examine." : item.getExamineText();
     }
 
     private String limbExamineText(LimbItem limb) {
@@ -3338,10 +3160,6 @@ public class GameState {
         removeExpiredTemporaryStations();
     }
 
-    public boolean isCookingActive() {
-        return cookingActive;
-    }
-
     public boolean isCookingAt(int x, int y) {
         return cookingActive && cookingX == x && cookingY == y;
     }
@@ -3544,10 +3362,6 @@ public class GameState {
         smeltingElapsedMs = 0;
         smeltingItemName = null;
         removeExpiredTemporaryStations();
-    }
-
-    public boolean isSmeltingActive() {
-        return smeltingActive;
     }
 
     public boolean isSmeltingAt(int x, int y) {
@@ -3821,48 +3635,6 @@ public class GameState {
         return count;
     }
 
-    public static class ResourceNodeState {
-        private int exhaustionLevel = 0;
-        private int attemptsSinceLastExhaustionRoll = 0;
-        private int respawnRemainingMs = 0;
-    }
-
-    private static String mapRuntimeKey(Path path) {
-        return path == null ? "" : MapDesignLibrary.resourcePathForMap(path).replace('\\', '/');
-    }
-
-    private static DungeonMap copyDungeonMap(DungeonMap source) {
-        if (source == null) {
-            return null;
-        }
-
-        Library.TileType[][] tiles = new Library.TileType[source.getHeight()][source.getWidth()];
-        int[][] themes = new int[source.getHeight()][source.getWidth()];
-        for (int y = 0; y < source.getHeight(); y++) {
-            for (int x = 0; x < source.getWidth(); x++) {
-                tiles[y][x] = source.getTile(x, y);
-                themes[y][x] = source.getEnvironmentThemeIndex(x, y);
-            }
-        }
-        MapPaintData paintData = source.getPaintData() == null
-                ? MapPaintData.blank(source.getWidth(), source.getHeight())
-                : source.getPaintData().copy();
-        MapGeometryData geometryData = source.getGeometryData() == null
-                ? MapGeometryData.blank(source.getWidth(), source.getHeight())
-                : source.getGeometryData().copy();
-        MobAreaData mobAreaData = source.getMobAreaData() == null
-                ? MobAreaData.blank(source.getWidth(), source.getHeight())
-                : source.getMobAreaData().copy();
-        return new DungeonMap(
-                tiles,
-                themes,
-                paintData,
-                geometryData,
-                mobAreaData,
-                source.getLightingSettings(),
-                source.getLightsView());
-    }
-
     private Map<String, ResourceNodeSnapshot> copyResourceNodeSnapshots() {
         Map<String, ResourceNodeSnapshot> snapshots = new HashMap<>();
         for (Map.Entry<String, ResourceNodeState> entry : resourceNodeStates.entrySet()) {
@@ -3874,10 +3646,6 @@ public class GameState {
             ));
         }
         return snapshots;
-    }
-
-    public Map<String, ResourceNodeSnapshot> getResourceNodeSnapshotsView() {
-        return Map.copyOf(copyResourceNodeSnapshots());
     }
 
     private void restoreResourceNodeSnapshots(Map<String, ResourceNodeSnapshot> snapshots) {
@@ -4080,6 +3848,92 @@ public class GameState {
 
     private double clampChance(double value) {
         return Math.max(0.0, Math.min(1.0, value));
+    }
+
+    public enum GatheringToolType {
+        MINING("mining"),
+        FISHING("fishing"),
+        WOODCUTTING("woodcutting");
+
+        private final String configurationPrefix;
+
+        GatheringToolType(String configurationPrefix) {
+            this.configurationPrefix = configurationPrefix;
+        }
+
+        public String configurationPrefix() {
+            return configurationPrefix;
+        }
+    }
+
+    public enum MiningAttemptOutcome {
+        NONE,
+        SUCCESS,
+        FAILURE
+    }
+
+    public enum MiningViewMotion {
+        REST,
+        WINDUP,
+        SUCCESS_STRIKE,
+        FAILURE_STRIKE,
+        SUCCESS_RECOVERY,
+        FAILURE_RECOVERY
+    }
+
+    public enum GameMode {
+        START_MENU,
+        CHARACTER_CREATION,
+        DUNGEON,
+        BATTLE,
+        GAME_OVER;
+
+        public boolean isDungeon() {
+            return this == DUNGEON;
+        }
+
+        public boolean isBattle() {
+            return this == BATTLE;
+        }
+    }
+
+    public enum MiniMapMode {
+        OFF,
+        DISCOVERED,
+        DEBUG
+    }
+
+    public enum CameraMovementMode {
+        STATIC,
+        FLUID
+    }
+
+    public record MiningViewModelState(
+            GatheringToolType toolType,
+            boolean visible,
+            MiningViewMotion motion,
+            double progress
+    ) {
+        public MiningViewModelState {
+            toolType = toolType == null ? GatheringToolType.MINING : toolType;
+            progress = Math.max(0.0, Math.min(1.0, progress));
+        }
+
+        public static MiningViewModelState hidden() {
+            return new MiningViewModelState(GatheringToolType.MINING, false, MiningViewMotion.REST, 0.0);
+        }
+    }
+
+    public record GatheringImpactEvent(
+            GatheringToolType toolType,
+            MiningAttemptOutcome outcome
+    ) {
+    }
+
+    public static class ResourceNodeState {
+        private int exhaustionLevel = 0;
+        private int attemptsSinceLastExhaustionRoll = 0;
+        private int respawnRemainingMs = 0;
     }
 
     public record ResourceNodeSnapshot(

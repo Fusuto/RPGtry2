@@ -10,15 +10,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.EnumMap;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Properties;
-import java.util.Set;
+import java.util.*;
 
 /**
  * Versioned authored first-person viewmodel catalog. Rigs, motion sets and
@@ -31,403 +23,6 @@ public final class FirstPersonCombatLibrary {
     public static final Path RESOURCE_PATH = Path.of(
             "src", "main", "resources", "assets", "editor", "content",
             "first_person_rig.properties");
-
-    public enum WieldHand {
-        LEFT,
-        RIGHT;
-
-        public WieldHand opposite() {
-            return this == LEFT ? RIGHT : LEFT;
-        }
-    }
-
-    public enum ArmCoverage {
-        OVERLAY,
-        HIDE_HAND,
-        HIDE_FOREARM,
-        HIDE_FULL_ARM
-    }
-
-    public enum AnimationSlot {
-        IDLE_LEFT(true),
-        IDLE_RIGHT(true),
-        ATTACK_LEFT(false),
-        ATTACK_RIGHT(false),
-        BLOCK_LEFT(false),
-        BLOCK_RIGHT(false),
-        CAST(false),
-        HIT(false),
-        DODGE(false);
-
-        private final boolean looping;
-
-        AnimationSlot(boolean looping) {
-            this.looping = looping;
-        }
-
-        public boolean looping() {
-            return looping;
-        }
-    }
-
-    public record ClipBinding(
-            String path,
-            String clipName,
-            double playbackSpeed,
-            double impactFraction,
-            CameraFraming cameraFraming
-    ) {
-        public ClipBinding {
-            path = normalizePath(path);
-            clipName = safe(clipName);
-            playbackSpeed = finitePositive(playbackSpeed, 1.0);
-            impactFraction = clamp(impactFraction, 0.0, 1.0, 0.55);
-            cameraFraming = cameraFraming == null ? CameraFraming.identity() : cameraFraming;
-        }
-
-        public ClipBinding(
-                String path,
-                String clipName,
-                double playbackSpeed,
-                double impactFraction
-        ) {
-            this(path, clipName, playbackSpeed, impactFraction, CameraFraming.identity());
-        }
-
-        public boolean present() {
-            return !path.isBlank();
-        }
-
-        public static ClipBinding empty() {
-            return new ClipBinding("", "", 1.0, 0.55);
-        }
-    }
-
-    /** Per-animation adjustment applied on top of the rig's baseline camera framing. */
-    public record CameraFraming(
-            double positionX,
-            double positionY,
-            double positionZ,
-            double rotationX,
-            double rotationY,
-            double rotationZ
-    ) {
-        public CameraFraming {
-            positionX = finite(positionX, 0.0);
-            positionY = finite(positionY, 0.0);
-            positionZ = finite(positionZ, 0.0);
-            rotationX = finite(rotationX, 0.0);
-            rotationY = finite(rotationY, 0.0);
-            rotationZ = finite(rotationZ, 0.0);
-        }
-
-        public static CameraFraming identity() {
-            return new CameraFraming(0, 0, 0, 0, 0, 0);
-        }
-    }
-
-    public record RigDefinition(
-            String rigId,
-            String displayName,
-            String modelPath,
-            String defaultLeftArmPath,
-            String defaultRightArmPath,
-            String leftShoulderBone,
-            String leftElbowBone,
-            String leftHandBone,
-            String rightShoulderBone,
-            String rightElbowBone,
-            String rightHandBone,
-            String cameraAnchorBone,
-            Set<String> leftVisibleMeshes,
-            Set<String> rightVisibleMeshes,
-            double positionX,
-            double positionY,
-            double positionZ,
-            double rotationX,
-            double rotationY,
-            double rotationZ,
-            double scale,
-            double fieldOfViewDegrees,
-            double nearPlane,
-            int crossfadeMs,
-            Map<AnimationSlot, ClipBinding> fallbackBindings
-    ) {
-        public RigDefinition {
-            rigId = normalizeId(rigId);
-            displayName = displayName == null || displayName.isBlank() ? rigId : displayName.trim();
-            modelPath = normalizePath(modelPath);
-            defaultLeftArmPath = normalizePath(defaultLeftArmPath);
-            defaultRightArmPath = normalizePath(defaultRightArmPath);
-            leftShoulderBone = safe(leftShoulderBone);
-            leftElbowBone = safe(leftElbowBone);
-            leftHandBone = blankDefault(leftHandBone, "Hand.L");
-            rightShoulderBone = safe(rightShoulderBone);
-            rightElbowBone = safe(rightElbowBone);
-            rightHandBone = blankDefault(rightHandBone, "Hand.R");
-            cameraAnchorBone = safe(cameraAnchorBone);
-            leftVisibleMeshes = immutableNames(leftVisibleMeshes);
-            rightVisibleMeshes = immutableNames(rightVisibleMeshes);
-            positionX = finite(positionX, 0.0);
-            positionY = finite(positionY, 0.0);
-            positionZ = finite(positionZ, -0.75);
-            rotationX = finite(rotationX, 0.0);
-            rotationY = finite(rotationY, 0.0);
-            rotationZ = finite(rotationZ, 0.0);
-            scale = finitePositive(scale, 1.0);
-            fieldOfViewDegrees = clamp(fieldOfViewDegrees, 30.0, 120.0, 70.0);
-            nearPlane = clamp(nearPlane, 0.001, 1.0, 0.05);
-            crossfadeMs = Math.max(0, Math.min(2000, crossfadeMs));
-            fallbackBindings = immutableBindings(fallbackBindings);
-        }
-
-        public boolean configured() {
-            return !rigId.isBlank() && !modelPath.isBlank();
-        }
-
-        public String handBone(WieldHand hand) {
-            return hand == WieldHand.LEFT ? leftHandBone : rightHandBone;
-        }
-
-        public String shoulderBone(WieldHand hand) {
-            return hand == WieldHand.LEFT ? leftShoulderBone : rightShoulderBone;
-        }
-
-        public String elbowBone(WieldHand hand) {
-            return hand == WieldHand.LEFT ? leftElbowBone : rightElbowBone;
-        }
-
-        public String armPath(WieldHand hand) {
-            return hand == WieldHand.LEFT ? defaultLeftArmPath : defaultRightArmPath;
-        }
-
-        public Set<String> visibleMeshes(WieldHand hand) {
-            return hand == WieldHand.LEFT ? leftVisibleMeshes : rightVisibleMeshes;
-        }
-
-        public ClipBinding fallback(AnimationSlot slot) {
-            return fallbackBindings.get(slot);
-        }
-    }
-
-    public record AnimationSet(
-            String id,
-            String displayName,
-            String rigId,
-            Map<AnimationSlot, ClipBinding> bindings
-    ) {
-        public AnimationSet {
-            id = normalizeId(id);
-            displayName = displayName == null || displayName.isBlank() ? id : displayName.trim();
-            rigId = normalizeId(rigId);
-            bindings = immutableBindings(bindings);
-        }
-
-        public ClipBinding binding(AnimationSlot slot) {
-            return bindings.get(slot);
-        }
-    }
-
-    public record ItemProfile(
-            String itemId,
-            String rigId,
-            WieldHand wieldHand,
-            String animationSetId,
-            EquipmentViewModelProfile socketTransform,
-            double secondaryGripX,
-            double secondaryGripY,
-            double secondaryGripZ,
-            String leftArmorPath,
-            String rightArmorPath,
-            ArmCoverage leftCoverage,
-            ArmCoverage rightCoverage,
-            Map<AnimationSlot, ClipBinding> overrides
-    ) {
-        public ItemProfile {
-            itemId = normalizeId(itemId);
-            rigId = normalizeId(rigId);
-            wieldHand = wieldHand == null ? WieldHand.RIGHT : wieldHand;
-            animationSetId = normalizeId(animationSetId);
-            socketTransform = socketTransform == null ? socketDefaults() : socketTransform;
-            secondaryGripX = finite(secondaryGripX, 0.0);
-            secondaryGripY = finite(secondaryGripY, 0.0);
-            secondaryGripZ = finite(secondaryGripZ, 0.0);
-            leftArmorPath = normalizePath(leftArmorPath);
-            rightArmorPath = normalizePath(rightArmorPath);
-            leftCoverage = leftCoverage == null ? ArmCoverage.OVERLAY : leftCoverage;
-            rightCoverage = rightCoverage == null ? ArmCoverage.OVERLAY : rightCoverage;
-            overrides = immutableBindings(overrides);
-        }
-
-        public ItemProfile(
-                String itemId,
-                WieldHand wieldHand,
-                String animationSetId,
-                EquipmentViewModelProfile socketTransform,
-                double secondaryGripX,
-                double secondaryGripY,
-                double secondaryGripZ,
-                String leftArmorPath,
-                String rightArmorPath,
-                ArmCoverage leftCoverage,
-                ArmCoverage rightCoverage,
-                Map<AnimationSlot, ClipBinding> overrides
-        ) {
-            this(itemId, "", wieldHand, animationSetId, socketTransform,
-                    secondaryGripX, secondaryGripY, secondaryGripZ,
-                    leftArmorPath, rightArmorPath, leftCoverage, rightCoverage, overrides);
-        }
-
-        public ClipBinding override(AnimationSlot slot) {
-            return overrides.get(slot);
-        }
-
-        public static EquipmentViewModelProfile socketDefaults() {
-            return new EquipmentViewModelProfile(
-                    0, 0, 0, 0, 0, 0, 1,
-                    0, 0, 1, false);
-        }
-    }
-
-    public record Content(
-            String defaultRigId,
-            Map<String, RigDefinition> rigs,
-            Map<String, AnimationSet> animationSets,
-            Map<String, ItemProfile> itemProfiles,
-            Map<WeaponType, String> weaponDefaults
-    ) {
-        public Content {
-            defaultRigId = normalizeId(defaultRigId);
-            rigs = immutableByKey(rigs);
-            animationSets = immutableByKey(animationSets);
-            itemProfiles = immutableByKey(itemProfiles);
-            EnumMap<WeaponType, String> defaults = new EnumMap<>(WeaponType.class);
-            if (weaponDefaults != null) {
-                weaponDefaults.forEach((type, id) -> {
-                    if (type != null && type != WeaponType.NONE) {
-                        defaults.put(type, normalizeId(id));
-                    }
-                });
-            }
-            weaponDefaults = Map.copyOf(defaults);
-            if (defaultRigId.isBlank() && !rigs.isEmpty()) {
-                defaultRigId = rigs.keySet().iterator().next();
-            }
-        }
-
-        public RigDefinition rig() {
-            return rig(defaultRigId);
-        }
-
-        public RigDefinition rig(String id) {
-            RigDefinition selected = rigs.get(normalizeId(id));
-            if (selected != null) return selected;
-            selected = rigs.get(defaultRigId);
-            return selected == null ? emptyRig() : selected;
-        }
-
-        public RigDefinition rigFor(ItemProfile profile) {
-            return profile == null || profile.rigId().isBlank()
-                    ? rig()
-                    : rig(profile.rigId());
-        }
-
-        public ItemProfile itemProfile(InventorySystem.Item item) {
-            if (item == null) return null;
-            String id = normalizeId(item.getContentId());
-            if (!id.isBlank() && itemProfiles.containsKey(id)) return itemProfiles.get(id);
-            return itemProfiles.get(normalizeId(item.getName()));
-        }
-
-        public AnimationSet animationSet(
-                WeaponType weaponType,
-                ItemProfile profile
-        ) {
-            String id = profile == null ? "" : profile.animationSetId();
-            if (id.isBlank()) {
-                id = weaponType == null || weaponType == WeaponType.NONE
-                        ? "unarmed"
-                        : weaponDefaults.getOrDefault(weaponType, defaultSetId(weaponType));
-            }
-            return animationSets.get(normalizeId(id));
-        }
-
-        public AnimationSet animationSet(InventorySystem.Item weapon, ItemProfile profile) {
-            return animationSet(weapon == null ? WeaponType.NONE : weapon.getWeaponType(), profile);
-        }
-
-        public ClipBinding resolveBinding(
-                WeaponType weaponType,
-                ItemProfile profile,
-                AnimationSlot slot
-        ) {
-            return resolveBinding(weaponType, profile, rigFor(profile), slot);
-        }
-
-        public ClipBinding resolveBinding(
-                WeaponType weaponType,
-                ItemProfile profile,
-                RigDefinition resolvedRig,
-                AnimationSlot slot
-        ) {
-            if (profile != null) {
-                ClipBinding override = profile.override(slot);
-                if (override != null && override.present()) return override;
-            }
-            AnimationSet set = animationSet(weaponType, profile);
-            RigDefinition rig = resolvedRig == null ? rigFor(profile) : resolvedRig;
-            if (set != null && (set.rigId().isBlank() || set.rigId().equals(rig.rigId()))) {
-                ClipBinding binding = set.binding(slot);
-                if (binding != null && binding.present()) return binding;
-            }
-            ClipBinding fallback = rig.fallback(slot);
-            return fallback != null && fallback.present() ? fallback : null;
-        }
-
-        public ClipBinding resolveBinding(
-                InventorySystem.Item weapon,
-                ItemProfile profile,
-                AnimationSlot slot
-        ) {
-            return resolveBinding(weapon == null ? WeaponType.NONE : weapon.getWeaponType(), profile, slot);
-        }
-
-        public Content withRig(RigDefinition rig) {
-            LinkedHashMap<String, RigDefinition> copy = new LinkedHashMap<>(rigs);
-            copy.put(rig.rigId(), rig);
-            return new Content(defaultRigId.isBlank() ? rig.rigId() : defaultRigId,
-                    copy, animationSets, itemProfiles, weaponDefaults);
-        }
-
-        public Content withAnimationSet(AnimationSet set) {
-            LinkedHashMap<String, AnimationSet> copy = new LinkedHashMap<>(animationSets);
-            copy.put(set.id(), set);
-            return new Content(defaultRigId, rigs, copy, itemProfiles, weaponDefaults);
-        }
-
-        public Content withItemProfile(ItemProfile profile) {
-            LinkedHashMap<String, ItemProfile> copy = new LinkedHashMap<>(itemProfiles);
-            copy.put(profile.itemId(), profile);
-            return new Content(defaultRigId, rigs, animationSets, copy, weaponDefaults);
-        }
-
-        public Content withoutItemProfile(String itemId) {
-            LinkedHashMap<String, ItemProfile> copy = new LinkedHashMap<>(itemProfiles);
-            copy.remove(normalizeId(itemId));
-            return new Content(defaultRigId, rigs, animationSets, copy, weaponDefaults);
-        }
-    }
-
-    public record Diagnostic(Severity severity, String ownerId, String message) {
-        public enum Severity { ERROR, WARNING, INFO }
-
-        public Diagnostic {
-            severity = severity == null ? Severity.ERROR : severity;
-            ownerId = safe(ownerId);
-            message = safe(message);
-        }
-    }
-
     private static volatile Content cached;
     private static volatile long revision = 1;
 
@@ -851,5 +446,403 @@ public final class FirstPersonCombatLibrary {
 
     private static double clamp(double value, double min, double max, double fallback) {
         return Double.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+    }
+
+    public enum WieldHand {
+        LEFT,
+        RIGHT;
+
+        public WieldHand opposite() {
+            return this == LEFT ? RIGHT : LEFT;
+        }
+    }
+
+    public enum ArmCoverage {
+        OVERLAY,
+        HIDE_HAND,
+        HIDE_FOREARM,
+        HIDE_FULL_ARM
+    }
+
+    public enum AnimationSlot {
+        IDLE_LEFT(true),
+        IDLE_RIGHT(true),
+        ATTACK_LEFT(false),
+        ATTACK_RIGHT(false),
+        BLOCK_LEFT(false),
+        BLOCK_RIGHT(false),
+        CAST(false),
+        HIT(false),
+        DODGE(false);
+
+        private final boolean looping;
+
+        AnimationSlot(boolean looping) {
+            this.looping = looping;
+        }
+
+        public boolean looping() {
+            return looping;
+        }
+    }
+
+    public record ClipBinding(
+            String path,
+            String clipName,
+            double playbackSpeed,
+            double impactFraction,
+            CameraFraming cameraFraming
+    ) {
+        public ClipBinding {
+            path = normalizePath(path);
+            clipName = safe(clipName);
+            playbackSpeed = finitePositive(playbackSpeed, 1.0);
+            impactFraction = clamp(impactFraction, 0.0, 1.0, 0.55);
+            cameraFraming = cameraFraming == null ? CameraFraming.identity() : cameraFraming;
+        }
+
+        public ClipBinding(
+                String path,
+                String clipName,
+                double playbackSpeed,
+                double impactFraction
+        ) {
+            this(path, clipName, playbackSpeed, impactFraction, CameraFraming.identity());
+        }
+
+        public static ClipBinding empty() {
+            return new ClipBinding("", "", 1.0, 0.55);
+        }
+
+        public boolean present() {
+            return !path.isBlank();
+        }
+    }
+
+    /**
+     * Per-animation adjustment applied on top of the rig's baseline camera framing.
+     */
+    public record CameraFraming(
+            double positionX,
+            double positionY,
+            double positionZ,
+            double rotationX,
+            double rotationY,
+            double rotationZ
+    ) {
+        public CameraFraming {
+            positionX = finite(positionX, 0.0);
+            positionY = finite(positionY, 0.0);
+            positionZ = finite(positionZ, 0.0);
+            rotationX = finite(rotationX, 0.0);
+            rotationY = finite(rotationY, 0.0);
+            rotationZ = finite(rotationZ, 0.0);
+        }
+
+        public static CameraFraming identity() {
+            return new CameraFraming(0, 0, 0, 0, 0, 0);
+        }
+    }
+
+    public record RigDefinition(
+            String rigId,
+            String displayName,
+            String modelPath,
+            String defaultLeftArmPath,
+            String defaultRightArmPath,
+            String leftShoulderBone,
+            String leftElbowBone,
+            String leftHandBone,
+            String rightShoulderBone,
+            String rightElbowBone,
+            String rightHandBone,
+            String cameraAnchorBone,
+            Set<String> leftVisibleMeshes,
+            Set<String> rightVisibleMeshes,
+            double positionX,
+            double positionY,
+            double positionZ,
+            double rotationX,
+            double rotationY,
+            double rotationZ,
+            double scale,
+            double fieldOfViewDegrees,
+            double nearPlane,
+            int crossfadeMs,
+            Map<AnimationSlot, ClipBinding> fallbackBindings
+    ) {
+        public RigDefinition {
+            rigId = normalizeId(rigId);
+            displayName = displayName == null || displayName.isBlank() ? rigId : displayName.trim();
+            modelPath = normalizePath(modelPath);
+            defaultLeftArmPath = normalizePath(defaultLeftArmPath);
+            defaultRightArmPath = normalizePath(defaultRightArmPath);
+            leftShoulderBone = safe(leftShoulderBone);
+            leftElbowBone = safe(leftElbowBone);
+            leftHandBone = blankDefault(leftHandBone, "Hand.L");
+            rightShoulderBone = safe(rightShoulderBone);
+            rightElbowBone = safe(rightElbowBone);
+            rightHandBone = blankDefault(rightHandBone, "Hand.R");
+            cameraAnchorBone = safe(cameraAnchorBone);
+            leftVisibleMeshes = immutableNames(leftVisibleMeshes);
+            rightVisibleMeshes = immutableNames(rightVisibleMeshes);
+            positionX = finite(positionX, 0.0);
+            positionY = finite(positionY, 0.0);
+            positionZ = finite(positionZ, -0.75);
+            rotationX = finite(rotationX, 0.0);
+            rotationY = finite(rotationY, 0.0);
+            rotationZ = finite(rotationZ, 0.0);
+            scale = finitePositive(scale, 1.0);
+            fieldOfViewDegrees = clamp(fieldOfViewDegrees, 30.0, 120.0, 70.0);
+            nearPlane = clamp(nearPlane, 0.001, 1.0, 0.05);
+            crossfadeMs = Math.max(0, Math.min(2000, crossfadeMs));
+            fallbackBindings = immutableBindings(fallbackBindings);
+        }
+
+        public boolean configured() {
+            return !rigId.isBlank() && !modelPath.isBlank();
+        }
+
+        public String handBone(WieldHand hand) {
+            return hand == WieldHand.LEFT ? leftHandBone : rightHandBone;
+        }
+
+        public String shoulderBone(WieldHand hand) {
+            return hand == WieldHand.LEFT ? leftShoulderBone : rightShoulderBone;
+        }
+
+        public String elbowBone(WieldHand hand) {
+            return hand == WieldHand.LEFT ? leftElbowBone : rightElbowBone;
+        }
+
+        public String armPath(WieldHand hand) {
+            return hand == WieldHand.LEFT ? defaultLeftArmPath : defaultRightArmPath;
+        }
+
+        public Set<String> visibleMeshes(WieldHand hand) {
+            return hand == WieldHand.LEFT ? leftVisibleMeshes : rightVisibleMeshes;
+        }
+
+        public ClipBinding fallback(AnimationSlot slot) {
+            return fallbackBindings.get(slot);
+        }
+    }
+
+    public record AnimationSet(
+            String id,
+            String displayName,
+            String rigId,
+            Map<AnimationSlot, ClipBinding> bindings
+    ) {
+        public AnimationSet {
+            id = normalizeId(id);
+            displayName = displayName == null || displayName.isBlank() ? id : displayName.trim();
+            rigId = normalizeId(rigId);
+            bindings = immutableBindings(bindings);
+        }
+
+        public ClipBinding binding(AnimationSlot slot) {
+            return bindings.get(slot);
+        }
+    }
+
+    public record ItemProfile(
+            String itemId,
+            String rigId,
+            WieldHand wieldHand,
+            String animationSetId,
+            EquipmentViewModelProfile socketTransform,
+            double secondaryGripX,
+            double secondaryGripY,
+            double secondaryGripZ,
+            String leftArmorPath,
+            String rightArmorPath,
+            ArmCoverage leftCoverage,
+            ArmCoverage rightCoverage,
+            Map<AnimationSlot, ClipBinding> overrides
+    ) {
+        public ItemProfile {
+            itemId = normalizeId(itemId);
+            rigId = normalizeId(rigId);
+            wieldHand = wieldHand == null ? WieldHand.RIGHT : wieldHand;
+            animationSetId = normalizeId(animationSetId);
+            socketTransform = socketTransform == null ? socketDefaults() : socketTransform;
+            secondaryGripX = finite(secondaryGripX, 0.0);
+            secondaryGripY = finite(secondaryGripY, 0.0);
+            secondaryGripZ = finite(secondaryGripZ, 0.0);
+            leftArmorPath = normalizePath(leftArmorPath);
+            rightArmorPath = normalizePath(rightArmorPath);
+            leftCoverage = leftCoverage == null ? ArmCoverage.OVERLAY : leftCoverage;
+            rightCoverage = rightCoverage == null ? ArmCoverage.OVERLAY : rightCoverage;
+            overrides = immutableBindings(overrides);
+        }
+
+        public ItemProfile(
+                String itemId,
+                WieldHand wieldHand,
+                String animationSetId,
+                EquipmentViewModelProfile socketTransform,
+                double secondaryGripX,
+                double secondaryGripY,
+                double secondaryGripZ,
+                String leftArmorPath,
+                String rightArmorPath,
+                ArmCoverage leftCoverage,
+                ArmCoverage rightCoverage,
+                Map<AnimationSlot, ClipBinding> overrides
+        ) {
+            this(itemId, "", wieldHand, animationSetId, socketTransform,
+                    secondaryGripX, secondaryGripY, secondaryGripZ,
+                    leftArmorPath, rightArmorPath, leftCoverage, rightCoverage, overrides);
+        }
+
+        public static EquipmentViewModelProfile socketDefaults() {
+            return new EquipmentViewModelProfile(
+                    0, 0, 0, 0, 0, 0, 1,
+                    0, 0, 1, false);
+        }
+
+        public ClipBinding override(AnimationSlot slot) {
+            return overrides.get(slot);
+        }
+    }
+
+    public record Content(
+            String defaultRigId,
+            Map<String, RigDefinition> rigs,
+            Map<String, AnimationSet> animationSets,
+            Map<String, ItemProfile> itemProfiles,
+            Map<WeaponType, String> weaponDefaults
+    ) {
+        public Content {
+            defaultRigId = normalizeId(defaultRigId);
+            rigs = immutableByKey(rigs);
+            animationSets = immutableByKey(animationSets);
+            itemProfiles = immutableByKey(itemProfiles);
+            EnumMap<WeaponType, String> defaults = new EnumMap<>(WeaponType.class);
+            if (weaponDefaults != null) {
+                weaponDefaults.forEach((type, id) -> {
+                    if (type != null && type != WeaponType.NONE) {
+                        defaults.put(type, normalizeId(id));
+                    }
+                });
+            }
+            weaponDefaults = Map.copyOf(defaults);
+            if (defaultRigId.isBlank() && !rigs.isEmpty()) {
+                defaultRigId = rigs.keySet().iterator().next();
+            }
+        }
+
+        public RigDefinition rig() {
+            return rig(defaultRigId);
+        }
+
+        public RigDefinition rig(String id) {
+            RigDefinition selected = rigs.get(normalizeId(id));
+            if (selected != null) return selected;
+            selected = rigs.get(defaultRigId);
+            return selected == null ? emptyRig() : selected;
+        }
+
+        public RigDefinition rigFor(ItemProfile profile) {
+            return profile == null || profile.rigId().isBlank()
+                    ? rig()
+                    : rig(profile.rigId());
+        }
+
+        public ItemProfile itemProfile(InventorySystem.Item item) {
+            if (item == null) return null;
+            String id = normalizeId(item.getContentId());
+            if (!id.isBlank() && itemProfiles.containsKey(id)) return itemProfiles.get(id);
+            return itemProfiles.get(normalizeId(item.getName()));
+        }
+
+        public AnimationSet animationSet(
+                WeaponType weaponType,
+                ItemProfile profile
+        ) {
+            String id = profile == null ? "" : profile.animationSetId();
+            if (id.isBlank()) {
+                id = weaponType == null || weaponType == WeaponType.NONE
+                        ? "unarmed"
+                        : weaponDefaults.getOrDefault(weaponType, defaultSetId(weaponType));
+            }
+            return animationSets.get(normalizeId(id));
+        }
+
+        public AnimationSet animationSet(InventorySystem.Item weapon, ItemProfile profile) {
+            return animationSet(weapon == null ? WeaponType.NONE : weapon.getWeaponType(), profile);
+        }
+
+        public ClipBinding resolveBinding(
+                WeaponType weaponType,
+                ItemProfile profile,
+                AnimationSlot slot
+        ) {
+            return resolveBinding(weaponType, profile, rigFor(profile), slot);
+        }
+
+        public ClipBinding resolveBinding(
+                WeaponType weaponType,
+                ItemProfile profile,
+                RigDefinition resolvedRig,
+                AnimationSlot slot
+        ) {
+            if (profile != null) {
+                ClipBinding override = profile.override(slot);
+                if (override != null && override.present()) return override;
+            }
+            AnimationSet set = animationSet(weaponType, profile);
+            RigDefinition rig = resolvedRig == null ? rigFor(profile) : resolvedRig;
+            if (set != null && (set.rigId().isBlank() || set.rigId().equals(rig.rigId()))) {
+                ClipBinding binding = set.binding(slot);
+                if (binding != null && binding.present()) return binding;
+            }
+            ClipBinding fallback = rig.fallback(slot);
+            return fallback != null && fallback.present() ? fallback : null;
+        }
+
+        public ClipBinding resolveBinding(
+                InventorySystem.Item weapon,
+                ItemProfile profile,
+                AnimationSlot slot
+        ) {
+            return resolveBinding(weapon == null ? WeaponType.NONE : weapon.getWeaponType(), profile, slot);
+        }
+
+        public Content withRig(RigDefinition rig) {
+            LinkedHashMap<String, RigDefinition> copy = new LinkedHashMap<>(rigs);
+            copy.put(rig.rigId(), rig);
+            return new Content(defaultRigId.isBlank() ? rig.rigId() : defaultRigId,
+                    copy, animationSets, itemProfiles, weaponDefaults);
+        }
+
+        public Content withAnimationSet(AnimationSet set) {
+            LinkedHashMap<String, AnimationSet> copy = new LinkedHashMap<>(animationSets);
+            copy.put(set.id(), set);
+            return new Content(defaultRigId, rigs, copy, itemProfiles, weaponDefaults);
+        }
+
+        public Content withItemProfile(ItemProfile profile) {
+            LinkedHashMap<String, ItemProfile> copy = new LinkedHashMap<>(itemProfiles);
+            copy.put(profile.itemId(), profile);
+            return new Content(defaultRigId, rigs, animationSets, copy, weaponDefaults);
+        }
+
+        public Content withoutItemProfile(String itemId) {
+            LinkedHashMap<String, ItemProfile> copy = new LinkedHashMap<>(itemProfiles);
+            copy.remove(normalizeId(itemId));
+            return new Content(defaultRigId, rigs, animationSets, copy, weaponDefaults);
+        }
+    }
+
+    public record Diagnostic(Severity severity, String ownerId, String message) {
+        public Diagnostic {
+            severity = severity == null ? Severity.ERROR : severity;
+            ownerId = safe(ownerId);
+            message = safe(message);
+        }
+
+        public enum Severity {ERROR, WARNING, INFO}
     }
 }

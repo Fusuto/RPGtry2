@@ -2,11 +2,7 @@ package org.main.engine;
 
 import org.main.core.Library;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 public class DungeonMap {
     private static final int FLOOR = 0;
@@ -91,6 +87,56 @@ public class DungeonMap {
         this.lightsView = Collections.unmodifiableList(this.lights);
     }
 
+    public static DungeonMap testMap() {
+        /*
+         * Visual map codes:
+         * 0 = floor, 1 = wall, 2 = closed door
+         * 3 = alternate wall, 4 = alternate floor, 5 = alternate closed door
+         * 6 = fishable water, 7 = decorative water
+         */
+        int[][] raw = {
+                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+                {1, 0, 0, 2, 0, 0, 0, 4, 4, 4, 2, 0, 0, 1},
+                {1, 0, 1, 1, 1, 0, 0, 4, 3, 4, 1, 1, 0, 1},
+                {1, 0, 1, 7, 6, 0, 0, 4, 3, 4, 0, 0, 0, 1},
+                {1, 0, 1, 7, 7, 0, 0, 4, 4, 4, 1, 1, 0, 1},
+                {1, 0, 1, 1, 1, 0, 0, 4, 4, 4, 1, 1, 0, 1},
+                {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 1},
+                {1, 1, 1, 2, 1, 0, 0, 0, 1, 1, 1, 0, 1, 1},
+                {1, 4, 4, 4, 1, 0, 0, 0, 1, 0, 0, 0, 4, 1},
+                {1, 4, 4, 4, 2, 0, 0, 0, 1, 0, 5, 4, 4, 1},
+                {1, 4, 4, 4, 1, 1, 1, 1, 1, 0, 4, 4, 4, 1},
+                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+        };
+
+        Library.TileType[][] tiles = new Library.TileType[raw.length][raw[0].length];
+        int[][] environmentThemeIndexes = new int[raw.length][raw[0].length];
+
+        for (int y = 0; y < raw.length; y++) {
+            for (int x = 0; x < raw[y].length; x++) {
+                tiles[y][x] = switch (raw[y][x]) {
+                    case WALL, ALT_WALL -> Library.TileType.WALL;
+                    case DOOR_CLOSED, ALT_DOOR_CLOSED -> Library.TileType.DOOR_CLOSED;
+                    case FISHING_WATER -> Library.TileType.FISHING_WATER;
+                    case WATER -> Library.TileType.WATER;
+                    default -> Library.TileType.FLOOR;
+                };
+
+                environmentThemeIndexes[y][x] = switch (raw[y][x]) {
+                    case ALT_WALL, ALT_FLOOR, ALT_DOOR_CLOSED -> 1;
+                    default -> 0;
+                };
+            }
+        }
+
+        return new DungeonMap(
+                tiles,
+                environmentThemeIndexes,
+                MapPaintData.blank(raw[0].length, raw.length),
+                MapGeometryData.blank(raw[0].length, raw.length)
+        );
+    }
+
     public int getWidth() {
         return tiles[0].length;
     }
@@ -158,7 +204,9 @@ public class DungeonMap {
         return lightingRevision;
     }
 
-    /** Revision for all authored state that can change terrain or lightmap output. */
+    /**
+     * Revision for all authored state that can change terrain or lightmap output.
+     */
     public long renderRevision() {
         long result = tileRevision;
         result = 31L * result + paintData.revision();
@@ -256,56 +304,6 @@ public class DungeonMap {
 
     public boolean isOutOfBounds(int x, int y) {
         return y < 0 || y >= tiles.length || x < 0 || x >= tiles[0].length;
-    }
-
-    public static DungeonMap testMap() {
-        /*
-         * Visual map codes:
-         * 0 = floor, 1 = wall, 2 = closed door
-         * 3 = alternate wall, 4 = alternate floor, 5 = alternate closed door
-         * 6 = fishable water, 7 = decorative water
-         */
-        int[][] raw = {
-                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-                {1, 0, 0, 2, 0, 0, 0, 4, 4, 4, 2, 0, 0, 1},
-                {1, 0, 1, 1, 1, 0, 0, 4, 3, 4, 1, 1, 0, 1},
-                {1, 0, 1, 7, 6, 0, 0, 4, 3, 4, 0, 0, 0, 1},
-                {1, 0, 1, 7, 7, 0, 0, 4, 4, 4, 1, 1, 0, 1},
-                {1, 0, 1, 1, 1, 0, 0, 4, 4, 4, 1, 1, 0, 1},
-                {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 1},
-                {1, 1, 1, 2, 1, 0, 0, 0, 1, 1, 1, 0, 1, 1},
-                {1, 4, 4, 4, 1, 0, 0, 0, 1, 0, 0, 0, 4, 1},
-                {1, 4, 4, 4, 2, 0, 0, 0, 1, 0, 5, 4, 4, 1},
-                {1, 4, 4, 4, 1, 1, 1, 1, 1, 0, 4, 4, 4, 1},
-                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
-        };
-
-        Library.TileType[][] tiles = new Library.TileType[raw.length][raw[0].length];
-        int[][] environmentThemeIndexes = new int[raw.length][raw[0].length];
-
-        for (int y = 0; y < raw.length; y++) {
-            for (int x = 0; x < raw[y].length; x++) {
-                tiles[y][x] = switch (raw[y][x]) {
-                    case WALL, ALT_WALL -> Library.TileType.WALL;
-                    case DOOR_CLOSED, ALT_DOOR_CLOSED -> Library.TileType.DOOR_CLOSED;
-                    case FISHING_WATER -> Library.TileType.FISHING_WATER;
-                    case WATER -> Library.TileType.WATER;
-                    default -> Library.TileType.FLOOR;
-                };
-
-                environmentThemeIndexes[y][x] = switch (raw[y][x]) {
-                    case ALT_WALL, ALT_FLOOR, ALT_DOOR_CLOSED -> 1;
-                    default -> 0;
-                };
-            }
-        }
-
-        return new DungeonMap(
-                tiles,
-                environmentThemeIndexes,
-                MapPaintData.blank(raw[0].length, raw.length),
-                MapGeometryData.blank(raw[0].length, raw.length)
-        );
     }
 
     public void setTile(int x, int y, Library.TileType tileType) {

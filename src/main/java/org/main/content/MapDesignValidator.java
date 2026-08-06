@@ -1,47 +1,19 @@
 package org.main.content;
 
-import org.main.core.Library;
-import org.main.content.BattleContentCatalog;
 import org.main.core.CraftingStationType;
 import org.main.core.InventorySystem;
-import org.main.engine.MapLight;
+import org.main.core.Library;
 import org.main.engine.MapGeometryData;
-import org.main.engine.MobAreaData;
+import org.main.engine.MapLight;
 import org.main.engine.MapPaintData;
+import org.main.engine.MobAreaData;
 import org.main.experimental.CharacterAnimationMetadataResolver;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
-import static org.main.content.MapDesignLibrary.AuthoredDialogue;
-import static org.main.content.MapDesignLibrary.AuthoredDialogueChoice;
-import static org.main.content.MapDesignLibrary.AuthoredDialogueNode;
-import static org.main.content.MapDesignLibrary.AuthoredQuest;
-import static org.main.content.MapDesignLibrary.CraftingRecipe;
-import static org.main.content.MapDesignLibrary.CustomCookingRecipe;
-import static org.main.content.MapDesignLibrary.CustomDropEntry;
-import static org.main.content.MapDesignLibrary.CustomFurnitureDefinition;
-import static org.main.content.MapDesignLibrary.CustomGatheringNode;
-import static org.main.content.MapDesignLibrary.CustomItem;
-import static org.main.content.MapDesignLibrary.CustomLimb;
-import static org.main.content.MapDesignLibrary.CustomMob;
-import static org.main.content.MapDesignLibrary.CustomNpc;
-import static org.main.content.MapDesignLibrary.GatheringNodeType;
-import static org.main.content.MapDesignLibrary.MapDesign;
-import static org.main.content.MapDesignLibrary.MapPlacement;
-import static org.main.content.MapDesignLibrary.MapTrigger;
-import static org.main.content.MapDesignLibrary.PlacedObjectInstance;
-import static org.main.content.MapDesignLibrary.PlacementKind;
-import static org.main.content.MapDesignLibrary.TriggerAction;
-import static org.main.content.MapDesignLibrary.TriggerActionType;
-import static org.main.content.MapDesignLibrary.ValidationIssue;
-import static org.main.content.MapDesignLibrary.ValidationSeverity;
+import static org.main.content.MapDesignLibrary.*;
 
 final class MapDesignValidator {
     private MapDesignValidator() {
@@ -63,7 +35,7 @@ final class MapDesignValidator {
             return issues;
         }
 
-        if (!isInside(design, design.spawnX(), design.spawnY())) {
+        if (isNotInside(design, design.spawnX(), design.spawnY())) {
             issues.add(new ValidationIssue(ValidationSeverity.ERROR, "Spawn is outside the map."));
         } else if (design.tiles()[design.spawnY()][design.spawnX()].blocksMovement()) {
             issues.add(new ValidationIssue(ValidationSeverity.ERROR, "Spawn is on a blocking tile."));
@@ -211,7 +183,7 @@ final class MapDesignValidator {
 
         for (MapPlacement placement : design.placements()) {
             if (placement == null || placement.kind() != PlacementKind.ENEMY
-                    || !isInside(design, placement.x(), placement.y())) {
+                    || isNotInside(design, placement.x(), placement.y())) {
                 continue;
             }
             String areaId = areas.get(placement.x(), placement.y());
@@ -246,7 +218,7 @@ final class MapDesignValidator {
             return;
         }
 
-        if (!isInside(design, placement.x(), placement.y())) {
+        if (isNotInside(design, placement.x(), placement.y())) {
             issues.add(new ValidationIssue(ValidationSeverity.ERROR, "Placement " + placement.id() + " is outside the map."));
             return;
         }
@@ -329,7 +301,7 @@ final class MapDesignValidator {
             }
             instanceIds.add(object.instanceId());
 
-            if (!isInside(design, object.x(), object.y())) {
+            if (isNotInside(design, object.x(), object.y())) {
                 issues.add(new ValidationIssue(
                         ValidationSeverity.ERROR,
                         "Placed object " + object.instanceId() + " is outside the map."
@@ -389,8 +361,8 @@ final class MapDesignValidator {
         String[] parts = interactionId.split("\\|", -1);
         if (parts.length != 4
                 || parts[1].isBlank()
-                || !isInteger(parts[2])
-                || !isInteger(parts[3])) {
+                || isNotInteger(parts[2])
+                || isNotInteger(parts[3])) {
             issues.add(new ValidationIssue(
                     ValidationSeverity.WARNING,
                     "Map link interaction " + interactionId + " is malformed. Expected map_link|targetPath|x|y."
@@ -398,15 +370,15 @@ final class MapDesignValidator {
         }
     }
 
-    private static boolean isInteger(String value) {
+    private static boolean isNotInteger(String value) {
         if (value == null || value.isBlank()) {
-            return false;
+            return true;
         }
         try {
             Integer.parseInt(value);
-            return true;
-        } catch (NumberFormatException exception) {
             return false;
+        } catch (NumberFormatException exception) {
+            return true;
         }
     }
 
@@ -425,7 +397,7 @@ final class MapDesignValidator {
             }
             ids.add(trigger.id());
 
-            if (!isInside(design, trigger.x(), trigger.y())) {
+            if (isNotInside(design, trigger.x(), trigger.y())) {
                 issues.add(new ValidationIssue(ValidationSeverity.ERROR, "Trigger " + trigger.id() + " is outside the map."));
             }
 
@@ -443,7 +415,7 @@ final class MapDesignValidator {
                         && !"COMPLETED".equals(trigger.requiredQuestProgress())
                         && (!trigger.requiredQuestProgress().startsWith("STAGE:")
                         || requiredQuest.stages().stream().noneMatch(stage ->
-                                ("STAGE:" + stage.stageId()).equals(trigger.requiredQuestProgress())))) {
+                        ("STAGE:" + stage.stageId()).equals(trigger.requiredQuestProgress())))) {
                     issues.add(new ValidationIssue(
                             ValidationSeverity.ERROR,
                             "Trigger " + trigger.id() + " references missing quest progress "
@@ -456,7 +428,7 @@ final class MapDesignValidator {
                 if (action == null) {
                     continue;
                 }
-                if (!isInside(design, action.targetX(), action.targetY())) {
+                if (isNotInside(design, action.targetX(), action.targetY())) {
                     issues.add(new ValidationIssue(ValidationSeverity.ERROR, "Trigger " + trigger.id() + " targets outside the map."));
                     continue;
                 }
@@ -485,7 +457,7 @@ final class MapDesignValidator {
             }
             ids.add(light.id());
 
-            if (!isInside(design, light.x(), light.y())) {
+            if (isNotInside(design, light.x(), light.y())) {
                 issues.add(new ValidationIssue(ValidationSeverity.ERROR, "Light " + light.id() + " is outside the map."));
             }
             if (light.radius() <= 0.0) {
@@ -546,21 +518,6 @@ final class MapDesignValidator {
                         issues, dialogue, node.choices(), nodeIds, knownItemNames, itemIds, choiceIds);
             }
         }
-    }
-
-    private static List<String> knownItemDisplayNames(List<CustomItem> customItems, List<CustomLimb> customLimbs) {
-        List<String> names = new ArrayList<>();
-        if (customItems != null) {
-            for (CustomItem item : customItems) {
-                names.add(item.displayName());
-            }
-        }
-        if (customLimbs != null) {
-            for (CustomLimb limb : customLimbs) {
-                names.add(limb.displayName());
-            }
-        }
-        return names;
     }
 
     private static List<String> knownItemIdsAndNames(List<CustomItem> customItems, List<CustomLimb> customLimbs) {
@@ -823,13 +780,13 @@ final class MapDesignValidator {
             } else if (!rewardIds.add(reward.rewardId())) {
                 issues.add(new ValidationIssue(
                         ValidationSeverity.ERROR, owner + " has duplicate reward ID "
-                                + reward.rewardId() + "."));
+                        + reward.rewardId() + "."));
             }
             if (reward.type() == MapDesignLibrary.QuestRewardType.ITEM
                     && !itemIds.contains(reward.itemId())) {
                 issues.add(new ValidationIssue(
                         ValidationSeverity.ERROR, owner + " rewards unavailable item or limb "
-                                + reward.itemId() + "."));
+                        + reward.itemId() + "."));
             }
             if (reward.type() == MapDesignLibrary.QuestRewardType.SKILL_XP && reward.skill() == null) {
                 issues.add(new ValidationIssue(
@@ -1383,7 +1340,7 @@ final class MapDesignValidator {
                                 "Leather product " + leather.itemId()
                                         + " is not linked back to enemy " + mob.mobId() + "."));
                     }
-                    if (!assetPathLooksResolvable(leather.iconPath())) {
+                    if (assetPathDoesNotLooksResolvable(leather.iconPath())) {
                         issues.add(new ValidationIssue(
                                 ValidationSeverity.ERROR,
                                 "Leather product " + leather.itemId()
@@ -1425,7 +1382,7 @@ final class MapDesignValidator {
                 issues.add(new ValidationIssue(
                         ValidationSeverity.ERROR,
                         "Humanoid enemy " + mob.mobId() + " requires a paper-doll source."));
-            } else if (!assetPathLooksResolvable(mob.paperDollSourcePath())) {
+            } else if (assetPathDoesNotLooksResolvable(mob.paperDollSourcePath())) {
                 issues.add(new ValidationIssue(
                         ValidationSeverity.ERROR,
                         "Humanoid enemy " + mob.mobId() + " has an unresolved paper-doll source: "
@@ -1447,7 +1404,7 @@ final class MapDesignValidator {
             }
             return;
         }
-        if (!assetPathLooksResolvable(assetPath)) {
+        if (assetPathDoesNotLooksResolvable(assetPath)) {
             issues.add(new ValidationIssue(
                     ValidationSeverity.WARNING,
                     owner + " " + role + " asset may be missing: " + assetPath + "."
@@ -1533,28 +1490,28 @@ final class MapDesignValidator {
         }
     }
 
-    private static boolean assetPathLooksResolvable(String assetPath) {
+    private static boolean assetPathDoesNotLooksResolvable(String assetPath) {
         String normalized = assetPath == null ? "" : assetPath.trim().replace('\\', '/');
         if (normalized.isBlank()) {
-            return false;
+            return true;
         }
 
         Path directPath = Path.of(normalized);
         if (Files.exists(directPath)) {
-            return true;
+            return false;
         }
 
         if (normalized.startsWith("assets/")) {
-            return Files.exists(Path.of("src", "main", "resources").resolve(normalized));
+            return !Files.exists(Path.of("src", "main", "resources").resolve(normalized));
         }
         if (normalized.startsWith("data/")) {
-            return Files.exists(Path.of(normalized));
+            return !Files.exists(Path.of(normalized));
         }
         if (normalized.startsWith("src/main/resources/") || normalized.startsWith("src/main/java/")) {
-            return Files.exists(Path.of(normalized));
+            return !Files.exists(Path.of(normalized));
         }
 
-        return Files.exists(Path.of("src", "main", "resources", "assets").resolve(normalized));
+        return !Files.exists(Path.of("src", "main", "resources", "assets").resolve(normalized));
     }
 
     private static void validateDuplicateIds(List<ValidationIssue> issues, String label, List<String> ids) {
@@ -1599,11 +1556,11 @@ final class MapDesignValidator {
         return false;
     }
 
-    private static boolean isInside(MapDesign design, int x, int y) {
-        return design != null
-                && x >= 0
-                && y >= 0
-                && x < design.width()
-                && y < design.height();
+    private static boolean isNotInside(MapDesign design, int x, int y) {
+        return design == null
+                || x < 0
+                || y < 0
+                || x >= design.width()
+                || y >= design.height();
     }
 }

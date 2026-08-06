@@ -2,7 +2,7 @@ package org.main.experimental;
 
 import org.lwjgl.BufferUtils;
 
-import java.awt.Graphics2D;
+import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.nio.ByteBuffer;
 import java.util.IdentityHashMap;
@@ -14,9 +14,9 @@ import static org.lwjgl.opengl.GL13.glActiveTexture;
 
 final class LwjglTextureCache {
     private final Map<BufferedImage, Integer> textures = new IdentityHashMap<>();
+    private final int[] boundTextureByUnit = new int[8];
     private int fallbackTexture;
     private int whiteTexture;
-    private final int[] boundTextureByUnit = new int[8];
 
     LwjglTextureCache() {
         invalidateBindings();

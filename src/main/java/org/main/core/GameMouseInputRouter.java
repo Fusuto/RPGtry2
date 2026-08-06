@@ -2,12 +2,8 @@ package org.main.core;
 
 import org.main.battle.BattleController;
 
-import javax.swing.JComponent;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.awt.event.MouseMotionAdapter;
-import java.awt.event.MouseWheelEvent;
-import java.awt.event.MouseWheelListener;
+import javax.swing.*;
+import java.awt.event.*;
 
 public class GameMouseInputRouter {
     private final JComponent component;

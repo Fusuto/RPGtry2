@@ -6,31 +6,20 @@ import javax.sound.sampled.AudioSystem;
 import java.awt.image.BufferedImage;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.JarURLConnection;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Enumeration;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Set;
+import java.util.*;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public final class AssetLoader {
-    public record ImageAsset(String fileName, BufferedImage image) {
-    }
-
     private static final ClassLoader CLASS_LOADER = AssetLoader.class.getClassLoader();
     private static final Logger LOGGER = Logger.getLogger(AssetLoader.class.getName());
 
@@ -270,11 +259,7 @@ public final class AssetLoader {
         }
 
         InputStream bundledStream = CLASS_LOADER.getResourceAsStream(resourcePath);
-        if (bundledStream != null) {
-            return bundledStream;
-        }
-
-        return null;
+        return bundledStream;
     }
 
     private static List<Path> listExternalAssetPacks() {
@@ -333,5 +318,8 @@ public final class AssetLoader {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    public record ImageAsset(String fileName, BufferedImage image) {
     }
 }

@@ -35,9 +35,6 @@ public final class WorldMessageLog {
             return prefix + text + suffix;
         }
 
-        public boolean hasWorldSource() {
-            return worldX != null && worldY != null;
-        }
     }
 
     private final List<Message> entries = new ArrayList<>();
@@ -73,7 +70,7 @@ public final class WorldMessageLog {
         }
 
         if (!entries.isEmpty()) {
-            Message previous = entries.get(entries.size() - 1);
+            Message previous = entries.getLast();
             if (previous.category() == safeCategory
                     && previous.text().equals(safeText)
                     && previous.speakerName().equals(safeSpeaker)
@@ -107,7 +104,7 @@ public final class WorldMessageLog {
         );
         entries.add(message);
         while (entries.size() > MAX_ENTRIES) {
-            entries.remove(0);
+            entries.removeFirst();
         }
         revision++;
         return message;
@@ -141,7 +138,7 @@ public final class WorldMessageLog {
 
     public boolean hasRecentMessages() {
         return !entries.isEmpty()
-                && elapsedMs - entries.get(entries.size() - 1).createdAtMs() <= RECENT_LIFETIME_MS;
+                && elapsedMs - entries.getLast().createdAtMs() <= RECENT_LIFETIME_MS;
     }
 
     public long presentationSignature() {

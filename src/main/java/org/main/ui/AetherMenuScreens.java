@@ -1,17 +1,8 @@
 package org.main.ui;
 
 import org.main.content.PlayerRegionLibrary;
-import org.main.core.PlayerStat;
 
-import java.awt.Color;
-import java.awt.Font;
-import java.awt.FontMetrics;
-import java.awt.GradientPaint;
-import java.awt.Graphics2D;
-import java.awt.Image;
-import java.awt.Paint;
-import java.awt.Rectangle;
-import java.util.Map;
+import java.awt.*;
 
 public final class AetherMenuScreens {
     private static final int START_TITLE_FONT_SIZE = 52;
@@ -179,9 +170,8 @@ public final class AetherMenuScreens {
     public static Rectangle gameOverButtonBounds(int width, int height, int index) {
         int buttonWidth = GAME_OVER_BUTTON_WIDTH;
         int buttonHeight = GAME_OVER_BUTTON_HEIGHT;
-        int gap = GAME_OVER_BUTTON_GAP;
         int x = (width - buttonWidth) / 2;
-        int y = height / 2 + index * (buttonHeight + gap);
+        int y = height / 2 + index * (buttonHeight + GAME_OVER_BUTTON_GAP);
         return new Rectangle(x, y, buttonWidth, buttonHeight);
     }
 

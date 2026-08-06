@@ -6,16 +6,9 @@ import org.main.engine.MapEntity;
 import org.main.engine.TerrainGeometry;
 import org.main.experimental.CharacterAnimationMetadataResolver;
 
-import java.awt.Point;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.WeakHashMap;
+import java.awt.*;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Consumer;
 
 public final class WorldCreatureSystem {
@@ -120,7 +113,7 @@ public final class WorldCreatureSystem {
         List<Point> choices = legalNeighbors(state, map, enemy, area, occupancy);
         choices.add(new Point(enemy.getX(), enemy.getY()));
         Collections.shuffle(choices);
-        Point choice = choices.get(0);
+        Point choice = choices.getFirst();
         beginMovement(enemy, choice, occupancy);
     }
 

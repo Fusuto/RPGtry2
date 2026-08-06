@@ -1,26 +1,12 @@
 package org.main.experimental;
 
 import org.main.battle.BattleEncounter;
-import org.main.core.AetherGameRuntime;
-import org.main.core.GameState;
-import org.main.core.InteractionSystem;
-import org.main.core.InventorySystem;
-import org.main.core.ItemModelIconRenderQueue;
-import org.main.core.MiniMapRenderer;
-import org.main.core.OverworldHud;
-import org.main.core.ShopSystem;
+import org.main.content.PlayerRegionLibrary;
+import org.main.core.*;
 import org.main.engine.AssetLoader;
 import org.main.ui.AetherMenuScreens;
 
-import java.awt.AlphaComposite;
-import java.awt.Canvas;
-import java.awt.Color;
-import java.awt.Font;
-import java.awt.FontMetrics;
-import java.awt.Graphics2D;
-import java.awt.Image;
-import java.awt.Rectangle;
-import java.awt.RenderingHints;
+import java.awt.*;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
@@ -32,48 +18,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import org.main.content.PlayerRegionLibrary;
 
 import static org.lwjgl.BufferUtils.createByteBuffer;
-import static org.lwjgl.opengl.GL11.GL_ALPHA_TEST;
-import static org.lwjgl.opengl.GL11.GL_BLEND;
+import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL12.GL_BGRA;
 import static org.lwjgl.opengl.GL12.GL_UNSIGNED_INT_8_8_8_8_REV;
 import static org.lwjgl.opengl.GL13.GL_TEXTURE0;
 import static org.lwjgl.opengl.GL13.glActiveTexture;
-import static org.lwjgl.opengl.GL15.GL_STREAM_DRAW;
-import static org.lwjgl.opengl.GL15.glBindBuffer;
-import static org.lwjgl.opengl.GL15.glBufferData;
-import static org.lwjgl.opengl.GL15.glBufferSubData;
-import static org.lwjgl.opengl.GL15.glDeleteBuffers;
-import static org.lwjgl.opengl.GL15.glGenBuffers;
+import static org.lwjgl.opengl.GL15.*;
 import static org.lwjgl.opengl.GL21.GL_PIXEL_UNPACK_BUFFER;
-import static org.lwjgl.opengl.GL11.GL_COLOR_BUFFER_BIT;
-import static org.lwjgl.opengl.GL11.GL_DEPTH_TEST;
-import static org.lwjgl.opengl.GL11.GL_NEAREST;
-import static org.lwjgl.opengl.GL11.GL_MODELVIEW;
-import static org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA;
-import static org.lwjgl.opengl.GL11.GL_PROJECTION;
-import static org.lwjgl.opengl.GL11.GL_RGBA;
-import static org.lwjgl.opengl.GL11.GL_RGBA8;
-import static org.lwjgl.opengl.GL11.GL_SRC_ALPHA;
-import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
-import static org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER;
-import static org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER;
-import static org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE;
-import static org.lwjgl.opengl.GL11.glBindTexture;
-import static org.lwjgl.opengl.GL11.glBlendFunc;
-import static org.lwjgl.opengl.GL11.glColor4f;
-import static org.lwjgl.opengl.GL11.glDeleteTextures;
-import static org.lwjgl.opengl.GL11.glDisable;
-import static org.lwjgl.opengl.GL11.glEnable;
-import static org.lwjgl.opengl.GL11.glGenTextures;
-import static org.lwjgl.opengl.GL11.glLoadIdentity;
-import static org.lwjgl.opengl.GL11.glMatrixMode;
-import static org.lwjgl.opengl.GL11.glOrtho;
-import static org.lwjgl.opengl.GL11.glTexImage2D;
-import static org.lwjgl.opengl.GL11.glTexParameteri;
-import static org.lwjgl.opengl.GL11.glTexSubImage2D;
 
 public final class LwjglTextOverlayRenderer {
     private static final int MAX_CHARACTER_NAME_LENGTH = 16;
@@ -98,12 +51,13 @@ public final class LwjglTextOverlayRenderer {
     private final ShopSystem.ShopWindow shopWindow = new ShopSystem.ShopWindow();
     private final Image gameOverCover = AssetLoader.loadImage("assets/images/ui/01_UI_Resources/01Battle/battle_gameover_cover.png");
     private final Image gameOverTitleBackground = AssetLoader.loadImage("assets/images/ui/01_UI_Resources/01Battle/battle_gameover_bg.png");
-
+    private final int[] uploadPixelBuffers = new int[2];
+    private final int[] worldUploadPixelBuffers = new int[2];
+    private final List<OverlayAction> overlayActions = new ArrayList<>();
     private int textureId;
     private FixedFunctionPrimitives fixedPrimitives;
     private int textureWidth;
     private int textureHeight;
-    private final int[] uploadPixelBuffers = new int[2];
     private int uploadPixelBufferCursor;
     private ByteBuffer uploadBuffer;
     private BufferedImage overlayImage;
@@ -115,13 +69,11 @@ public final class LwjglTextOverlayRenderer {
     private ByteBuffer worldUploadBuffer;
     private BufferedImage worldOverlayImage;
     private Graphics2D worldOverlayGraphics;
-    private final int[] worldUploadPixelBuffers = new int[2];
     private int worldUploadPixelBufferCursor;
     private long renderedWorldRevision = Long.MIN_VALUE;
     private List<Rectangle> renderedWorldBounds = List.of();
     private long localUiRevision;
     private int renderedEnemyLabelsHash;
-    private final List<OverlayAction> overlayActions = new ArrayList<>();
     private List<ItemModelIconRenderQueue.Request> modelIconRequests = List.of();
     private Runnable quitAction = () -> {
     };
@@ -1300,7 +1252,7 @@ public final class LwjglTextOverlayRenderer {
 
     private void splitLongWord(Graphics2D graphics, List<String> lines, String word, int width) {
         StringBuilder segment = new StringBuilder();
-        for (int offset = 0; offset < word.length();) {
+        for (int offset = 0; offset < word.length(); ) {
             int codePoint = word.codePointAt(offset);
             String candidate = segment + new String(Character.toChars(codePoint));
             if (!segment.isEmpty() && graphics.getFontMetrics().stringWidth(candidate) > width) {
@@ -1544,7 +1496,7 @@ public final class LwjglTextOverlayRenderer {
 
     private void mergeDirtyBound(List<Rectangle> merged, Rectangle candidate) {
         Rectangle combined = new Rectangle(candidate);
-        for (int index = 0; index < merged.size();) {
+        for (int index = 0; index < merged.size(); ) {
             Rectangle existing = merged.get(index);
             Rectangle padded = new Rectangle(existing.x - 2, existing.y - 2,
                     existing.width + 4, existing.height + 4);
@@ -1651,15 +1603,6 @@ public final class LwjglTextOverlayRenderer {
         glEnable(GL_ALPHA_TEST);
     }
 
-    private record OverlayAction(Rectangle bounds, Runnable action) {
-    }
-
-    private enum ScrollTarget {
-        NONE,
-        CUSTOM_MAP,
-        CREDITS
-    }
-
     private int nextUploadPixelBuffer() {
         int index = uploadPixelBufferCursor++ & 1;
         if (uploadPixelBuffers[index] == 0) {
@@ -1674,5 +1617,14 @@ public final class LwjglTextOverlayRenderer {
             worldUploadPixelBuffers[index] = glGenBuffers();
         }
         return worldUploadPixelBuffers[index];
+    }
+
+    private enum ScrollTarget {
+        NONE,
+        CUSTOM_MAP,
+        CREDITS
+    }
+
+    private record OverlayAction(Rectangle bounds, Runnable action) {
     }
 }
