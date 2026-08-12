@@ -1344,13 +1344,15 @@ public final class SaveSystem {
             return "";
         }
         if (!item.getContentId().isBlank()) {
-            return "CUSTOM_ITEM|" + item.getContentId();
+            return "CUSTOM_ITEM|" + item.getContentId()
+                    + (LanternSystem.isLantern(item) ? "|" + item.getLanternFuelMillis() : "");
         }
 
         try {
             for (MapDesignLibrary.CustomItem customItem : MapDesignLibrary.loadSharedContent().customItems()) {
                 if (customItem.displayName().equalsIgnoreCase(item.getName())) {
-                    return "CUSTOM_ITEM|" + customItem.itemId();
+                    return "CUSTOM_ITEM|" + customItem.itemId()
+                            + (LanternSystem.isLantern(item) ? "|" + item.getLanternFuelMillis() : "");
                 }
             }
         } catch (IOException ignored) {
@@ -1370,7 +1372,16 @@ public final class SaveSystem {
         }
 
         if (itemName.startsWith("CUSTOM_ITEM|")) {
-            return readCustomItem(itemName.substring("CUSTOM_ITEM|".length()));
+            String[] parts = itemName.split("\\|", 3);
+            InventorySystem.Item item = readCustomItem(parts.length >= 2 ? parts[1] : "");
+            if (item != null && parts.length >= 3 && LanternSystem.isLantern(item)) {
+                try {
+                    item.setLanternFuelMillis(Long.parseLong(parts[2]));
+                } catch (NumberFormatException ignored) {
+                    item.setLanternFuelMillis(0L);
+                }
+            }
+            return item;
         }
 
         if (itemName.startsWith("RECIPE|")) {

@@ -112,32 +112,11 @@ public final class PaperDollRenderer {
     }
 
     private Color materialTint(GearMaterial material) {
-        if (material == null) {
-            return null;
-        }
-
-        return switch (material) {
-            case COPPER -> new Color(150, 82, 44);
-            case BRONZE -> new Color(176, 126, 62);
-            case IRON -> new Color(165, 170, 176);
-            case STEEL -> new Color(205, 210, 214);
-            case SILVER -> new Color(180, 205, 220);
-            case OAK -> new Color(150, 104, 56);
-            case YEW -> new Color(94, 130, 72);
-            case IRONWOOD -> new Color(92, 92, 82);
-            case LEATHER -> new Color(120, 72, 44);
-            case NONE -> null;
-            default -> new Color(180, 180, 180);
-        };
+        return material == null ? null : material.getTintColor();
     }
 
     private float materialTintStrength(GearMaterial material) {
-        return switch (material) {
-            case IRON, STEEL, SILVER -> 0.35f;
-            case COPPER, BRONZE, OAK, YEW, IRONWOOD, LEATHER -> 0.45f;
-            case NONE -> 0.0f;
-            default -> 0.35f;
-        };
+        return material == null ? 0.0f : material.getTintStrength();
     }
 
     private BufferedImage loadImage(String path) {

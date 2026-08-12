@@ -66,6 +66,47 @@ public final class LwjglSkinnedModel {
         }
     }
 
+    /** Stable skeleton information used by authoring tools and attachment validation. */
+    public record SkeletonNodeMetadata(
+            String name,
+            String parentName,
+            boolean weightedBone,
+            boolean animatedNode,
+            boolean socketOrHelper,
+            boolean meshNode,
+            Matrix4f bindPoseTransform
+    ) {
+        public SkeletonNodeMetadata {
+            bindPoseTransform = new Matrix4f(bindPoseTransform);
+        }
+
+        @Override public Matrix4f bindPoseTransform() {
+            return new Matrix4f(bindPoseTransform);
+        }
+
+        public String categoryLabel() {
+            if (weightedBone) return "Bone";
+            if (animatedNode) return "Animated";
+            if (socketOrHelper) return "Helper";
+            if (meshNode) return "Mesh";
+            return "Node";
+        }
+
+        public String displayLabel() {
+            return name + " [" + categoryLabel() + "]";
+        }
+    }
+
+    public record SkeletonNodePose(SkeletonNodeMetadata metadata, Matrix4f currentTransform) {
+        public SkeletonNodePose {
+            currentTransform = new Matrix4f(currentTransform);
+        }
+
+        @Override public Matrix4f currentTransform() {
+            return new Matrix4f(currentTransform);
+        }
+    }
+
     private record Node(String name, int parent, Matrix4f bindLocal, int[] meshIndices) { }
     private record Bone(String name, int nodeIndex, Matrix4f inverseBind) { }
     private record ImportedScene(List<Node> nodes, Map<String, Integer> nodeIndexByName,
@@ -91,6 +132,7 @@ public final class LwjglSkinnedModel {
     private final ThreadLocal<SkinWorkspaceRing> skinWorkspaces;
     private final ThreadLocal<PoseWorkspaceRing> poseWorkspaces;
     private final Pose bindPose;
+    private final List<SkeletonNodeMetadata> skeletonMetadata;
 
     private LwjglSkinnedModel(CharacterModelDefinition definition, ImportedScene base,
                               Map<CharacterModelDefinition.AnimationSlot, ClipBinding> bindings,
@@ -115,6 +157,7 @@ public final class LwjglSkinnedModel {
         this.poseWorkspaces = ThreadLocal.withInitial(() ->
                 new PoseWorkspaceRing(this.nodes.size(), this.bones.size()));
         this.bindPose = copyPose(poseFromGlobals(bindGlobals(), 0.0));
+        this.skeletonMetadata = buildSkeletonMetadata();
         this.bindPosePositions = copyPositions(skinPositions(bindPose));
         ModelBounds bounds = boundsOf(bindPosePositions);
         this.minY = bounds.minY();
@@ -211,6 +254,116 @@ public final class LwjglSkinnedModel {
     public List<String> nodeNames() {
         return nodes.stream().map(Node::name).toList();
     }
+    public List<SkeletonNodeMetadata> skeletonNodes() {
+        return skeletonMetadata;
+    }
+
+    /** True when the node, or one of its parents, participates in skeletal animation. */
+    public boolean followsAnimatedHierarchy(String nodeName) {
+        if (nodeName == null || nodeName.isBlank()) return false;
+        Map<String, SkeletonNodeMetadata> byName = new HashMap<>();
+        for (SkeletonNodeMetadata node : skeletonMetadata) {
+            byName.put(node.name().toLowerCase(Locale.ROOT), node);
+        }
+        SkeletonNodeMetadata current = byName.get(nodeName.trim().toLowerCase(Locale.ROOT));
+        Set<String> visited = new HashSet<>();
+        while (current != null && visited.add(current.name().toLowerCase(Locale.ROOT))) {
+            if (current.weightedBone() || current.animatedNode()) return true;
+            current = byName.get(current.parentName().toLowerCase(Locale.ROOT));
+        }
+        return false;
+    }
+
+    /**
+     * Returns the direction continuing from a node's parent through the node,
+     * expressed in the selected node's local coordinates.
+     */
+    public Vector3f outwardDirectionFromParentNormalized(
+            CharacterModelDefinition.AnimationSlot slot,
+            double normalizedProgress,
+            String nodeName
+    ) {
+        Integer nodeIndex = baseNodeIndex(nodeName);
+        if (nodeIndex == null) return new Vector3f(0, 1, 0);
+        int parentIndex = nodes.get(nodeIndex).parent();
+        if (parentIndex < 0 || parentIndex >= nodes.size()) return new Vector3f(0, 1, 0);
+        Pose pose = poseNormalized(slot, normalizedProgress);
+        Matrix4f node = pose.nodeMatrices()[nodeIndex];
+        Matrix4f parent = pose.nodeMatrices()[parentIndex];
+        Vector3f direction = node.getTranslation(new Vector3f())
+                .sub(parent.getTranslation(new Vector3f()));
+        if (direction.lengthSquared() < 0.000001f) return new Vector3f(0, 1, 0);
+        Quaternionf inverseNodeRotation = node.getUnnormalizedRotation(
+                new Quaternionf()).normalize().conjugate();
+        return inverseNodeRotation.transform(direction).normalize();
+    }
+
+    /**
+     * Returns a practical grip point beneath a hand/wrist attachment instead
+     * of the skeletal joint at the base of the wrist. The direct child joints
+     * (normally the finger roots) provide a model-authored palm location.
+     * Non-hand attachment nodes deliberately remain at their exact origin.
+     */
+    public Vector3f handGripOffsetNormalized(
+            CharacterModelDefinition.AnimationSlot slot,
+            double normalizedProgress,
+            String nodeName
+    ) {
+        Integer nodeIndex = baseNodeIndex(nodeName);
+        if (nodeIndex == null) return new Vector3f();
+        String normalized = nodes.get(nodeIndex).name().toLowerCase(Locale.ROOT);
+        if (!normalized.contains("hand") && !normalized.contains("wrist")) {
+            return new Vector3f();
+        }
+        // Hand joints in common Blender/GLTF rigs sit at the wrist. Continue
+        // along the authored forearm direction to reach the closed-palm grip.
+        // A fixed normalized hand depth is more stable than averaging finger
+        // roots, which are frequently spread asymmetrically by the rest pose.
+        return outwardDirectionFromParentNormalized(slot, normalizedProgress, nodeName)
+                .mul(0.20f);
+    }
+
+    private List<SkeletonNodeMetadata> buildSkeletonMetadata() {
+        Set<String> weighted = new HashSet<>();
+        bones.forEach(bone -> weighted.add(bone.name().toLowerCase(Locale.ROOT)));
+        Set<String> animated = new HashSet<>();
+        embeddedClipsByName.values().forEach(clip -> clip.channels().keySet()
+                .forEach(name -> animated.add(name.toLowerCase(Locale.ROOT))));
+        bindings.values().forEach(binding -> binding.clip().channels().keySet()
+                .forEach(name -> animated.add(name.toLowerCase(Locale.ROOT))));
+        List<SkeletonNodeMetadata> result = new ArrayList<>(nodes.size());
+        for (int index = 0; index < nodes.size(); index++) {
+            Node node = nodes.get(index);
+            String lower = node.name().toLowerCase(Locale.ROOT);
+            String parent = node.parent() >= 0 && node.parent() < nodes.size()
+                    ? nodes.get(node.parent()).name() : "";
+            boolean helper = lower.contains("socket") || lower.contains("helper")
+                    || lower.contains("grip") || lower.contains("prop")
+                    || lower.contains("attach");
+            Matrix4f bindTransform = index < bindPose.nodeMatrices().length
+                    ? bindPose.nodeMatrices()[index] : node.bindLocal();
+            result.add(new SkeletonNodeMetadata(node.name(), parent,
+                    weighted.contains(lower), animated.contains(lower), helper,
+                    node.meshIndices().length > 0, bindTransform));
+        }
+        return List.copyOf(result);
+    }
+
+    public List<SkeletonNodePose> skeletonPose(
+            CharacterModelDefinition.AnimationSlot slot,
+            double normalizedProgress
+    ) {
+        Pose pose = poseNormalized(slot, normalizedProgress);
+        List<SkeletonNodeMetadata> metadata = skeletonNodes();
+        List<SkeletonNodePose> result = new ArrayList<>(metadata.size());
+        for (int index = 0; index < metadata.size(); index++) {
+            Matrix4f current = index < pose.nodeMatrices().length
+                    ? pose.nodeMatrices()[index]
+                    : metadata.get(index).bindPoseTransform();
+            result.add(new SkeletonNodePose(metadata.get(index), current));
+        }
+        return List.copyOf(result);
+    }
     public List<String> meshNames() {
         return meshes.stream().map(SkinnedMesh::name).toList();
     }
@@ -219,6 +372,10 @@ public final class LwjglSkinnedModel {
         ClipBinding binding = bindings.get(slot);
         return binding == null ? 0.0
                 : binding.clip().durationSeconds() / Math.max(0.0001, binding.speed());
+    }
+    public double clipNaturalDurationSeconds(CharacterModelDefinition.AnimationSlot slot) {
+        ClipBinding binding = bindings.get(slot);
+        return binding == null ? 0.0 : binding.clip().durationSeconds();
     }
     public double impactFraction(CharacterModelDefinition.AnimationSlot slot) {
         ClipBinding binding = bindings.get(slot);

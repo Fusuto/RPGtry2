@@ -384,13 +384,15 @@ final class LwjglBattleSceneRenderer {
 
         if (weapon != null && weapon.hasFirstPersonModel()) {
             drawSocketEquipment(weapon, weaponProfile.socketTransform(), resolved.model(),
-                    rig.handBone(weaponHand), animation);
+                    FirstPersonAnimationRuntime.resolveAttachmentBone(
+                            rig, weaponProfile, resolved.model()), animation);
         }
         if (shield != null && shield.hasFirstPersonModel() && shieldProfile != null
                 && (weapon == null || !weapon.isTwoHanded())) {
             FirstPersonCombatLibrary.WieldHand shieldHand = shieldProfile.wieldHand();
             drawSocketEquipment(shield, shieldProfile.socketTransform(), resolved.model(),
-                    rig.handBone(shieldHand), animation);
+                    FirstPersonAnimationRuntime.resolveAttachmentBone(
+                            rig, shieldProfile, resolved.model()), animation);
         }
         glEnable(GL_TEXTURE_2D);
         glEnable(GL_DEPTH_TEST);
@@ -626,7 +628,8 @@ final class LwjglBattleSceneRenderer {
                 && Math.abs(profile.secondaryGripY()) < 0.0001
                 && Math.abs(profile.secondaryGripZ()) < 0.0001)) return new Vector3f();
         Matrix4f weaponSocket = animatedNodeTransform(resolved.model(),
-                resolved.rig().handBone(weaponHand), animation);
+                FirstPersonAnimationRuntime.resolveAttachmentBone(
+                        resolved.rig(), profile, resolved.model()), animation);
         Matrix4f offHandSocket = animatedNodeTransform(resolved.model(),
                 resolved.rig().handBone(weaponHand.opposite()), animation);
         LwjglStaticModel weaponModel = weapon == null

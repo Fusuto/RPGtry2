@@ -113,6 +113,7 @@ public class GameState {
     private String smeltingItemName;
     private String smeltingMessage = "Use ore, then interact with a furnace.";
     private String smithingMaterialName;
+    private String smithingMaterialItemId;
     private String smithingMessage = "Use a metal bar, then interact with an anvil.";
     private String selectedQuestId;
     private InteractionSystem.Interaction activeInteraction;
@@ -1495,6 +1496,10 @@ public class GameState {
         }
     }
 
+    public List<MapDesignLibrary.CraftingRecipe> getCraftingRecipes() {
+        return List.copyOf(allCraftingRecipes());
+    }
+
     public InventorySystem.Item createCustomItem(String itemId) {
         MapDesignLibrary.CustomItem item = customItems.get(itemId);
         return item == null ? null : item.createItem();
@@ -2821,6 +2826,7 @@ public class GameState {
             case LEG_ARMOR -> InventorySystem.EquipmentSlot.LEGS;
             case WEAPON -> InventorySystem.EquipmentSlot.WEAPON;
             case SHIELD -> InventorySystem.EquipmentSlot.SHIELD;
+            case UTILITY -> InventorySystem.EquipmentSlot.POCKET;
             case RING -> getInventory().getEquippedItem(InventorySystem.EquipmentSlot.RING_LEFT) == null
                     ? InventorySystem.EquipmentSlot.RING_LEFT
                     : InventorySystem.EquipmentSlot.RING_RIGHT;
@@ -2879,12 +2885,45 @@ public class GameState {
             return false;
         }
 
+        if (LanternSystem.isLantern(targetItem)) {
+            LanternSystem.RefuelResult result = LanternSystem.refuel(
+                    getInventory(), selectedWorldItemIndex, targetItem);
+            worldMessageLog.post(result.success()
+                    ? WorldMessageLog.Category.SUCCESS : WorldMessageLog.Category.WARNING,
+                    result.message());
+            if (result.success()) {
+                clearSelectedWorldUseItem();
+            }
+            return true;
+        }
+
         MapDesignLibrary.CraftingRecipe recipe = findCraftingRecipe(selectedItem, targetItem);
         if (recipe == null) {
             return false;
         }
         craftRecipe(recipe);
         return true;
+    }
+
+    public boolean fuelPocketLantern(int fuelInventoryIndex) {
+        InventorySystem.Item lantern = getInventory().getEquippedItem(InventorySystem.EquipmentSlot.POCKET);
+        LanternSystem.RefuelResult result = LanternSystem.refuel(getInventory(), fuelInventoryIndex, lantern);
+        worldMessageLog.post(result.success()
+                ? WorldMessageLog.Category.SUCCESS : WorldMessageLog.Category.WARNING,
+                result.message());
+        return result.success();
+    }
+
+    public boolean isActiveExploration() {
+        return isDungeonMode()
+                && !isBattleMode()
+                && !isGameplayPaused()
+                && !inventoryOpen
+                && !skillsOpen
+                && !questsOpen
+                && !statsOpen
+                && !hasActiveShop()
+                && !hasActiveInteraction();
     }
 
     public boolean hasSingleIngredientCraftingRecipe(int inventoryIndex) {
@@ -3547,17 +3586,20 @@ public class GameState {
         InventorySystem.Item selectedItem = getSelectedWorldUseItem();
         if (!CraftingSystem.isSmithingMaterial(selectedItem)) {
             smithingMaterialName = null;
+            smithingMaterialItemId = null;
             smithingMessage = "Use a metal bar from your inventory first, then interact with the anvil.";
             return false;
         }
 
         smithingMaterialName = selectedItem.getName();
+        smithingMaterialItemId = selectedItem.getContentId().isBlank()
+                ? selectedItem.getName() : selectedItem.getContentId();
         smithingMessage = "Choose what to make with " + smithingMaterialName + ".";
         return true;
     }
 
     public List<CraftingSystem.SmithingRecipe> getAvailableSmithingRecipes() {
-        return CraftingSystem.smithingRecipesForMaterial(smithingMaterialName);
+        return CraftingSystem.smithingRecipesForMaterial(smithingMaterialItemId);
     }
 
     public String getSmithingMaterialName() {
@@ -3578,7 +3620,7 @@ public class GameState {
             return false;
         }
 
-        int barCount = countInventoryItemsNamed(recipe.materialName());
+        int barCount = getInventory().countItemByContentId(recipe.barItemId());
         if (barCount < recipe.requiredBars()) {
             smithingMessage = "You need " + recipe.requiredBars() + " " + recipe.materialName() + " to make " + recipe.displayName() + ".";
             return false;
@@ -3589,9 +3631,7 @@ public class GameState {
             return false;
         }
 
-        for (int i = 0; i < recipe.requiredBars(); i++) {
-            getInventory().removeFirstItemNamed(recipe.materialName());
-        }
+        getInventory().removeItemQuantityByContentId(recipe.barItemId(), recipe.requiredBars());
 
         if (!getInventory().addItem(recipe.createResult())) {
             smithingMessage = "Your inventory is too full to hold the result.";
@@ -3608,8 +3648,9 @@ public class GameState {
                 + playerCharacter.getSkillExperienceRequired(CharacterSkill.SMITHING)
                 + ".";
 
-        if (countInventoryItemsNamed(recipe.materialName()) <= 0) {
+        if (getInventory().countItemByContentId(recipe.barItemId()) <= 0) {
             smithingMaterialName = null;
+            smithingMaterialItemId = null;
             clearSelectedWorldUseItem();
             smithingMessage += " You have no more " + recipe.materialName() + ".";
         }

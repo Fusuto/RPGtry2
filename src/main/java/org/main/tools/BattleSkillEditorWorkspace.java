@@ -154,8 +154,6 @@ public final class BattleSkillEditorWorkspace extends JDialog {
 
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(6, 6));
-        setMinimumSize(new Dimension(960, 680));
-        setPreferredSize(new Dimension(1180, 780));
         add(buildHeader(), BorderLayout.NORTH);
         add(buildBody(), BorderLayout.CENTER);
         add(buildFooter(), BorderLayout.SOUTH);
@@ -170,6 +168,7 @@ public final class BattleSkillEditorWorkspace extends JDialog {
                 statusStacking.getSelectedItem() == StatusDefinition.StackingPolicy.STACK));
         kindBox.setSelectedItem(kind == null ? Kind.SKILL : kind);
         refreshCatalog(BattleContentCatalog.normalizeId(selectedId));
+        ConstructionKitUi.configureWorkspace(this);
         pack();
         setLocationRelativeTo(owner);
     }

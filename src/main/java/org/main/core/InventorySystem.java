@@ -26,6 +26,7 @@ public final class InventorySystem {
         RING,
         WEAPON,
         SHIELD,
+        UTILITY,
         LIMB,
         MISC,
         CONSUMABLE
@@ -38,7 +39,8 @@ public final class InventorySystem {
         RING_LEFT("Ring"),
         RING_RIGHT("Ring"),
         WEAPON("Weapon"),
-        SHIELD("Shield");
+        SHIELD("Shield"),
+        POCKET("Pocket");
 
         private final String label;
 
@@ -73,6 +75,9 @@ public final class InventorySystem {
         private String firstPersonModelPath = "";
         private EquipmentViewModelProfile viewModelProfile = EquipmentViewModelProfile.defaults();
         private ItemModelIconProfile modelIconProfile = ItemModelIconProfile.defaults();
+        private CharacterSkill equipmentSkill;
+        private LanternDefinition lanternDefinition = LanternDefinition.none();
+        private long lanternFuelMillis;
         private int quantity;
 
         public Item(String name, ItemType itemType, BufferedImage icon) {
@@ -302,6 +307,23 @@ public final class InventorySystem {
             return this;
         }
 
+        public Item withEquipmentSkill(CharacterSkill skill) {
+            equipmentSkill = isEquippable() && itemType != ItemType.UTILITY ? skill : null;
+            return this;
+        }
+
+        public Item withLanternDefinition(LanternDefinition definition) {
+            lanternDefinition = itemType == ItemType.UTILITY && definition != null
+                    ? definition : LanternDefinition.none();
+            lanternFuelMillis = Math.min(lanternFuelMillis, getLanternCapacityMillis());
+            return this;
+        }
+
+        public Item withLanternFuelMillis(long fuelMillis) {
+            setLanternFuelMillis(fuelMillis);
+            return this;
+        }
+
         private static WeaponType defaultWeaponType(ItemType itemType) {
             return itemType == ItemType.WEAPON ? WeaponType.SWORD : WeaponType.NONE;
         }
@@ -476,7 +498,7 @@ public final class InventorySystem {
             return source != null
                     && itemType != null
                     && material != null
-                    && material != GearMaterial.NONE
+                    && !GearMaterial.NONE.equals(material)
                     && isTintableEquipmentType(itemType)
                     && materialTint(material) != null;
         }
@@ -486,32 +508,16 @@ public final class InventorySystem {
                     || itemType == ItemType.SHIELD
                     || itemType == ItemType.HEAD_GEAR
                     || itemType == ItemType.CHEST_ARMOR
-                    || itemType == ItemType.LEG_ARMOR;
+                    || itemType == ItemType.LEG_ARMOR
+                    || itemType == ItemType.UTILITY;
         }
 
         private static Color materialTint(GearMaterial material) {
-            return switch (material) {
-                case COPPER -> new Color(150, 82, 44);
-                case BRONZE -> new Color(176, 126, 62);
-                case IRON -> new Color(165, 170, 176);
-                case STEEL -> new Color(205, 210, 214);
-                case SILVER -> new Color(180, 205, 220);
-                case OAK -> new Color(150, 104, 56);
-                case YEW -> new Color(94, 130, 72);
-                case IRONWOOD -> new Color(92, 92, 82);
-                case LEATHER -> new Color(120, 72, 44);
-                case NONE -> null;
-                default -> new Color(180, 180, 180);
-            };
+            return material == null ? null : material.getTintColor();
         }
 
         private static float materialTintStrength(GearMaterial material) {
-            return switch (material) {
-                case IRON, STEEL, SILVER -> 0.35f;
-                case COPPER, BRONZE, OAK, YEW, IRONWOOD, LEATHER -> 0.45f;
-                case NONE -> 0.0f;
-                default -> 0.35f;
-            };
+            return material == null ? 0.0f : material.getTintStrength();
         }
 
         public String getName() {
@@ -590,7 +596,7 @@ public final class InventorySystem {
         }
 
         public int getEffectiveStatBonus() {
-            if (!isEquippable()) {
+            if (!isEquippable() || itemType == ItemType.UTILITY) {
                 return 0;
             }
 
@@ -639,6 +645,34 @@ public final class InventorySystem {
             return modelIconProfile;
         }
 
+        public CharacterSkill getEquipmentSkill() {
+            return equipmentSkill;
+        }
+
+        public LanternDefinition getLanternDefinition() {
+            return lanternDefinition;
+        }
+
+        public long getLanternFuelMillis() {
+            return lanternFuelMillis;
+        }
+
+        public long getLanternCapacityMillis() {
+            if (!lanternDefinition.enabled()) {
+                return 0L;
+            }
+            MaterialDefinition definition = MaterialCatalog.snapshot().require(material.id());
+            return Math.max(0L, definition.lanternFuelCapacitySeconds()) * 1_000L;
+        }
+
+        public void setLanternFuelMillis(long fuelMillis) {
+            lanternFuelMillis = Math.max(0L, Math.min(getLanternCapacityMillis(), fuelMillis));
+        }
+
+        public int getEquipmentRequiredLevel() {
+            return EquipmentRequirementRules.requiredLevel(equipmentSkill, material);
+        }
+
         public boolean hasModelBackedIcon() {
             return itemType == ItemType.WEAPON && !firstPersonModelPath.isBlank();
         }
@@ -665,7 +699,8 @@ public final class InventorySystem {
                     || itemType == ItemType.LEG_ARMOR
                     || itemType == ItemType.RING
                     || itemType == ItemType.WEAPON
-                    || itemType == ItemType.SHIELD;
+                    || itemType == ItemType.SHIELD
+                    || itemType == ItemType.UTILITY;
         }
 
         public Item copy() {
@@ -690,7 +725,10 @@ public final class InventorySystem {
                     .withContentId(contentId)
                     .withFirstPersonModel(firstPersonModelPath)
                     .withViewModelProfile(viewModelProfile)
-                    .withModelIconProfile(modelIconProfile);
+                    .withModelIconProfile(modelIconProfile)
+                    .withEquipmentSkill(equipmentSkill)
+                    .withLanternDefinition(lanternDefinition)
+                    .withLanternFuelMillis(lanternFuelMillis);
         }
     }
 
@@ -725,6 +763,7 @@ public final class InventorySystem {
             result = 31 * result + item.quantity;
             result = 31 * result + item.durability.ordinal();
             result = 31 * result + item.baseGoldValue;
+            result = 31 * result + Long.hashCode(item.lanternFuelMillis / 1_000L);
             return result;
         }
 
@@ -813,7 +852,9 @@ public final class InventorySystem {
             int total = 0;
 
             for (Map.Entry<EquipmentSlot, Item> entry : equippedItems.entrySet()) {
-                if (entry.getKey() != EquipmentSlot.WEAPON && entry.getValue() != null) {
+                if (entry.getKey() != EquipmentSlot.WEAPON
+                        && entry.getKey() != EquipmentSlot.POCKET
+                        && entry.getValue() != null) {
                     total += entry.getValue().getEffectiveStatBonus();
                 }
             }
@@ -853,6 +894,21 @@ public final class InventorySystem {
             items[index] = null;
 
             return removedItem;
+        }
+
+        public boolean removeOneFromInventorySlot(int index) {
+            if (!isValidInventoryIndex(index)) {
+                return false;
+            }
+            Item item = items[index];
+            if (item == null) {
+                return false;
+            }
+            if (item.isStackable() && item.getQuantity() > 1) {
+                return item.removeQuantity(1);
+            }
+            items[index] = null;
+            return true;
         }
 
         public boolean removeFirstItemNamed(String itemName) {
@@ -1316,6 +1372,7 @@ public final class InventorySystem {
                 case WEAPON -> slot == EquipmentSlot.WEAPON;
                 case SHIELD -> slot == EquipmentSlot.SHIELD
                         && !isTwoHandedWeaponEquipped();
+                case UTILITY -> slot == EquipmentSlot.POCKET;
                 case LIMB, MISC, CONSUMABLE -> false;
             };
         }
@@ -1336,6 +1393,7 @@ public final class InventorySystem {
                 case LEG_ARMOR -> EquipmentSlot.LEGS;
                 case WEAPON -> EquipmentSlot.WEAPON;
                 case SHIELD -> EquipmentSlot.SHIELD;
+                case UTILITY -> EquipmentSlot.POCKET;
                 case RING -> getPreferredRingSlot();
                 case LIMB, MISC, CONSUMABLE -> null;
             };
@@ -1551,6 +1609,14 @@ public final class InventorySystem {
                 }));
             }
 
+            Item pocketLantern = inventory().getEquippedItem(EquipmentSlot.POCKET);
+            if (gameState != null && LanternSystem.isCompatibleFuel(pocketLantern, item)) {
+                contextMenuOptions.add(new ContextMenuOption("Fuel Pocket Lantern", () -> {
+                    gameState.fuelPocketLantern(contextInventoryIndex);
+                    closeContextMenu();
+                }));
+            }
+
             if (item instanceof LimbItem limb && gameState != null) {
                 contextMenuOptions.add(new ContextMenuOption("Graft", () -> {
                     int indexToRemove = contextInventoryIndex;
@@ -1585,7 +1651,9 @@ public final class InventorySystem {
                 closeContextMenu();
             }));
 
-            int width = 96;
+            int width = contextMenuOptions.stream()
+                    .mapToInt(option -> option.label().length() * 8 + 24)
+                    .max().orElse(96);
             int height = contextMenuOptions.size() * 26 + 8;
             contextMenuBounds.setBounds(point.x, point.y, width, height);
         }
@@ -1798,6 +1866,14 @@ public final class InventorySystem {
             EquipmentSlot targetEquipmentSlot = getEquipmentSlotAt(mousePoint);
 
             if (targetEquipmentSlot != null) {
+                Item targetEquipment = inventory().getEquippedItem(targetEquipmentSlot);
+                if (targetEquipmentSlot == EquipmentSlot.POCKET
+                        && LanternSystem.isLantern(targetEquipment)
+                        && !LanternSystem.isLantern(draggedItem)) {
+                    refuelDraggedLog(targetEquipment);
+                    clearDrag();
+                    return true;
+                }
                 if (canWearItem(draggedItem, targetEquipmentSlot)) {
                     inventory().equipFromInventory(draggedInventoryIndex, targetEquipmentSlot);
                 } else {
@@ -1818,6 +1894,12 @@ public final class InventorySystem {
             int targetInventoryIndex = getInventorySlotAt(mousePoint);
 
             if (targetInventoryIndex >= 0) {
+                Item targetItem = inventory().getItem(targetInventoryIndex);
+                if (LanternSystem.isLantern(targetItem) && !LanternSystem.isLantern(draggedItem)) {
+                    refuelDraggedLog(targetItem);
+                    clearDrag();
+                    return true;
+                }
                 inventory().swapInventorySlots(draggedInventoryIndex, targetInventoryIndex);
                 clearDrag();
                 return true;
@@ -1825,6 +1907,19 @@ public final class InventorySystem {
 
             clearDrag();
             return true;
+        }
+
+        private void refuelDraggedLog(Item lantern) {
+            LanternSystem.RefuelResult result = LanternSystem.refuel(
+                    inventory(), draggedInventoryIndex, lantern);
+            if (gameState != null) {
+                gameState.getWorldMessageLog().post(
+                        result.success() ? WorldMessageLog.Category.SUCCESS : WorldMessageLog.Category.WARNING,
+                        result.message());
+            }
+            examineTooltipTitle = result.success() ? "Lantern fuelled" : "Cannot refuel";
+            examineTooltipText = result.message();
+            examineTooltipPoint = mousePoint == null ? new Point(24, 24) : new Point(mousePoint);
         }
 
         private boolean finishEquipmentDrag() {
@@ -2101,6 +2196,11 @@ public final class InventorySystem {
             if (item == null) {
                 return "There is nothing to examine.";
             }
+            if (LanternSystem.isLantern(item)) {
+                return item.getExamineText() + "\n\n" + LanternSystem.fuelTooltip(item)
+                        + "\nLight radius: "
+                        + String.format(java.util.Locale.ROOT, "%.1f", item.getLanternDefinition().radius());
+            }
             if (item.getItemType() != ItemType.WEAPON) {
                 return item.getExamineText();
             }
@@ -2338,6 +2438,9 @@ public final class InventorySystem {
             g.setFont(oldFont.deriveFont(Font.BOLD, 13f));
             FontMetrics metrics = g.getFontMetrics();
             String label = hoveredItem.getName() == null ? "Unknown" : hoveredItem.getName();
+            if (LanternSystem.isLantern(hoveredItem)) {
+                label += " — " + LanternSystem.fuelTooltip(hoveredItem);
+            }
             int tooltipWidth = metrics.stringWidth(label) + 18;
             int tooltipHeight = 26;
             int x = Math.max(8, Math.min(panelWidth - tooltipWidth - 8, mousePoint.x + 12));
@@ -2480,6 +2583,7 @@ public final class InventorySystem {
                 case RING -> EquipmentSlot.RING_LEFT;
                 case WEAPON -> EquipmentSlot.WEAPON;
                 case SHIELD -> EquipmentSlot.SHIELD;
+                case UTILITY -> EquipmentSlot.POCKET;
                 case LIMB, MISC, CONSUMABLE -> null;
             };
         }
@@ -2622,6 +2726,7 @@ public final class InventorySystem {
                 case RING -> new Color(200, 170, 70);
                 case WEAPON -> new Color(170, 170, 180);
                 case SHIELD -> new Color(115, 145, 165);
+                case UTILITY -> new Color(224, 164, 76);
                 case LIMB -> new Color(180, 90, 120);
                 case CONSUMABLE -> new Color(120, 180, 120);
                 case MISC -> new Color(150, 150, 150);

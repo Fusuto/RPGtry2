@@ -225,6 +225,7 @@ public final class AetherGameRuntime {
         }
 
         gameState.updateMovementAnimation(deltaMs);
+        LanternSystem.updateFuel(gameState, deltaMs);
         gameState.updateResourceNodes(deltaMs);
         gameState.updateEnemyRespawns(deltaMs);
         gameState.updateFishing(deltaMs);

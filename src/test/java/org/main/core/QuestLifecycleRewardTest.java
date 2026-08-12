@@ -368,6 +368,7 @@ class QuestLifecycleRewardTest {
                 "",
                 "",
                 WeaponType.NONE,
+                false,
                 GearMaterial.NONE,
                 0,
                 1,
@@ -376,8 +377,7 @@ class QuestLifecycleRewardTest {
                 stackable,
                 false,
                 1,
-                1,
-                0
+                1
         );
     }
 

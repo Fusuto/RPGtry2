@@ -1047,21 +1047,16 @@ public class BattleRenderer {
     }
 
     private Color materialColor(InventorySystem.Item item) {
-        if (item == null || item.getMaterial() == null) {
-            return new Color(165, 165, 172);
+        Color base = new Color(165, 165, 172);
+        if (item == null || item.getMaterial() == null || item.getMaterial().getTintColor() == null) {
+            return base;
         }
-        return switch (item.getMaterial()) {
-            case COPPER -> new Color(184, 103, 66);
-            case TIN, SILVER -> new Color(205, 212, 220);
-            case BRONZE -> new Color(160, 112, 56);
-            case IRON -> new Color(130, 137, 145);
-            case STEEL -> new Color(175, 185, 195);
-            case OAK -> new Color(132, 87, 48);
-            case YEW -> new Color(104, 62, 37);
-            case IRONWOOD -> new Color(73, 48, 34);
-            case LEATHER -> new Color(111, 72, 45);
-            case NONE -> new Color(165, 165, 172);
-        };
+        Color tint = item.getMaterial().getTintColor();
+        float strength = item.getMaterial().getTintStrength();
+        return new Color(
+                Math.round(base.getRed() * (1 - strength) + tint.getRed() * strength),
+                Math.round(base.getGreen() * (1 - strength) + tint.getGreen() * strength),
+                Math.round(base.getBlue() * (1 - strength) + tint.getBlue() * strength));
     }
 
     private void drawFormation(

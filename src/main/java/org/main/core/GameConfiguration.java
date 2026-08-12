@@ -71,6 +71,11 @@ public final class GameConfiguration {
         return value == null ? fallback : value;
     }
 
+    public static boolean hasValue(String key) {
+        return key != null && !key.isBlank()
+                && (PROPERTIES.containsKey(key) || DEFAULTS.containsKey(key));
+    }
+
     public static boolean booleanValue(String key, boolean fallback) {
         Boolean cached = BOOLEAN_CACHE.get(key);
         if (cached != null) {
@@ -116,6 +121,27 @@ public final class GameConfiguration {
         }
     }
 
+    public static void removeValue(String key) {
+        if (key == null || key.isBlank()) {
+            return;
+        }
+        boolean changed = PROPERTIES.remove(key) != null;
+        DEFAULTS.remove(key);
+        INTEGER_CACHE.remove(key);
+        DOUBLE_CACHE.remove(key);
+        BOOLEAN_CACHE.remove(key);
+        if (!changed) {
+            return;
+        }
+        REVISION.incrementAndGet();
+        try {
+            Files.createDirectories(CONFIG_PATH.getParent());
+            writeDefaultsAndCurrentValues();
+        } catch (IOException ignored) {
+            // Runtime config edits should not crash editor/game tools.
+        }
+    }
+
     /**
      * Monotonically increases when a runtime setting changes. Renderers can use
      * this instead of reparsing every configuration value every frame.
@@ -131,7 +157,10 @@ public final class GameConfiguration {
             Files.createDirectories(CONFIG_PATH.getParent());
             if (Files.isRegularFile(CONFIG_PATH)) {
                 try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                    PROPERTIES.load(inputStream);
+                    Properties installed = new Properties();
+                    installed.load(inputStream);
+                    migrateLegacyEquipmentGates(installed);
+                    PROPERTIES.putAll(installed);
                 }
             }
             writeDefaultsAndCurrentValues();
@@ -171,6 +200,21 @@ public final class GameConfiguration {
 
     private static void put(String key, String value) {
         DEFAULTS.put(key, value);
+    }
+
+    private static void migrateLegacyEquipmentGates(Properties installed) {
+        for (String legacyKey : installed.stringPropertyNames().stream()
+                .filter(key -> key.startsWith("levelGate.equipmentDefense."))
+                .toList()) {
+            String materialId = legacyKey.substring("levelGate.equipmentDefense.".length())
+                    .trim()
+                    .toLowerCase(java.util.Locale.ROOT);
+            if (!materialId.isBlank()) {
+                String replacementKey = "levelGate.equipment.defense." + materialId;
+                installed.putIfAbsent(replacementKey, installed.getProperty(legacyKey));
+            }
+            installed.remove(legacyKey);
+        }
     }
 
     private static String configuredValue(String key) {
@@ -217,17 +261,6 @@ public final class GameConfiguration {
         put("battle.lowHpWarning.threshold", "0.10");
         put("battle.lowHpWarning.soundPath", "assets/sounds/generated/kurt_sample_2.wav");
         put("battle.playerAutoAttack.soundPath", "");
-        put("battle.playerModel.path", "");
-        put("battle.playerModel.rigId", "");
-        put("battle.playerModel.scale", "1.0");
-        put("battle.playerModel.facingRotationDegrees", "0.0");
-        put("battle.playerModel.verticalOffset", "0.0");
-        for (String slot : new String[]{"IDLE", "WALK", "ATTACK", "HIT", "BLOCK", "DODGE", "CAST", "DEATH"}) {
-            put("battle.playerModel.animation." + slot + ".path", "");
-            put("battle.playerModel.animation." + slot + ".clipName", "");
-            put("battle.playerModel.animation." + slot + ".speed", "1.0");
-            put("battle.playerModel.animation." + slot + ".impactFraction", "0.55");
-        }
         put("battle.debug.criticalHpPercent", "0.10");
         put("battle.debug.invulnerableTurns", "1");
         put("battle.debug.damageReduction", "1.0");
@@ -243,17 +276,6 @@ public final class GameConfiguration {
         put("terrain.heightStep", "0.35");
         put("terrain.maxWalkableDelta", "1");
         put("terrain.cliffTexturePath", "assets/images/building/wall_rock.png");
-
-        put("levelGate.equipmentDefense.NONE", "0");
-        put("levelGate.equipmentDefense.COPPER", "1");
-        put("levelGate.equipmentDefense.BRONZE", "3");
-        put("levelGate.equipmentDefense.IRON", "5");
-        put("levelGate.equipmentDefense.STEEL", "10");
-        put("levelGate.equipmentDefense.SILVER", "5");
-        put("levelGate.equipmentDefense.OAK", "1");
-        put("levelGate.equipmentDefense.YEW", "5");
-        put("levelGate.equipmentDefense.IRONWOOD", "10");
-        put("levelGate.equipmentDefense.LEATHER", "1");
 
         put("renderer.prototype.maxDepth", "12");
         put("renderer.prototype.windowWidth", "1280");
@@ -331,6 +353,12 @@ public final class GameConfiguration {
         put("cooking.successChancePerLevel", "0.035");
         put("cooking.maxSuccessChance", "0.90");
         put("cooking.xpReward", "20");
+        put("smithing.xpPerBar.copper", "12");
+        put("smithing.xpPerBar.tin", "12");
+        put("smithing.xpPerBar.bronze", "20");
+        put("smithing.xpPerBar.silver", "28");
+        put("smithing.xpPerBar.iron", "37");
+        put("smithing.xpPerBar.steel", "55");
 
         put("dungeonGenerator.minSize", "17");
         put("dungeonGenerator.maxSize", "29");

@@ -485,6 +485,10 @@ public final class LwjglTextOverlayRenderer {
         return false;
     }
 
+    public boolean closeSkillProgressionGuide() {
+        return overworldHud.closeSkillProgressionGuide();
+    }
+
     public boolean handleMouseReleased(int x, int y, int button, AetherGameRuntime runtime) {
         localUiRevision++;
         if (runtime == null || !runtime.gameState().isDungeonMode()) {

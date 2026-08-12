@@ -238,6 +238,7 @@ public final class FirstPersonViewmodelValidator {
         }
         profile.overrides().forEach((slot, binding) ->
                 validateBinding(owner, rig, slot, binding, issues));
+        validateAttachmentBone(content, owner, rig, profile, issues);
         validateProfileAttachment(content, owner, "left armor", profile.leftArmorPath(),
                 rig, profile, issues);
         validateProfileAttachment(content, owner, "right armor", profile.rightArmorPath(),
@@ -250,6 +251,44 @@ public final class FirstPersonViewmodelValidator {
                 || rig.elbowBone(offHand).isBlank()
                 || rig.handBone(offHand).isBlank())) {
             issues.add(warning(owner, "Secondary grip is authored, but the off-hand IK chain is incomplete."));
+        }
+    }
+
+    private static void validateAttachmentBone(
+            Content content,
+            String owner,
+            RigDefinition rig,
+            ItemProfile profile,
+            List<Diagnostic> issues
+    ) {
+        if (rig == null || !rig.configured()) {
+            issues.add(error(owner, "Attachment rig is missing or has no model."));
+            return;
+        }
+        String requested = profile.attachmentBone().isBlank()
+                ? rig.handBone(profile.wieldHand()) : profile.attachmentBone();
+        if (requested == null || requested.isBlank()) {
+            issues.add(error(owner, profile.attachmentBone().isBlank()
+                    ? "Inherited " + profile.wieldHand().name().toLowerCase()
+                    + " hand bone is blank."
+                    : "Attachment bone is blank."));
+            return;
+        }
+        try {
+            CharacterModelDefinition definition = FirstPersonAnimationRuntime.definitionFor(
+                    content, rig, WeaponType.NONE, profile, profile.wieldHand());
+            LwjglSkinnedModel model = LwjglSkinnedModel.loadCached(definition);
+            if (!model.hasNode(requested)) {
+                issues.add(error(owner, (profile.attachmentBone().isBlank()
+                        ? "Inherited hand bone " : "Explicit attachment bone ")
+                        + requested + " does not exist in rig " + rig.rigId() + "."));
+            } else if (!model.followsAnimatedHierarchy(requested)) {
+                issues.add(error(owner, (profile.attachmentBone().isBlank()
+                        ? "Inherited hand node " : "Explicit attachment node ")
+                        + requested + " is static and does not follow the animated skeleton."));
+            }
+        } catch (Exception exception) {
+            issues.add(error(owner, "Attachment rig could not be loaded: " + rootMessage(exception)));
         }
     }
 

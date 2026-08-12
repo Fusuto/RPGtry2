@@ -18,7 +18,8 @@ import java.util.*;
  * runtime can never observe a half-updated combination.
  */
 public final class FirstPersonCombatLibrary {
-    public static final int SCHEMA_VERSION = 2;
+    public static final int SCHEMA_VERSION = 3;
+    private static final int MINIMUM_READABLE_SCHEMA_VERSION = 2;
     public static final String ASSET = "assets/editor/content/first_person_rig.properties";
     public static final Path RESOURCE_PATH = Path.of(
             "src", "main", "resources", "assets", "editor", "content",
@@ -123,7 +124,8 @@ public final class FirstPersonCombatLibrary {
     }
 
     private static Content read(Properties properties) {
-        if (integer(properties, "schemaVersion", 0) != SCHEMA_VERSION) {
+        int schemaVersion = integer(properties, "schemaVersion", 0);
+        if (schemaVersion < MINIMUM_READABLE_SCHEMA_VERSION || schemaVersion > SCHEMA_VERSION) {
             return emptyContent();
         }
         LinkedHashMap<String, RigDefinition> rigs = new LinkedHashMap<>();
@@ -204,6 +206,7 @@ public final class FirstPersonCombatLibrary {
                     properties.getProperty(prefix + "rightArmorPath", ""),
                     enumValue(ArmCoverage.class, properties.getProperty(prefix + "leftCoverage", ""), ArmCoverage.OVERLAY),
                     enumValue(ArmCoverage.class, properties.getProperty(prefix + "rightCoverage", ""), ArmCoverage.OVERLAY),
+                    properties.getProperty(prefix + "attachmentBone", ""),
                     readBindings(properties, prefix + "override."));
             profiles.put(itemId, profile);
         }
@@ -285,6 +288,7 @@ public final class FirstPersonCombatLibrary {
             properties.setProperty(prefix + "rightArmorPath", profile.rightArmorPath());
             properties.setProperty(prefix + "leftCoverage", profile.leftCoverage().name());
             properties.setProperty(prefix + "rightCoverage", profile.rightCoverage().name());
+            properties.setProperty(prefix + "attachmentBone", profile.attachmentBone());
             writeBindings(properties, prefix + "override.", profile.overrides());
         }
         content.weaponDefaults().forEach((type, id) ->
@@ -659,6 +663,7 @@ public final class FirstPersonCombatLibrary {
             String rightArmorPath,
             ArmCoverage leftCoverage,
             ArmCoverage rightCoverage,
+            String attachmentBone,
             Map<AnimationSlot, ClipBinding> overrides
     ) {
         public ItemProfile {
@@ -674,7 +679,29 @@ public final class FirstPersonCombatLibrary {
             rightArmorPath = normalizePath(rightArmorPath);
             leftCoverage = leftCoverage == null ? ArmCoverage.OVERLAY : leftCoverage;
             rightCoverage = rightCoverage == null ? ArmCoverage.OVERLAY : rightCoverage;
+            attachmentBone = attachmentBone == null ? "" : attachmentBone.trim();
             overrides = immutableBindings(overrides);
+        }
+
+        /** Schema-2/source-compatible constructor. Blank attachment inherits the selected rig hand. */
+        public ItemProfile(
+                String itemId,
+                String rigId,
+                WieldHand wieldHand,
+                String animationSetId,
+                EquipmentViewModelProfile socketTransform,
+                double secondaryGripX,
+                double secondaryGripY,
+                double secondaryGripZ,
+                String leftArmorPath,
+                String rightArmorPath,
+                ArmCoverage leftCoverage,
+                ArmCoverage rightCoverage,
+                Map<AnimationSlot, ClipBinding> overrides
+        ) {
+            this(itemId, rigId, wieldHand, animationSetId, socketTransform,
+                    secondaryGripX, secondaryGripY, secondaryGripZ,
+                    leftArmorPath, rightArmorPath, leftCoverage, rightCoverage, "", overrides);
         }
 
         public ItemProfile(
@@ -693,7 +720,7 @@ public final class FirstPersonCombatLibrary {
         ) {
             this(itemId, "", wieldHand, animationSetId, socketTransform,
                     secondaryGripX, secondaryGripY, secondaryGripZ,
-                    leftArmorPath, rightArmorPath, leftCoverage, rightCoverage, overrides);
+                    leftArmorPath, rightArmorPath, leftCoverage, rightCoverage, "", overrides);
         }
 
         public static EquipmentViewModelProfile socketDefaults() {
@@ -748,6 +775,15 @@ public final class FirstPersonCombatLibrary {
             return profile == null || profile.rigId().isBlank()
                     ? rig()
                     : rig(profile.rigId());
+        }
+
+        /** Resolves the authored parent node without consulting a loaded model. */
+        public String resolveAttachmentBone(ItemProfile profile) {
+            RigDefinition selectedRig = rigFor(profile);
+            if (profile == null) return selectedRig.handBone(WieldHand.RIGHT);
+            return profile.attachmentBone().isBlank()
+                    ? selectedRig.handBone(profile.wieldHand())
+                    : profile.attachmentBone();
         }
 
         public ItemProfile itemProfile(InventorySystem.Item item) {

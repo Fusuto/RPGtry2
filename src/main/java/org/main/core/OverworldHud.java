@@ -52,6 +52,9 @@ public class OverworldHud {
     private static final int STATS_SCROLL_STEP = 24;
     private static final int SKILL_TOOLTIP_WIDTH = 158;
     private static final int SKILL_TOOLTIP_HEIGHT = 54;
+    private static final int SKILL_GUIDE_WIDTH = 440;
+    private static final int SKILL_GUIDE_HEIGHT = 460;
+    private static final int SKILL_GUIDE_SCROLL_STEP = 34;
     private static final int HELD_ITEM_SLOT_SIZE = 48;
     private static final int HELD_ITEM_ICON_PADDING = 7;
     private static final int HELD_ITEM_CLUSTER_GAP = 24;
@@ -83,6 +86,9 @@ public class OverworldHud {
     private final Rectangle escapeButtonBounds = new Rectangle();
     private final Map<String, Rectangle> questRowBounds = new HashMap<>();
     private final Map<CharacterSkill, Rectangle> skillCellBounds = new EnumMap<>(CharacterSkill.class);
+    private final Rectangle skillGuideBounds = new Rectangle();
+    private final Rectangle skillGuideCloseBounds = new Rectangle();
+    private final Rectangle skillGuideClipBounds = new Rectangle();
     private final Rectangle statsPanelBounds = new Rectangle();
     private final Rectangle statsClipBounds = new Rectangle();
     private final Rectangle messageFeedBounds = new Rectangle();
@@ -93,6 +99,10 @@ public class OverworldHud {
     private int statsContentHeight = 0;
     private boolean messageLogExpanded;
     private int messageLogScroll;
+    private CharacterSkill selectedSkillGuide;
+    private List<SkillProgressionCatalog.Unlock> skillGuideUnlocks = List.of();
+    private int skillGuideScroll;
+    private int skillGuideContentHeight;
 
     public OverworldHud() {
         skillIcons.put(CharacterSkill.MINING, AssetLoader.loadImage(SKILL_ICON_PATH + "mining.png"));
@@ -127,6 +137,11 @@ public class OverworldHud {
 
         if (gameState.isSkillsOpen()) {
             drawSkillsPanel(g, gameState, width, height);
+            if (selectedSkillGuide != null) {
+                drawSkillProgressionGuide(g, gameState, width, height);
+            }
+        } else {
+            closeSkillProgressionGuide();
         }
 
         if (gameState.isInventoryOpen()) {
@@ -182,7 +197,32 @@ public class OverworldHud {
 
         if (skillsButtonBounds.contains(point)) {
             gameState.toggleSkills();
+            if (!gameState.isSkillsOpen()) {
+                closeSkillProgressionGuide();
+            }
             return true;
+        }
+
+        if (gameState.isSkillsOpen() && selectedSkillGuide != null) {
+            if (skillGuideCloseBounds.contains(point)) {
+                closeSkillProgressionGuide();
+                return true;
+            }
+            if (skillGuideBounds.contains(point)) {
+                return true;
+            }
+            return true;
+        }
+
+        if (gameState.isSkillsOpen()) {
+            for (Map.Entry<CharacterSkill, Rectangle> entry : skillCellBounds.entrySet()) {
+                if (entry.getValue().contains(point)) {
+                    selectedSkillGuide = entry.getKey();
+                    skillGuideUnlocks = SkillProgressionCatalog.forSkill(selectedSkillGuide, gameState);
+                    skillGuideScroll = 0;
+                    return true;
+                }
+            }
         }
 
         if (questsButtonBounds.contains(point)) {
@@ -200,6 +240,9 @@ public class OverworldHud {
         }
 
         if (escapeButtonBounds.contains(point)) {
+            if (closeSkillProgressionGuide()) {
+                return true;
+            }
             gameState.closeInventory();
             gameState.closeSkills();
             gameState.closeQuests();
@@ -240,6 +283,12 @@ public class OverworldHud {
     }
 
     public boolean handleMouseWheelMoved(MouseWheelEvent e, GameState gameState, int width, int height) {
+        if (e != null && selectedSkillGuide != null && skillGuideBounds.contains(e.getPoint())) {
+            int maximum = Math.max(0, skillGuideContentHeight - skillGuideClipBounds.height);
+            skillGuideScroll = clamp(
+                    skillGuideScroll + e.getWheelRotation() * SKILL_GUIDE_SCROLL_STEP, 0, maximum);
+            return true;
+        }
         if (e != null && gameState != null && messageLogExpanded && messagePanelBounds.contains(e.getPoint())) {
             int visibleRows = Math.max(1, (messagePanelBounds.height - 58) / MESSAGE_ROW_HEIGHT);
             int maximum = Math.max(0, gameState.getWorldMessageLog().entries().size() - visibleRows);
@@ -265,6 +314,20 @@ public class OverworldHud {
         }
 
         statsScrollOffset = clamp(statsScrollOffset + e.getWheelRotation() * STATS_SCROLL_STEP, 0, maxScroll);
+        return true;
+    }
+
+    public boolean closeSkillProgressionGuide() {
+        if (selectedSkillGuide == null) {
+            return false;
+        }
+        selectedSkillGuide = null;
+        skillGuideUnlocks = List.of();
+        skillGuideScroll = 0;
+        skillGuideContentHeight = 0;
+        skillGuideBounds.setBounds(0, 0, 0, 0);
+        skillGuideCloseBounds.setBounds(0, 0, 0, 0);
+        skillGuideClipBounds.setBounds(0, 0, 0, 0);
         return true;
     }
 
@@ -508,6 +571,106 @@ public class OverworldHud {
         }
 
         drawSkillTooltip(g, gameState, width, height);
+    }
+
+    private void drawSkillProgressionGuide(Graphics2D g, GameState gameState, int width, int height) {
+        int panelWidth = Math.min(SKILL_GUIDE_WIDTH, Math.max(280, width - 28));
+        int panelHeight = Math.min(SKILL_GUIDE_HEIGHT,
+                Math.max(220, height - BOTTOM_BAR_HEIGHT - 28));
+        int x = Math.max(14, (width - panelWidth) / 2);
+        int y = Math.max(14, (height - BOTTOM_BAR_HEIGHT - panelHeight) / 2);
+        skillGuideBounds.setBounds(x, y, panelWidth, panelHeight);
+        skillGuideCloseBounds.setBounds(x + panelWidth - 38, y + 12, 24, 24);
+        skillGuideClipBounds.setBounds(x + 18, y + 68, panelWidth - 36, panelHeight - 86);
+
+        g.setColor(new Color(7, 8, 12, 242));
+        g.fillRoundRect(x, y, panelWidth, panelHeight, 12, 12);
+        g.setColor(new Color(146, 119, 70));
+        g.drawRoundRect(x, y, panelWidth, panelHeight, 12, 12);
+        g.drawLine(x + 14, y + 56, x + panelWidth - 14, y + 56);
+
+        BufferedImage skillIcon = skillIcons.get(selectedSkillGuide);
+        drawImage(g, skillIcon, x + 16, y + 12, 34, 34, false);
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 18f));
+        g.setColor(new Color(246, 236, 176));
+        g.drawString(selectedSkillGuide.getDisplayName(), x + 60, y + 29);
+        int currentLevel = Math.max(1,
+                gameState.getPlayerCharacter().getSkillLevel(selectedSkillGuide));
+        g.setFont(g.getFont().deriveFont(Font.PLAIN, 12f));
+        g.setColor(new Color(210, 204, 178));
+        g.drawString("Level " + currentLevel, x + 60, y + 45);
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 15f));
+        g.setColor(new Color(238, 228, 190));
+        g.drawString("X", skillGuideCloseBounds.x + 6, skillGuideCloseBounds.y + 17);
+
+        int contentHeight = 0;
+        int previousLevel = -1;
+        for (SkillProgressionCatalog.Unlock unlock : skillGuideUnlocks) {
+            if (unlock.requiredLevel() != previousLevel) {
+                contentHeight += 28;
+                previousLevel = unlock.requiredLevel();
+            }
+            contentHeight += unlock.kind() == SkillProgressionCatalog.Kind.EQUIPMENT ? 42 : 25;
+        }
+        skillGuideContentHeight = contentHeight;
+        int maximumScroll = Math.max(0, contentHeight - skillGuideClipBounds.height);
+        skillGuideScroll = clamp(skillGuideScroll, 0, maximumScroll);
+
+        Graphics2D clipped = (Graphics2D) g.create();
+        clipped.setClip(skillGuideClipBounds);
+        int rowY = skillGuideClipBounds.y - skillGuideScroll;
+        previousLevel = -1;
+        for (SkillProgressionCatalog.Unlock unlock : skillGuideUnlocks) {
+            if (unlock.requiredLevel() != previousLevel) {
+                boolean unlocked = unlock.requiredLevel() <= currentLevel;
+                clipped.setFont(g.getFont().deriveFont(Font.BOLD, 14f));
+                clipped.setColor(unlocked ? new Color(102, 222, 124) : new Color(220, 158, 98));
+                clipped.drawString("Level " + unlock.requiredLevel(), skillGuideClipBounds.x + 2, rowY + 18);
+                rowY += 28;
+                previousLevel = unlock.requiredLevel();
+            }
+
+            int rowHeight = unlock.kind() == SkillProgressionCatalog.Kind.EQUIPMENT ? 42 : 25;
+            if (rowY + rowHeight >= skillGuideClipBounds.y
+                    && rowY <= skillGuideClipBounds.y + skillGuideClipBounds.height) {
+                clipped.setColor(new Color(255, 255, 255, 16));
+                clipped.fillRoundRect(skillGuideClipBounds.x, rowY, skillGuideClipBounds.width - 8,
+                        rowHeight - 3, 5, 5);
+                int textX = skillGuideClipBounds.x + 10;
+                if (unlock.kind() == SkillProgressionCatalog.Kind.EQUIPMENT && unlock.item() != null) {
+                    int iconSize = 32;
+                    int iconX = skillGuideClipBounds.x + 5;
+                    int iconY = rowY + 3;
+                    if (!ItemModelIconRenderQueue.request(unlock.item(), iconX, iconY, iconSize, iconSize)) {
+                        if (unlock.item().getIcon() != null) {
+                            clipped.drawImage(unlock.item().getIcon(), iconX, iconY, iconSize, iconSize, null);
+                        }
+                    }
+                    textX = iconX + iconSize + 8;
+                }
+                clipped.setFont(g.getFont().deriveFont(Font.PLAIN, 13f));
+                clipped.setColor(unlock.requiredLevel() <= currentLevel
+                        ? new Color(226, 230, 214) : new Color(178, 174, 165));
+                clipped.drawString(unlock.displayName(), textX,
+                        rowY + (rowHeight + clipped.getFontMetrics().getAscent()) / 2 - 3);
+            }
+            rowY += rowHeight;
+        }
+        clipped.dispose();
+
+        if (maximumScroll > 0) {
+            int trackX = skillGuideClipBounds.x + skillGuideClipBounds.width - 5;
+            int trackHeight = skillGuideClipBounds.height;
+            int thumbHeight = Math.max(24,
+                    (int) Math.round(trackHeight * skillGuideClipBounds.height / (double) contentHeight));
+            int thumbY = skillGuideClipBounds.y
+                    + (int) Math.round((trackHeight - thumbHeight)
+                    * skillGuideScroll / (double) maximumScroll);
+            g.setColor(new Color(255, 255, 255, 35));
+            g.fillRoundRect(trackX, skillGuideClipBounds.y, 4, trackHeight, 4, 4);
+            g.setColor(new Color(220, 202, 154, 180));
+            g.fillRoundRect(trackX, thumbY, 4, thumbHeight, 4, 4);
+        }
     }
 
     private void drawCharacterStatus(Graphics2D g, GameState gameState, int width, int height) {

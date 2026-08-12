@@ -53,7 +53,7 @@ public final class PaperDollAssetLibrary {
                     match(name, "sword", PLAYER_ROOT + "hand1/sword.png")
             );
             case SHIELD -> firstKnown(name, PLAYER_ROOT + "hand2/buckler_green.png");
-            case RING_LEFT, RING_RIGHT -> "";
+            case RING_LEFT, RING_RIGHT, POCKET -> "";
         };
     }
 

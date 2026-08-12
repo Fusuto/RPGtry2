@@ -38,8 +38,8 @@ class BattleContentCatalogTest {
     void bundledVersionedCatalogLoadsAndValidates() throws IOException {
         BattleContentCatalog.Snapshot snapshot = BattleContentCatalog.reload();
 
-        assertEquals(12, snapshot.skills().size());
-        assertEquals(3, snapshot.statuses().size());
+        assertEquals(14, snapshot.skills().size());
+        assertEquals(4, snapshot.statuses().size());
         assertTrue(BattleContentCatalog.validate(snapshot).isEmpty());
     }
 

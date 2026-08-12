@@ -2,6 +2,10 @@ package org.main.content;
 
 import org.main.core.CraftingStationType;
 import org.main.core.InventorySystem;
+import org.main.core.GearMaterial;
+import org.main.core.LanternDefinition;
+import org.main.core.MaterialCatalog;
+import org.main.core.MaterialDefinition;
 import org.main.core.Library;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapLight;
@@ -1151,6 +1155,42 @@ final class MapDesignValidator {
         }
 
         for (CustomItem item : design.customItems()) {
+            if (!item.material().isResolved()) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.ERROR,
+                        "Item " + item.itemId() + " references unavailable material "
+                                + item.material().id() + "."));
+            }
+            if (item.smithingRecipeEnabled()) {
+                String barItemId = item.material().getProcessedResourceItemId();
+                if (item.material().getFamily() != org.main.core.GearMaterial.MaterialFamily.METAL
+                        || barItemId.isBlank()
+                        || !containsIgnoreCase(knownItems, barItemId)) {
+                    issues.add(new ValidationIssue(
+                            ValidationSeverity.ERROR,
+                            "Smithing item " + item.itemId()
+                                    + " needs a Metal material with a valid linked bar item."));
+                }
+            }
+            if (item.lanternDefinition().enabled()) {
+                MaterialDefinition material = MaterialCatalog.snapshot().find(item.material().id());
+                if (item.itemType() != InventorySystem.ItemType.UTILITY) {
+                    issues.add(new ValidationIssue(ValidationSeverity.ERROR,
+                            "Lantern behavior on " + item.itemId() + " requires the Utility item type."));
+                }
+                if (material == null || material.family() != GearMaterial.MaterialFamily.METAL
+                        || material.lanternFuelCapacitySeconds() <= 0) {
+                    issues.add(new ValidationIssue(ValidationSeverity.ERROR,
+                            "Lantern " + item.itemId() + " requires a Metal material with positive capacity."));
+                }
+                LanternDefinition light = item.lanternDefinition();
+                if (light.radius() <= 0.0 || light.radius() > 64.0
+                        || light.intensity() <= 0.0 || light.intensity() > 8.0
+                        || light.flickerAmount() < 0.0 || light.flickerAmount() > 1.0) {
+                    issues.add(new ValidationIssue(ValidationSeverity.ERROR,
+                            "Lantern " + item.itemId() + " has invalid light settings."));
+                }
+            }
             boolean modelBackedWeapon = item.itemType() == InventorySystem.ItemType.WEAPON
                     && !item.firstPersonModelPath().isBlank();
             validateAssetPath(issues, "Item " + item.itemId(), "icon", item.iconPath(), !modelBackedWeapon);
@@ -1164,6 +1204,19 @@ final class MapDesignValidator {
                         ValidationSeverity.WARNING,
                         "Weapon " + item.itemId()
                                 + " has no 3D model and will use its legacy bitmap icon."));
+            }
+        }
+
+        for (MaterialDefinition material : MaterialCatalog.snapshot().definitions()) {
+            if (material.family() != GearMaterial.MaterialFamily.WOOD) {
+                continue;
+            }
+            CustomItem rawLog = MapDesignLibrary.findCustomItem(
+                    material.rawResourceItemId(), design.customItems());
+            if (material.rawResourceItemId().isBlank() || rawLog == null || !rawLog.stackable()) {
+                issues.add(new ValidationIssue(ValidationSeverity.WARNING,
+                        "Wood material " + material.displayName()
+                                + " has no valid stackable raw-resource log for lantern fuel."));
             }
         }
 
@@ -1327,12 +1380,12 @@ final class MapDesignValidator {
                             "Leather enemy " + mob.mobId() + " references missing product "
                                     + profile.leatherItemId() + "."));
                 } else if (leather.itemType() != org.main.core.InventorySystem.ItemType.MISC
-                        || leather.material() != org.main.core.GearMaterial.LEATHER
+                        || leather.material().getFamily() != org.main.core.GearMaterial.MaterialFamily.HIDE
                         || !leather.stackable()) {
                     issues.add(new ValidationIssue(
                             ValidationSeverity.ERROR,
                             "Leather enemy " + mob.mobId()
-                                    + " must use a stackable MISC item with LEATHER material."));
+                                    + " must use a stackable MISC item with a Hide material."));
                 } else {
                     if (!mob.mobId().equals(leather.sourceEnemyId())) {
                         issues.add(new ValidationIssue(

@@ -2,6 +2,7 @@ package org.main.tools;
 
 import org.main.content.MapDesignLibrary;
 import org.main.core.Library;
+import org.main.core.CharacterSkill;
 import org.main.core.PlayerStat;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MobAreaData;
@@ -61,6 +62,7 @@ record PlaceableOption(String label, MapDesignLibrary.PlacementKind kind, String
 
 enum ContentCategory {
     ALL("All"),
+    MATERIALS("Materials"),
     ITEMS("Items"),
     ENEMIES("Enemies"),
     NPCS("NPCs"),
@@ -93,6 +95,13 @@ enum ContentCategory {
     @Override
     public String toString() {
         return label;
+    }
+}
+
+record EquipmentSkillOption(CharacterSkill skill) {
+    @Override
+    public String toString() {
+        return skill == null ? "None / Unrestricted" : skill.getDisplayName();
     }
 }
 

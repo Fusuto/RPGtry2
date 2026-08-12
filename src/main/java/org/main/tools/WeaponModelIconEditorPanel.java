@@ -8,6 +8,7 @@ import org.main.experimental.LwjglStaticModel;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
@@ -145,6 +146,7 @@ final class WeaponModelIconEditorPanel extends JPanel {
             if (model != null) {
                 List<Triangle> triangles = triangles(icon);
                 triangles.sort(Comparator.comparingDouble(Triangle::depth));
+                drawSilhouetteOutline(g, icon, triangles);
                 for (Triangle triangle : triangles) {
                     g.setColor(triangle.color());
                     g.fillPolygon(triangle.polygon());
@@ -157,6 +159,28 @@ final class WeaponModelIconEditorPanel extends JPanel {
         } finally {
             g.dispose();
         }
+    }
+
+    private void drawSilhouetteOutline(Graphics2D g, Rectangle bounds, List<Triangle> triangles) {
+        if (triangles.isEmpty()) return;
+        BufferedImage silhouette = new BufferedImage(
+                Math.max(1, bounds.width), Math.max(1, bounds.height), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D mask = silhouette.createGraphics();
+        try {
+            mask.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            mask.translate(-bounds.x, -bounds.y);
+            float outlinePixels = Math.max(2.0f, bounds.width * (1.25f / 40.0f));
+            mask.setStroke(new BasicStroke(outlinePixels * 2.0f,
+                    BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            mask.setColor(new Color(12, 10, 9, 245));
+            for (Triangle triangle : triangles) {
+                mask.fillPolygon(triangle.polygon());
+                mask.drawPolygon(triangle.polygon());
+            }
+        } finally {
+            mask.dispose();
+        }
+        g.drawImage(silhouette, bounds.x, bounds.y, null);
     }
 
     private Rectangle iconBounds() {

@@ -16,7 +16,6 @@ import org.main.core.PaperDollRenderer;
 import org.main.core.PlayerCharacter;
 import org.main.core.PlayerStat;
 import org.main.core.PartyFormation;
-import org.main.core.PlayerCharacterModelConfiguration;
 import org.main.engine.SoundSystem;
 import org.main.experimental.FirstPersonAnimationRuntime;
 import org.main.monsters.Monster;
@@ -306,7 +305,6 @@ public class BattleEncounter {
                 playerCharacter.getCombinedStat(PlayerStat.DEFENSE) + equipmentDefenseBonus
         );
         playerActor.copyCombatProfileFrom(playerCharacter);
-        playerActor.setCharacterModel(PlayerCharacterModelConfiguration.load());
         playerActor.setHitSoundPath(environment == null ? null : environment.getPlayerHitSoundPath());
         playerActor.setAttackSoundPath(GameConfiguration.stringValue("battle.playerAutoAttack.soundPath", ""));
 

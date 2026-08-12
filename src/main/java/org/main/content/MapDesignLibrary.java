@@ -217,7 +217,7 @@ public final class MapDesignLibrary {
                 writeQuestFlow(properties, prefix + "epilogue.", authoredQuest.epilogueFlow());
             }
 
-            properties.setProperty("item.schemaVersion", "3");
+            properties.setProperty("item.schemaVersion", "6");
             properties.setProperty("item.count", String.valueOf(design.customItems().size()));
             for (int i = 0; i < design.customItems().size(); i++) {
                 CustomItem customItem = design.customItems().get(i);
@@ -230,7 +230,9 @@ public final class MapDesignLibrary {
                 properties.setProperty(prefix + "useSoundPath", customItem.useSoundPath());
                 properties.setProperty(prefix + "weaponType", customItem.weaponType().name());
                 properties.setProperty(prefix + "twoHanded", String.valueOf(customItem.twoHanded()));
-                properties.setProperty(prefix + "material", customItem.material().name());
+                properties.setProperty(prefix + "material", customItem.material().id());
+                properties.setProperty(prefix + "equipmentSkill",
+                        customItem.equipmentSkill() == null ? "" : customItem.equipmentSkill().name());
                 properties.setProperty(prefix + "healAmount", String.valueOf(customItem.healAmount()));
                 properties.setProperty(prefix + "baseGoldValue", String.valueOf(customItem.baseGoldValue()));
                 properties.setProperty(prefix + "examineText", customItem.examineText());
@@ -239,11 +241,16 @@ public final class MapDesignLibrary {
                 properties.setProperty(prefix + "smithingRecipeEnabled", String.valueOf(customItem.smithingRecipeEnabled()));
                 properties.setProperty(prefix + "smithingRequiredBars", String.valueOf(customItem.smithingRequiredBars()));
                 properties.setProperty(prefix + "smithingRequiredLevel", String.valueOf(customItem.smithingRequiredLevel()));
-                properties.setProperty(prefix + "smithingXpReward", String.valueOf(customItem.smithingXpReward()));
                 properties.setProperty(prefix + "magicAccuracyBonus", String.valueOf(customItem.magicAccuracyBonus()));
                 properties.setProperty(prefix + "magicPowerBonus", String.valueOf(customItem.magicPowerBonus()));
                 properties.setProperty(prefix + "firstPersonModelPath", customItem.firstPersonModelPath());
                 properties.setProperty(prefix + "sourceEnemyId", customItem.sourceEnemyId());
+                LanternDefinition lantern = customItem.lanternDefinition();
+                properties.setProperty(prefix + "lantern.enabled", String.valueOf(lantern.enabled()));
+                properties.setProperty(prefix + "lantern.color", String.format(Locale.ROOT, "#%06X", lantern.colorRgb()));
+                properties.setProperty(prefix + "lantern.radius", String.valueOf(lantern.radius()));
+                properties.setProperty(prefix + "lantern.intensity", String.valueOf(lantern.intensity()));
+                properties.setProperty(prefix + "lantern.flicker", String.valueOf(lantern.flickerAmount()));
                 EquipmentViewModelProfile pose = customItem.viewModelProfile();
                 properties.setProperty(prefix + "viewModel.positionX", String.valueOf(pose.positionX()));
                 properties.setProperty(prefix + "viewModel.positionY", String.valueOf(pose.positionY()));
@@ -674,6 +681,10 @@ public final class MapDesignLibrary {
             WeaponType weaponType = readWeaponType(properties.getProperty(prefix + "weaponType", ""), itemType);
             boolean twoHanded = Boolean.parseBoolean(properties.getProperty(prefix + "twoHanded", "false"));
             GearMaterial material = readMaterial(properties.getProperty(prefix + "material", ""), GearMaterial.NONE);
+            String equipmentSkillValue = properties.getProperty(prefix + "equipmentSkill");
+            CharacterSkill equipmentSkill = equipmentSkillValue == null
+                    ? CustomItem.defaultEquipmentSkill(itemType, weaponType)
+                    : readCharacterSkillOrNull(equipmentSkillValue);
             int healAmount = readInt(properties, prefix + "healAmount", 0);
             int baseGoldValue = readInt(properties, prefix + "baseGoldValue", 10);
             String examineText = properties.getProperty(prefix + "examineText", "");
@@ -682,11 +693,17 @@ public final class MapDesignLibrary {
             boolean smithingRecipeEnabled = Boolean.parseBoolean(properties.getProperty(prefix + "smithingRecipeEnabled", "false"));
             int smithingRequiredBars = readInt(properties, prefix + "smithingRequiredBars", 1);
             int smithingRequiredLevel = readInt(properties, prefix + "smithingRequiredLevel", 1);
-            int smithingXpReward = readInt(properties, prefix + "smithingXpReward", 25);
             int magicAccuracyBonus = readInt(properties, prefix + "magicAccuracyBonus", 0);
             int magicPowerBonus = readInt(properties, prefix + "magicPowerBonus", 0);
             String firstPersonModelPath = properties.getProperty(prefix + "firstPersonModelPath", "");
             String sourceEnemyId = properties.getProperty(prefix + "sourceEnemyId", "");
+            boolean lanternEnabled = Boolean.parseBoolean(properties.getProperty(prefix + "lantern.enabled", "false"));
+            LanternDefinition lanternDefinition = new LanternDefinition(
+                    lanternEnabled,
+                    readColor(properties.getProperty(prefix + "lantern.color", "#FFB45A"), LanternDefinition.DEFAULT_COLOR),
+                    readDouble(properties, prefix + "lantern.radius", 5.0),
+                    readDouble(properties, prefix + "lantern.intensity", 1.0),
+                    readDouble(properties, prefix + "lantern.flicker", 0.12));
             EquipmentViewModelProfile viewModelProfile = new EquipmentViewModelProfile(
                     readDouble(properties, prefix + "viewModel.positionX", 0.38),
                     readDouble(properties, prefix + "viewModel.positionY", -0.45),
@@ -726,13 +743,14 @@ public final class MapDesignLibrary {
                         smithingRecipeEnabled,
                         smithingRequiredBars,
                         smithingRequiredLevel,
-                        smithingXpReward,
                         magicAccuracyBonus,
                         magicPowerBonus,
                         firstPersonModelPath,
                         viewModelProfile,
                         sourceEnemyId,
-                        modelIconProfile
+                        modelIconProfile,
+                        equipmentSkill,
+                        lanternDefinition
                 ));
             }
         }
@@ -2304,10 +2322,17 @@ public final class MapDesignLibrary {
     }
 
     private static GearMaterial readMaterial(String value, GearMaterial fallback) {
+        return value == null || value.isBlank() ? fallback : GearMaterial.resolve(value);
+    }
+
+    private static CharacterSkill readCharacterSkillOrNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
         try {
-            return GearMaterial.valueOf(value);
+            return CharacterSkill.valueOf(value.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException ignored) {
-            return fallback;
+            return null;
         }
     }
 
@@ -2514,12 +2539,15 @@ public final class MapDesignLibrary {
         int expectedVersion = switch (fileName) {
             case MapDesignContentStore.DIALOGUE_FILE, MapDesignContentStore.QUEST_FILE -> 3;
             case MapDesignContentStore.NPC_FILE -> 2;
+            case MapDesignContentStore.ITEM_FILE -> 6;
             default -> 0;
         };
         if (expectedVersion > 0) {
             String key = root + ".schemaVersion";
             int actualVersion = readInt(properties, key, -1);
-            if (actualVersion != expectedVersion) {
+            boolean supportedLegacyItem = fileName.equals(MapDesignContentStore.ITEM_FILE)
+                    && (actualVersion == 3 || actualVersion == 4 || actualVersion == 5);
+            if (actualVersion != expectedVersion && !supportedLegacyItem) {
                 throw new IOException("Unsupported " + fileName + " schema version "
                         + actualVersion + "; expected " + expectedVersion + ".");
             }
@@ -2547,6 +2575,14 @@ public final class MapDesignLibrary {
             return Double.parseDouble(properties.getProperty(key, String.valueOf(fallback)));
         } catch (NumberFormatException ignored) {
             return fallback;
+        }
+    }
+
+    private static int readColor(String value, int fallback) {
+        try {
+            return Integer.parseInt(value == null ? "" : value.trim().replace("#", ""), 16) & 0xFFFFFF;
+        } catch (NumberFormatException ignored) {
+            return fallback & 0xFFFFFF;
         }
     }
 
@@ -3669,13 +3705,14 @@ public final class MapDesignLibrary {
             boolean smithingRecipeEnabled,
             int smithingRequiredBars,
             int smithingRequiredLevel,
-            int smithingXpReward,
             int magicAccuracyBonus,
             int magicPowerBonus,
             String firstPersonModelPath,
             EquipmentViewModelProfile viewModelProfile,
             String sourceEnemyId,
-            ItemModelIconProfile modelIconProfile
+            ItemModelIconProfile modelIconProfile,
+            CharacterSkill equipmentSkill,
+            LanternDefinition lanternDefinition
     ) {
         public CustomItem {
             itemId = itemId == null ? "" : itemId;
@@ -3696,7 +3733,6 @@ public final class MapDesignLibrary {
             smithingRecipeEnabled = smithingRecipeEnabled && material.getFamily() == GearMaterial.MaterialFamily.METAL;
             smithingRequiredBars = Math.max(1, smithingRequiredBars);
             smithingRequiredLevel = Math.max(1, smithingRequiredLevel);
-            smithingXpReward = Math.max(0, smithingXpReward);
             magicAccuracyBonus = itemType == InventorySystem.ItemType.WEAPON ? Math.max(0, magicAccuracyBonus) : 0;
             magicPowerBonus = itemType == InventorySystem.ItemType.WEAPON ? Math.max(0, magicPowerBonus) : 0;
             firstPersonModelPath = firstPersonModelPath == null
@@ -3705,6 +3741,69 @@ public final class MapDesignLibrary {
             viewModelProfile = viewModelProfile == null ? EquipmentViewModelProfile.defaults() : viewModelProfile;
             sourceEnemyId = sourceEnemyId == null ? "" : sourceEnemyId.trim();
             modelIconProfile = modelIconProfile == null ? ItemModelIconProfile.defaults() : modelIconProfile;
+            equipmentSkill = isEquippableType(itemType) && itemType != InventorySystem.ItemType.UTILITY
+                    ? equipmentSkill : null;
+            lanternDefinition = itemType == InventorySystem.ItemType.UTILITY && lanternDefinition != null
+                    ? lanternDefinition : LanternDefinition.none();
+        }
+
+        /** Schema-5/source compatibility; older items have no passive light behavior. */
+        public CustomItem(
+                String itemId, String displayName, InventorySystem.ItemType itemType, String iconPath,
+                String paperDollOverlayPath, String useSoundPath, WeaponType weaponType, boolean twoHanded,
+                GearMaterial material, int healAmount, int baseGoldValue, String examineText,
+                PlayerStat statBonusTarget, boolean stackable, boolean smithingRecipeEnabled,
+                int smithingRequiredBars, int smithingRequiredLevel, int magicAccuracyBonus,
+                int magicPowerBonus, String firstPersonModelPath, EquipmentViewModelProfile viewModelProfile,
+                String sourceEnemyId, ItemModelIconProfile modelIconProfile, CharacterSkill equipmentSkill
+        ) {
+            this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath,
+                    weaponType, twoHanded, material, healAmount, baseGoldValue, examineText,
+                    statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
+                    smithingRequiredLevel, magicAccuracyBonus, magicPowerBonus, firstPersonModelPath,
+                    viewModelProfile, sourceEnemyId, modelIconProfile, equipmentSkill,
+                    LanternDefinition.none());
+        }
+
+        /** Schema-v3/v4 source compatibility constructor; schema 5 writes the inferred assignment explicitly. */
+        public CustomItem(
+                String itemId, String displayName, InventorySystem.ItemType itemType, String iconPath,
+                String paperDollOverlayPath, String useSoundPath, WeaponType weaponType, boolean twoHanded,
+                GearMaterial material, int healAmount, int baseGoldValue, String examineText,
+                PlayerStat statBonusTarget, boolean stackable, boolean smithingRecipeEnabled,
+                int smithingRequiredBars, int smithingRequiredLevel, int magicAccuracyBonus,
+                int magicPowerBonus, String firstPersonModelPath, EquipmentViewModelProfile viewModelProfile,
+                String sourceEnemyId, ItemModelIconProfile modelIconProfile
+        ) {
+            this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath,
+                    weaponType, twoHanded, material, healAmount, baseGoldValue, examineText,
+                    statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
+                    smithingRequiredLevel, magicAccuracyBonus, magicPowerBonus, firstPersonModelPath,
+                    viewModelProfile, sourceEnemyId, modelIconProfile,
+                    defaultEquipmentSkill(itemType, weaponType));
+        }
+
+        public static CharacterSkill defaultEquipmentSkill(InventorySystem.ItemType itemType, WeaponType weaponType) {
+            if (itemType == null) {
+                return null;
+            }
+            return switch (itemType) {
+                case HEAD_GEAR, CHEST_ARMOR, LEG_ARMOR, SHIELD -> CharacterSkill.DEFENSE;
+                case WEAPON -> weaponType == WeaponType.STAFF
+                        ? CharacterSkill.MAGIC_ACCURACY
+                        : CharacterSkill.ATTACK;
+                default -> null;
+            };
+        }
+
+        private static boolean isEquippableType(InventorySystem.ItemType itemType) {
+            return itemType == InventorySystem.ItemType.HEAD_GEAR
+                    || itemType == InventorySystem.ItemType.CHEST_ARMOR
+                    || itemType == InventorySystem.ItemType.LEG_ARMOR
+                    || itemType == InventorySystem.ItemType.SHIELD
+                    || itemType == InventorySystem.ItemType.WEAPON
+                    || itemType == InventorySystem.ItemType.RING
+                    || itemType == InventorySystem.ItemType.UTILITY;
         }
 
         public CustomItem(
@@ -3725,7 +3824,6 @@ public final class MapDesignLibrary {
                 boolean smithingRecipeEnabled,
                 int smithingRequiredBars,
                 int smithingRequiredLevel,
-                int smithingXpReward,
                 int magicAccuracyBonus,
                 int magicPowerBonus,
                 String firstPersonModelPath,
@@ -3735,7 +3833,7 @@ public final class MapDesignLibrary {
             this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath,
                     weaponType, twoHanded, material, healAmount, baseGoldValue, examineText,
                     statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
-                    smithingRequiredLevel, smithingXpReward, magicAccuracyBonus, magicPowerBonus,
+                    smithingRequiredLevel, magicAccuracyBonus, magicPowerBonus,
                     firstPersonModelPath, viewModelProfile, sourceEnemyId,
                     ItemModelIconProfile.defaults());
         }
@@ -3758,7 +3856,6 @@ public final class MapDesignLibrary {
                 boolean smithingRecipeEnabled,
                 int smithingRequiredBars,
                 int smithingRequiredLevel,
-                int smithingXpReward,
                 int magicAccuracyBonus,
                 int magicPowerBonus,
                 String firstPersonModelPath,
@@ -3782,7 +3879,6 @@ public final class MapDesignLibrary {
                     smithingRecipeEnabled,
                     smithingRequiredBars,
                     smithingRequiredLevel,
-                    smithingXpReward,
                     magicAccuracyBonus,
                     magicPowerBonus,
                     firstPersonModelPath,
@@ -3809,7 +3905,6 @@ public final class MapDesignLibrary {
                 boolean smithingRecipeEnabled,
                 int smithingRequiredBars,
                 int smithingRequiredLevel,
-                int smithingXpReward,
                 int magicAccuracyBonus,
                 int magicPowerBonus,
                 String firstPersonModelPath,
@@ -3819,7 +3914,7 @@ public final class MapDesignLibrary {
             this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath,
                     weaponType, twoHanded, material, healAmount, baseGoldValue, examineText,
                     statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
-                    smithingRequiredLevel, smithingXpReward, magicAccuracyBonus, magicPowerBonus,
+                    smithingRequiredLevel, magicAccuracyBonus, magicPowerBonus,
                     firstPersonModelPath, viewModelProfile, "", modelIconProfile);
         }
 
@@ -3828,12 +3923,12 @@ public final class MapDesignLibrary {
                 String paperDollOverlayPath, String useSoundPath, WeaponType weaponType, boolean twoHanded,
                 GearMaterial material, int healAmount, int baseGoldValue, String examineText,
                 PlayerStat statBonusTarget, boolean stackable, boolean smithingRecipeEnabled,
-                int smithingRequiredBars, int smithingRequiredLevel, int smithingXpReward,
+                int smithingRequiredBars, int smithingRequiredLevel,
                 int magicAccuracyBonus, int magicPowerBonus, String firstPersonModelPath
         ) {
             this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath, weaponType,
                     twoHanded, material, healAmount, baseGoldValue, examineText, statBonusTarget, stackable,
-                    smithingRecipeEnabled, smithingRequiredBars, smithingRequiredLevel, smithingXpReward,
+                    smithingRecipeEnabled, smithingRequiredBars, smithingRequiredLevel,
                     magicAccuracyBonus, magicPowerBonus, firstPersonModelPath, EquipmentViewModelProfile.defaults());
         }
 
@@ -3855,14 +3950,13 @@ public final class MapDesignLibrary {
                 boolean smithingRecipeEnabled,
                 int smithingRequiredBars,
                 int smithingRequiredLevel,
-                int smithingXpReward,
                 int magicAccuracyBonus,
                 int magicPowerBonus
         ) {
             this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath,
                     weaponType, twoHanded, material, healAmount, baseGoldValue, examineText,
                     statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
-                    smithingRequiredLevel, smithingXpReward, magicAccuracyBonus, magicPowerBonus, "");
+                    smithingRequiredLevel, magicAccuracyBonus, magicPowerBonus, "");
         }
 
         public CustomItem(
@@ -3882,13 +3976,12 @@ public final class MapDesignLibrary {
                 boolean stackable,
                 boolean smithingRecipeEnabled,
                 int smithingRequiredBars,
-                int smithingRequiredLevel,
-                int smithingXpReward
+                int smithingRequiredLevel
         ) {
             this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath,
                     weaponType, twoHanded, material, healAmount, baseGoldValue, examineText,
                     statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
-                    smithingRequiredLevel, smithingXpReward, 0, 0);
+                    smithingRequiredLevel, 0, 0);
         }
 
         public CustomItem(
@@ -3907,8 +4000,7 @@ public final class MapDesignLibrary {
                 boolean stackable,
                 boolean smithingRecipeEnabled,
                 int smithingRequiredBars,
-                int smithingRequiredLevel,
-                int smithingXpReward
+                int smithingRequiredLevel
         ) {
             this(
                     itemId,
@@ -3928,7 +4020,6 @@ public final class MapDesignLibrary {
                     smithingRecipeEnabled,
                     smithingRequiredBars,
                     smithingRequiredLevel,
-                    smithingXpReward,
                     0,
                     0
             );
@@ -3955,7 +4046,9 @@ public final class MapDesignLibrary {
                     .withContentId(itemId)
                     .withFirstPersonModel(firstPersonModelPath)
                     .withViewModelProfile(viewModelProfile)
-                    .withModelIconProfile(modelIconProfile);
+                    .withModelIconProfile(modelIconProfile)
+                    .withEquipmentSkill(equipmentSkill)
+                    .withLanternDefinition(lanternDefinition);
         }
 
         public CustomItem withSourceEnemyId(String sourceId) {
@@ -3977,13 +4070,23 @@ public final class MapDesignLibrary {
                     smithingRecipeEnabled,
                     smithingRequiredBars,
                     smithingRequiredLevel,
-                    smithingXpReward,
                     magicAccuracyBonus,
                     magicPowerBonus,
                     firstPersonModelPath,
                     viewModelProfile,
                     sourceId,
-                    modelIconProfile);
+                    modelIconProfile,
+                    equipmentSkill,
+                    lanternDefinition);
+        }
+
+        public CustomItem withMaterial(GearMaterial replacement) {
+            return new CustomItem(
+                    itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath,
+                    weaponType, twoHanded, replacement, healAmount, baseGoldValue, examineText,
+                    statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
+                    smithingRequiredLevel, magicAccuracyBonus, magicPowerBonus, firstPersonModelPath,
+                    viewModelProfile, sourceEnemyId, modelIconProfile, equipmentSkill, lanternDefinition);
         }
     }
 

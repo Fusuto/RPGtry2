@@ -3,12 +3,14 @@ package org.main.tools;
 import org.main.content.CharacterModelDefinition;
 import org.main.content.FirstPersonCombatLibrary;
 import org.main.content.FirstPersonViewmodelValidator;
+import org.main.core.EquipmentAutoPlacementService;
 import org.main.core.EquipmentViewModelProfile;
 import org.main.core.InventorySystem;
 import org.main.core.WeaponType;
 import org.main.experimental.CharacterAnimationMetadataResolver;
 import org.main.experimental.FirstPersonAnimationRuntime;
 import org.main.experimental.LwjglSkinnedModel;
+import org.main.experimental.StaticModelPlacementMetadataResolver;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -85,8 +87,6 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                 this::previewCameraFraming);
 
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
-        setMinimumSize(new Dimension(1180, 760));
-        setPreferredSize(new Dimension(1480, 900));
         setLayout(new BorderLayout(7, 7));
         add(buildToolbar(), BorderLayout.NORTH);
         add(buildBody(), BorderLayout.CENTER);
@@ -94,6 +94,7 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         installListeners();
         refreshCatalogs();
         selectInitialContent();
+        ConstructionKitUi.configureWorkspace(this);
         pack();
         setLocationRelativeTo(owner);
         addWindowListener(new WindowAdapter() {
@@ -110,14 +111,15 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         return panel;
     }
 
-    private static void row(JPanel panel, String label, Component component) {
+    private static JLabel row(JPanel panel, String label, Component component) {
         int y = panel.getComponentCount() / 2;
         GridBagConstraints left = new GridBagConstraints();
         left.gridx = 0;
         left.gridy = y;
         left.anchor = GridBagConstraints.NORTHWEST;
         left.insets = new Insets(4, 3, 4, 8);
-        panel.add(new JLabel(label), left);
+        JLabel rowLabel = new JLabel(label);
+        panel.add(rowLabel, left);
         GridBagConstraints right = new GridBagConstraints();
         right.gridx = 1;
         right.gridy = y;
@@ -126,6 +128,7 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         right.anchor = GridBagConstraints.NORTHWEST;
         right.insets = new Insets(3, 3, 3, 3);
         panel.add(component, right);
+        return rowLabel;
     }
 
     private static JPanel compact(Component... components) {
@@ -337,7 +340,8 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         return new FirstPersonCombatLibrary.ItemProfile(profile.itemId(), rigId, profile.wieldHand(),
                 profile.animationSetId(), profile.socketTransform(), profile.secondaryGripX(),
                 profile.secondaryGripY(), profile.secondaryGripZ(), profile.leftArmorPath(),
-                profile.rightArmorPath(), profile.leftCoverage(), profile.rightCoverage(), profile.overrides());
+                profile.rightArmorPath(), profile.leftCoverage(), profile.rightCoverage(),
+                profile.attachmentBone(), profile.overrides());
     }
 
     private static FirstPersonCombatLibrary.ItemProfile withAnimationSet(
@@ -345,7 +349,7 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         return new FirstPersonCombatLibrary.ItemProfile(profile.itemId(), profile.rigId(), profile.wieldHand(),
                 setId, profile.socketTransform(), profile.secondaryGripX(), profile.secondaryGripY(),
                 profile.secondaryGripZ(), profile.leftArmorPath(), profile.rightArmorPath(),
-                profile.leftCoverage(), profile.rightCoverage(), profile.overrides());
+                profile.leftCoverage(), profile.rightCoverage(), profile.attachmentBone(), profile.overrides());
     }
 
     private JComponent buildToolbar() {
@@ -368,7 +372,8 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         right.add(new JLabel("Preview Loadout"));
         previewItem.setPreferredSize(new Dimension(260, 26));
         right.add(previewItem);
-        JButton refresh = new JButton("Refresh Draft Preview");
+        JButton refresh = new JButton("Reload Preview Assets");
+        refresh.setToolTipText("Model and animation files reload here; framing controls update live.");
         refresh.addActionListener(event -> {
             commitCurrentEditor();
             preview.reloadPreview();
@@ -480,6 +485,7 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         activeKind = Kind.RIG;
         rigForm.load(draft.rigs().get(entry.id()));
         showInspector(activeKind);
+        preview.reloadPreview();
     }
 
     private void selectSet() {
@@ -561,7 +567,10 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
             return;
         }
         FirstPersonCombatLibrary.ItemProfile profile = new FirstPersonCombatLibrary.ItemProfile(
-                selected.id(), draft.defaultRigId(), FirstPersonCombatLibrary.WieldHand.RIGHT,
+                selected.id(), draft.defaultRigId(),
+                selected.itemType() == InventorySystem.ItemType.SHIELD
+                        ? FirstPersonCombatLibrary.WieldHand.LEFT
+                        : FirstPersonCombatLibrary.WieldHand.RIGHT,
                 FirstPersonCombatLibrary.defaultSetId(selected.weaponType()),
                 FirstPersonCombatLibrary.ItemProfile.socketDefaults(),
                 0, 0, 0, "", "",
@@ -572,6 +581,11 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         markDirty();
         refreshCatalogs();
         selectEntry(profileList, profile.itemId());
+        if ((selected.itemType() == InventorySystem.ItemType.WEAPON
+                || selected.itemType() == InventorySystem.ItemType.SHIELD)
+                && !selected.modelPath().isBlank()) {
+            SwingUtilities.invokeLater(() -> profileForm.autoPlace(false));
+        }
     }
 
     private void duplicateCurrent() {
@@ -705,8 +719,9 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
 
     private List<FirstPersonCombatLibrary.Diagnostic> runValidation(boolean applying) {
         Set<String> itemIds = new LinkedHashSet<>(itemsById.keySet());
-        List<FirstPersonCombatLibrary.Diagnostic> issues =
-                FirstPersonViewmodelValidator.validate(draft, itemIds);
+        List<FirstPersonCombatLibrary.Diagnostic> issues = new ArrayList<>(
+                FirstPersonViewmodelValidator.validate(draft, itemIds));
+        appendPlacementDiagnostics(issues);
         StringBuilder text = new StringBuilder();
         if (issues.isEmpty()) text.append("No diagnostics. The catalog is ready to apply.");
         for (FirstPersonCombatLibrary.Diagnostic issue : issues) {
@@ -727,6 +742,62 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                     "First-Person Validation", JOptionPane.ERROR_MESSAGE);
         }
         return issues;
+    }
+
+    private void appendPlacementDiagnostics(List<FirstPersonCombatLibrary.Diagnostic> issues) {
+        for (FirstPersonCombatLibrary.ItemProfile profile : draft.itemProfiles().values()) {
+            ItemOption item = itemsById.get(profile.itemId());
+            if (item == null || item.modelPath().isBlank()
+                    || (item.itemType() != InventorySystem.ItemType.WEAPON
+                    && item.itemType() != InventorySystem.ItemType.SHIELD)) continue;
+            String owner = "itemProfile:" + profile.itemId();
+            try {
+                StaticModelPlacementMetadataResolver.Metadata metadata =
+                        StaticModelPlacementMetadataResolver.resolve(item.modelPath());
+                for (String duplicate : metadata.duplicateNodeNames()) {
+                    if (duplicate.equalsIgnoreCase(EquipmentAutoPlacementService.PRIMARY_GRIP_NODE)
+                            || duplicate.equalsIgnoreCase(
+                            EquipmentAutoPlacementService.SECONDARY_GRIP_NODE)) {
+                        issues.add(new FirstPersonCombatLibrary.Diagnostic(
+                                FirstPersonCombatLibrary.Diagnostic.Severity.WARNING, owner,
+                                "Model contains duplicate grip node " + duplicate + "."));
+                    }
+                }
+                boolean hasSecondary = Math.abs(profile.secondaryGripX()) > 0.0001
+                        || Math.abs(profile.secondaryGripY()) > 0.0001
+                        || Math.abs(profile.secondaryGripZ()) > 0.0001;
+                if (hasSecondary && (!item.twoHanded()
+                        || item.itemType() == InventorySystem.ItemType.SHIELD)) {
+                    issues.add(new FirstPersonCombatLibrary.Diagnostic(
+                            FirstPersonCombatLibrary.Diagnostic.Severity.WARNING, owner,
+                            "Secondary grip is ignored because this is not a two-handed weapon."));
+                }
+                if (item.twoHanded() && metadata.node(
+                        EquipmentAutoPlacementService.PRIMARY_GRIP_NODE) != null
+                        && metadata.node(EquipmentAutoPlacementService.SECONDARY_GRIP_NODE) == null) {
+                    issues.add(new FirstPersonCombatLibrary.Diagnostic(
+                            FirstPersonCombatLibrary.Diagnostic.Severity.WARNING, owner,
+                            "Marked two-handed model has no FP_GRIP_SECONDARY node."));
+                }
+                org.joml.Vector3d grip = EquipmentAutoPlacementService.gripForSocket(
+                        metadata.bounds(), profile.socketTransform());
+                StaticModelPlacementMetadataResolver.Bounds bounds = metadata.bounds();
+                org.joml.Vector3d size = new org.joml.Vector3d(bounds.maximum())
+                        .sub(bounds.minimum()).mul(0.25);
+                org.joml.Vector3d minimum = new org.joml.Vector3d(bounds.minimum()).sub(size);
+                org.joml.Vector3d maximum = new org.joml.Vector3d(bounds.maximum()).add(size);
+                if (grip.x < minimum.x || grip.y < minimum.y || grip.z < minimum.z
+                        || grip.x > maximum.x || grip.y > maximum.y || grip.z > maximum.z) {
+                    issues.add(new FirstPersonCombatLibrary.Diagnostic(
+                            FirstPersonCombatLibrary.Diagnostic.Severity.WARNING, owner,
+                            "The authored hand grip lies far outside the equipment model."));
+                }
+            } catch (Exception exception) {
+                issues.add(new FirstPersonCombatLibrary.Diagnostic(
+                        FirstPersonCombatLibrary.Diagnostic.Severity.ERROR, owner,
+                        "Equipment model could not be analyzed: " + rootMessage(exception)));
+            }
+        }
     }
 
     private void applyDraft() {
@@ -807,6 +878,10 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
     }
 
     private String previewRigId() {
+        if (activeKind == Kind.RIG && !loadedRigId.isBlank()
+                && draft.rigs().containsKey(loadedRigId)) {
+            return loadedRigId;
+        }
         if (activeKind == Kind.ANIMATION_SET) {
             FirstPersonCombatLibrary.AnimationSet set = draft.animationSets().get(loadedSetId);
             if (set != null && !set.rigId().isBlank()) return set.rigId();
@@ -821,6 +896,19 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         ItemOption item = (ItemOption) previewItem.getSelectedItem();
         FirstPersonCombatLibrary.ItemProfile stored = item == null
                 ? null : draft.itemProfiles().get(item.id());
+        if (activeKind == Kind.RIG && !loadedRigId.isBlank()
+                && draft.rigs().containsKey(loadedRigId)) {
+            FirstPersonCombatLibrary.ItemProfile base = stored == null
+                    ? new FirstPersonCombatLibrary.ItemProfile(
+                    item == null ? "preview" : item.id(), loadedRigId,
+                    FirstPersonCombatLibrary.WieldHand.RIGHT, "",
+                    FirstPersonCombatLibrary.ItemProfile.socketDefaults(),
+                    0, 0, 0, "", "",
+                    FirstPersonCombatLibrary.ArmCoverage.OVERLAY,
+                    FirstPersonCombatLibrary.ArmCoverage.OVERLAY, Map.of())
+                    : stored;
+            return withRig(base, loadedRigId);
+        }
         if (activeKind == Kind.ANIMATION_SET && !loadedSetId.isBlank()) {
             FirstPersonCombatLibrary.AnimationSet selectedSet = draft.animationSets().get(loadedSetId);
             String rigId = selectedSet == null || selectedSet.rigId().isBlank()
@@ -839,7 +927,7 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                     base.itemId(), rigId, hand, loadedSetId,
                     base.socketTransform(), base.secondaryGripX(), base.secondaryGripY(),
                     base.secondaryGripZ(), base.leftArmorPath(), base.rightArmorPath(),
-                    base.leftCoverage(), base.rightCoverage(), Map.of());
+                    base.leftCoverage(), base.rightCoverage(), base.attachmentBone(), Map.of());
         }
         if (stored != null) return stored;
         String rigId = !loadedRigId.isBlank() && draft.rigs().containsKey(loadedRigId)
@@ -1092,6 +1180,16 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         }
     }
 
+    private record AttachmentBoneOption(
+            String boneName,
+            FirstPersonCombatLibrary.WieldHand inheritedHand,
+            String label,
+            boolean unavailable
+    ) {
+        boolean inherited() { return inheritedHand != null; }
+        @Override public String toString() { return label; }
+    }
+
     private record ModelInspection(
             List<String> nodes,
             List<String> meshes,
@@ -1178,6 +1276,20 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                 }
             });
             row(panel, "Catalog Default", makeDefault);
+            for (JSpinner control : List.of(px, py, pz, rx, ry, rz, scale, fov, near)) {
+                control.addChangeListener(event -> liveFramingChanged());
+            }
+            for (JComboBox<String> control : List.of(
+                    leftShoulder, leftElbow, leftHand,
+                    rightShoulder, rightElbow, rightHand, cameraAnchor)) {
+                control.addActionListener(event -> liveFramingChanged());
+            }
+            leftMeshes.addListSelectionListener(event -> {
+                if (!event.getValueIsAdjusting()) liveFramingChanged();
+            });
+            rightMeshes.addListSelectionListener(event -> {
+                if (!event.getValueIsAdjusting()) liveFramingChanged();
+            });
         }
 
         void load(FirstPersonCombatLibrary.RigDefinition rig) {
@@ -1232,6 +1344,12 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                     value(fov), value(near), ((Number) crossfade.getValue()).intValue(), fallbacks);
             replaceRig(loadedRigId, updated);
             loadedRigId = requestedId;
+        }
+
+        private void liveFramingChanged() {
+            if (loading || activeKind != Kind.RIG) return;
+            commit();
+            preview.refreshPose();
         }
 
         void refreshReferences() {
@@ -1414,7 +1532,11 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
             inspect.addActionListener(event -> inspectClips());
             row(panel, "Clip Metadata", inspect);
             row(panel, "Clip", clip);
-            row(panel, "Playback Speed", speed);
+            String speedHelp = "Authored playback multiplier for this action. "
+                    + "1.0 is the clip's natural speed, 2.0 is twice as fast, and 0.5 is half speed. "
+                    + "The preview and battle timing update from this value.";
+            speed.setToolTipText(speedHelp);
+            row(panel, "Playback Speed Multiplier", speed);
             row(panel, "Impact Fraction", impact);
             String cameraHelp = "Saved only for the selected action slot and added to the rig's baseline framing.";
             cameraX.setToolTipText(cameraHelp);
@@ -1451,7 +1573,12 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                 commit();
                 refreshSelectedAnimationPreview(true);
             });
-            enabled.addActionListener(event -> updateBindingEnabled());
+            enabled.addActionListener(event -> {
+                updateBindingEnabled();
+                animationTimingChanged();
+            });
+            speed.addChangeListener(event -> animationTimingChanged());
+            impact.addChangeListener(event -> animationTimingChanged());
             cameraX.addChangeListener(event -> cameraFramingChanged());
             cameraY.addChangeListener(event -> cameraFramingChanged());
             cameraZ.addChangeListener(event -> cameraFramingChanged());
@@ -1575,6 +1702,13 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
             refreshSelectedAnimationPreview(false);
         }
 
+        private void animationTimingChanged() {
+            if (loading || loadedSlot == null) return;
+            commitBinding();
+            commit();
+            refreshSelectedAnimationPreview(false);
+        }
+
         private void resetCameraFraming() {
             loading = true;
             cameraX.setValue(0.0);
@@ -1640,6 +1774,10 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         final JComboBox<CatalogEntry> set = new JComboBox<>();
         final JComboBox<FirstPersonCombatLibrary.WieldHand> hand =
                 new JComboBox<>(FirstPersonCombatLibrary.WieldHand.values());
+        final JComboBox<AttachmentBoneOption> attachmentBone = new JComboBox<>();
+        final JButton pickBone = new JButton("Pick Bone in Viewport");
+        final JLabel attachmentBoneLabel;
+        final JPanel attachmentBoneControls;
         final JSpinner px = decimal(0, -10, 10, 0.01), py = decimal(0, -10, 10, 0.01),
                 pz = decimal(0, -10, 10, 0.01);
         final JSpinner rx = decimal(0, -360, 360, 1), ry = decimal(0, -360, 360, 1),
@@ -1651,17 +1789,33 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                 new JComboBox<>(FirstPersonCombatLibrary.ArmCoverage.values());
         final JComboBox<FirstPersonCombatLibrary.ArmCoverage> rightCoverage =
                 new JComboBox<>(FirstPersonCombatLibrary.ArmCoverage.values());
+        final JLabel placementState = new JLabel("Manual placement");
+        final JButton autoPlace = new JButton("Snap to Bone");
+        final JButton editGrip = new JButton("Edit Grip");
+        final JButton undoPlacement = new JButton("Undo Bone/Snap Change");
+        final JButton flipPlacement = new JButton("Flip Grip End");
         Map<FirstPersonCombatLibrary.AnimationSlot, FirstPersonCombatLibrary.ClipBinding> overrides = Map.of();
+        FirstPersonCombatLibrary.ItemProfile undoProfile;
+        EquipmentAutoPlacementService.PlacementProposal lastProposal;
+        String attachmentBoneValue = "";
+        FirstPersonCombatLibrary.ItemProfile pendingBoneUndo;
+        boolean placementBusy;
 
         ProfileForm() {
+            attachmentBone.setEditable(true);
             row(panel, "Item", item);
             row(panel, "Rig", rig);
             row(panel, "Motion Set", set);
             row(panel, "Wielding Hand", hand);
+            attachmentBoneControls = compact(attachmentBone, pickBone);
+            attachmentBoneLabel = row(panel, "Attachment Bone", attachmentBoneControls);
             row(panel, "Socket Position X / Y / Z", compact(px, py, pz));
             row(panel, "Socket Rotation X / Y / Z", compact(rx, ry, rz));
             row(panel, "Socket Model Height", scale);
             row(panel, "Secondary Grip X / Y / Z", compact(secondaryX, secondaryY, secondaryZ));
+            JPanel placementButtons = compact(autoPlace, editGrip, undoPlacement, flipPlacement);
+            row(panel, "Automatic Placement", placementButtons);
+            row(panel, "Placement Result", placementState);
             row(panel, "Left Glove / Sleeve", browseRow(leftArmor));
             row(panel, "Left Coverage", leftCoverage);
             row(panel, "Right Glove / Sleeve", browseRow(rightArmor));
@@ -1690,6 +1844,43 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                 preview.reloadPreview();
             });
             row(panel, "Preview", usePreview);
+            undoPlacement.setEnabled(false);
+            autoPlace.addActionListener(event -> autoPlace(false));
+            flipPlacement.addActionListener(event -> autoPlace(lastProposal == null
+                    || !lastProposal.flipped()));
+            undoPlacement.addActionListener(event -> undoPlacement());
+            editGrip.addActionListener(event -> editGrip());
+            attachmentBone.addActionListener(event -> attachmentBoneChanged());
+            attachmentBone.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
+                @Override public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent event) {
+                    refreshAttachmentBones(attachmentBoneValue);
+                }
+                @Override public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent event) { }
+                @Override public void popupMenuCanceled(javax.swing.event.PopupMenuEvent event) { }
+            });
+            pickBone.addActionListener(event -> preview.pickAttachmentBone(this::pickedBone));
+            for (JSpinner control : List.of(
+                    px, py, pz, rx, ry, rz, scale,
+                    secondaryX, secondaryY, secondaryZ)) {
+                control.addChangeListener(event -> liveSocketChanged());
+            }
+            hand.addActionListener(event -> {
+                if (!loading && attachmentBoneValue.isBlank()) {
+                    refreshAttachmentBones("");
+                    preview.setSelectedAttachmentBone(draft.rig(comboEntryId(rig))
+                            .handBone((FirstPersonCombatLibrary.WieldHand) hand.getSelectedItem()));
+                }
+                liveSocketChanged();
+            });
+            rig.addActionListener(event -> {
+                if (loading || activeKind != Kind.ITEM_PROFILE) return;
+                commit();
+                refreshAttachmentBones(attachmentBoneValue);
+                preview.reloadPreview();
+                markDirty();
+            });
+            leftCoverage.addActionListener(event -> liveSocketChanged());
+            rightCoverage.addActionListener(event -> liveSocketChanged());
         }
 
         void load(FirstPersonCombatLibrary.ItemProfile profile) {
@@ -1700,6 +1891,9 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
             selectComboEntryPreserving(rig, profile.rigId(), "Unavailable rig");
             selectComboEntryPreserving(set, profile.animationSetId(), "Unavailable motion set");
             hand.setSelectedItem(profile.wieldHand());
+            attachmentBoneValue = profile.attachmentBone();
+            refreshAttachmentBones(attachmentBoneValue);
+            preview.setSelectedAttachmentBone(draft.resolveAttachmentBone(profile));
             EquipmentViewModelProfile socket = profile.socketTransform();
             px.setValue(socket.positionX());
             py.setValue(socket.positionY());
@@ -1716,6 +1910,11 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
             leftCoverage.setSelectedItem(profile.leftCoverage());
             rightCoverage.setSelectedItem(profile.rightCoverage());
             overrides = profile.overrides();
+            undoProfile = null;
+            lastProposal = null;
+            undoPlacement.setEnabled(false);
+            placementState.setText("Manual placement");
+            updatePlacementButtons();
             loading = false;
         }
 
@@ -1738,9 +1937,235 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                     value(secondaryX), value(secondaryY), value(secondaryZ),
                     leftArmor.getText(), rightArmor.getText(),
                     (FirstPersonCombatLibrary.ArmCoverage) leftCoverage.getSelectedItem(),
-                    (FirstPersonCombatLibrary.ArmCoverage) rightCoverage.getSelectedItem(), overrides);
+                    (FirstPersonCombatLibrary.ArmCoverage) rightCoverage.getSelectedItem(),
+                    attachmentBoneValue, overrides);
             replaceProfile(loadedProfileId, updated);
             loadedProfileId = itemId;
+        }
+
+        private void liveSocketChanged() {
+            if (loading || activeKind != Kind.ITEM_PROFILE) return;
+            commit();
+            preview.refreshPose();
+        }
+
+        private void attachmentBoneChanged() {
+            if (loading || activeKind != Kind.ITEM_PROFILE) return;
+            Object selectedValue = attachmentBone.getSelectedItem();
+            FirstPersonCombatLibrary.ItemProfile previous = draft.itemProfiles().get(loadedProfileId);
+            if (previous == null) return;
+            if (selectedValue instanceof AttachmentBoneOption selected) {
+                if (selected.inherited()) {
+                    hand.setSelectedItem(selected.inheritedHand());
+                    attachmentBoneValue = "";
+                } else {
+                    attachmentBoneValue = selected.boneName();
+                }
+            } else {
+                String authored = selectedValue == null ? "" : selectedValue.toString().trim();
+                if (authored.isBlank()) return;
+                AttachmentBoneOption known = findBoneOption(authored);
+                attachmentBoneValue = known == null ? authored : known.boneName();
+            }
+            pendingBoneUndo = previous;
+            undoProfile = previous;
+            undoPlacement.setEnabled(true);
+            commit();
+            preview.setSelectedAttachmentBone(draft.resolveAttachmentBone(
+                    draft.itemProfiles().get(loadedProfileId)));
+            autoPlace(false);
+        }
+
+        private void pickedBone(String boneName) {
+            if (boneName == null || boneName.isBlank()) return;
+            refreshAttachmentBones(boneName);
+            AttachmentBoneOption selected = findBoneOption(boneName);
+            if (selected != null) attachmentBone.setSelectedItem(selected);
+        }
+
+        private void refreshAttachmentBones(String selectedBone) {
+            boolean oldLoading = loading;
+            loading = true;
+            FirstPersonCombatLibrary.RigDefinition selectedRig = draft.rig(
+                    comboEntryId(rig));
+            FirstPersonCombatLibrary.WieldHand selectedHand =
+                    (FirstPersonCombatLibrary.WieldHand) hand.getSelectedItem();
+            attachmentBone.removeAllItems();
+            attachmentBone.addItem(new AttachmentBoneOption("",
+                    FirstPersonCombatLibrary.WieldHand.RIGHT,
+                    "Inherit Right Hand [" + selectedRig.rightHandBone() + "]", false));
+            attachmentBone.addItem(new AttachmentBoneOption("",
+                    FirstPersonCombatLibrary.WieldHand.LEFT,
+                    "Inherit Left Hand [" + selectedRig.leftHandBone() + "]", false));
+            List<LwjglSkinnedModel.SkeletonNodeMetadata> nodes = new ArrayList<>(preview.skeletonNodes());
+            nodes.sort(Comparator
+                    .comparingInt((LwjglSkinnedModel.SkeletonNodeMetadata node) ->
+                            node.weightedBone() ? 0 : node.animatedNode() ? 1
+                                    : node.socketOrHelper() ? 2 : node.meshNode() ? 3 : 4)
+                    .thenComparing(LwjglSkinnedModel.SkeletonNodeMetadata::name,
+                            String.CASE_INSENSITIVE_ORDER));
+            for (LwjglSkinnedModel.SkeletonNodeMetadata node : nodes) {
+                attachmentBone.addItem(new AttachmentBoneOption(node.name(), null,
+                        node.displayLabel() + (node.weightedBone() || node.animatedNode()
+                                ? "" : " (Advanced)"), false));
+            }
+            AttachmentBoneOption match = selectedBone == null || selectedBone.isBlank()
+                    ? findInheritedOption(selectedHand) : findBoneOption(selectedBone);
+            if (match == null && selectedBone != null && !selectedBone.isBlank()) {
+                match = new AttachmentBoneOption(selectedBone, null,
+                        selectedBone + " [Unavailable]", true);
+                attachmentBone.addItem(match);
+            }
+            if (match != null) attachmentBone.setSelectedItem(match);
+            loading = oldLoading;
+        }
+
+        private AttachmentBoneOption findInheritedOption(FirstPersonCombatLibrary.WieldHand side) {
+            for (int index = 0; index < attachmentBone.getItemCount(); index++) {
+                AttachmentBoneOption option = attachmentBone.getItemAt(index);
+                if (option.inheritedHand() == side) return option;
+            }
+            return null;
+        }
+
+        private AttachmentBoneOption findBoneOption(String boneName) {
+            if (boneName == null) return null;
+            for (int index = 0; index < attachmentBone.getItemCount(); index++) {
+                AttachmentBoneOption option = attachmentBone.getItemAt(index);
+                if (!option.inherited() && option.boneName().equalsIgnoreCase(boneName.trim())) return option;
+            }
+            return null;
+        }
+
+        private ItemOption selectedItemOption() {
+            CatalogEntry selected = (CatalogEntry) item.getSelectedItem();
+            return selected == null ? null : itemsById.get(selected.id());
+        }
+
+        private void updatePlacementButtons() {
+            ItemOption selected = selectedItemOption();
+            boolean supported = selected != null && !selected.modelPath().isBlank()
+                    && (selected.itemType() == InventorySystem.ItemType.WEAPON
+                    || selected.itemType() == InventorySystem.ItemType.SHIELD);
+            autoPlace.setEnabled(supported && !placementBusy);
+            editGrip.setEnabled(supported && !placementBusy);
+            flipPlacement.setEnabled(supported && !placementBusy);
+            flipPlacement.setText(selected != null
+                    && selected.itemType() == InventorySystem.ItemType.SHIELD
+                    ? "Flip Shield Face" : "Flip Grip End");
+            attachmentBoneLabel.setVisible(supported);
+            attachmentBoneControls.setVisible(supported);
+        }
+
+        void autoPlace(boolean flipped) {
+            if (placementBusy) return;
+            commit();
+            ItemOption selected = selectedItemOption();
+            FirstPersonCombatLibrary.ItemProfile current = draft.itemProfiles().get(loadedProfileId);
+            if (selected == null || current == null || selected.modelPath().isBlank()
+                    || (selected.itemType() != InventorySystem.ItemType.WEAPON
+                    && selected.itemType() != InventorySystem.ItemType.SHIELD)) {
+                state("Select a weapon or shield with a 3D model first.", true);
+                return;
+            }
+            placementBusy = true;
+            updatePlacementButtons();
+            placementState.setText("Analyzing " + selected.displayName() + "...");
+            new SwingWorker<EquipmentAutoPlacementService.PlacementProposal, Void>() {
+                @Override protected EquipmentAutoPlacementService.PlacementProposal doInBackground()
+                        throws Exception {
+                    return EquipmentAutoPlacementService.proposeForAttachment(selected.modelPath(),
+                            selected.itemType(), selected.weaponType(), selected.twoHanded(), flipped,
+                            draft, current);
+                }
+
+                @Override protected void done() {
+                    placementBusy = false;
+                    updatePlacementButtons();
+                    try {
+                        applyPlacement(get(), current);
+                    } catch (Exception exception) {
+                        placementState.setText("Placement failed: " + rootMessage(exception));
+                        FirstPersonViewmodelEditorWorkspace.this.state(
+                                "Automatic placement failed: " + rootMessage(exception), true);
+                    }
+                }
+            }.execute();
+        }
+
+        private void applyPlacement(
+                EquipmentAutoPlacementService.PlacementProposal value,
+                FirstPersonCombatLibrary.ItemProfile previous
+        ) {
+            if (value == null) return;
+            undoProfile = pendingBoneUndo == null ? previous : pendingBoneUndo;
+            pendingBoneUndo = null;
+            undoPlacement.setEnabled(undoProfile != null);
+            lastProposal = value;
+            loading = true;
+            EquipmentViewModelProfile socket = value.socket();
+            px.setValue(socket.positionX()); py.setValue(socket.positionY()); pz.setValue(socket.positionZ());
+            rx.setValue(socket.rotationX()); ry.setValue(socket.rotationY()); rz.setValue(socket.rotationZ());
+            scale.setValue(socket.normalizedHeight());
+            if (value.secondaryGrip() == null) {
+                secondaryX.setValue(0); secondaryY.setValue(0); secondaryZ.setValue(0);
+            } else {
+                secondaryX.setValue(value.secondaryGrip().x);
+                secondaryY.setValue(value.secondaryGrip().y);
+                secondaryZ.setValue(value.secondaryGrip().z);
+            }
+            loading = false;
+            commit();
+            placementState.setText(value.summary());
+            placementState.setToolTipText(String.join(" ", value.diagnostics()));
+            preview.refreshPose();
+            markDirty();
+        }
+
+        private void undoPlacement() {
+            if (undoProfile == null) return;
+            FirstPersonCombatLibrary.ItemProfile restore = undoProfile;
+            FirstPersonCombatLibrary.ItemProfile redo = draft.itemProfiles().get(loadedProfileId);
+            pendingBoneUndo = null;
+            draft = draft.withItemProfile(restore);
+            loadedProfileId = restore.itemId();
+            load(restore);
+            undoProfile = redo;
+            undoPlacement.setEnabled(undoProfile != null);
+            placementState.setText("Previous placement restored");
+            preview.refreshPose();
+            markDirty();
+        }
+
+        private void editGrip() {
+            commit();
+            ItemOption selected = selectedItemOption();
+            FirstPersonCombatLibrary.ItemProfile current = draft.itemProfiles().get(loadedProfileId);
+            if (selected == null || current == null || selected.modelPath().isBlank()) return;
+            try {
+                EquipmentGripEditorDialog.Result edited = EquipmentGripEditorDialog.show(
+                        FirstPersonViewmodelEditorWorkspace.this, selected.modelPath(),
+                        selected.itemType(), selected.weaponType(), selected.twoHanded(),
+                        draft, current, lastProposal);
+                if (edited == null) return;
+                undoProfile = current;
+                undoPlacement.setEnabled(true);
+                loading = true;
+                EquipmentViewModelProfile socket = edited.socket();
+                px.setValue(socket.positionX()); py.setValue(socket.positionY()); pz.setValue(socket.positionZ());
+                rx.setValue(socket.rotationX()); ry.setValue(socket.rotationY()); rz.setValue(socket.rotationZ());
+                scale.setValue(socket.normalizedHeight());
+                secondaryX.setValue(edited.secondaryX());
+                secondaryY.setValue(edited.secondaryY());
+                secondaryZ.setValue(edited.secondaryZ());
+                loading = false;
+                commit();
+                placementState.setText("Visual grip adjustment");
+                preview.refreshPose();
+                markDirty();
+            } catch (Exception exception) {
+                state("Grip editor could not open: " + rootMessage(exception), true);
+            }
         }
 
         void refreshReferences() {
@@ -1756,6 +2181,8 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
             selectComboEntryPreserving(item, itemId, "Unavailable item");
             selectComboEntryPreserving(rig, rigId, "Unavailable rig");
             selectComboEntryPreserving(set, setId, "Unavailable motion set");
+            refreshAttachmentBones(attachmentBoneValue);
+            updatePlacementButtons();
         }
     }
 }

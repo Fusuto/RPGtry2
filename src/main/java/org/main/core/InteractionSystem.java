@@ -2832,8 +2832,11 @@ public final class InteractionSystem {
             String name = recipe.displayName();
             String bars = recipe.requiredBars() + " " + recipe.materialName();
             String level = "Requires Smithing " + recipe.requiredLevel();
-            int width = Math.max(metrics.stringWidth(name), Math.max(metrics.stringWidth(bars), metrics.stringWidth(level))) + 20;
-            int height = 58;
+            String experience = "Awards " + recipe.xpReward() + " Smithing XP";
+            int width = Math.max(
+                    Math.max(metrics.stringWidth(name), metrics.stringWidth(bars)),
+                    Math.max(metrics.stringWidth(level), metrics.stringWidth(experience))) + 20;
+            int height = 75;
             int x = Math.min(windowBounds.x + windowBounds.width - width - 12, slot.x + slot.width + 10);
             int y = Math.max(windowBounds.y + 10, slot.y);
 
@@ -2850,6 +2853,7 @@ public final class InteractionSystem {
             g.setColor(new Color(218, 210, 180));
             g.drawString(bars, x + 10, y + 35);
             g.drawString(level, x + 10, y + 51);
+            g.drawString(experience, x + 10, y + 67);
             g.setFont(oldFont);
         }
     }

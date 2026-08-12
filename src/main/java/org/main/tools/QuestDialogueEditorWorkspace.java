@@ -140,8 +140,6 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
         npcs.addAll(host.npcs());
         followUpBox.replaceOptions(dialogueOptions());
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
-        setMinimumSize(new Dimension(1050, 700));
-        setPreferredSize(new Dimension(1420, 860));
         setLayout(new BorderLayout(6, 6));
         add(buildHeader(), BorderLayout.NORTH);
         add(buildBody(), BorderLayout.CENTER);
@@ -178,6 +176,7 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
             }
         });
         refreshCatalog(selectedId);
+        ConstructionKitUi.configureWorkspace(this);
         pack();
         setLocationRelativeTo(owner);
     }

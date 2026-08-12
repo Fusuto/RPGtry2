@@ -200,7 +200,7 @@ public class PlayerCharacter {
                     || entry.getKey() == InventorySystem.EquipmentSlot.RING_RIGHT)
                     && item != null
                     && item.getStatBonusTarget() == stat
-                    && canUseEquipment(item, entry.getKey())) {
+                    && canBenefitFromEquippedItem(item, entry.getKey())) {
                 total += item.getEffectiveStatBonus();
             }
         }
@@ -404,11 +404,26 @@ public class PlayerCharacter {
             case RING_LEFT, RING_RIGHT -> hasFunctionalLimb(LimbSlot.LEFT_ARM) || hasFunctionalLimb(LimbSlot.RIGHT_ARM);
             case WEAPON -> canWieldWeapon();
             case SHIELD -> hasFunctionalLimb(LimbSlot.LEFT_ARM) || hasFunctionalLimb(LimbSlot.RIGHT_ARM);
+            case POCKET -> true;
         };
     }
 
     public boolean canUseEquipment(InventorySystem.Item item, InventorySystem.EquipmentSlot slot) {
         return equipmentRestrictionMessage(item, slot).isBlank();
+    }
+
+    private boolean canBenefitFromEquippedItem(
+            InventorySystem.Item item,
+            InventorySystem.EquipmentSlot slot) {
+        if (item == null || slot == null || !canUseEquipmentSlot(slot)) {
+            return false;
+        }
+        if (slot == InventorySystem.EquipmentSlot.SHIELD) {
+            InventorySystem.Item weapon = inventory == null
+                    ? null : inventory.getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
+            return weapon == null || !weapon.isTwoHanded();
+        }
+        return true;
     }
 
     public String equipmentRestrictionMessage(InventorySystem.Item item, InventorySystem.EquipmentSlot slot) {
@@ -424,6 +439,7 @@ public class PlayerCharacter {
                 case WEAPON -> "You need two functional arms to wield this.";
                 case SHIELD -> "You need a functional arm to hold this.";
                 case RING_LEFT, RING_RIGHT -> "You need a functional arm to wear this.";
+                case POCKET -> "That cannot be carried in your Pocket slot.";
             };
         }
 
@@ -436,39 +452,25 @@ public class PlayerCharacter {
             }
         }
 
-        if (item.getItemType() == InventorySystem.ItemType.WEAPON || item.getItemType() == InventorySystem.ItemType.RING) {
-            return "";
-        }
-
-        int requiredDefense = defenseRequirementFor(item.getMaterial());
-        int currentDefense = getSkillLevel(CharacterSkill.DEFENSE);
-        if (currentDefense < requiredDefense) {
-            return "You need Defense level " + requiredDefense + " to wear "
-                    + item.getMaterial().getDisplayName() + " equipment.";
+        CharacterSkill equipmentSkill = item.getEquipmentSkill();
+        if (equipmentSkill != null) {
+            int requiredLevel = EquipmentRequirementRules.requiredLevel(equipmentSkill, item.getMaterial());
+            if (getSkillLevel(equipmentSkill) < requiredLevel) {
+                return "You need " + equipmentSkill.getDisplayName() + " level " + requiredLevel
+                        + " to equip " + item.getName() + ".";
+            }
         }
 
         return "";
     }
 
     public static int defenseRequirementFor(GearMaterial material) {
-        if (material == null) {
-            return 0;
-        }
-
-        int fallback = switch (material) {
-            case NONE -> 0;
-            case COPPER, OAK, LEATHER -> 1;
-            case BRONZE -> 3;
-            case IRON, YEW, SILVER -> 5;
-            case STEEL, IRONWOOD -> 10;
-            default -> 1;
-        };
-        return Math.max(0, GameConfiguration.intValue(equipmentDefenseRequirementKey(material), fallback));
+        return EquipmentRequirementRules.requiredLevel(CharacterSkill.DEFENSE, material);
     }
 
     public static String equipmentDefenseRequirementKey(GearMaterial material) {
         GearMaterial safeMaterial = material == null ? GearMaterial.NONE : material;
-        return "levelGate.equipmentDefense." + safeMaterial.name();
+        return EquipmentRequirementRules.configurationKey(CharacterSkill.DEFENSE, safeMaterial);
     }
 
     public int getUsableWeaponStatBonus() {
@@ -511,7 +513,7 @@ public class PlayerCharacter {
                     && entry.getKey() != InventorySystem.EquipmentSlot.RING_LEFT
                     && entry.getKey() != InventorySystem.EquipmentSlot.RING_RIGHT
                     && entry.getValue() != null
-                    && canUseEquipment(entry.getValue(), entry.getKey())) {
+                    && canBenefitFromEquippedItem(entry.getValue(), entry.getKey())) {
                 total += entry.getValue().getEffectiveStatBonus();
             }
         }
@@ -527,7 +529,7 @@ public class PlayerCharacter {
                     || entry.getKey() == InventorySystem.EquipmentSlot.RING_RIGHT)
                     && entry.getValue() != null
                     && entry.getValue().getStatBonusTarget() == null
-                    && canUseEquipment(entry.getValue(), entry.getKey())) {
+                    && canBenefitFromEquippedItem(entry.getValue(), entry.getKey())) {
                 total += entry.getValue().getEffectiveStatBonus();
             }
         }

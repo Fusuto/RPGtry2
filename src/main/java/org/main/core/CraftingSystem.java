@@ -22,7 +22,8 @@ public final class CraftingSystem {
     }
 
     public static boolean isSmithingMaterial(InventorySystem.Item item) {
-        return item != null && !smithingRecipesForMaterial(item.getName()).isEmpty();
+        return item != null && !smithingRecipesForMaterial(
+                item.getContentId().isBlank() ? item.getName() : item.getContentId()).isEmpty();
     }
 
     public static List<SmithingRecipe> smithingRecipesForMaterial(String materialName) {
@@ -47,7 +48,7 @@ public final class CraftingSystem {
         return item != null && createSmithingResultByDisplayName(item.getName()) != null;
     }
 
-    private static List<SmithingRecipe> allSmithingRecipes() {
+    public static List<SmithingRecipe> allSmithingRecipes() {
         return customSmithingRecipes();
     }
 
@@ -55,24 +56,28 @@ public final class CraftingSystem {
         if (material == null || material.getFamily() != GearMaterial.MaterialFamily.METAL) {
             return "";
         }
-
-        return switch (material) {
-            case COPPER -> "Copper Bar";
-            case BRONZE -> "Bronze Bar";
-            case IRON -> "Iron Bar";
-            case STEEL -> "Steel Bar";
-            case SILVER -> "Silver Bar";
-            default -> material.getDisplayName() + " Bar";
-        };
+        String barItemId = material.getProcessedResourceItemId();
+        if (!barItemId.isBlank()) {
+            try {
+                InventorySystem.Item bar = createCustomContentItem(MapDesignLibrary.loadSharedContent(), barItemId);
+                if (bar != null) {
+                    return bar.getName();
+                }
+            } catch (IOException ignored) {
+                // Display-name fallback keeps diagnostics and drafts readable.
+            }
+        }
+        return material.getDisplayName() + " Bar";
     }
 
-    private static List<SmithingRecipe> customSmithingRecipesForMaterial(String materialName) {
-        if (materialName == null || materialName.isBlank()) {
+    private static List<SmithingRecipe> customSmithingRecipesForMaterial(String materialIdOrName) {
+        if (materialIdOrName == null || materialIdOrName.isBlank()) {
             return List.of();
         }
 
         return customSmithingRecipes().stream()
-                .filter(recipe -> recipe.materialName().equalsIgnoreCase(materialName.trim()))
+                .filter(recipe -> recipe.barItemId().equalsIgnoreCase(materialIdOrName.trim())
+                        || recipe.materialName().equalsIgnoreCase(materialIdOrName.trim()))
                 .toList();
     }
 
@@ -154,16 +159,19 @@ public final class CraftingSystem {
         }
 
         String materialName = smithingMaterialNameFor(item.material());
-        if (materialName.isBlank()) {
+        String barItemId = item.material().getProcessedResourceItemId();
+        if (materialName.isBlank() || barItemId.isBlank()) {
             return null;
         }
 
         return new SmithingRecipe(
                 item.displayName(),
+                item.material().id(),
+                barItemId,
                 materialName,
                 item.smithingRequiredBars(),
                 item.smithingRequiredLevel(),
-                item.smithingXpReward(),
+                SmithingExperienceRules.calculate(item.material(), item.smithingRequiredBars()),
                 item.createItem()
         );
     }
@@ -176,6 +184,8 @@ public final class CraftingSystem {
 
     public record SmithingRecipe(
             String displayName,
+            String materialId,
+            String barItemId,
             String materialName,
             int requiredBars,
             int requiredLevel,

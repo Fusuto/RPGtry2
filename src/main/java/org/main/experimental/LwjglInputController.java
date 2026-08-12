@@ -539,6 +539,12 @@ public final class LwjglInputController {
             return;
         }
 
+        if (gameState.isSkillsOpen()
+                && overlayRenderer != null
+                && overlayRenderer.closeSkillProgressionGuide()) {
+            return;
+        }
+
         if (gameState.isCharacterCreationMode()) {
             if (overlayRenderer != null) {
                 overlayRenderer.cancelCharacterCreation(gameState);

@@ -13,7 +13,9 @@ import org.main.core.WeaponType;
 import java.io.IOException;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Logger;
 
 /** Resolves authored first-person clips into the existing skeletal animation player. */
 public final class FirstPersonAnimationRuntime {
@@ -38,6 +40,8 @@ public final class FirstPersonAnimationRuntime {
 
     private static final Map<CharacterModelDefinition, LwjglSkinnedModel> MODELS =
             new ConcurrentHashMap<>();
+    private static final Set<String> WARNED_MISSING_ATTACHMENT_BONES = ConcurrentHashMap.newKeySet();
+    private static final Logger LOGGER = Logger.getLogger(FirstPersonAnimationRuntime.class.getName());
 
     private FirstPersonAnimationRuntime() {
     }
@@ -53,7 +57,6 @@ public final class FirstPersonAnimationRuntime {
         FirstPersonCombatLibrary.ItemProfile shieldProfile = content.itemProfile(shield);
         FirstPersonCombatLibrary.WieldHand hand = profile != null
                 ? profile.wieldHand()
-                : shieldProfile != null ? shieldProfile.wieldHand()
                 : FirstPersonCombatLibrary.WieldHand.RIGHT;
         FirstPersonCombatLibrary.WieldHand blockHand = shieldProfile == null
                 ? hand.opposite() : shieldProfile.wieldHand();
@@ -135,6 +138,36 @@ public final class FirstPersonAnimationRuntime {
 
     public static void clearCaches() {
         MODELS.clear();
+        WARNED_MISSING_ATTACHMENT_BONES.clear();
+        StaticModelPlacementMetadataResolver.clearCache();
+    }
+
+    /**
+     * Resolves the parent node used by both runtime rendering and editor previews.
+     * Invalid externally-authored explicit nodes safely fall back to the inherited hand.
+     */
+    public static String resolveAttachmentBone(
+            FirstPersonCombatLibrary.RigDefinition rig,
+            FirstPersonCombatLibrary.ItemProfile profile,
+            LwjglSkinnedModel model
+    ) {
+        FirstPersonCombatLibrary.WieldHand hand = profile == null
+                ? FirstPersonCombatLibrary.WieldHand.RIGHT : profile.wieldHand();
+        String inherited = rig == null ? "" : rig.handBone(hand);
+        String explicit = profile == null ? "" : profile.attachmentBone();
+        if (explicit.isBlank()) return inherited;
+        if (model == null || model.hasNode(explicit) && model.followsAnimatedHierarchy(explicit)) {
+            return explicit;
+        }
+        String warningKey = (rig == null ? "" : rig.rigId()) + "\u0000" + explicit;
+        if (WARNED_MISSING_ATTACHMENT_BONES.add(warningKey)) {
+            LOGGER.warning("First-person attachment bone '" + explicit
+                    + "' is missing or does not follow the animated hierarchy in rig '"
+                    + (rig == null ? "" : rig.rigId())
+                    + "'; falling back to inherited " + hand.name().toLowerCase()
+                    + " hand bone '" + inherited + "'.");
+        }
+        return inherited;
     }
 
     public static CharacterModelDefinition definitionFor(
