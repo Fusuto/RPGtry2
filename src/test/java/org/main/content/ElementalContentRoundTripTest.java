@@ -11,8 +11,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ElementalContentRoundTripTest {
-    @TempDir
-    Path temporaryDirectory;
+    @TempDir Path temporaryDirectory;
 
     @Test
     void recipePillarAndCreatureFieldsRoundTrip() throws Exception {

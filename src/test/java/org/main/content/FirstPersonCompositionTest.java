@@ -18,8 +18,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FirstPersonCompositionTest {
-    @TempDir
-    Path temporaryDirectory;
+    @TempDir Path temporaryDirectory;
 
     @Test
     void schemaFourRoundTripsComposition() throws Exception {

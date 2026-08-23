@@ -10,8 +10,7 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 class WandWeaponOverridesTest {
-    @TempDir
-    Path temporaryDirectory;
+    @TempDir Path temporaryDirectory;
 
     @Test
     void wandDefaultsAndOverridesDrivePhysicalStatsAndSpeed() {

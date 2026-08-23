@@ -161,7 +161,7 @@ class ElementalCraftingContentTest {
     }
 
     private static DungeonMap floor() {
-        return new DungeonMap(new Library.TileType[][]{
+        return new DungeonMap(new Library.TileType[][] {
                 {Library.TileType.FLOOR, Library.TileType.FLOOR},
                 {Library.TileType.FLOOR, Library.TileType.FLOOR}
         });
