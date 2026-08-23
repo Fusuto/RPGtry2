@@ -16,6 +16,7 @@ import java.util.Properties;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.main.engine.AssetLoader;
+import org.main.content.CatalogPublicationService;
 import org.main.content.MapDesignLibrary;
 import org.main.content.ContentRepository;
 import org.main.pack.ContentPackManifest;
@@ -53,8 +54,11 @@ public final class MaterialCatalog {
     }
 
     public static void save(List<MaterialDefinition> definitions) throws IOException {
-        List<MaterialDefinition> normalized = write(definitions);
-        CURRENT.set(new Snapshot(normalized));
+        Snapshot published = CatalogPublicationService.publishProjectCatalogs(
+                List.of(SOURCE_PATH),
+                () -> write(definitions),
+                MaterialCatalog::loadSnapshot);
+        CURRENT.set(published);
     }
 
     /** Writes a complete catalog transaction without publishing it to live runtime readers. */

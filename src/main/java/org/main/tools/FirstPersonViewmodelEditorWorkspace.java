@@ -808,12 +808,12 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) return;
         try {
-            FirstPersonCombatLibrary.save(FirstPersonCombatLibrary.RESOURCE_PATH, draft);
-            FirstPersonCombatLibrary.install(draft);
+            FirstPersonCombatLibrary.Content published = FirstPersonCombatLibrary.saveProject(draft);
             FirstPersonAnimationRuntime.clearCaches();
             CharacterAnimationMetadataResolver.clear();
             LwjglSkinnedModel.clearSharedCache();
-            committed = draft;
+            draft = published;
+            committed = published;
             dirty = false;
             appliedCallback.accept(Map.copyOf(rigRenames));
             rigRenames.clear();

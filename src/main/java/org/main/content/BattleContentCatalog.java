@@ -129,12 +129,15 @@ public final class BattleContentCatalog {
         if (!errors.isEmpty()) {
             throw new IOException("Battle content was not saved: " + String.join(" ", errors));
         }
-        Files.createDirectories(CONTENT_FOLDER);
-        boolean hadSkillFile = Files.isRegularFile(SKILL_PATH);
-        boolean hadStatusFile = Files.isRegularFile(STATUS_PATH);
-        byte[] originalSkills = hadSkillFile ? Files.readAllBytes(SKILL_PATH) : null;
-        byte[] originalStatuses = hadStatusFile ? Files.readAllBytes(STATUS_PATH) : null;
+        Snapshot published = CatalogPublicationService.publishProjectCatalogs(
+                List.of(SKILL_PATH, STATUS_PATH),
+                () -> writeCatalogFiles(snapshot),
+                BattleContentCatalog::load);
+        current = published;
+    }
 
+    private static void writeCatalogFiles(Snapshot snapshot) throws IOException {
+        Files.createDirectories(CONTENT_FOLDER);
         Path skillTemp = CONTENT_FOLDER.resolve("skill.properties.tmp");
         Path statusTemp = CONTENT_FOLDER.resolve("status.properties.tmp");
         try {
@@ -146,26 +149,9 @@ public final class BattleContentCatalog {
             writeStatuses(snapshot, statusTemp);
             moveAtomically(statusTemp, STATUS_PATH);
             moveAtomically(skillTemp, SKILL_PATH);
-            current = snapshot;
-        } catch (IOException failure) {
-            restoreAfterFailedTransaction(STATUS_PATH, originalStatuses, hadStatusFile);
-            restoreAfterFailedTransaction(SKILL_PATH, originalSkills, hadSkillFile);
-            throw failure;
         } finally {
             Files.deleteIfExists(skillTemp);
             Files.deleteIfExists(statusTemp);
-        }
-    }
-
-    private static void restoreAfterFailedTransaction(
-            Path target, byte[] originalContents, boolean existedBefore) throws IOException {
-        if (existedBefore) {
-            if (originalContents == null) {
-                throw new IOException("Missing original catalog content for " + target + ".");
-            }
-            Files.write(target, originalContents);
-        } else if (!existedBefore) {
-            Files.deleteIfExists(target);
         }
     }
 

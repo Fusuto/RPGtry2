@@ -7520,8 +7520,7 @@ public class AetherConstructionKit extends JFrame {
         FirstPersonCombatLibrary.Content updatedContent =
                 FirstPersonCombatLibrary.loadFresh().withItemProfile(updated);
         try {
-            FirstPersonCombatLibrary.save(FirstPersonCombatLibrary.RESOURCE_PATH, updatedContent);
-            FirstPersonCombatLibrary.install(updatedContent);
+            FirstPersonCombatLibrary.saveProject(updatedContent);
             FirstPersonAnimationRuntime.clearCaches();
             CharacterAnimationMetadataResolver.clear();
             LwjglSkinnedModel.clearSharedCache();
@@ -7535,8 +7534,7 @@ public class AetherConstructionKit extends JFrame {
         if (!current.itemProfiles().containsKey(FirstPersonCombatLibrary.normalizeId(itemId))) return;
         FirstPersonCombatLibrary.Content updated = current.withoutItemProfile(itemId);
         try {
-            FirstPersonCombatLibrary.save(FirstPersonCombatLibrary.RESOURCE_PATH, updated);
-            FirstPersonCombatLibrary.install(updated);
+            FirstPersonCombatLibrary.saveProject(updated);
             FirstPersonAnimationRuntime.clearCaches();
             CharacterAnimationMetadataResolver.clear();
             LwjglSkinnedModel.clearSharedCache();

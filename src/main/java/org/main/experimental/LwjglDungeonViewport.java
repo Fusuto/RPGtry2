@@ -30,6 +30,7 @@ import org.main.engine.RealtimeDungeonViewport;
 import org.main.engine.SkyboxSpec;
 import org.main.engine.TerrainGeometry;
 import org.main.engine.TextureManager;
+import org.lwjgl.opengl.GLCapabilities;
 import org.main.engine.GridDirection;
 import org.main.engine.LineOfSight;
 import org.lwjgl.BufferUtils;
@@ -238,18 +239,33 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             throw new IllegalStateException("Unable to initialize GLFW.");
         }
 
+        glfwDefaultWindowHints();
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, GameConfiguration.intValue("renderer.opengl.major", 4));
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, GameConfiguration.intValue("renderer.opengl.minor", 1));
+        // The current renderer still uses fixed-function OpenGL calls. Requesting
+        // compatibility explicitly prevents drivers from selecting a core-only
+        // context where calls such as glAlphaFunc are unavailable.
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_FALSE);
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
         glfwWindowHint(GLFW_RESIZABLE, resizable ? GLFW_TRUE : GLFW_FALSE);
         window = glfwCreateWindow(windowWidth, windowHeight, "Aether LWJGL Dungeon Prototype", NULL, NULL);
         if (window == NULL) {
             glfwTerminate();
-            throw new IllegalStateException("Unable to create LWJGL prototype window.");
+            throw new IllegalStateException("Unable to create an OpenGL compatibility-profile window. "
+                    + "Update the graphics driver and ensure Aether uses the dedicated GPU.");
         }
 
         glfwMakeContextCurrent(window);
-        createCapabilities();
+        GLCapabilities capabilities;
+        try {
+            capabilities = createCapabilities();
+        } catch (RuntimeException | Error error) {
+            cleanupFailedContext();
+            throw new IllegalStateException("Unable to initialize the OpenGL compatibility context.", error);
+        }
+        logOpenGlContext();
+        requireFixedFunctionCapabilities(capabilities);
         fixedPrimitives = new FixedFunctionPrimitives();
         updateDisplayRefreshRate();
         applyRenderSettings(true);
@@ -266,6 +282,53 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         glEnable(GL_ALPHA_TEST);
         glAlphaFunc(GL_GREATER, 0.10f);
         glClearColor(0.04f, 0.04f, 0.07f, 1.0f);
+    }
+
+    private void logOpenGlContext() {
+        String vendor = openGlString(GL_VENDOR);
+        String renderer = openGlString(GL_RENDERER);
+        String version = openGlString(GL_VERSION);
+        int profile = glfwGetWindowAttrib(window, GLFW_OPENGL_PROFILE);
+        String profileName = switch (profile) {
+            case GLFW_OPENGL_COMPAT_PROFILE -> "compatibility";
+            case GLFW_OPENGL_CORE_PROFILE -> "core";
+            default -> "unspecified";
+        };
+        LOGGER.info(() -> "OpenGL context: vendor=" + vendor
+                + ", renderer=" + renderer
+                + ", version=" + version
+                + ", profile=" + profileName);
+    }
+
+    private static String openGlString(int name) {
+        String value = glGetString(name);
+        return value == null || value.isBlank() ? "unknown" : value;
+    }
+
+    private void requireFixedFunctionCapabilities(GLCapabilities capabilities) {
+        List<String> missing = new ArrayList<>();
+        if (capabilities.glAlphaFunc == NULL) missing.add("glAlphaFunc");
+        if (capabilities.glBegin == NULL) missing.add("glBegin");
+        if (capabilities.glMatrixMode == NULL) missing.add("glMatrixMode");
+        if (missing.isEmpty()) {
+            return;
+        }
+
+        String details = String.join(", ", missing);
+        cleanupFailedContext();
+        throw new IllegalStateException("The graphics driver did not provide the OpenGL compatibility functions "
+                + "required by Aether: " + details + ". Update the graphics driver and ensure Aether uses the "
+                + "dedicated GPU.");
+    }
+
+    private void cleanupFailedContext() {
+        if (window != NULL) {
+            glfwMakeContextCurrent(NULL);
+            org.lwjgl.opengl.GL.setCapabilities(null);
+            glfwDestroyWindow(window);
+            window = NULL;
+        }
+        glfwTerminate();
     }
 
     @Override

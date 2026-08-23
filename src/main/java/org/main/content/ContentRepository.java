@@ -49,11 +49,25 @@ public final class ContentRepository {
         if (current != null && current.packRevision() == packRevision) {
             return current;
         }
-        return reload();
+        return rebuildIfStale();
     }
 
     public synchronized ContentSnapshot reload() throws IOException {
+        registry.reload();
+        snapshot = null;
+        return rebuildSnapshot(registry.snapshot().revision());
+    }
+
+    private synchronized ContentSnapshot rebuildIfStale() throws IOException {
         long packRevision = registry.snapshot().revision();
+        ContentSnapshot current = snapshot;
+        if (current != null && current.packRevision() == packRevision) {
+            return current;
+        }
+        return rebuildSnapshot(packRevision);
+    }
+
+    private ContentSnapshot rebuildSnapshot(long packRevision) throws IOException {
         ContentMount baseMount = baseMount();
         Accumulator accumulator = new Accumulator(loadFromMount(baseMount), baseMount.manifest().id());
 
@@ -97,7 +111,7 @@ public final class ContentRepository {
         MapDesignContentStore.saveSharedContent(delta);
         registry.reload();
         snapshot = null;
-        return reload();
+        return rebuildSnapshot(registry.snapshot().revision());
     }
 
     private static void validateProjectIds(

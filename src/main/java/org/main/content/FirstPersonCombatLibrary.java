@@ -227,6 +227,16 @@ public final class FirstPersonCombatLibrary {
         }
     }
 
+    public static Content saveProject(Content content) throws IOException {
+        Content safe = content == null ? emptyContent() : content;
+        Content published = CatalogPublicationService.publishProjectCatalogs(
+                List.of(RESOURCE_PATH),
+                () -> save(RESOURCE_PATH, safe),
+                FirstPersonCombatLibrary::loadFresh);
+        install(published);
+        return published;
+    }
+
     public static String itemKey(InventorySystem.Item item) {
         if (item == null) return "";
         String contentId = normalizeId(item.getContentId());
