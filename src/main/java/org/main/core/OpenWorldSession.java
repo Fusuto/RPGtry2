@@ -6,6 +6,7 @@ import org.main.content.ThemeLibrary;
 import org.main.content.WorldManifestLibrary;
 import org.main.content.WorldManifestLibrary.ChunkCoordinate;
 import org.main.content.WorldManifestLibrary.WorldManifest;
+import org.main.content.ContentRepository;
 import org.main.engine.DungeonMap;
 import org.main.engine.EnvironmentTheme;
 import org.main.engine.MapEntity;
@@ -33,10 +34,14 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public final class OpenWorldSession {
+public final class OpenWorldSession implements AutoCloseable {
     private static final Logger LOGGER = Logger.getLogger(OpenWorldSession.class.getName());
     public static final int WINDOW_RADIUS = 1;
     public static final int WINDOW_DIAMETER = WINDOW_RADIUS * 2 + 1;
+    private static final int MAX_CLEAN_RESIDENT_CHUNKS = 32;
+    private static final int MAX_PREPARED_TERRAIN_WINDOWS = 12;
+    private static final int MAX_PREFETCHED_MODEL_PATHS = 512;
+    private static final int MAX_PREFETCHED_CHARACTER_MODELS = 128;
 
     private final Path manifestPath;
     private final WorldManifest manifest;
@@ -57,8 +62,7 @@ public final class OpenWorldSession {
     });
     private final Object chunkLoadLock = new Object();
     private final Set<ChunkCoordinate> loadedCoordinates = new HashSet<>();
-    private MapDesignLibrary.AuthoredContent worldContent;
-    private ChunkCoordinate center;
+    private volatile ChunkCoordinate center;
     private List<EnvironmentTheme> currentEnvironmentThemes = List.of();
     private int resumeGlobalX;
     private int resumeGlobalY;
@@ -214,6 +218,7 @@ public final class OpenWorldSession {
             state.firedTriggerIds.clear();
             state.removedEntityKeys.clear();
             state.lastUpdatedEpochMs = now;
+            state.dirty = true;
         }
 
         for (MapEntity entity : capture.entities()) {
@@ -295,7 +300,9 @@ public final class OpenWorldSession {
         Map<ChunkCoordinate, PersistedChunkState> snapshots = new LinkedHashMap<>();
         for (Map.Entry<ChunkCoordinate, ChunkState> entry : chunkStates.entrySet()) {
             ChunkState state = entry.getValue();
-            snapshots.put(entry.getKey(), state.persisted());
+            if (state.dirty) {
+                snapshots.put(entry.getKey(), state.persisted());
+            }
         }
         return Map.copyOf(snapshots);
     }
@@ -303,7 +310,9 @@ public final class OpenWorldSession {
     public Map<ChunkCoordinate, PersistedChunkState> snapshotChunkStates() {
         Map<ChunkCoordinate, PersistedChunkState> snapshots = new LinkedHashMap<>();
         for (Map.Entry<ChunkCoordinate, ChunkState> entry : chunkStates.entrySet()) {
-            snapshots.put(entry.getKey(), entry.getValue().persisted());
+            if (entry.getValue().dirty) {
+                snapshots.put(entry.getKey(), entry.getValue().persisted());
+            }
         }
         return Map.copyOf(snapshots);
     }
@@ -336,6 +345,7 @@ public final class OpenWorldSession {
             state.firedTriggerIds.clear();
             state.firedTriggerIds.addAll(snapshot.firedTriggerIds());
             state.lastUpdatedEpochMs = snapshot.lastUpdatedEpochMs();
+            state.dirty = true;
             chunkStates.put(entry.getKey(), state);
         }
     }
@@ -437,10 +447,6 @@ public final class OpenWorldSession {
             }
             state.entities.add(entity);
         }
-    }
-
-    private static String normalizedText(String value) {
-        return value == null ? "" : value;
     }
 
     private PreparedTerrainWindow buildPreparedTerrainWindow(ChunkCoordinate requestedCenter) throws IOException {
@@ -717,8 +723,7 @@ public final class OpenWorldSession {
                 return null;
             }
             Path path = WorldManifestLibrary.resolveChunkPath(manifestPath, relativePath);
-            MapDesignLibrary.MapDesign design = MapDesignLibrary.load(path);
-            MapDesignLibrary.mergeAuthoredContent(design, worldContent());
+            MapDesignLibrary.MapDesign design = MapDesignLibrary.loadGeometryOnly(path);
             if (design.width() != manifest.chunkWidth() || design.height() != manifest.chunkHeight()) {
                 throw new IOException("Chunk " + coordinate + " has incompatible dimensions.");
             }
@@ -753,8 +758,21 @@ public final class OpenWorldSession {
                     prefetchedCharacterModels.add(entity.getCharacterModel());
                 }
             }
+            trimPrefetchedModels();
             return state;
         }
+    }
+
+    public int residentChunkCount() {
+        return chunkStates.size();
+    }
+
+    public long dirtyChunkCount() {
+        return chunkStates.values().stream().filter(state -> state.dirty).count();
+    }
+
+    public int preparedTerrainWindowCount() {
+        return preparedTerrainWindows.size();
     }
 
     public Set<String> prefetchedModelPathsView() {
@@ -865,6 +883,7 @@ public final class OpenWorldSession {
                         LOGGER.log(Level.WARNING, "Failed to prefetch world chunk " + coordinate + ".", exception);
                     } finally {
                         chunkPrefetches.remove(coordinate);
+                        evictCleanChunks(requestedCenter);
                     }
                     return null;
                 });
@@ -888,8 +907,12 @@ public final class OpenWorldSession {
                     try {
                         PreparedTerrainWindow prepared = buildPreparedTerrainWindow(candidate);
                         if (prepared != null) {
-                            preparedTerrainWindows.put(candidate, prepared);
-                            preparedTerrainRevision.incrementAndGet();
+                            ChunkCoordinate liveCenter = center;
+                            if (liveCenter != null && chebyshevDistance(liveCenter, candidate) <= 2) {
+                                preparedTerrainWindows.put(candidate, prepared);
+                                trimPreparedTerrain(liveCenter);
+                                preparedTerrainRevision.incrementAndGet();
+                            }
                         }
                     } catch (IOException exception) {
                         LOGGER.log(Level.WARNING,
@@ -903,13 +926,82 @@ public final class OpenWorldSession {
                 chunkPrefetchExecutor.execute(task);
             }
         }
+        evictCleanChunks(requestedCenter);
+        trimPreparedTerrain(requestedCenter);
+    }
+
+    private void evictCleanChunks(ChunkCoordinate requestedCenter) {
+        if (requestedCenter == null) {
+            return;
+        }
+        synchronized (chunkLoadLock) {
+            List<ChunkCoordinate> clean = chunkStates.entrySet().stream()
+                    .filter(entry -> !entry.getValue().dirty)
+                    .map(Map.Entry::getKey)
+                    .sorted(java.util.Comparator.comparingInt(
+                            coordinate -> -chebyshevDistance(requestedCenter, coordinate)))
+                    .toList();
+            int cleanCount = clean.size();
+            for (ChunkCoordinate coordinate : clean) {
+                boolean outsidePrefetchRing = chebyshevDistance(requestedCenter, coordinate) > 2;
+                if ((outsidePrefetchRing || cleanCount > MAX_CLEAN_RESIDENT_CHUNKS)
+                        && !loadedCoordinates.contains(coordinate)
+                        && !chunkPrefetches.containsKey(coordinate)) {
+                    if (chunkStates.remove(coordinate) != null) {
+                        cleanCount--;
+                    }
+                }
+            }
+        }
+    }
+
+    private void trimPreparedTerrain(ChunkCoordinate requestedCenter) {
+        preparedTerrainWindows.keySet().removeIf(coordinate ->
+                chebyshevDistance(requestedCenter, coordinate) > 2);
+        if (preparedTerrainWindows.size() <= MAX_PREPARED_TERRAIN_WINDOWS) {
+            return;
+        }
+        preparedTerrainWindows.keySet().stream()
+                .sorted(java.util.Comparator.comparingInt(
+                        coordinate -> -chebyshevDistance(requestedCenter, coordinate)))
+                .limit(preparedTerrainWindows.size() - MAX_PREPARED_TERRAIN_WINDOWS)
+                .toList().forEach(preparedTerrainWindows::remove);
+    }
+
+    private void trimPrefetchedModels() {
+        trimSet(prefetchedModelPaths, MAX_PREFETCHED_MODEL_PATHS);
+        trimSet(prefetchedCharacterModels, MAX_PREFETCHED_CHARACTER_MODELS);
+    }
+
+    private static <T> void trimSet(Set<T> values, int maximum) {
+        int remove = values.size() - maximum;
+        if (remove <= 0) {
+            return;
+        }
+        var iterator = values.iterator();
+        while (remove-- > 0 && iterator.hasNext()) {
+            values.remove(iterator.next());
+        }
+    }
+
+    private static int chebyshevDistance(ChunkCoordinate first, ChunkCoordinate second) {
+        return Math.max(Math.abs(first.x() - second.x()), Math.abs(first.y() - second.y()));
+    }
+
+    @Override
+    public void close() {
+        chunkPrefetches.values().forEach(task -> task.cancel(true));
+        terrainPreparationTasks.values().forEach(task -> task.cancel(true));
+        chunkPrefetchExecutor.shutdownNow();
+        chunkPrefetches.clear();
+        terrainPreparationTasks.clear();
+        preparedTerrainWindows.clear();
+        prefetchedModelPaths.clear();
+        prefetchedCharacterModels.clear();
     }
 
     private MapDesignLibrary.AuthoredContent worldContent() throws IOException {
-        if (worldContent == null) {
-            worldContent = WorldManifestLibrary.loadWorldContent(manifest, manifestPath);
-        }
-        return worldContent;
+        return ContentRepository.shared().snapshot().content();
     }
 
     private int themeIndex(List<EnvironmentTheme> themes, ThemeLibrary theme) {
@@ -1345,6 +1437,7 @@ public final class OpenWorldSession {
         private final List<MapDesignLibrary.MapTrigger> triggers;
         private final Set<String> firedTriggerIds;
         private long lastUpdatedEpochMs;
+        private boolean dirty;
 
         private ChunkState(
                 Path path,

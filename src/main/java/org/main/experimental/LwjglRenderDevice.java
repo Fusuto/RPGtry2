@@ -599,6 +599,35 @@ final class LwjglRenderDevice {
         gpuSkinnedMeshes.clear();
     }
 
+    void evictStaticModel(LwjglStaticModel model) {
+        if (model == null) {
+            return;
+        }
+        for (LwjglStaticModel.Mesh source : model.meshes()) {
+            GpuMesh mesh = staticModelMeshes.remove(source);
+            if (mesh != null) {
+                mesh.shutdown();
+            }
+        }
+    }
+
+    void evictSkinnedModel(LwjglSkinnedModel model) {
+        if (model == null) {
+            return;
+        }
+        for (LwjglSkinnedModel.SkinnedMesh source : model.meshes()) {
+            GpuMesh cpuMesh = skinnedModelMeshes.remove(source);
+            if (cpuMesh != null) {
+                cpuMesh.shutdown();
+            }
+            GpuSkinnedMesh gpuMesh = gpuSkinnedMeshes.remove(source);
+            if (gpuMesh != null) {
+                gpuMesh.shutdown();
+            }
+            skinnedVertexWorkspaces.remove(source);
+        }
+    }
+
     private GpuMesh createStaticModelMesh(LwjglStaticModel.Mesh sourceMesh) {
         int vertexCount = sourceMesh.positions().length / 3;
         float[] vertices = new float[vertexCount * GpuMesh.FLOATS_PER_VERTEX];

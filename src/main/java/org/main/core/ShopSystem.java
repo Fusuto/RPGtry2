@@ -740,7 +740,7 @@ public final class ShopSystem {
                 int y,
                 int size
         ) {
-            g.setColor(getFallbackColor(item));
+            g.setColor(ItemPresentationPalette.fallbackColor(item));
             g.fillRoundRect(x, y, size, size, 8, 8);
 
             g.setColor(Color.BLACK);
@@ -762,21 +762,6 @@ public final class ShopSystem {
             g.drawString(label, textX, textY);
 
             g.setFont(oldFont);
-        }
-
-        private Color getFallbackColor(InventorySystem.Item item) {
-            return switch (item.getItemType()) {
-                case HEAD_GEAR -> new Color(120, 120, 180);
-                case CHEST_ARMOR -> new Color(130, 90, 70);
-                case LEG_ARMOR -> new Color(90, 110, 150);
-                case RING -> new Color(200, 170, 70);
-                case WEAPON -> new Color(170, 170, 180);
-                case SHIELD -> new Color(115, 145, 165);
-                case UTILITY -> new Color(224, 164, 76);
-                case LIMB -> new Color(180, 90, 120);
-                case CONSUMABLE -> new Color(120, 180, 120);
-                case MISC -> new Color(150, 150, 150);
-            };
         }
 
         private String getItemDetails(InventorySystem.Item item) {

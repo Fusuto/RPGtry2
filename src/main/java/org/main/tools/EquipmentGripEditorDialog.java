@@ -285,7 +285,7 @@ final class EquipmentGripEditorDialog extends JDialog {
                 secondary == null ? 0 : secondary.y,
                 secondary == null ? 0 : secondary.z,
                 safe.leftArmorPath(), safe.rightArmorPath(), safe.leftCoverage(),
-                safe.rightCoverage(), safe.attachmentBone(), safe.overrides());
+                safe.rightCoverage(), safe.attachmentBone(), safe.animationComposition(), safe.overrides());
     }
 
     private JSpinner selectedX() { return secondaryMode.isSelected() ? secondaryX : gripX; }

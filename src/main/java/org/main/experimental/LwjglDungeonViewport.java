@@ -30,6 +30,8 @@ import org.main.engine.RealtimeDungeonViewport;
 import org.main.engine.SkyboxSpec;
 import org.main.engine.TerrainGeometry;
 import org.main.engine.TextureManager;
+import org.main.engine.GridDirection;
+import org.main.engine.LineOfSight;
 import org.lwjgl.BufferUtils;
 
 import javax.imageio.ImageIO;
@@ -90,7 +92,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         }
     };
     private final LwjglBattleSceneRenderer battleSceneRenderer = new LwjglBattleSceneRenderer(textureCache);
-    private final Map<String, LwjglStaticModel> staticModelCache = new HashMap<>();
+    private final Map<String, LwjglStaticModel> staticModelCache = new LinkedHashMap<>(128, 0.75f, true);
     private final Map<LwjglStaticModel.Mesh, FixedMeshBuffers> fixedViewModelMeshes =
             new IdentityHashMap<>();
     private final Map<ModelIconBoundsKey, ModelIconBounds> modelIconBoundsCache = new HashMap<>();
@@ -102,7 +104,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         thread.setDaemon(true);
         return thread;
     });
-    private final Map<CharacterModelDefinition, LwjglSkinnedModel> worldSkinnedModelCache = new HashMap<>();
+    private final Map<CharacterModelDefinition, LwjglSkinnedModel> worldSkinnedModelCache =
+            new LinkedHashMap<>(64, 0.75f, true);
     private final Map<CharacterModelDefinition, Future<LwjglSkinnedModel>> pendingWorldSkinnedImports = new HashMap<>();
     private final Set<CharacterModelDefinition> failedWorldSkinnedModels = new HashSet<>();
     private final Set<CharacterModelDefinition> failedGpuSkinningModels = new HashSet<>();
@@ -731,6 +734,14 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         return frameProfiler.benchmarkSnapshot();
     }
 
+    RendererResidencyMetrics rendererResidencyMetrics() {
+        return new RendererResidencyMetrics(
+                textureCache.textureCount(), textureCache.uploadCount(), textureCache.uploadedBytes(),
+                staticModelCache.size(), pendingStaticModelImports.size(),
+                worldSkinnedModelCache.size(), pendingWorldSkinnedImports.size(),
+                terrainCache.size(), preparedTerrainCellBuilds.size(), pendingTerrainCellUploads.size());
+    }
+
     void resetProfiler() {
         frameProfiler.reset();
     }
@@ -1255,62 +1266,21 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     }
 
     private double animatedYawDegrees(DungeonRenderContext context) {
-        return yawDegrees(context.direction()) - Math.toDegrees(context.cameraRotationRadians());
+        return GridDirection.yawDegrees(context.direction()) - Math.toDegrees(context.cameraRotationRadians());
     }
 
     private double animatedCameraX(DungeonRenderContext context) {
         return context.playerX()
                 + 0.5
-                + forwardX(context.direction()) * context.cameraOffsetForward()
-                + rightX(context.direction()) * context.cameraOffsetSide();
+                + GridDirection.forwardX(context.direction()) * context.cameraOffsetForward()
+                + GridDirection.rightX(context.direction()) * context.cameraOffsetSide();
     }
 
     private double animatedCameraZ(DungeonRenderContext context) {
         return context.playerY()
                 + 0.5
-                + forwardY(context.direction()) * context.cameraOffsetForward()
-                + rightY(context.direction()) * context.cameraOffsetSide();
-    }
-
-    private double yawDegrees(int direction) {
-        return switch (direction) {
-            case 1 -> -90.0;
-            case 2 -> 180.0;
-            case 3 -> 90.0;
-            default -> 0.0;
-        };
-    }
-
-    private int forwardX(int direction) {
-        return switch (direction) {
-            case 1 -> 1;
-            case 3 -> -1;
-            default -> 0;
-        };
-    }
-
-    private int forwardY(int direction) {
-        return switch (direction) {
-            case 0 -> -1;
-            case 2 -> 1;
-            default -> 0;
-        };
-    }
-
-    private int rightX(int direction) {
-        return switch (direction) {
-            case 0 -> 1;
-            case 2 -> -1;
-            default -> 0;
-        };
-    }
-
-    private int rightY(int direction) {
-        return switch (direction) {
-            case 1 -> 1;
-            case 3 -> -1;
-            default -> 0;
-        };
+                + GridDirection.forwardY(context.direction()) * context.cameraOffsetForward()
+                + GridDirection.rightY(context.direction()) * context.cameraOffsetSide();
     }
 
     private List<EnemyLabel> projectEnemyLabels(
@@ -1423,39 +1393,8 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
     }
 
     private boolean hasLineOfSight(DungeonRenderContext context, int targetX, int targetY) {
-        int x0 = context.playerX();
-        int y0 = context.playerY();
-        int dx = Math.abs(targetX - x0);
-        int dy = Math.abs(targetY - y0);
-        int sx = x0 < targetX ? 1 : -1;
-        int sy = y0 < targetY ? 1 : -1;
-        int error = dx - dy;
-        int x = x0;
-        int y = y0;
-
-        while (x != targetX || y != targetY) {
-            int previousX = x;
-            int previousY = y;
-            int doubledError = error * 2;
-            if (doubledError > -dy) {
-                error -= dy;
-                x += sx;
-            }
-            if (doubledError < dx) {
-                error += dx;
-                y += sy;
-            }
-
-            if (context.map().isWallLike(x, y)
-                    || TerrainGeometry.edgeKind(context.map(), previousX, previousY, x, y) == org.main.engine.TerrainEdgeKind.CLIFF) {
-                return false;
-            }
-
-            if (x == targetX && y == targetY) {
-                return true;
-            }
-        }
-        return true;
+        return context != null && LineOfSight.between(context.map(), context.playerX(), context.playerY(),
+                targetX, targetY, LineOfSight.Blocker.WALL_LIKE, true);
     }
 
     private void drawStaticModel(LwjglDungeonSceneBuilder.ModelInstance instance) {
@@ -1627,17 +1566,6 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
         lightSpatialIndex = new LightSpatialIndex(map);
         lightSpatialIndexMap = map;
         lightSpatialIndexRevision = map.renderRevision();
-    }
-
-    private double distanceSquaredToCamera(MapLight light) {
-        if (light == null) {
-            return Double.POSITIVE_INFINITY;
-        }
-        double lightX = light.x() + 0.5 + light.offsetX();
-        double lightZ = light.y() + 0.5 + light.offsetZ();
-        double dx = lightX - currentCameraX;
-        double dz = lightZ - currentCameraZ;
-        return dx * dx + dz * dz;
     }
 
     private void renderGatheringToolViewModel(GameState.MiningViewModelState viewModelState, int framebufferWidth, int framebufferHeight) {
@@ -1846,6 +1774,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             LwjglSkinnedModel loaded = pending.get();
             pendingWorldSkinnedImports.remove(definition);
             worldSkinnedModelCache.put(definition, loaded);
+            trimWorldSkinnedModelCache();
             return loaded;
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
@@ -1866,8 +1795,26 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                 || pendingWorldSkinnedImports.containsKey(definition)) {
             return;
         }
+        int maximumPending = Math.max(4, GameConfiguration.intValue(
+                "renderer.staticModel.maxPendingImports", 64));
+        if (pendingWorldSkinnedImports.size() >= maximumPending) {
+            return;
+        }
         pendingWorldSkinnedImports.put(definition,
                 staticModelExecutor.submit(() -> LwjglSkinnedModel.loadCached(definition)));
+    }
+
+    private void trimWorldSkinnedModelCache() {
+        int maximum = Math.max(8, GameConfiguration.intValue(
+                "renderer.skinnedModel.gpuCache.maxEntries", 64));
+        while (worldSkinnedModelCache.size() > maximum) {
+            var iterator = worldSkinnedModelCache.entrySet().iterator();
+            Map.Entry<CharacterModelDefinition, LwjglSkinnedModel> eldest = iterator.next();
+            iterator.remove();
+            if (renderDevice != null) {
+                renderDevice.evictSkinnedModel(eldest.getValue());
+            }
+        }
     }
 
     private void drawModelMesh(LwjglStaticModel.Mesh mesh) {
@@ -2248,6 +2195,11 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                 || queuedStaticModelPreloads.contains(normalizedPath)) {
             return;
         }
+        int maximumPending = Math.max(4, GameConfiguration.intValue(
+                "renderer.staticModel.maxPendingImports", 64));
+        if (pendingStaticModelImports.size() >= maximumPending) {
+            return;
+        }
         pendingStaticModelPreloads.addLast(normalizedPath);
         queuedStaticModelPreloads.add(normalizedPath);
         pendingStaticModelImports.put(normalizedPath,
@@ -2311,6 +2263,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             queuedStaticModelPreloads.remove(normalizedPath);
             if (loaded != null) {
                 staticModelCache.put(normalizedPath, loaded);
+                trimStaticModelCache();
             }
             return loaded;
         } catch (InterruptedException exception) {
@@ -2324,6 +2277,27 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
             LOGGER.log(Level.WARNING,
                     "Failed to load static model " + normalizedPath, exception.getCause());
             return null;
+        }
+    }
+
+    private void trimStaticModelCache() {
+        int maximum = Math.max(16, GameConfiguration.intValue(
+                "renderer.staticModel.gpuCache.maxEntries", 128));
+        while (staticModelCache.size() > maximum) {
+            var iterator = staticModelCache.entrySet().iterator();
+            Map.Entry<String, LwjglStaticModel> eldest = iterator.next();
+            LwjglStaticModel model = eldest.getValue();
+            iterator.remove();
+            if (renderDevice != null) {
+                renderDevice.evictStaticModel(model);
+            }
+            for (LwjglStaticModel.Mesh mesh : model.meshes()) {
+                FixedMeshBuffers buffers = fixedViewModelMeshes.remove(mesh);
+                if (buffers != null) {
+                    buffers.shutdown();
+                }
+            }
+            modelIconBoundsCache.keySet().removeIf(key -> key.model() == model);
         }
     }
 
@@ -2394,6 +2368,20 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
                     + String.format("%.1f", lastLookState.pitchOffsetDegrees()));
         }
         return lines;
+    }
+
+    record RendererResidencyMetrics(
+            int textures,
+            long textureUploads,
+            long textureUploadedBytes,
+            int staticModels,
+            int pendingStaticModels,
+            int skinnedModels,
+            int pendingSkinnedModels,
+            int terrainCells,
+            int preparedTerrainBuilds,
+            int pendingTerrainUploads
+    ) {
     }
 
     private static int clamp(int value, int min, int max) {

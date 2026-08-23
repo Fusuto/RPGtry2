@@ -20,7 +20,7 @@ class FirstPersonAttachmentBoneTest {
     @TempDir Path temporaryDirectory;
 
     @Test
-    void schemaTwoMigratesBlankAndSchemaThreeRoundTripsExplicitBone() throws Exception {
+    void currentSchemaRoundTripsExplicitBoneAndRejectsOldSchemas() throws Exception {
         Path schemaTwo = temporaryDirectory.resolve("schema-2.properties");
         Properties properties = new Properties();
         properties.setProperty("schemaVersion", "2");
@@ -39,24 +39,26 @@ class FirstPersonAttachmentBoneTest {
             properties.store(output, "schema two fixture");
         }
 
-        FirstPersonCombatLibrary.Content migrated = FirstPersonCombatLibrary.load(schemaTwo);
-        FirstPersonCombatLibrary.ItemProfile oldProfile = migrated.itemProfiles().get("dagger");
-        assertNotNull(oldProfile);
-        assertEquals("", oldProfile.attachmentBone());
-        assertEquals("Hand.R", migrated.resolveAttachmentBone(oldProfile));
+        assertThrows(java.io.IOException.class, () -> FirstPersonCombatLibrary.load(schemaTwo));
+
+        FirstPersonCombatLibrary.Content current = FirstPersonCombatLibrary.loadFresh();
+        FirstPersonCombatLibrary.ItemProfile oldProfile = current.itemProfiles().values().stream()
+                .findFirst().orElseThrow();
 
         FirstPersonCombatLibrary.ItemProfile explicit = copyWithBone(oldProfile, "ForeArm.R");
-        FirstPersonCombatLibrary.Content updated = migrated.withItemProfile(explicit);
+        FirstPersonCombatLibrary.Content updated = current.withItemProfile(explicit);
         Path schemaThree = temporaryDirectory.resolve("schema-3.properties");
         FirstPersonCombatLibrary.save(schemaThree, updated);
 
         Properties written = new Properties();
         try (var input = Files.newInputStream(schemaThree)) { written.load(input); }
-        assertEquals("3", written.getProperty("schemaVersion"));
+        assertEquals("4", written.getProperty("schemaVersion"));
         FirstPersonCombatLibrary.ItemProfile roundTripped =
-                FirstPersonCombatLibrary.load(schemaThree).itemProfiles().get("dagger");
+                FirstPersonCombatLibrary.load(schemaThree).itemProfiles().get(explicit.itemId());
         assertEquals("ForeArm.R", roundTripped.attachmentBone());
         assertEquals(oldProfile.socketTransform(), roundTripped.socketTransform());
+        assertEquals(FirstPersonCombatLibrary.AnimationCompositionMode.AUTO,
+                roundTripped.animationComposition());
     }
 
     @Test

@@ -1774,14 +1774,6 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
         );
     }
 
-    private void addReward(DefaultListModel<MapDesignLibrary.RewardDefinition> model) {
-        MapDesignLibrary.RewardDefinition reward = showRewardDialog(null);
-        if (reward != null) {
-            model.addElement(reward);
-            markDirty();
-        }
-    }
-
     private void editReward(DefaultListModel<MapDesignLibrary.RewardDefinition> model, int index) {
         if (index < 0) {
             return;

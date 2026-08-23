@@ -9,6 +9,8 @@ import org.main.content.SkillDefinition;
 import org.main.content.SkillEffectDefinition;
 import org.main.content.StatusDefinition;
 import org.main.core.Library;
+import org.main.core.CombatElement;
+import org.main.engine.AssetRepository;
 
 import javax.swing.BorderFactory;
 import javax.swing.DefaultComboBoxModel;
@@ -94,6 +96,7 @@ public final class BattleSkillEditorWorkspace extends JDialog {
             new JComboBox<>(Library.SkillTargetShape.values());
     private final JComboBox<Library.BattleTargetingMode> skillMode =
             new JComboBox<>(Library.BattleTargetingMode.values());
+    private final JComboBox<CombatElement> skillElement = new JComboBox<>(CombatElement.values());
     private final JTextField skillSound = new JTextField(28);
     private final JComboBox<String> skillPresentation = new JComboBox<>(new String[]{
             "AUTO", "PHYSICAL_SKILL", "RANGED", "SPELL", "HEAL", "DEFEND", "SUMMON", "UTILITY", "DEBUG"
@@ -234,6 +237,7 @@ public final class BattleSkillEditorWorkspace extends JDialog {
         addRow(identity, "Target Team", skillTeam);
         addRow(identity, "Target Shape", skillShape);
         addRow(identity, "Targeting Mode", skillMode);
+        addRow(identity, "Damage Element", skillElement);
         addRow(identity, "Cooldown (seconds)", skillCooldown);
         addRow(identity, "Use Sound", skillSound);
         addRow(identity, "Presentation", skillPresentation);
@@ -365,6 +369,7 @@ public final class BattleSkillEditorWorkspace extends JDialog {
         skillTeam.setSelectedItem(skill.targetTeam());
         skillShape.setSelectedItem(skill.targetShape());
         skillMode.setSelectedItem(skill.targetingMode());
+        skillElement.setSelectedItem(skill.element());
         skillCooldown.setValue(skill.cooldownSeconds());
         skillSound.setText(skill.useSoundPath());
         skillPresentation.setSelectedItem(skill.presentationStyle());
@@ -451,7 +456,8 @@ public final class BattleSkillEditorWorkspace extends JDialog {
                 String.valueOf(skillPresentation.getSelectedItem()),
                 ((Number) skillCooldown.getValue()).doubleValue(),
                 consumesAutoAction.isSelected(),
-                effects);
+                effects,
+                (CombatElement) skillElement.getSelectedItem());
     }
 
     private StatusDefinition draftStatus() {
@@ -534,7 +540,7 @@ public final class BattleSkillEditorWorkspace extends JDialog {
                     List.of(new SkillEffectDefinition(
                             "damage", SkillEffectDefinition.RecipientScope.RESOLVED_TARGETS,
                             SkillEffectDefinition.ActivationCondition.ALWAYS, 1.0,
-                            Map.of("potency", "5"))));
+                            Map.of("potency", "5"))), CombatElement.NEUTRAL);
             skills.put(id, created);
             refreshCatalog(id);
         }
@@ -558,7 +564,7 @@ public final class BattleSkillEditorWorkspace extends JDialog {
                     id, source.displayName() + " Copy", source.description(), source.targetShape(),
                     source.targetTeam(), source.targetingMode(), source.useSoundPath(),
                     source.presentationStyle(), source.cooldownSeconds(),
-                    source.consumesAutoAction(), source.effects()));
+                    source.consumesAutoAction(), source.effects(), source.element()));
             refreshCatalog(id);
         }
     }
@@ -684,9 +690,11 @@ public final class BattleSkillEditorWorkspace extends JDialog {
     private boolean assetExists(String assetPath) {
         String normalized = assetPath == null ? "" : assetPath.trim().replace('\\', '/');
         if (normalized.isBlank()) return true;
-        Path source = Path.of("src", "main", "resources").resolve(normalized);
-        return Files.isRegularFile(source)
-                || getClass().getClassLoader().getResource(normalized) != null;
+        try {
+            return AssetRepository.shared().describe(normalized).isPresent();
+        } catch (IOException ignored) {
+            return false;
+        }
     }
 
     private void editEffect(SkillEffectDefinition source, int replaceIndex) {
@@ -896,7 +904,7 @@ public final class BattleSkillEditorWorkspace extends JDialog {
                     skill.id(), skill.displayName(), skill.description(), skill.targetShape(),
                     skill.targetTeam(), skill.targetingMode(), skill.useSoundPath(),
                     skill.presentationStyle(), skill.cooldownSeconds(),
-                    skill.consumesAutoAction(), effects));
+                    skill.consumesAutoAction(), effects, skill.element()));
         }
         skills.clear();
         replacements.forEach(skill -> skills.put(skill.id(), skill));

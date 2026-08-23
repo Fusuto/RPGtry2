@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -50,6 +51,24 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
     private final Supplier<String> rigIdSupplier;
     private final Supplier<FirstPersonCombatLibrary.CameraFraming> cameraFramingSupplier;
     private final JComboBox<Pose> poseBox = new JComboBox<>(Pose.values());
+    private final JComboBox<FirstPersonCombatLibrary.AnimationSlot> leftActionBox =
+            new JComboBox<>(new FirstPersonCombatLibrary.AnimationSlot[]{
+                    FirstPersonCombatLibrary.AnimationSlot.IDLE_LEFT,
+                    FirstPersonCombatLibrary.AnimationSlot.BLOCK_LEFT,
+                    FirstPersonCombatLibrary.AnimationSlot.ATTACK_LEFT,
+                    FirstPersonCombatLibrary.AnimationSlot.CAST_LEFT
+            });
+    private final JComboBox<FirstPersonCombatLibrary.AnimationSlot> rightActionBox =
+            new JComboBox<>(new FirstPersonCombatLibrary.AnimationSlot[]{
+                    FirstPersonCombatLibrary.AnimationSlot.IDLE_RIGHT,
+                    FirstPersonCombatLibrary.AnimationSlot.BLOCK_RIGHT,
+                    FirstPersonCombatLibrary.AnimationSlot.ATTACK_RIGHT,
+                    FirstPersonCombatLibrary.AnimationSlot.CAST_RIGHT
+            });
+    private final JSlider leftTimeline = new JSlider(0, 1000, 0);
+    private final JSlider rightTimeline = new JSlider(0, 1000, 0);
+    private final JPanel coupledActionControls = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+    private final JPanel independentActionControls = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final JButton playButton = new JButton("Play");
     private final JSlider timeline = new JSlider(0, 1000, 0);
     private final JCheckBox loopBox = new JCheckBox("Loop", true);
@@ -124,8 +143,22 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
         this.cameraFramingSupplier = cameraFramingSupplier == null ? () -> null : cameraFramingSupplier;
         JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
         controls.add(reloadButton);
-        controls.add(new JLabel("Combat Pose"));
-        controls.add(poseBox);
+        coupledActionControls.add(new JLabel("Combat Pose"));
+        coupledActionControls.add(poseBox);
+        controls.add(coupledActionControls);
+        leftTimeline.setPreferredSize(new Dimension(90, 24));
+        rightTimeline.setPreferredSize(new Dimension(90, 24));
+        independentActionControls.add(new JLabel("Left"));
+        independentActionControls.add(leftActionBox);
+        independentActionControls.add(leftTimeline);
+        independentActionControls.add(new JLabel("Right"));
+        independentActionControls.add(rightActionBox);
+        independentActionControls.add(rightTimeline);
+        JButton guardAttack = new JButton("Guard + Attack");
+        JButton guardCast = new JButton("Guard + Cast");
+        independentActionControls.add(guardAttack);
+        independentActionControls.add(guardCast);
+        controls.add(independentActionControls);
         controls.add(playButton);
         JButton restartButton = new JButton("|<");
         JButton previousFrameButton = new JButton("<");
@@ -160,6 +193,28 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
             canvas.invalidateFrameCache();
             canvas.repaint();
         });
+        Runnable layeredPreviewChanged = () -> {
+            canvas.invalidateSkinCache();
+            canvas.invalidateFrameCache();
+            canvas.repaint();
+        };
+        leftActionBox.addActionListener(event -> layeredPreviewChanged.run());
+        rightActionBox.addActionListener(event -> layeredPreviewChanged.run());
+        leftTimeline.addChangeListener(event -> layeredPreviewChanged.run());
+        rightTimeline.addChangeListener(event -> layeredPreviewChanged.run());
+        guardAttack.addActionListener(event -> {
+            leftActionBox.setSelectedItem(FirstPersonCombatLibrary.AnimationSlot.BLOCK_LEFT);
+            leftTimeline.setValue(550);
+            rightActionBox.setSelectedItem(FirstPersonCombatLibrary.AnimationSlot.ATTACK_RIGHT);
+            rightTimeline.setValue(550);
+        });
+        guardCast.addActionListener(event -> {
+            leftActionBox.setSelectedItem(FirstPersonCombatLibrary.AnimationSlot.BLOCK_LEFT);
+            leftTimeline.setValue(550);
+            rightActionBox.setSelectedItem(FirstPersonCombatLibrary.AnimationSlot.CAST_RIGHT);
+            rightTimeline.setValue(720);
+        });
+        updateCompositionControls();
         playButton.addActionListener(event -> {
             if (animationTimer.isRunning()) {
                 stopAnimation();
@@ -236,6 +291,7 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
     }
 
     void refreshPose() {
+        updateCompositionControls();
         canvas.invalidateFrameCache();
         canvas.repaint();
     }
@@ -306,7 +362,16 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
     }
 
     void reloadPreview() {
+        updateCompositionControls();
         if (reloadButton.isEnabled()) reloadButton.doClick();
+    }
+
+    private void updateCompositionControls() {
+        FirstPersonCombatLibrary.ItemProfile profile = itemProfileSupplier.get();
+        boolean independent = profile != null
+                && profile.animationComposition().independent(Boolean.TRUE.equals(twoHandedSupplier.get()));
+        coupledActionControls.setVisible(!independent);
+        independentActionControls.setVisible(independent);
     }
 
     void selectAnimationSlot(FirstPersonCombatLibrary.AnimationSlot slot) {
@@ -315,7 +380,7 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
             case IDLE_LEFT, IDLE_RIGHT -> Pose.REST;
             case ATTACK_LEFT, ATTACK_RIGHT -> Pose.ATTACK;
             case BLOCK_LEFT, BLOCK_RIGHT -> Pose.BLOCK;
-            case CAST -> Pose.CAST;
+            case CAST_LEFT, CAST_RIGHT, CAST -> Pose.CAST;
             case HIT -> Pose.HIT;
             case DODGE -> Pose.DODGE;
         };
@@ -392,7 +457,12 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
                     == FirstPersonCombatLibrary.WieldHand.LEFT
                     ? FirstPersonCombatLibrary.AnimationSlot.BLOCK_LEFT
                     : FirstPersonCombatLibrary.AnimationSlot.BLOCK_RIGHT;
-            case CAST -> FirstPersonCombatLibrary.AnimationSlot.CAST;
+            case CAST -> profile.animationComposition().independent(
+                    Boolean.TRUE.equals(twoHandedSupplier.get()))
+                    ? animationHand == FirstPersonCombatLibrary.WieldHand.LEFT
+                    ? FirstPersonCombatLibrary.AnimationSlot.CAST_LEFT
+                    : FirstPersonCombatLibrary.AnimationSlot.CAST_RIGHT
+                    : FirstPersonCombatLibrary.AnimationSlot.CAST;
             case HIT -> FirstPersonCombatLibrary.AnimationSlot.HIT;
             case DODGE -> FirstPersonCombatLibrary.AnimationSlot.DODGE;
         };
@@ -497,7 +567,8 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
     ) throws Exception {
         if (path == null || path.isBlank()) return null;
         CharacterModelDefinition definition = new CharacterModelDefinition(
-                path, rigDefinition.rigId(), 1, 0, 0, rigDefinition.animationBindings());
+                path, rigDefinition.rigId(), 1, 0, 0,
+                rigDefinition.animationBindings(), rigDefinition.namedAnimationBindings());
         LwjglSkinnedModel attachment = LwjglSkinnedModel.loadCached(definition);
         return signature.equals(attachment.skeletonSignature()) ? attachment : null;
     }
@@ -789,11 +860,15 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
             }
             FirstPersonCombatLibrary.RigDefinition rig = liveRigDefinition();
             FirstPersonCombatLibrary.ItemProfile profile = liveProfile();
+            boolean independent = profile.animationComposition().independent(
+                    Boolean.TRUE.equals(twoHandedSupplier.get()));
+            LwjglSkinnedModel.Pose layeredRigPose = independent
+                    ? independentPose(skeletalPreview.rig(), rig) : null;
             Matrix4d root = skeletalRoot(
-                    rig, skeletalPreview.rig(), slot, progress, cameraFraming(mode));
+                    rig, skeletalPreview.rig(), slot, progress, cameraFraming(mode), layeredRigPose);
             List<PaintTriangle> sceneTriangles = new ArrayList<>();
-            Map<LwjglSkinnedModel, LwjglSkinnedModel.Frame> frameCache =
-                    skinFrameCache(slot, progress);
+            Map<LwjglSkinnedModel, LwjglSkinnedModel.Frame> frameCache = independent
+                    ? independentSkinFrames(rig) : skinFrameCache(slot, progress);
             appendSkinnedAttachment(sceneTriangles, skeletalPreview.leftArm(), slot, progress, root,
                     FirstPersonCombatLibrary.WieldHand.LEFT,
                     profile.leftCoverage(), rig.leftVisibleMeshes(), frameCache);
@@ -815,9 +890,9 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
                         profile.wieldHand();
                 String attachmentBone = FirstPersonAnimationRuntime.resolveAttachmentBone(
                         rig, profile, skeletalPreview.rig());
-                Matrix4f socket = socketTransformWithoutScale(
-                        skeletalPreview.rig().nodeTransformNormalized(
-                                slot, progress, attachmentBone));
+                Matrix4f socket = socketTransformWithoutScale(layeredRigPose == null
+                        ? skeletalPreview.rig().nodeTransformNormalized(slot, progress, attachmentBone)
+                        : skeletalPreview.rig().nodeTransform(layeredRigPose, attachmentBone));
                 selectedAttachmentTransform = socket;
                 if (socket != null) {
                     Matrix4d equipmentTransform = new Matrix4d(root)
@@ -847,6 +922,54 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
             g.drawString("Skeletal rig preview - " + slot.name(),
                     viewport.x + 18, viewport.y + 28);
             return true;
+        }
+
+        private Map<LwjglSkinnedModel, LwjglSkinnedModel.Frame> independentSkinFrames(
+                FirstPersonCombatLibrary.RigDefinition rig
+        ) {
+            IdentityHashMap<LwjglSkinnedModel, LwjglSkinnedModel.Frame> frames = new IdentityHashMap<>();
+            for (LwjglSkinnedModel source : List.of(
+                    skeletalPreview.rig(),
+                    skeletalPreview.leftArm() == null ? skeletalPreview.rig() : skeletalPreview.leftArm(),
+                    skeletalPreview.rightArm() == null ? skeletalPreview.rig() : skeletalPreview.rightArm())) {
+                frames.put(source, snapshotFrame(source.skinPose(independentPose(source, rig))));
+            }
+            if (skeletalPreview.leftArmor() != null) frames.put(skeletalPreview.leftArmor(),
+                    snapshotFrame(skeletalPreview.leftArmor().skinPose(
+                            independentPose(skeletalPreview.leftArmor(), rig))));
+            if (skeletalPreview.rightArmor() != null) frames.put(skeletalPreview.rightArmor(),
+                    snapshotFrame(skeletalPreview.rightArmor().skinPose(
+                            independentPose(skeletalPreview.rightArmor(), rig))));
+            return frames;
+        }
+
+        private LwjglSkinnedModel.Pose independentPose(
+                LwjglSkinnedModel source,
+                FirstPersonCombatLibrary.RigDefinition rig
+        ) {
+            Set<String> leftMask = source.descendantNodeNames(rig.leftShoulderBone());
+            Set<String> rightMask = source.descendantNodeNames(rig.rightShoulderBone());
+            LinkedHashSet<String> globalMask = new LinkedHashSet<>(source.allNodeNames());
+            globalMask.removeAll(leftMask);
+            globalMask.removeAll(rightMask);
+            FirstPersonCombatLibrary.AnimationSlot left =
+                    (FirstPersonCombatLibrary.AnimationSlot) leftActionBox.getSelectedItem();
+            FirstPersonCombatLibrary.AnimationSlot right =
+                    (FirstPersonCombatLibrary.AnimationSlot) rightActionBox.getSelectedItem();
+            String leftKey = left == null ? "IDLE_LEFT" : left.name();
+            String rightKey = right == null ? "IDLE_RIGHT" : right.name();
+            if (!source.hasNamedClip(leftKey)) leftKey = "IDLE_LEFT";
+            if (!source.hasNamedClip(rightKey)) rightKey = "IDLE_RIGHT";
+            List<LwjglSkinnedModel.PoseLayer> layers = new ArrayList<>();
+            if (source.hasNamedClip("IDLE_RIGHT")) layers.add(new LwjglSkinnedModel.PoseLayer(
+                    null, new LwjglSkinnedModel.NamedSample("IDLE_RIGHT", 0), 1, globalMask));
+            if (source.hasNamedClip(leftKey)) layers.add(new LwjglSkinnedModel.PoseLayer(
+                    null, new LwjglSkinnedModel.NamedSample(leftKey,
+                    leftTimeline.getValue() / 1000.0), 1, leftMask));
+            if (source.hasNamedClip(rightKey)) layers.add(new LwjglSkinnedModel.PoseLayer(
+                    null, new LwjglSkinnedModel.NamedSample(rightKey,
+                    rightTimeline.getValue() / 1000.0), 1, rightMask));
+            return source.composePose(layers);
         }
 
         private void drawSkeletonPicker(
@@ -973,6 +1096,17 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
                 double progress,
                 FirstPersonCombatLibrary.CameraFraming camera
         ) {
+            return skeletalRoot(rig, source, slot, progress, camera, null);
+        }
+
+        private Matrix4d skeletalRoot(
+                FirstPersonCombatLibrary.RigDefinition rig,
+                LwjglSkinnedModel source,
+                CharacterModelDefinition.AnimationSlot slot,
+                double progress,
+                FirstPersonCombatLibrary.CameraFraming camera,
+                LwjglSkinnedModel.Pose composedPose
+        ) {
             FirstPersonCombatLibrary.CameraFraming framing = camera == null
                     ? FirstPersonCombatLibrary.CameraFraming.identity() : camera;
             Matrix4d root = new Matrix4d()
@@ -985,8 +1119,9 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
                     .rotateZ(Math.toRadians(rig.rotationZ() + framing.rotationZ()))
                     .scale(rig.scale());
             if (!rig.cameraAnchorBone().isBlank()) {
-                Matrix4f anchor = source.nodeTransformNormalized(
-                        slot, progress, rig.cameraAnchorBone());
+                Matrix4f anchor = composedPose == null
+                        ? source.nodeTransformNormalized(slot, progress, rig.cameraAnchorBone())
+                        : source.nodeTransform(composedPose, rig.cameraAnchorBone());
                 if (anchor != null) {
                     Vector3f position = anchor.getTranslation(new Vector3f());
                     root.translate(-position.x, -position.y, -position.z);
@@ -1012,7 +1147,12 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
                         ? profile.wieldHand() : hand.opposite()) == FirstPersonCombatLibrary.WieldHand.LEFT
                         ? FirstPersonCombatLibrary.AnimationSlot.BLOCK_LEFT
                         : FirstPersonCombatLibrary.AnimationSlot.BLOCK_RIGHT;
-                case CAST -> FirstPersonCombatLibrary.AnimationSlot.CAST;
+                case CAST -> profile.animationComposition().independent(
+                        Boolean.TRUE.equals(twoHandedSupplier.get()))
+                        ? hand == FirstPersonCombatLibrary.WieldHand.LEFT
+                        ? FirstPersonCombatLibrary.AnimationSlot.CAST_LEFT
+                        : FirstPersonCombatLibrary.AnimationSlot.CAST_RIGHT
+                        : FirstPersonCombatLibrary.AnimationSlot.CAST;
                 case HIT -> FirstPersonCombatLibrary.AnimationSlot.HIT;
                 case DODGE -> FirstPersonCombatLibrary.AnimationSlot.DODGE;
             };
@@ -1073,7 +1213,12 @@ final class EquipmentCombinationPreviewPanel extends JPanel {
                         == FirstPersonCombatLibrary.WieldHand.LEFT
                         ? FirstPersonCombatLibrary.AnimationSlot.BLOCK_LEFT
                         : FirstPersonCombatLibrary.AnimationSlot.BLOCK_RIGHT;
-                case CAST -> FirstPersonCombatLibrary.AnimationSlot.CAST;
+                case CAST -> profile.animationComposition().independent(
+                        Boolean.TRUE.equals(twoHandedSupplier.get()))
+                        ? animationHand == FirstPersonCombatLibrary.WieldHand.LEFT
+                        ? FirstPersonCombatLibrary.AnimationSlot.CAST_LEFT
+                        : FirstPersonCombatLibrary.AnimationSlot.CAST_RIGHT
+                        : FirstPersonCombatLibrary.AnimationSlot.CAST;
                 case HIT -> FirstPersonCombatLibrary.AnimationSlot.HIT;
                 case DODGE -> FirstPersonCombatLibrary.AnimationSlot.DODGE;
             };

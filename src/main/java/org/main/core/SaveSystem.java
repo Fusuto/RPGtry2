@@ -5,18 +5,22 @@ import org.main.content.BattleContentCatalog;
 import org.main.content.PlayerRegionLibrary;
 import org.main.content.WorldManifestLibrary;
 import org.main.engine.DungeonMap;
+import org.main.engine.ApplicationPaths;
 import org.main.engine.MapLight;
 import org.main.engine.MapLightingSettings;
 import org.main.engine.MapGeometryData;
 import org.main.engine.MapPaintData;
 import org.main.engine.MapEntity;
 import org.main.engine.MobAreaData;
+import org.main.engine.AssetRepository;
+import org.main.pack.PackLock;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -30,7 +34,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 public final class SaveSystem {
-    private static final Path SAVE_PATH = Path.of("data", "saves", "save.properties");
+    private static final int SAVE_SCHEMA_VERSION = 1;
+    private static final Path SAVE_PATH = ApplicationPaths.dataFolder().resolve("saves").resolve("save.properties");
 
     private SaveSystem() {
     }
@@ -52,6 +57,9 @@ public final class SaveSystem {
 
         Properties properties = new Properties();
         PlayerCharacter player = gameState.getPlayerCharacter();
+
+        properties.setProperty("save.schemaVersion", String.valueOf(SAVE_SCHEMA_VERSION));
+        AssetRepository.shared().registry().activePackLock().writeTo(properties, "packLock.");
 
         properties.setProperty("player.name", player.getName());
         properties.setProperty("player.region", player.getPlayerRegion() == null ? PlayerRegionLibrary.MIDLANDS.name() : player.getPlayerRegion().name());
@@ -101,8 +109,15 @@ public final class SaveSystem {
 
         saveQuestRuntime(properties, gameState.getQuestRuntime().snapshots());
 
-        try (OutputStream outputStream = Files.newOutputStream(SAVE_PATH)) {
+        Path temporary = SAVE_PATH.resolveSibling(SAVE_PATH.getFileName() + ".new");
+        try (OutputStream outputStream = Files.newOutputStream(temporary)) {
             properties.store(outputStream, "Aether save");
+        }
+        try {
+            Files.move(temporary, SAVE_PATH, StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+            Files.move(temporary, SAVE_PATH, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
@@ -116,6 +131,14 @@ public final class SaveSystem {
         try (InputStream inputStream = Files.newInputStream(SAVE_PATH)) {
             properties.load(inputStream);
         }
+
+        int schemaVersion = readRequiredInt(properties, "save.schemaVersion");
+        if (schemaVersion != SAVE_SCHEMA_VERSION) {
+            throw new IOException("Unsupported save schema " + schemaVersion + "; expected exactly "
+                    + SAVE_SCHEMA_VERSION + ". Old and unversioned saves are not supported.");
+        }
+        PackLock packLock = PackLock.readFrom(properties, "packLock.");
+        AssetRepository.shared().registry().requirePackLock(packLock);
 
         PlayerRegionLibrary playerRegion = readEnum(properties, "player.region", PlayerRegionLibrary.class, PlayerRegionLibrary.MIDLANDS);
         PlayerCharacter player = GameBootstrap.createPlayerCharacter(
@@ -1737,6 +1760,19 @@ public final class SaveSystem {
             return Integer.parseInt(properties.getProperty(key, String.valueOf(fallback)));
         } catch (NumberFormatException ignored) {
             return fallback;
+        }
+    }
+
+    private static int readRequiredInt(Properties properties, String key) throws IOException {
+        String value = properties.getProperty(key);
+        if (value == null || value.isBlank()) {
+            throw new IOException("Missing required save property: " + key
+                    + ". Old and unversioned saves are not supported.");
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException error) {
+            throw new IOException("Invalid save property: " + key, error);
         }
     }
 

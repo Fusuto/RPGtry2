@@ -4,8 +4,8 @@ import org.main.core.GameConfiguration;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapLight;
 import org.main.engine.MapLightingSettings;
-import org.main.engine.TerrainEdgeKind;
 import org.main.engine.TerrainGeometry;
+import org.main.engine.LineOfSight;
 
 import java.awt.image.BufferedImage;
 import java.util.List;
@@ -55,7 +55,8 @@ final class LightmapBaker {
                         if (distance > light.radius()) {
                             continue;
                         }
-                        if (occlusionEnabled && !hasLineOfSight(map, sampleTileX, sampleTileY, light.x(), light.y())) {
+                        if (occlusionEnabled && !LineOfSight.between(map, sampleTileX, sampleTileY,
+                                light.x(), light.y(), LineOfSight.Blocker.WALL_LIKE, false)) {
                             continue;
                         }
                         double falloff = 1.0 - distance / light.radius();
@@ -79,42 +80,6 @@ final class LightmapBaker {
         return new LightmapBakeResult(image, pixelsPerTile, bakeMs, appliedSamples);
     }
 
-    private static boolean hasLineOfSight(DungeonMap map, int fromX, int fromY, int targetX, int targetY) {
-        if (map == null || map.isOutOfBounds(targetX, targetY)) {
-            return false;
-        }
-        int dx = Math.abs(targetX - fromX);
-        int dy = Math.abs(targetY - fromY);
-        int sx = fromX < targetX ? 1 : -1;
-        int sy = fromY < targetY ? 1 : -1;
-        int error = dx - dy;
-        int x = fromX;
-        int y = fromY;
-
-        while (x != targetX || y != targetY) {
-            int previousX = x;
-            int previousY = y;
-            int doubledError = error * 2;
-            if (doubledError > -dy) {
-                error -= dy;
-                x += sx;
-            }
-            if (doubledError < dx) {
-                error += dx;
-                y += sy;
-            }
-            if (map.isOutOfBounds(x, y)) {
-                return false;
-            }
-            if ((x != targetX || y != targetY) && map.isWallLike(x, y)) {
-                return false;
-            }
-            if (TerrainGeometry.edgeKind(map, previousX, previousY, x, y) == TerrainEdgeKind.CLIFF) {
-                return false;
-            }
-        }
-        return true;
-    }
 
     private static double colorRed(int rgb) {
         return ((rgb >> 16) & 0xFF) / 255.0;

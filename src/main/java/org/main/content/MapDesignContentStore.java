@@ -43,6 +43,10 @@ final class MapDesignContentStore {
     private MapDesignContentStore() {
     }
 
+    static Set<String> catalogFiles() {
+        return CATALOG_FILES;
+    }
+
     static AuthoredContent loadSharedContent() throws IOException {
         MapDesign dialogues = loadRequiredSegment(DIALOGUE_FILE);
         MapDesign quests = loadRequiredSegment(QUEST_FILE);

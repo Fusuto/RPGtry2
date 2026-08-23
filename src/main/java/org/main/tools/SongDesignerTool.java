@@ -7,8 +7,6 @@ import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
-import javax.sound.sampled.DataLine;
-import javax.sound.sampled.SourceDataLine;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -87,9 +85,7 @@ public class SongDesignerTool extends JFrame {
     private final JToggleButton normalizeButton = new JToggleButton("Normalize", true);
     private final JLabel statusLabel = new JLabel("Ready.");
 
-    private SourceDataLine previewLine;
-    private Thread previewThread;
-    private volatile boolean previewPlaying = false;
+    private final AudioPreviewPlayer previewPlayer = new AudioPreviewPlayer();
     private int selectedTrackIndex = 0;
 
     public SongDesignerTool() {
@@ -108,6 +104,12 @@ public class SongDesignerTool extends JFrame {
 
         pack();
         setLocationRelativeTo(null);
+    }
+
+    @Override
+    public void dispose() {
+        previewPlayer.close();
+        super.dispose();
     }
 
     private void configureSliders() {
@@ -256,63 +258,23 @@ public class SongDesignerTool extends JFrame {
     }
 
     private void playPreview() {
-        stopPreview();
         syncProjectFromControls();
 
         byte[] audioBytes = SongRenderer.render(project, normalizeButton.isSelected());
         AudioFormat format = createAudioFormat();
 
-        previewPlaying = true;
-        previewThread = new Thread(() -> streamPreview(format, audioBytes), "song-preview");
-        previewThread.setDaemon(true);
-        previewThread.start();
+        previewPlayer.play(format, audioBytes, loopButton::isSelected, 4096, "song-preview",
+                state -> status(state == AudioPreviewPlayer.State.PLAYING
+                        ? "Playing song preview." : "Preview finished."),
+                error -> {
+                    status("Preview failed: " + error.getMessage());
+                    LOGGER.log(Level.WARNING, "Preview failed.", error);
+                });
     }
 
     private void stopPreview() {
-        previewPlaying = false;
-
-        if (previewLine != null) {
-            previewLine.stop();
-            previewLine.close();
-            previewLine = null;
-        }
-
+        previewPlayer.stop();
         status("Stopped.");
-    }
-
-    private void streamPreview(AudioFormat format, byte[] audioBytes) {
-        try {
-            DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
-            previewLine = (SourceDataLine) AudioSystem.getLine(info);
-            previewLine.open(format);
-            previewLine.start();
-
-            status("Playing song preview.");
-
-            int chunkSize = 4096;
-            do {
-                int offset = 0;
-                while (previewPlaying && offset < audioBytes.length) {
-                    int bytesToWrite = Math.min(chunkSize, audioBytes.length - offset);
-                    offset += previewLine.write(audioBytes, offset, bytesToWrite);
-                }
-            } while (previewPlaying && loopButton.isSelected());
-
-            if (previewPlaying) {
-                previewLine.drain();
-            }
-
-            previewLine.stop();
-            previewLine.close();
-            previewLine = null;
-
-            status("Preview finished.");
-        } catch (Exception e) {
-            status("Preview failed: " + e.getMessage());
-            LOGGER.log(Level.WARNING, "Preview failed.", e);
-        } finally {
-            previewPlaying = false;
-        }
     }
 
     private void saveProject() {

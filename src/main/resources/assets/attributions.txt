@@ -1,1 +1,16 @@
-Animated Zombie by Quaternius [CC-BY] (https://creativecommons.org/licenses/by/3.0/) via Poly Pizza (https://poly.pizza/m/jkrEvQZb8J)
+Aether Third-Party Credits
+
+Animated Zombie
+Credit: Animated Zombie by Quaternius, distributed via Poly Pizza
+License: CC BY 3.0
+Source: https://poly.pizza/m/jkrEvQZb8J
+
+Pixel Battle Backgrounds
+Credit: Created by Willibab; preview sprites by The Mighty Palm; preview font by Mounir Tohami
+License: Free for personal and commercial projects with credit; modification allowed; resale and false authorship prohibited
+Source: https://willibab.itch.io/
+
+Ancient Roguelike Tiles
+Credit: rltiles and Crawl Stone Soup developers/artists
+License: CC0 1.0; full legal text remains packaged with the asset set
+Source: http://crawl.develz.org/wordpress/

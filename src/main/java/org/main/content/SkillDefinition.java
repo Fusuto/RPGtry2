@@ -1,6 +1,7 @@
 package org.main.content;
 
 import org.main.core.Library;
+import org.main.core.CombatElement;
 
 import java.util.List;
 
@@ -15,7 +16,8 @@ public record SkillDefinition(
         String presentationStyle,
         double cooldownSeconds,
         boolean consumesAutoAction,
-        List<SkillEffectDefinition> effects
+        List<SkillEffectDefinition> effects,
+        CombatElement element
 ) {
     public SkillDefinition {
         id = BattleContentCatalog.normalizeId(id);
@@ -28,5 +30,24 @@ public record SkillDefinition(
         presentationStyle = presentationStyle == null ? "AUTO" : presentationStyle.trim().toUpperCase();
         cooldownSeconds = Math.max(0.0, cooldownSeconds);
         effects = effects == null ? List.of() : List.copyOf(effects);
+        element = element == null ? CombatElement.NEUTRAL : element;
+    }
+
+    public SkillDefinition(
+            String id,
+            String displayName,
+            String description,
+            Library.SkillTargetShape targetShape,
+            Library.EntityType targetTeam,
+            Library.BattleTargetingMode targetingMode,
+            String useSoundPath,
+            String presentationStyle,
+            double cooldownSeconds,
+            boolean consumesAutoAction,
+            List<SkillEffectDefinition> effects
+    ) {
+        this(id, displayName, description, targetShape, targetTeam, targetingMode,
+                useSoundPath, presentationStyle, cooldownSeconds, consumesAutoAction,
+                effects, CombatElement.NEUTRAL);
     }
 }

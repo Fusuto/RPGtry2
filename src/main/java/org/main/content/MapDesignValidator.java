@@ -1,5 +1,7 @@
 package org.main.content;
 
+import java.io.IOException;
+
 import org.main.core.CraftingStationType;
 import org.main.core.InventorySystem;
 import org.main.core.GearMaterial;
@@ -1067,10 +1069,14 @@ final class MapDesignValidator {
         }
 
         for (CustomFurnitureDefinition furniture : design.customFurniture()) {
-            validateModelAssetPath(issues, "Furniture " + furniture.furnitureId(), "model", furniture.modelPath(), true);
+            validateModelAssetPath(issues, "Furniture " + furniture.furnitureId(), "model",
+                    furniture.modelPath(), furniture.spritePath().isBlank());
+            validateAssetPath(issues, "Furniture " + furniture.furnitureId(), "fallback sprite",
+                    furniture.spritePath(), furniture.modelPath().isBlank());
             if (!furniture.interactionId().isBlank() && !dialogueIds.contains(furniture.interactionId())) {
                 boolean knownInteraction = org.main.core.InteractionSystem.EDITOR_INTERACTIONS.stream()
-                        .anyMatch(interaction -> interaction.interactionId().equals(furniture.interactionId()));
+                        .anyMatch(interaction -> interaction.interactionId().equals(furniture.interactionId()))
+                        || "attunement_pillar".equals(furniture.interactionId());
                 if (!knownInteraction && !isMapLinkInteractionId(furniture.interactionId())) {
                     issues.add(new ValidationIssue(
                             ValidationSeverity.WARNING,
@@ -1085,6 +1091,19 @@ final class MapDesignValidator {
                         ValidationSeverity.WARNING,
                         "Furniture " + furniture.furnitureId() + " has an enabled attached light with no intensity."
                 ));
+            }
+            MapDesignLibrary.AttunementPillarDefinition pillar = furniture.attunementPillar();
+            if (pillar != null) {
+                validateRecipeItem(issues, knownItems, "Pillar " + furniture.furnitureId(),
+                        "input item", pillar.inputItemId());
+                validateRecipeItem(issues, knownItems, "Pillar " + furniture.furnitureId(),
+                        "output item", pillar.outputItemId());
+                validateAssetPath(issues, "Pillar " + furniture.furnitureId(),
+                        "transformation sound", pillar.soundPath(), false);
+                if (!pillar.element().isElemental()) {
+                    issues.add(new ValidationIssue(ValidationSeverity.ERROR,
+                            "Pillar " + furniture.furnitureId() + " needs an elemental affinity."));
+                }
             }
         }
 
@@ -1351,6 +1370,14 @@ final class MapDesignValidator {
             if (!recipe.smeltOutputItemId().isBlank()) {
                 validateRecipeItem(issues, knownItems, owner, "smelt output item", recipe.smeltOutputItemId());
             }
+            if (recipe.requiredToolWeaponType() != null
+                    && recipe.requiredToolWeaponType() != org.main.core.WeaponType.NONE
+                    && recipe.outputType() != MapDesignLibrary.CraftingOutputType.ITEM) {
+                issues.add(new ValidationIssue(
+                        ValidationSeverity.WARNING,
+                        owner + " uses a weapon tool while producing a temporary station."
+                ));
+            }
         }
     }
 
@@ -1548,23 +1575,18 @@ final class MapDesignValidator {
         if (normalized.isBlank()) {
             return true;
         }
-
-        Path directPath = Path.of(normalized);
-        if (Files.exists(directPath)) {
-            return false;
-        }
-
-        if (normalized.startsWith("assets/")) {
-            return !Files.exists(Path.of("src", "main", "resources").resolve(normalized));
+        if (normalized.startsWith("src/main/resources/") || normalized.startsWith("src/main/java/")) {
+            return true;
         }
         if (normalized.startsWith("data/")) {
-            return !Files.exists(Path.of(normalized));
+            return true;
         }
-        if (normalized.startsWith("src/main/resources/") || normalized.startsWith("src/main/java/")) {
-            return !Files.exists(Path.of(normalized));
+        String logicalPath = normalized.startsWith("assets/") ? normalized : "assets/" + normalized;
+        try {
+            return org.main.engine.AssetRepository.shared().describe(logicalPath).isEmpty();
+        } catch (IOException ignored) {
+            return true;
         }
-
-        return !Files.exists(Path.of("src", "main", "resources", "assets").resolve(normalized));
     }
 
     private static void validateDuplicateIds(List<ValidationIssue> issues, String label, List<String> ids) {

@@ -55,6 +55,8 @@ final class LwjglBattleSceneRenderer {
     private final Map<BattleActor, Point> projectedActors = new IdentityHashMap<>();
     private final Map<BattleActor, FirstPersonTransition> firstPersonTransitions =
             new IdentityHashMap<>();
+    private final Map<BattleActor, LayeredTransitionState> layeredFirstPersonTransitions =
+            new IdentityHashMap<>();
     private final float[] encounterLight = {1f, 1f, 1f};
     private FixedFunctionPrimitives fixedPrimitives;
     private long firstPersonCatalogRevision = -1;
@@ -312,6 +314,14 @@ final class LwjglBattleSceneRenderer {
         double progress = firstPersonProgress(player, actions, slot, resolved.model());
         FirstPersonAnimationView animation = firstPersonAnimationView(
                 player, slot, progress, rig.crossfadeMs());
+        LayeredAnimationView layeredAnimation = resolved.independent()
+                ? layeredAnimationView(player, actions, resolved, shieldProfile, rig.crossfadeMs())
+                : null;
+        NamedAnimationView coupledAnimation = layeredAnimation == null
+                ? coupledAnimationView(animation, resolved, shieldProfile) : null;
+        LwjglSkinnedModel.Pose composedRigPose = layeredAnimation == null
+                ? composedFullPose(resolved.model(), coupledAnimation)
+                : composedPose(resolved.model(), rig, layeredAnimation);
 
         LimbItem leftLimb = player.getSourcePlayer().getEquippedLimb(LimbSlot.LEFT_ARM);
         LimbItem rightLimb = player.getSourcePlayer().getEquippedLimb(LimbSlot.RIGHT_ARM);
@@ -355,7 +365,7 @@ final class LwjglBattleSceneRenderer {
                 weapon == null ? WeaponType.NONE : weapon.getWeaponType(),
                 shieldProfile,
                 animation);
-        applyRigRoot(rig, resolved.model(), animation, cameraFraming);
+        applyRigRoot(rig, resolved.model(), animation, composedRigPose, cameraFraming);
 
         FirstPersonCombatLibrary.ArmCoverage leftCoverage = armorProfile == null
                 ? FirstPersonCombatLibrary.ArmCoverage.OVERLAY : armorProfile.leftCoverage();
@@ -363,21 +373,26 @@ final class LwjglBattleSceneRenderer {
                 ? FirstPersonCombatLibrary.ArmCoverage.OVERLAY : armorProfile.rightCoverage();
         FirstPersonCombatLibrary.WieldHand weaponHand = resolved.wieldHand();
         Vector3f secondaryGripOffset = weapon != null && weapon.isTwoHanded()
-                ? secondaryGripOffset(resolved, weapon, weaponProfile, weaponHand, animation)
+                ? secondaryGripOffset(resolved, weapon, weaponProfile, weaponHand, animation,
+                composedRigPose)
                 : new Vector3f();
-        drawArmAttachment(leftArm, animation, FirstPersonCombatLibrary.WieldHand.LEFT,
+        drawArmAttachment(leftArm, animation, layeredAnimation, coupledAnimation, rig,
+                FirstPersonCombatLibrary.WieldHand.LEFT,
                 leftCoverage, rig.leftVisibleMeshes(),
                 weaponHand == FirstPersonCombatLibrary.WieldHand.RIGHT
                         ? secondaryGripOffset : new Vector3f());
-        drawArmAttachment(rightArm, animation, FirstPersonCombatLibrary.WieldHand.RIGHT,
+        drawArmAttachment(rightArm, animation, layeredAnimation, coupledAnimation, rig,
+                FirstPersonCombatLibrary.WieldHand.RIGHT,
                 rightCoverage, rig.rightVisibleMeshes(),
                 weaponHand == FirstPersonCombatLibrary.WieldHand.LEFT
                         ? secondaryGripOffset : new Vector3f());
-        drawArmAttachment(leftArmor, animation, FirstPersonCombatLibrary.WieldHand.LEFT,
+        drawArmAttachment(leftArmor, animation, layeredAnimation, coupledAnimation, rig,
+                FirstPersonCombatLibrary.WieldHand.LEFT,
                 FirstPersonCombatLibrary.ArmCoverage.OVERLAY, Set.of(),
                 weaponHand == FirstPersonCombatLibrary.WieldHand.RIGHT
                         ? secondaryGripOffset : new Vector3f());
-        drawArmAttachment(rightArmor, animation, FirstPersonCombatLibrary.WieldHand.RIGHT,
+        drawArmAttachment(rightArmor, animation, layeredAnimation, coupledAnimation, rig,
+                FirstPersonCombatLibrary.WieldHand.RIGHT,
                 FirstPersonCombatLibrary.ArmCoverage.OVERLAY, Set.of(),
                 weaponHand == FirstPersonCombatLibrary.WieldHand.LEFT
                         ? secondaryGripOffset : new Vector3f());
@@ -385,14 +400,14 @@ final class LwjglBattleSceneRenderer {
         if (weapon != null && weapon.hasFirstPersonModel()) {
             drawSocketEquipment(weapon, weaponProfile.socketTransform(), resolved.model(),
                     FirstPersonAnimationRuntime.resolveAttachmentBone(
-                            rig, weaponProfile, resolved.model()), animation);
+                            rig, weaponProfile, resolved.model()), animation, composedRigPose);
         }
         if (shield != null && shield.hasFirstPersonModel() && shieldProfile != null
                 && (weapon == null || !weapon.isTwoHanded())) {
             FirstPersonCombatLibrary.WieldHand shieldHand = shieldProfile.wieldHand();
             drawSocketEquipment(shield, shieldProfile.socketTransform(), resolved.model(),
                     FirstPersonAnimationRuntime.resolveAttachmentBone(
-                            rig, shieldProfile, resolved.model()), animation);
+                            rig, shieldProfile, resolved.model()), animation, composedRigPose);
         }
         glEnable(GL_TEXTURE_2D);
         glEnable(GL_DEPTH_TEST);
@@ -435,6 +450,7 @@ final class LwjglBattleSceneRenderer {
         staticModels.clear();
         failedStaticModels.clear();
         firstPersonTransitions.clear();
+        layeredFirstPersonTransitions.clear();
         warnedFirstPersonFallbacks.clear();
         firstPersonCatalogRevision = current;
     }
@@ -488,7 +504,8 @@ final class LwjglBattleSceneRenderer {
                 1.0,
                 0.0,
                 0.0,
-                resolved.modelDefinition().animationBindings());
+                resolved.modelDefinition().animationBindings(),
+                resolved.modelDefinition().namedAnimationBindings());
         LwjglSkinnedModel attachment = getSkinnedModel(attachmentDefinition);
         if (attachment == null
                 || !attachment.skeletonSignature().equals(resolved.model().skeletonSignature())) {
@@ -505,6 +522,7 @@ final class LwjglBattleSceneRenderer {
             FirstPersonCombatLibrary.RigDefinition rig,
             LwjglSkinnedModel model,
             FirstPersonAnimationView animation,
+            LwjglSkinnedModel.Pose composedPose,
             FirstPersonCombatLibrary.CameraFraming camera
     ) {
         FirstPersonCombatLibrary.CameraFraming framing = camera == null
@@ -518,7 +536,9 @@ final class LwjglBattleSceneRenderer {
         glRotated(rig.rotationZ() + framing.rotationZ(), 0, 0, 1);
         glScaled(rig.scale(), rig.scale(), rig.scale());
         if (!rig.cameraAnchorBone().isBlank()) {
-            Matrix4f anchor = animatedNodeTransform(model, rig.cameraAnchorBone(), animation);
+            Matrix4f anchor = composedPose == null
+                    ? animatedNodeTransform(model, rig.cameraAnchorBone(), animation)
+                    : socketTransformWithoutScale(model.nodeTransform(composedPose, rig.cameraAnchorBone()));
             if (anchor != null) {
                 Vector3f position = anchor.getTranslation(new Vector3f());
                 glTranslated(-position.x, -position.y, -position.z);
@@ -565,7 +585,11 @@ final class LwjglBattleSceneRenderer {
                     : shieldProfile.wieldHand()) == FirstPersonCombatLibrary.WieldHand.LEFT
                     ? FirstPersonCombatLibrary.AnimationSlot.BLOCK_LEFT
                     : FirstPersonCombatLibrary.AnimationSlot.BLOCK_RIGHT;
-            case CAST -> FirstPersonCombatLibrary.AnimationSlot.CAST;
+            case CAST -> resolved.independent()
+                    ? resolved.wieldHand() == FirstPersonCombatLibrary.WieldHand.LEFT
+                    ? FirstPersonCombatLibrary.AnimationSlot.CAST_LEFT
+                    : FirstPersonCombatLibrary.AnimationSlot.CAST_RIGHT
+                    : FirstPersonCombatLibrary.AnimationSlot.CAST;
             case HIT -> FirstPersonCombatLibrary.AnimationSlot.HIT;
             case DODGE -> FirstPersonCombatLibrary.AnimationSlot.DODGE;
             default -> null;
@@ -597,18 +621,21 @@ final class LwjglBattleSceneRenderer {
     private void drawArmAttachment(
             LwjglSkinnedModel model,
             FirstPersonAnimationView animation,
+            LayeredAnimationView layeredAnimation,
+            NamedAnimationView coupledAnimation,
+            FirstPersonCombatLibrary.RigDefinition rig,
             FirstPersonCombatLibrary.WieldHand side,
             FirstPersonCombatLibrary.ArmCoverage coverage,
             Set<String> selectedMeshes,
             Vector3f offset
     ) {
         if (model == null || coverage == FirstPersonCombatLibrary.ArmCoverage.HIDE_FULL_ARM) return;
-        LwjglSkinnedModel.Frame frame = model.skinNormalized(animation.slot(), animation.progress());
-        if (animation.blend() < 1.0 && animation.fromSlot() != null) {
-            LwjglSkinnedModel.Frame from = model.skinNormalized(
-                    animation.fromSlot(), animation.fromProgress());
-            frame = blendFrames(from, frame, animation.blend());
-        }
+        LwjglSkinnedModel.Pose localPose = layeredAnimation == null
+                ? composedFullPose(model, coupledAnimation)
+                : composedPose(model, rig, layeredAnimation);
+        LwjglSkinnedModel.Frame frame = localPose == null
+                ? model.skinNormalized(animation.slot(), animation.progress())
+                : model.skinPose(localPose);
         glPushMatrix();
         if (offset != null) glTranslated(offset.x, offset.y, offset.z);
         drawSkinnedModel(model, frame, mesh -> (selectedMeshes == null || selectedMeshes.isEmpty()
@@ -622,16 +649,21 @@ final class LwjglBattleSceneRenderer {
             InventorySystem.Item weapon,
             FirstPersonCombatLibrary.ItemProfile profile,
             FirstPersonCombatLibrary.WieldHand weaponHand,
-            FirstPersonAnimationView animation
+            FirstPersonAnimationView animation,
+            LwjglSkinnedModel.Pose composedPose
     ) {
         if (profile == null || (Math.abs(profile.secondaryGripX()) < 0.0001
                 && Math.abs(profile.secondaryGripY()) < 0.0001
                 && Math.abs(profile.secondaryGripZ()) < 0.0001)) return new Vector3f();
-        Matrix4f weaponSocket = animatedNodeTransform(resolved.model(),
-                FirstPersonAnimationRuntime.resolveAttachmentBone(
-                        resolved.rig(), profile, resolved.model()), animation);
-        Matrix4f offHandSocket = animatedNodeTransform(resolved.model(),
-                resolved.rig().handBone(weaponHand.opposite()), animation);
+        String weaponBone = FirstPersonAnimationRuntime.resolveAttachmentBone(
+                resolved.rig(), profile, resolved.model());
+        Matrix4f weaponSocket = composedPose == null
+                ? animatedNodeTransform(resolved.model(), weaponBone, animation)
+                : socketTransformWithoutScale(resolved.model().nodeTransform(composedPose, weaponBone));
+        String offHandBone = resolved.rig().handBone(weaponHand.opposite());
+        Matrix4f offHandSocket = composedPose == null
+                ? animatedNodeTransform(resolved.model(), offHandBone, animation)
+                : socketTransformWithoutScale(resolved.model().nodeTransform(composedPose, offHandBone));
         LwjglStaticModel weaponModel = weapon == null
                 ? null : getStaticModel(weapon.getFirstPersonModelPath());
         if (weaponSocket == null || offHandSocket == null || weaponModel == null) return new Vector3f();
@@ -678,24 +710,6 @@ final class LwjglBattleSceneRenderer {
         return new Matrix4f().translation(translation).rotate(rotation);
     }
 
-    private LwjglSkinnedModel.Frame blendFrames(
-            LwjglSkinnedModel.Frame from,
-            LwjglSkinnedModel.Frame to,
-            double amount
-    ) {
-        float blend = (float) smooth(amount);
-        for (int mesh = 0; mesh < to.meshPositions().size(); mesh++) {
-            float[] target = to.meshPositions().get(mesh);
-            float[] source = mesh < from.meshPositions().size()
-                    ? from.meshPositions().get(mesh) : target;
-            float[] output = target;
-            for (int index = 0; index < output.length && index < source.length; index++) {
-                output[index] = source[index] + (target[index] - source[index]) * blend;
-            }
-        }
-        return new LwjglSkinnedModel.Frame(to.meshPositions(), to.normalizedProgress());
-    }
-
     private boolean regionVisible(
             String meshName,
             FirstPersonCombatLibrary.WieldHand side,
@@ -722,11 +736,14 @@ final class LwjglBattleSceneRenderer {
             EquipmentViewModelProfile transform,
             LwjglSkinnedModel rigModel,
             String handBone,
-            FirstPersonAnimationView animation
+            FirstPersonAnimationView animation,
+            LwjglSkinnedModel.Pose composedPose
     ) {
         if (item == null || transform == null || rigModel == null) return;
         LwjglStaticModel model = getStaticModel(item.getFirstPersonModelPath());
-        Matrix4f socket = animatedNodeTransform(rigModel, handBone, animation);
+        Matrix4f socket = composedPose == null
+                ? animatedNodeTransform(rigModel, handBone, animation)
+                : socketTransformWithoutScale(rigModel.nodeTransform(composedPose, handBone));
         if (model == null || socket == null) return;
         FloatBuffer matrix = BufferUtils.createFloatBuffer(16);
         socket.get(matrix);
@@ -743,14 +760,242 @@ final class LwjglBattleSceneRenderer {
         glPopMatrix();
     }
 
+    private LayeredAnimationView layeredAnimationView(
+            BattleActor player,
+            List<BattlePresentationDirector.ActionSnapshot> actions,
+            FirstPersonAnimationRuntime.ResolvedRig resolved,
+            FirstPersonCombatLibrary.ItemProfile shieldProfile,
+            int crossfadeMs
+    ) {
+        LwjglSkinnedModel model = resolved.model();
+        long now = System.nanoTime();
+        LayerRequest left = new LayerRequest("IDLE_LEFT", loopingNamedProgress(model, "IDLE_LEFT"), -3L);
+        LayerRequest right = new LayerRequest("IDLE_RIGHT", loopingNamedProgress(model, "IDLE_RIGHT"), -2L);
+        LayerRequest global = new LayerRequest("IDLE_RIGHT", right.progress(), -1L);
+        FirstPersonCombatLibrary.WieldHand blockHand = shieldProfile == null
+                ? resolved.wieldHand().opposite() : shieldProfile.wieldHand();
+        String blockKey = blockHand == FirstPersonCombatLibrary.WieldHand.LEFT
+                ? "BLOCK_LEFT" : "BLOCK_RIGHT";
+        if (player.getDefendingTurns() > 0) {
+            LayerRequest guard = new LayerRequest(blockKey,
+                    model.hasNamedClip(blockKey) ? model.namedImpactFraction(blockKey) : 0.55, -4L);
+            if (blockHand == FirstPersonCombatLibrary.WieldHand.LEFT) left = guard;
+            else right = guard;
+        }
+
+        LayerRequest full = null;
+        for (BattlePresentationDirector.ActionSnapshot action : actions) {
+            if (action.attacker() == player) {
+                switch (action.actionType()) {
+                    case AUTO_ATTACK, PHYSICAL_SKILL, RANGED -> {
+                        String key = resolved.wieldHand() == FirstPersonCombatLibrary.WieldHand.LEFT
+                                ? "ATTACK_LEFT" : "ATTACK_RIGHT";
+                        LayerRequest request = new LayerRequest(key, action.overallProgress(), action.sequence());
+                        if (resolved.wieldHand() == FirstPersonCombatLibrary.WieldHand.LEFT
+                                && request.newerThan(left)) left = request;
+                        if (resolved.wieldHand() == FirstPersonCombatLibrary.WieldHand.RIGHT
+                                && request.newerThan(right)) right = request;
+                    }
+                    case SPELL, HEAL, SUMMON -> {
+                        String key = resolved.wieldHand() == FirstPersonCombatLibrary.WieldHand.LEFT
+                                ? "CAST_LEFT" : "CAST_RIGHT";
+                        LayerRequest request = new LayerRequest(key, action.overallProgress(), action.sequence());
+                        if (resolved.wieldHand() == FirstPersonCombatLibrary.WieldHand.LEFT
+                                && request.newerThan(left)) left = request;
+                        if (resolved.wieldHand() == FirstPersonCombatLibrary.WieldHand.RIGHT
+                                && request.newerThan(right)) right = request;
+                    }
+                    case DEFEND -> {
+                        LayerRequest request = new LayerRequest(blockKey, action.overallProgress(), action.sequence());
+                        if (blockHand == FirstPersonCombatLibrary.WieldHand.LEFT
+                                && request.newerThan(left)) left = request;
+                        if (blockHand == FirstPersonCombatLibrary.WieldHand.RIGHT
+                                && request.newerThan(right)) right = request;
+                    }
+                    case DEATH -> {
+                        LayerRequest request = new LayerRequest("HIT", action.overallProgress(), action.sequence());
+                        if (request.newerThan(full)) full = request;
+                    }
+                }
+            }
+            for (BattlePresentationDirector.TargetReaction target : action.targets()) {
+                if (target.target() != player) continue;
+                switch (target.reaction()) {
+                    case BLOCK -> {
+                        LayerRequest request = new LayerRequest(blockKey, action.overallProgress(), action.sequence());
+                        if (blockHand == FirstPersonCombatLibrary.WieldHand.LEFT
+                                && request.newerThan(left)) left = request;
+                        if (blockHand == FirstPersonCombatLibrary.WieldHand.RIGHT
+                                && request.newerThan(right)) right = request;
+                    }
+                    case HIT, DODGE -> {
+                        String key = target.reaction() == BattlePresentationDirector.Reaction.DODGE
+                                ? "DODGE" : "HIT";
+                        LayerRequest request = new LayerRequest(key, action.overallProgress(), action.sequence());
+                        if (request.newerThan(full)) full = request;
+                    }
+                    case NONE -> {
+                    }
+                }
+            }
+        }
+
+        left = availableRequest(model, left, "IDLE_LEFT");
+        right = availableRequest(model, right, "IDLE_RIGHT");
+        global = availableRequest(model, global, "IDLE_RIGHT");
+        if (full != null && !model.hasNamedClip(full.key())) full = null;
+        LayeredTransitionState state = layeredFirstPersonTransitions.computeIfAbsent(
+                player, ignored -> new LayeredTransitionState());
+        return new LayeredAnimationView(
+                updateNamedTransition(state.global, global, crossfadeMs, now, false),
+                updateNamedTransition(state.left, left, crossfadeMs, now, false),
+                updateNamedTransition(state.right, right, crossfadeMs, now, false),
+                updateNamedTransition(state.full, full, crossfadeMs, now, true));
+    }
+
+    private static LayerRequest availableRequest(
+            LwjglSkinnedModel model,
+            LayerRequest requested,
+            String fallback
+    ) {
+        if (requested != null && model.hasNamedClip(requested.key())) return requested;
+        return new LayerRequest(fallback, loopingNamedProgress(model, fallback),
+                requested == null ? -1L : requested.identity());
+    }
+
+    private static double loopingNamedProgress(LwjglSkinnedModel model, String key) {
+        double duration = model != null && model.hasNamedClip(key)
+                ? model.namedClipDurationSeconds(key) : 1.0;
+        return (System.nanoTime() / 1_000_000_000.0) / Math.max(0.001, duration) % 1.0;
+    }
+
+    private static NamedAnimationView updateNamedTransition(
+            NamedTransition state,
+            LayerRequest request,
+            int crossfadeMs,
+            long now,
+            boolean fadeInitial
+    ) {
+        if (!state.initialized) {
+            state.initialized = true;
+            state.toKey = request == null ? null : request.key();
+            state.toProgress = request == null ? 0.0 : request.progress();
+            state.identity = request == null ? Long.MIN_VALUE : request.identity();
+            state.startedNanos = fadeInitial && request != null ? now : 0L;
+        } else {
+            String requestedKey = request == null ? null : request.key();
+            long requestedIdentity = request == null ? Long.MIN_VALUE : request.identity();
+            if (!Objects.equals(state.toKey, requestedKey) || state.identity != requestedIdentity) {
+                state.fromKey = state.toKey;
+                state.fromProgress = state.toProgress;
+                state.toKey = requestedKey;
+                state.toProgress = request == null ? 0.0 : request.progress();
+                state.identity = requestedIdentity;
+                state.startedNanos = now;
+            } else if (request != null) {
+                state.toProgress = request.progress();
+            }
+        }
+        double blend = state.startedNanos == 0L ? 1.0
+                : Math.min(1.0, (now - state.startedNanos)
+                / Math.max(1_000_000.0, crossfadeMs * 1_000_000.0));
+        NamedAnimationView view = new NamedAnimationView(
+                state.fromKey, state.fromProgress, state.toKey, state.toProgress, blend);
+        if (blend >= 1.0) {
+            state.fromKey = null;
+            state.startedNanos = 0L;
+        }
+        return view;
+    }
+
+    private LwjglSkinnedModel.Pose composedPose(
+            LwjglSkinnedModel model,
+            FirstPersonCombatLibrary.RigDefinition rig,
+            LayeredAnimationView animation
+    ) {
+        if (model == null || animation == null) return null;
+        Set<String> leftMask = model.descendantNodeNames(rig.leftShoulderBone());
+        Set<String> rightMask = model.descendantNodeNames(rig.rightShoulderBone());
+        LinkedHashSet<String> globalMask = new LinkedHashSet<>(model.allNodeNames());
+        globalMask.removeAll(leftMask);
+        globalMask.removeAll(rightMask);
+        List<LwjglSkinnedModel.PoseLayer> layers = new ArrayList<>(4);
+        addPoseLayer(layers, animation.global(), globalMask);
+        addPoseLayer(layers, animation.left(), leftMask);
+        addPoseLayer(layers, animation.right(), rightMask);
+        addPoseLayer(layers, animation.full(), Set.of());
+        return model.composePose(layers);
+    }
+
+    private static LwjglSkinnedModel.Pose composedFullPose(
+            LwjglSkinnedModel model,
+            NamedAnimationView animation
+    ) {
+        if (model == null || animation == null
+                || animation.fromKey() == null && animation.toKey() == null) return null;
+        List<LwjglSkinnedModel.PoseLayer> layers = new ArrayList<>(1);
+        addPoseLayer(layers, animation, Set.of());
+        return model.composePose(layers);
+    }
+
+    private static NamedAnimationView coupledAnimationView(
+            FirstPersonAnimationView animation,
+            FirstPersonAnimationRuntime.ResolvedRig resolved,
+            FirstPersonCombatLibrary.ItemProfile shieldProfile
+    ) {
+        if (animation == null || resolved == null) return null;
+        return new NamedAnimationView(
+                coupledBindingKey(animation.fromSlot(), resolved, shieldProfile),
+                animation.fromProgress(),
+                coupledBindingKey(animation.slot(), resolved, shieldProfile),
+                animation.progress(), animation.blend());
+    }
+
+    private static String coupledBindingKey(
+            CharacterModelDefinition.AnimationSlot slot,
+            FirstPersonAnimationRuntime.ResolvedRig resolved,
+            FirstPersonCombatLibrary.ItemProfile shieldProfile
+    ) {
+        if (slot == null) return null;
+        return switch (slot) {
+            case IDLE -> resolved.wieldHand() == FirstPersonCombatLibrary.WieldHand.LEFT
+                    ? "IDLE_LEFT" : "IDLE_RIGHT";
+            case ATTACK -> resolved.wieldHand() == FirstPersonCombatLibrary.WieldHand.LEFT
+                    ? "ATTACK_LEFT" : "ATTACK_RIGHT";
+            case BLOCK -> (shieldProfile == null
+                    ? resolved.wieldHand().opposite() : shieldProfile.wieldHand())
+                    == FirstPersonCombatLibrary.WieldHand.LEFT ? "BLOCK_LEFT" : "BLOCK_RIGHT";
+            case CAST -> "CAST";
+            case HIT, DEATH -> "HIT";
+            case DODGE -> "DODGE";
+            default -> null;
+        };
+    }
+
+    private static void addPoseLayer(
+            List<LwjglSkinnedModel.PoseLayer> layers,
+            NamedAnimationView view,
+            Set<String> mask
+    ) {
+        if (view == null || view.fromKey() == null && view.toKey() == null) return;
+        LwjglSkinnedModel.NamedSample from = view.fromKey() == null ? null
+                : new LwjglSkinnedModel.NamedSample(view.fromKey(), view.fromProgress());
+        LwjglSkinnedModel.NamedSample to = view.toKey() == null ? null
+                : new LwjglSkinnedModel.NamedSample(view.toKey(), view.toProgress());
+        layers.add(new LwjglSkinnedModel.PoseLayer(from, to, view.blend(), mask));
+    }
+
     private CharacterModelDefinition.AnimationSlot firstPersonSlot(
             BattleActor player,
             List<BattlePresentationDirector.ActionSnapshot> actions
     ) {
-        for (BattlePresentationDirector.ActionSnapshot action : actions) {
-            if (action.attacker() == player) {
-                return FirstPersonAnimationRuntime.characterSlot(action.actionType());
-            }
+        BattlePresentationDirector.ActionSnapshot action = actions.stream()
+                .filter(candidate -> candidate.attacker() == player
+                        || candidate.targets().stream().anyMatch(target -> target.target() == player))
+                .max(Comparator.comparingLong(BattlePresentationDirector.ActionSnapshot::sequence))
+                .orElse(null);
+        if (action != null) {
+            if (action.attacker() == player) return FirstPersonAnimationRuntime.characterSlot(action.actionType());
             for (BattlePresentationDirector.TargetReaction target : action.targets()) {
                 if (target.target() != player) continue;
                 return switch (target.reaction()) {
@@ -770,12 +1015,11 @@ final class LwjglBattleSceneRenderer {
             CharacterModelDefinition.AnimationSlot slot,
             LwjglSkinnedModel model
     ) {
-        for (BattlePresentationDirector.ActionSnapshot action : actions) {
-            if (action.attacker() == player
-                    || action.targets().stream().anyMatch(target -> target.target() == player)) {
-                return action.overallProgress();
-            }
-        }
+        Optional<BattlePresentationDirector.ActionSnapshot> newest = actions.stream()
+                .filter(action -> action.attacker() == player
+                        || action.targets().stream().anyMatch(target -> target.target() == player))
+                .max(Comparator.comparingLong(BattlePresentationDirector.ActionSnapshot::sequence));
+        if (newest.isPresent()) return newest.get().overallProgress();
         if (slot != CharacterModelDefinition.AnimationSlot.IDLE) {
             return 0.0;
         }
@@ -965,9 +1209,13 @@ final class LwjglBattleSceneRenderer {
             for (BattlePresentationDirector.TargetReaction target : targets) {
                 Position p = relative(formationPosition(target.target(), !target.target().isEnemy()), playerCell);
                 glPushMatrix(); glTranslated(p.x(), 0.85, p.z() + 0.03);
-                glColor4f(action.actionType() == BattlePresentationDirector.ActionType.HEAL ? 0.35f : 0.45f,
-                        action.actionType() == BattlePresentationDirector.ActionType.HEAL ? 1.0f : 0.72f,
-                        1f, 0.78f);
+                if (action.actionType() == BattlePresentationDirector.ActionType.HEAL) {
+                    glColor4f(0.35f, 1.0f, 1.0f, 0.78f);
+                } else {
+                    java.awt.Color color = target.element().getColor();
+                    glColor4f(color.getRed() / 255f, color.getGreen() / 255f,
+                            color.getBlue() / 255f, 0.78f);
+                }
                 fixedPrimitives.drawCenteredQuad(0.56, 0.56, false);
                 glPopMatrix();
             }
@@ -1190,6 +1438,7 @@ final class LwjglBattleSceneRenderer {
         for (MeshBuffers mesh : buffers.values()) { glDeleteBuffers(mesh.positionVbo()); glDeleteBuffers(mesh.uvVbo()); glDeleteBuffers(mesh.indexBuffer()); }
         for (MeshBuffers mesh : staticBuffers.values()) { glDeleteBuffers(mesh.positionVbo()); glDeleteBuffers(mesh.uvVbo()); glDeleteBuffers(mesh.indexBuffer()); }
         buffers.clear(); staticBuffers.clear(); skinnedModels.clear(); staticModels.clear(); firstPersonTransitions.clear();
+        layeredFirstPersonTransitions.clear();
         warnedFirstPersonFallbacks.clear();
     }
 
@@ -1216,6 +1465,46 @@ final class LwjglBattleSceneRenderer {
             double fromProgress,
             double blend
     ) { }
+
+    private record LayerRequest(String key, double progress, long identity) {
+        boolean newerThan(LayerRequest other) {
+            return other == null || identity > other.identity;
+        }
+    }
+
+    private static final class NamedTransition {
+        private boolean initialized;
+        private String fromKey;
+        private double fromProgress;
+        private String toKey;
+        private double toProgress;
+        private long identity = Long.MIN_VALUE;
+        private long startedNanos;
+    }
+
+    private static final class LayeredTransitionState {
+        private final NamedTransition global = new NamedTransition();
+        private final NamedTransition left = new NamedTransition();
+        private final NamedTransition right = new NamedTransition();
+        private final NamedTransition full = new NamedTransition();
+    }
+
+    private record NamedAnimationView(
+            String fromKey,
+            double fromProgress,
+            String toKey,
+            double toProgress,
+            double blend
+    ) {
+    }
+
+    private record LayeredAnimationView(
+            NamedAnimationView global,
+            NamedAnimationView left,
+            NamedAnimationView right,
+            NamedAnimationView full
+    ) {
+    }
 
     private record Position(double x, double y, double z) { }
     private record MeshBuffers(

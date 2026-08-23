@@ -4,10 +4,10 @@ target/
 !**/src/test/**/target/
 
 # Local launcher packaging artifacts
-/launcher/
+/launcher/build/
+/launcher/target/
 /dist/
 /out/
-/scripts/
 /data/
 *.af~lock~
 
@@ -46,6 +46,9 @@ build/
 
 ### VS Code ###
 .vscode/
+/.gitignore
+/.agents
+/.codex
 
 ### Mac OS ###
 .DS_Store

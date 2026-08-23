@@ -3,6 +3,7 @@ package org.main.monsters;
 import org.main.content.CharacterModelDefinition;
 import org.main.content.EnemyButcheryProfile;
 import org.main.core.PlayerStat;
+import org.main.core.CombatElement;
 import org.main.engine.AssetLoader;
 
 import java.awt.image.BufferedImage;
@@ -26,6 +27,7 @@ public class Monster {
     private final List<DropEntry> customDrops;
     private final CharacterModelDefinition characterModel;
     private final EnemyButcheryProfile butcheryProfile;
+    private final EnumMap<CombatElement, Double> elementalDamageMultipliers;
 
     private int currentHp;
 
@@ -43,7 +45,8 @@ public class Monster {
             List<String> skillIds,
             List<DropEntry> drops,
             CharacterModelDefinition characterModel,
-            EnemyButcheryProfile butcheryProfile
+            EnemyButcheryProfile butcheryProfile,
+            Map<CombatElement, Double> elementalDamageMultipliers
     ) {
         this.customId = customId == null ? "" : customId;
         this.customName = name == null || name.isBlank() ? "Custom Enemy" : name;
@@ -64,7 +67,20 @@ public class Monster {
         this.butcheryProfile = butcheryProfile == null
                 ? EnemyButcheryProfile.defaultHumanoid()
                 : butcheryProfile;
+        this.elementalDamageMultipliers = safeElementalMultipliers(elementalDamageMultipliers);
         this.currentHp = getMaxHp();
+    }
+
+    public Monster(
+            String customId, String name, Map<PlayerStat, Integer> stats, int xpReward,
+            String description, String imagePath, String paperDollSourcePath,
+            String attackSoundPath, String damageSoundPath, int combatAiIntelligence,
+            List<String> skillIds, List<DropEntry> drops,
+            CharacterModelDefinition characterModel, EnemyButcheryProfile butcheryProfile
+    ) {
+        this(customId, name, stats, xpReward, description, imagePath, paperDollSourcePath,
+                attackSoundPath, damageSoundPath, combatAiIntelligence, skillIds, drops,
+                characterModel, butcheryProfile, Map.of());
     }
 
     public Monster(
@@ -186,6 +202,10 @@ public class Monster {
         return butcheryProfile;
     }
 
+    public Map<CombatElement, Double> getElementalDamageMultipliers() {
+        return Map.copyOf(elementalDamageMultipliers);
+    }
+
     public boolean isAlive() {
         return currentHp > 0;
     }
@@ -205,7 +225,8 @@ public class Monster {
                 customSkillIds,
                 customDrops,
                 characterModel,
-                butcheryProfile
+                butcheryProfile,
+                elementalDamageMultipliers
         );
     }
 
@@ -235,6 +256,17 @@ public class Monster {
             }
         }
         return stats;
+    }
+
+    private static EnumMap<CombatElement, Double> safeElementalMultipliers(
+            Map<CombatElement, Double> source) {
+        EnumMap<CombatElement, Double> values = new EnumMap<>(CombatElement.class);
+        for (CombatElement element : CombatElement.values()) {
+            double value = source == null ? 1.0 : source.getOrDefault(element, 1.0);
+            values.put(element, Double.isFinite(value)
+                    ? Math.max(0.0, Math.min(5.0, value)) : 1.0);
+        }
+        return values;
     }
 
     public record DropEntry(String itemId, double chance) {

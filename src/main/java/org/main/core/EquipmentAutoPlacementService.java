@@ -352,6 +352,7 @@ public final class EquipmentAutoPlacementService {
         return switch (weapon) {
             case DAGGER -> 0.65;
             case MACE -> 0.75;
+            case WAND -> 0.55;
             case STAFF -> 1.00;
             case GREATSWORD -> 1.20;
             case NONE, SWORD -> 0.85;

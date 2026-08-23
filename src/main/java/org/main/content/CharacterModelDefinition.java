@@ -1,6 +1,7 @@
 package org.main.content;
 
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -67,6 +68,7 @@ public final class CharacterModelDefinition {
     private final double facingRotationDegrees;
     private final double verticalOffset;
     private final Map<AnimationSlot, AnimationBinding> animationBindings;
+    private final Map<String, AnimationBinding> namedAnimationBindings;
 
     public CharacterModelDefinition(
             String modelPath,
@@ -76,17 +78,18 @@ public final class CharacterModelDefinition {
             double verticalOffset,
             Map<AnimationSlot, AnimationBinding> animationBindings
     ) {
-        this(modelPath, rigId, scale, facingRotationDegrees, verticalOffset, animationBindings, true);
+        this(modelPath, rigId, scale, facingRotationDegrees, verticalOffset,
+                animationBindings, Map.of());
     }
 
-    private CharacterModelDefinition(
+    public CharacterModelDefinition(
             String modelPath,
             String rigId,
             double scale,
             double facingRotationDegrees,
             double verticalOffset,
             Map<AnimationSlot, AnimationBinding> animationBindings,
-            boolean ignored
+            Map<String, AnimationBinding> namedAnimationBindings
     ) {
         this.modelPath = normalize(modelPath);
         this.rigId = rigId == null ? "" : rigId.trim();
@@ -105,6 +108,16 @@ public final class CharacterModelDefinition {
             }
         }
         this.animationBindings = Map.copyOf(safe);
+        LinkedHashMap<String, AnimationBinding> named = new LinkedHashMap<>();
+        if (namedAnimationBindings != null) {
+            namedAnimationBindings.forEach((key, binding) -> {
+                String normalizedKey = normalizeKey(key);
+                if (!normalizedKey.isBlank() && binding != null && binding.isPresent()) {
+                    named.put(normalizedKey, binding);
+                }
+            });
+        }
+        this.namedAnimationBindings = Map.copyOf(named);
     }
 
     public static CharacterModelDefinition empty() {
@@ -135,6 +148,14 @@ public final class CharacterModelDefinition {
         return animationBindings;
     }
 
+    public Map<String, AnimationBinding> namedAnimationBindings() {
+        return namedAnimationBindings;
+    }
+
+    public AnimationBinding namedAnimationBinding(String key) {
+        return namedAnimationBindings.getOrDefault(normalizeKey(key), AnimationBinding.ofPath(""));
+    }
+
     public boolean hasModel() {
         return !modelPath.isBlank();
     }
@@ -154,6 +175,10 @@ public final class CharacterModelDefinition {
         return value == null ? "" : value.trim().replace('\\', '/');
     }
 
+    private static String normalizeKey(String value) {
+        return value == null ? "" : value.trim().toUpperCase(java.util.Locale.ROOT);
+    }
+
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -167,11 +192,13 @@ public final class CharacterModelDefinition {
                 && Double.compare(verticalOffset, that.verticalOffset) == 0
                 && modelPath.equals(that.modelPath)
                 && rigId.equals(that.rigId)
-                && animationBindings.equals(that.animationBindings);
+                && animationBindings.equals(that.animationBindings)
+                && namedAnimationBindings.equals(that.namedAnimationBindings);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(modelPath, rigId, scale, facingRotationDegrees, verticalOffset, animationBindings);
+        return Objects.hash(modelPath, rigId, scale, facingRotationDegrees, verticalOffset,
+                animationBindings, namedAnimationBindings);
     }
 }

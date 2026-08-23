@@ -11,14 +11,36 @@ import org.main.monsters.Monster;
 
 import java.util.List;
 import java.util.Map;
+import java.util.WeakHashMap;
+import java.util.LinkedHashMap;
 
 public final class DifficultyResolver {
+    private static final Map<PlayerCharacter, CachedRating> PLAYER_CACHE = new WeakHashMap<>();
+    private static final Map<Monster, CachedRating> MONSTER_CACHE = new WeakHashMap<>();
+    private static final Map<ProfileKey, DifficultyRating> PROFILE_CACHE =
+            new LinkedHashMap<>(256, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<ProfileKey, DifficultyRating> eldest) {
+                    return size() > 512;
+                }
+            };
+
     private DifficultyResolver() {
     }
 
     public static DifficultyRating ratePlayer(PlayerCharacter player) {
         if (player == null) {
             return emptyRating();
+        }
+
+        long contextRevision = contextRevision();
+        int signature = playerSignature(player);
+        synchronized (PLAYER_CACHE) {
+            CachedRating cached = PLAYER_CACHE.get(player);
+            if (cached != null && cached.contextRevision() == contextRevision
+                    && cached.signature() == signature) {
+                return cached.rating();
+            }
         }
 
         BattleActor actor = new BattleActor(
@@ -46,15 +68,30 @@ public final class DifficultyResolver {
         for (BattleSkill skill : player.getBattleSkills()) {
             actor.addSkill(skill);
         }
-        return rateActor(actor);
+        DifficultyRating rating = rateActor(actor);
+        synchronized (PLAYER_CACHE) {
+            PLAYER_CACHE.put(player, new CachedRating(contextRevision, signature, rating));
+        }
+        return rating;
     }
 
     public static DifficultyRating rateMonster(Monster monster) {
         if (monster == null) {
             return emptyRating();
         }
-
-        return rateMonsterProfile(monster.getName(), monster.getStatsView(), monster.getSkillIds());
+        long contextRevision = contextRevision();
+        synchronized (MONSTER_CACHE) {
+            CachedRating cached = MONSTER_CACHE.get(monster);
+            if (cached != null && cached.contextRevision() == contextRevision) {
+                return cached.rating();
+            }
+        }
+        DifficultyRating rating = rateMonsterProfile(
+                monster.getName(), monster.getStatsView(), monster.getSkillIds());
+        synchronized (MONSTER_CACHE) {
+            MONSTER_CACHE.put(monster, new CachedRating(contextRevision, 0, rating));
+        }
+        return rating;
     }
 
     public static DifficultyRating rateMonsterProfile(
@@ -62,8 +99,19 @@ public final class DifficultyResolver {
             Map<PlayerStat, Integer> stats,
             List<String> skillIds
     ) {
+        ProfileKey key = new ProfileKey(name, stats, skillIds, contextRevision());
+        synchronized (PROFILE_CACHE) {
+            DifficultyRating cached = PROFILE_CACHE.get(key);
+            if (cached != null) {
+                return cached;
+            }
+        }
         BattleActor actor = createMonsterProfile(name, stats, skillIds);
-        return rateActor(actor);
+        DifficultyRating rating = rateActor(actor);
+        synchronized (PROFILE_CACHE) {
+            PROFILE_CACHE.put(key, rating);
+        }
+        return rating;
     }
 
     public static BattleActor createMonsterProfile(
@@ -176,6 +224,43 @@ public final class DifficultyResolver {
 
     private static int minLevel() {
         return Math.max(1, GameConfiguration.intValue("difficulty.minimumLevel", 1));
+    }
+
+    private static long contextRevision() {
+        return GameConfiguration.revision() * 31L
+                + System.identityHashCode(BattleContentCatalog.current());
+    }
+
+    private static int playerSignature(PlayerCharacter player) {
+        int result = player.getMaxHp();
+        for (PlayerStat stat : PlayerStat.values()) {
+            result = 31 * result + player.getStat(stat);
+        }
+        for (CharacterSkill skill : List.of(
+                CharacterSkill.ATTACK,
+                CharacterSkill.STRENGTH,
+                CharacterSkill.DEFENSE,
+                CharacterSkill.MAGIC_ACCURACY,
+                CharacterSkill.MAGIC_POWER)) {
+            result = 31 * result + player.getSkillLevel(skill);
+        }
+        return 31 * result + player.getBattleSkills().hashCode();
+    }
+
+    private record CachedRating(long contextRevision, int signature, DifficultyRating rating) {
+    }
+
+    private record ProfileKey(
+            String name,
+            Map<PlayerStat, Integer> stats,
+            List<String> skillIds,
+            long contextRevision
+    ) {
+        private ProfileKey {
+            name = name == null ? "" : name;
+            stats = stats == null ? Map.of() : Map.copyOf(stats);
+            skillIds = skillIds == null ? List.of() : List.copyOf(skillIds);
+        }
     }
 
     public record DifficultyRating(

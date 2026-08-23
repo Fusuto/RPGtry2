@@ -1,133 +1,102 @@
 package org.main.engine;
 
-import javax.imageio.ImageIO;
+import org.main.pack.ContentResource;
+
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import java.awt.image.BufferedImage;
 import java.io.BufferedInputStream;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.JarURLConnection;
-import java.net.URISyntaxException;
-import java.net.URL;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
-import java.util.jar.JarEntry;
-import java.util.jar.JarFile;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public final class AssetLoader {
-    private static final ClassLoader CLASS_LOADER = AssetLoader.class.getClassLoader();
     private static final Logger LOGGER = Logger.getLogger(AssetLoader.class.getName());
 
     private AssetLoader() {
     }
 
     public static BufferedImage loadImage(String assetPath) {
-        if (isBlank(assetPath)) {
+        if (assetPath == null || assetPath.isBlank()) {
             return null;
         }
-
-        Path externalPath = resolveExternalPath(assetPath);
-        if (externalPath != null && Files.exists(externalPath)) {
-            try {
-                return ImageIO.read(externalPath.toFile());
-            } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to load image file: " + assetPath, e);
-                return null;
-            }
-        }
-
-        try (InputStream stream = openResourceStream(normalizeResourcePath(assetPath))) {
-            if (stream == null) {
+        try {
+            BufferedImage image = AssetRepository.shared().image(assetPath);
+            if (image == null) {
                 LOGGER.warning(() -> "Image resource not found: " + assetPath);
-                return null;
             }
-
-            return ImageIO.read(stream);
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to load image resource: " + assetPath, e);
+            return image;
+        } catch (IOException error) {
+            LOGGER.log(Level.WARNING, "Failed to load image: " + assetPath, error);
             return null;
         }
     }
 
     public static AudioInputStream openAudioStream(String assetPath) throws Exception {
-        Path externalPath = resolveExternalPath(assetPath);
-        if (externalPath != null && Files.exists(externalPath)) {
-            return AudioSystem.getAudioInputStream(externalPath.toFile());
-        }
-
-        InputStream stream = openResourceStream(normalizeResourcePath(assetPath));
-        if (stream == null) {
-            throw new IOException("Audio resource not found: " + assetPath);
-        }
-
+        InputStream stream = openAssetStream(assetPath);
         return AudioSystem.getAudioInputStream(new BufferedInputStream(stream));
     }
 
     public static InputStream openAssetStream(String assetPath) throws IOException {
-        Path externalPath = resolveExternalPath(assetPath);
-        if (externalPath != null && Files.exists(externalPath)) {
-            return Files.newInputStream(externalPath);
-        }
-
-        InputStream stream = openResourceStream(normalizeResourcePath(assetPath));
+        InputStream stream = AssetRepository.shared().open(assetPath);
         if (stream == null) {
             throw new IOException("Asset resource not found: " + assetPath);
         }
-
-        return new BufferedInputStream(stream);
+        return stream;
     }
 
     public static List<ImageAsset> loadImagesFromFolder(String folderPath) {
         List<ImageAsset> assets = new ArrayList<>();
-        Set<String> loadedFileNames = new LinkedHashSet<>();
-        Path externalPath = resolveExternalPath(folderPath);
-
-        if (externalPath != null && Files.isDirectory(externalPath)) {
-            try {
-                Files.list(externalPath)
-                        .filter(Files::isRegularFile)
-                        .filter(path -> isImageFile(path.getFileName().toString()))
-                        .forEach(path -> {
-                            try {
-                                BufferedImage image = ImageIO.read(path.toFile());
-                                String fileName = path.getFileName().toString();
-                                assets.add(new ImageAsset(fileName, image));
-                                loadedFileNames.add(fileName);
-                            } catch (IOException e) {
-                                LOGGER.log(Level.WARNING, "Failed to load image file: " + path, e);
-                            }
-                        });
-            } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to list image folder: " + folderPath, e);
-            }
-        }
-
-        for (String resourcePath : listResourceFiles(normalizeResourcePath(folderPath))) {
-            String fileName = Path.of(resourcePath).getFileName().toString();
-            if (!isImageFile(fileName) || loadedFileNames.contains(fileName)) {
-                continue;
-            }
-
-            try (InputStream stream = openResourceStream(resourcePath)) {
-                if (stream != null) {
-                    assets.add(new ImageAsset(fileName, ImageIO.read(stream)));
-                    loadedFileNames.add(fileName);
+        Set<String> loadedNames = new LinkedHashSet<>();
+        try {
+            for (ContentResource resource : AssetRepository.shared().list(folderPath, false)) {
+                String fileName = Path.of(resource.logicalPath()).getFileName().toString();
+                if (!isImageFile(fileName) || !loadedNames.add(fileName)) {
+                    continue;
                 }
-            } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to load image resource: " + resourcePath, e);
+                BufferedImage image = loadImage(resource.logicalPath());
+                if (image != null) {
+                    assets.add(new ImageAsset(fileName, image));
+                }
             }
+        } catch (IOException error) {
+            LOGGER.log(Level.WARNING, "Failed to list image folder: " + folderPath, error);
         }
-
         return assets;
     }
 
+    /**
+     * Returns recursive logical paths from every active content mount.
+     */
     public static List<String> listAssetFiles(String folderPath) {
-        return listResourceFiles(normalizeResourcePath(folderPath));
+        try {
+            return AssetRepository.shared().list(folderPath, true).stream()
+                    .map(ContentResource::logicalPath)
+                    .toList();
+        } catch (IOException error) {
+            LOGGER.log(Level.WARNING, "Failed to list asset folder: " + folderPath, error);
+            return List.of();
+        }
+    }
+
+    public static List<ContentResource> listAssetEntries(String folderPath, boolean recursive) {
+        try {
+            return AssetRepository.shared().list(folderPath, recursive);
+        } catch (IOException error) {
+            LOGGER.log(Level.WARNING, "Failed to list asset folder: " + folderPath, error);
+            return List.of();
+        }
+    }
+
+    public static void refreshContentPacks() throws IOException {
+        AssetRepository.shared().reload();
     }
 
     public static Path generatedSoundsFolder() {
@@ -135,189 +104,13 @@ public final class AssetLoader {
     }
 
     public static Path assetPacksFolder() {
-        return ApplicationPaths.dataFolder().resolve("asset-packs");
-    }
-
-    private static Path resolveExternalPath(String assetPath) {
-        if (isBlank(assetPath)) {
-            return null;
-        }
-
-        String normalizedPath = normalizeSlashes(assetPath);
-        Path directPath = Path.of(normalizedPath);
-        if (directPath.isAbsolute() || Files.exists(directPath)) {
-            return directPath;
-        }
-
-        if (normalizedPath.startsWith("data/")) {
-            return ApplicationPaths.resolveApplicationPath(normalizedPath);
-        }
-
-        /*
-         * The Construction Kit writes imported assets into the source-resource
-         * tree. That tree is not part of an already-running class loader, so a
-         * newly imported assets/... path must be resolved directly while
-         * developing instead of waiting for the next Maven resource copy or
-         * application restart.
-         */
-        if (normalizedPath.startsWith("assets/")) {
-            Path workingResource = resolveWithinResourceRoot(
-                    Path.of("src", "main", "resources"),
-                    normalizedPath);
-            if (workingResource != null && Files.exists(workingResource)) {
-                return workingResource;
-            }
-            Path applicationResource = resolveWithinResourceRoot(
-                    ApplicationPaths.applicationFolder()
-                            .resolve("src")
-                            .resolve("main")
-                            .resolve("resources"),
-                    normalizedPath);
-            if (applicationResource != null && Files.exists(applicationResource)) {
-                return applicationResource;
-            }
-        }
-
-        return directPath;
-    }
-
-    private static Path resolveWithinResourceRoot(Path resourceRoot, String assetPath) {
-        if (resourceRoot == null || isBlank(assetPath)) {
-            return null;
-        }
-        Path normalizedRoot = resourceRoot.toAbsolutePath().normalize();
-        Path candidate = normalizedRoot.resolve(assetPath).normalize();
-        return candidate.startsWith(normalizedRoot) ? candidate : null;
-    }
-
-    private static String normalizeResourcePath(String assetPath) {
-        String normalizedPath = normalizeSlashes(assetPath);
-
-        if (normalizedPath.startsWith("data/sounds/generated/")) {
-            return "assets/sounds/generated/" + normalizedPath.substring("data/sounds/generated/".length());
-        }
-
-        return normalizedPath;
-    }
-
-    private static List<String> listResourceFiles(String folderPath) {
-        Set<String> resourcePaths = new LinkedHashSet<>();
-        String normalizedFolder = trimTrailingSlash(folderPath);
-
-        try {
-            Enumeration<URL> urls = CLASS_LOADER.getResources(normalizedFolder);
-            while (urls.hasMoreElements()) {
-                URL url = urls.nextElement();
-
-                if ("file".equals(url.getProtocol())) {
-                    Path folder = Path.of(url.toURI());
-                    if (Files.isDirectory(folder)) {
-                        Files.list(folder)
-                                .filter(Files::isRegularFile)
-                                .map(path -> normalizedFolder + "/" + path.getFileName())
-                                .forEach(resourcePaths::add);
-                    }
-                }
-
-                if ("jar".equals(url.getProtocol())) {
-                    JarURLConnection connection = (JarURLConnection) url.openConnection();
-                    collectJarEntries(connection.getJarFile(), normalizedFolder, resourcePaths);
-                }
-            }
-
-            URL ownLocation = AssetLoader.class.getProtectionDomain().getCodeSource().getLocation();
-            if (ownLocation != null && ownLocation.getPath().endsWith(".jar")) {
-                try (JarFile jarFile = new JarFile(Path.of(ownLocation.toURI()).toFile())) {
-                    collectJarEntries(jarFile, normalizedFolder, resourcePaths);
-                }
-            }
-
-            for (Path assetPack : listExternalAssetPacks()) {
-                try (JarFile jarFile = new JarFile(assetPack.toFile())) {
-                    collectJarEntries(jarFile, normalizedFolder, resourcePaths);
-                }
-            }
-        } catch (IOException | URISyntaxException e) {
-            LOGGER.log(Level.WARNING, "Failed to list resource folder: " + folderPath, e);
-        }
-
-        return new ArrayList<>(resourcePaths);
-    }
-
-    private static InputStream openResourceStream(String resourcePath) throws IOException {
-        for (Path assetPack : listExternalAssetPacks()) {
-            try (JarFile jarFile = new JarFile(assetPack.toFile())) {
-                JarEntry entry = jarFile.getJarEntry(resourcePath);
-                if (entry == null || entry.isDirectory()) {
-                    continue;
-                }
-
-                try (InputStream stream = jarFile.getInputStream(entry)) {
-                    return new ByteArrayInputStream(stream.readAllBytes());
-                }
-            }
-        }
-
-        InputStream bundledStream = CLASS_LOADER.getResourceAsStream(resourcePath);
-        return bundledStream;
-    }
-
-    private static List<Path> listExternalAssetPacks() {
-        if (!Files.isDirectory(assetPacksFolder())) {
-            return List.of();
-        }
-
-        try {
-            return Files.list(assetPacksFolder())
-                    .filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jar"))
-                    .toList();
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to list asset packs: " + assetPacksFolder(), e);
-            return List.of();
-        }
-    }
-
-    private static void collectJarEntries(JarFile jarFile, String folderPath, Set<String> resourcePaths) {
-        String prefix = trimTrailingSlash(folderPath) + "/";
-        Enumeration<JarEntry> entries = jarFile.entries();
-
-        while (entries.hasMoreElements()) {
-            JarEntry entry = entries.nextElement();
-            String name = entry.getName();
-
-            if (entry.isDirectory() || !name.startsWith(prefix)) {
-                continue;
-            }
-
-            String remainder = name.substring(prefix.length());
-            if (!remainder.contains("/")) {
-                resourcePaths.add(name);
-            }
-        }
+        return ApplicationPaths.contentPacksFolder().resolve("installed");
     }
 
     private static boolean isImageFile(String fileName) {
         String lowerName = fileName.toLowerCase(Locale.ROOT);
-        return lowerName.endsWith(".png")
-                || lowerName.endsWith(".jpg")
-                || lowerName.endsWith(".jpeg");
-    }
-
-    private static String trimTrailingSlash(String value) {
-        String result = normalizeSlashes(value);
-        while (result.endsWith("/")) {
-            result = result.substring(0, result.length() - 1);
-        }
-        return result;
-    }
-
-    private static String normalizeSlashes(String value) {
-        return value == null ? "" : value.replace('\\', '/');
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.isBlank();
+        return lowerName.endsWith(".png") || lowerName.endsWith(".jpg")
+                || lowerName.endsWith(".jpeg") || lowerName.endsWith(".gif");
     }
 
     public record ImageAsset(String fileName, BufferedImage image) {

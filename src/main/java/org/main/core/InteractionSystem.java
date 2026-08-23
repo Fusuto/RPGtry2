@@ -3,6 +3,7 @@ package org.main.core;
 import org.main.content.MapDesignLibrary;
 import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
+import org.main.engine.TextWrapping;
 
 import javax.swing.*;
 import java.awt.*;
@@ -1243,7 +1244,7 @@ public final class InteractionSystem {
 
             g.setFont(oldFont.deriveFont(14f));
 
-            List<String> lines = wrapText(g, model.getBodyText(), textWidth);
+            List<String> lines = TextWrapping.wrap(g.getFontMetrics(), model.getBodyText(), textWidth);
             lastBodyContentHeight = lines.size() * 19;
             bodyScrollOffset = clampScroll(bodyScrollOffset, lastBodyContentHeight, bodyClip.height);
 
@@ -1343,51 +1344,6 @@ public final class InteractionSystem {
 
             g.setStroke(oldStroke);
             g.setComposite(oldComposite);
-        }
-
-        private List<String> wrapText(Graphics2D g, String text, int maxWidth) {
-            List<String> lines = new ArrayList<>();
-
-            if (text == null || text.isBlank()) {
-                return lines;
-            }
-
-            FontMetrics metrics = g.getFontMetrics();
-
-            for (String paragraph : text.split("\\R")) {
-                String[] words = paragraph.split("\\s+");
-                StringBuilder currentLine = new StringBuilder();
-
-                for (String word : words) {
-                    if (word.isBlank()) {
-                        continue;
-                    }
-
-                    String candidate;
-
-                    if (currentLine.isEmpty()) {
-                        candidate = word;
-                    } else {
-                        candidate = currentLine + " " + word;
-                    }
-
-                    if (metrics.stringWidth(candidate) <= maxWidth) {
-                        currentLine = new StringBuilder(candidate);
-                    } else {
-                        if (!currentLine.isEmpty()) {
-                            lines.add(currentLine.toString());
-                        }
-
-                        currentLine = new StringBuilder(word);
-                    }
-                }
-
-                if (!currentLine.isEmpty()) {
-                    lines.add(currentLine.toString());
-                }
-            }
-
-            return lines;
         }
 
         private String trimTextToFit(Graphics2D g, String text, int maxWidth) {
@@ -1492,6 +1448,18 @@ public final class InteractionSystem {
                 }
 
                 return anvilMenu(context.getGameState());
+            });
+
+            registry.register("attunement_pillar", context -> {
+                GameState.AttunementResult result = context.getGameState().attuneSelectedStone(
+                        context.getEntity() == null ? "" : context.getEntity().getContentId());
+                Interaction interaction = prompt(
+                        result.title(),
+                        result.message(),
+                        closeOption("Close")
+                );
+                return result.soundPath().isBlank()
+                        ? interaction : interaction.withSelectionSoundPath(result.soundPath());
             });
 
             return registry;
@@ -2281,23 +2249,16 @@ public final class InteractionSystem {
             }
             for (Map.Entry<String, MapDesignLibrary.RewardDefinition> entry : pending) {
                 MapDesignLibrary.RewardDefinition reward = entry.getValue();
-                if (reward.type() == MapDesignLibrary.QuestRewardType.SKILL_XP && reward.skill() == null) {
-                    return new DialogueTransactionResult(false, "A dialogue reward is missing its skill.");
-                }
-                if (reward.type() != MapDesignLibrary.QuestRewardType.SKILL_XP) {
-                    String itemId = reward.type() == MapDesignLibrary.QuestRewardType.GOLD
-                            ? "GOLD"
-                            : reward.itemId();
-                    if (gameState.createItemByNameOrId(itemId) == null) {
-                        return new DialogueTransactionResult(false, "Missing reward item: " + itemId);
-                    }
+                String issue = QuestRewardService.validate(gameState, reward);
+                if (!issue.isBlank()) {
+                    return new DialogueTransactionResult(false, issue);
                 }
             }
 
             InventorySystem.Inventory inventory = gameState.getInventory();
             InventorySystem.Inventory.Snapshot inventorySnapshot = inventory.snapshot();
-            Map<CharacterSkill, Integer> skillLevels = gameState.getPlayerCharacter().getSkillsView();
-            Map<CharacterSkill, Integer> skillXp = gameState.getPlayerCharacter().getSkillExperienceView();
+            QuestRewardService.PlayerProgressSnapshot playerProgress =
+                    QuestRewardService.capturePlayerProgress(gameState);
             try {
                 if (!takeItemId.isBlank()
                         && !removeAuthoredItem(gameState, takeItemId, takeItemAmount)) {
@@ -2308,7 +2269,7 @@ public final class InteractionSystem {
                 }
                 for (Map.Entry<String, MapDesignLibrary.RewardDefinition> entry : pending) {
                     if (entry.getValue().type() != MapDesignLibrary.QuestRewardType.SKILL_XP
-                            && !grantAuthoredInventoryReward(gameState, entry.getValue())) {
+                            && !QuestRewardService.grantInventory(gameState, entry.getValue())) {
                         return new DialogueTransactionResult(false, "You need more inventory space for these rewards.");
                     }
                 }
@@ -2325,9 +2286,7 @@ public final class InteractionSystem {
                 }
                 for (Map.Entry<String, MapDesignLibrary.RewardDefinition> entry : pending) {
                     MapDesignLibrary.RewardDefinition reward = entry.getValue();
-                    if (reward.type() == MapDesignLibrary.QuestRewardType.SKILL_XP) {
-                        gameState.getPlayerCharacter().addSkillExperience(reward.skill(), reward.amount());
-                    } else if (!grantAuthoredInventoryReward(gameState, reward)) {
+                    if (!QuestRewardService.grant(gameState, reward)) {
                         throw new IllegalStateException("Reward grant failed.");
                     }
                     appendRewardText(gameState, rewardText, reward);
@@ -2335,10 +2294,7 @@ public final class InteractionSystem {
                 pending.forEach(entry -> gameState.markDialogueRewardClaimed(entry.getKey()));
             } catch (RuntimeException exception) {
                 inventory.restore(commitSnapshot);
-                for (CharacterSkill skill : CharacterSkill.values()) {
-                    gameState.getPlayerCharacter().setSkillLevel(skill, skillLevels.getOrDefault(skill, 0));
-                    gameState.getPlayerCharacter().setSkillExperience(skill, skillXp.getOrDefault(skill, 0));
-                }
+                QuestRewardService.restorePlayerProgress(gameState, playerProgress);
                 return new DialogueTransactionResult(false, "The dialogue reward could not be granted safely.");
             }
             return new DialogueTransactionResult(
@@ -2362,33 +2318,6 @@ public final class InteractionSystem {
                 text.append("\n+").append(reward.amount()).append(" ")
                         .append(item == null ? reward.itemId() : item.getName());
             }
-        }
-
-        private boolean grantAuthoredInventoryReward(
-                GameState gameState,
-                MapDesignLibrary.RewardDefinition reward
-        ) {
-            String itemId = reward.type() == MapDesignLibrary.QuestRewardType.GOLD
-                    ? "GOLD"
-                    : reward.itemId();
-            InventorySystem.Item first = gameState.createItemByNameOrId(itemId);
-            if (first == null) {
-                return false;
-            }
-            if (first.isStackable()) {
-                first.addQuantity(reward.amount() - 1);
-                return gameState.getInventory().addItem(first);
-            }
-            if (!gameState.getInventory().addItem(first)) {
-                return false;
-            }
-            for (int count = 1; count < reward.amount(); count++) {
-                InventorySystem.Item next = gameState.createItemByNameOrId(itemId);
-                if (next == null || !gameState.getInventory().addItem(next)) {
-                    return false;
-                }
-            }
-            return true;
         }
 
         private int countAuthoredItem(GameState gameState, String itemId) {

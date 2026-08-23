@@ -16,18 +16,43 @@ import java.util.function.Function;
 import java.util.stream.Stream;
 
 public final class MapDesignLibrary {
+    public static final int MAP_FORMAT_VERSION = 1;
     public static final String DEFAULT_NPC_VISUAL_PATH = "assets/images/monster/Nov-2015/mon/goblin.png";
     public static final String MAP_RESOURCE_FOLDER = "assets/editor/maps";
     public static final String CONTENT_RESOURCE_FOLDER = "assets/editor/content";
-    public static final Path EDITOR_RESOURCE_FOLDER = Path.of("src", "main", "resources", "assets", "editor");
+    public static final Path EDITOR_RESOURCE_FOLDER = editableEditorFolder();
     public static final Path MAP_FOLDER = EDITOR_RESOURCE_FOLDER.resolve("maps");
     public static final Path CONTENT_FOLDER = EDITOR_RESOURCE_FOLDER.resolve("content");
-    public static final Path DATA_MAP_FOLDER = Path.of("data", "maps");
-    private static final String OAK_TREE_TEST_MODEL_PATH = "assets/3D/gatheringNode/Tree3.glb";
+    public static final Path DATA_MAP_FOLDER = ApplicationPaths.dataFolder().resolve("maps");
     private static final String LEGACY_GENERATED_LIMB_ICON =
             "assets/images/monster/Ancient/Oct-5-2010/player/hand1/misc/head.png";
 
     private MapDesignLibrary() {
+    }
+
+    private static Path editableEditorFolder() {
+        Path development = ApplicationPaths.developmentResourcesFolder();
+        if (development != null) {
+            return development.resolve("assets/editor");
+        }
+        Path project = ApplicationPaths.activeProjectFolder();
+        if (project == null) {
+            return ApplicationPaths.dataFolder().resolve("editable-resources/assets/editor");
+        }
+        String namespace = "aether_user";
+        Path manifest = project.resolve("aether-pack.properties");
+        if (Files.isRegularFile(manifest)) {
+            Properties properties = new Properties();
+            try (InputStream input = Files.newInputStream(manifest)) {
+                properties.load(input);
+                String configured = properties.getProperty("pack.namespace", "").trim().toLowerCase(Locale.ROOT);
+                if (configured.matches("[a-z][a-z0-9_]{1,31}")) {
+                    namespace = configured;
+                }
+            } catch (IOException ignored) {
+            }
+        }
+        return project.resolve("assets/packs").resolve(namespace).resolve("editor");
     }
 
     public static Monster createEnemyById(String enemyId) {
@@ -102,6 +127,7 @@ public final class MapDesignLibrary {
 
         Files.createDirectories(path.toAbsolutePath().getParent());
         Properties properties = new Properties();
+        properties.setProperty("formatVersion", String.valueOf(MAP_FORMAT_VERSION));
         properties.setProperty("displayName", design.displayName());
         properties.setProperty("description", design.description());
         properties.setProperty("musicPath", design.musicPath());
@@ -217,7 +243,7 @@ public final class MapDesignLibrary {
                 writeQuestFlow(properties, prefix + "epilogue.", authoredQuest.epilogueFlow());
             }
 
-            properties.setProperty("item.schemaVersion", "6");
+            properties.setProperty("item.schemaVersion", "8");
             properties.setProperty("item.count", String.valueOf(design.customItems().size()));
             for (int i = 0; i < design.customItems().size(); i++) {
                 CustomItem customItem = design.customItems().get(i);
@@ -243,6 +269,15 @@ public final class MapDesignLibrary {
                 properties.setProperty(prefix + "smithingRequiredLevel", String.valueOf(customItem.smithingRequiredLevel()));
                 properties.setProperty(prefix + "magicAccuracyBonus", String.valueOf(customItem.magicAccuracyBonus()));
                 properties.setProperty(prefix + "magicPowerBonus", String.valueOf(customItem.magicPowerBonus()));
+                properties.setProperty(prefix + "elementalAffinity", customItem.elementalAffinity().name());
+                properties.setProperty(prefix + "matchingElementSpellDamageBonus",
+                        String.valueOf(customItem.matchingElementSpellDamageBonus()));
+                WeaponStatOverrides weaponStats = customItem.weaponStatOverrides();
+                properties.setProperty(prefix + "weaponStats.enabled", String.valueOf(weaponStats.enabled()));
+                properties.setProperty(prefix + "weaponStats.accuracyBonus", String.valueOf(weaponStats.accuracyBonus()));
+                properties.setProperty(prefix + "weaponStats.powerBonus", String.valueOf(weaponStats.powerBonus()));
+                properties.setProperty(prefix + "weaponStats.attackIntervalMultiplier",
+                        String.valueOf(weaponStats.attackIntervalMultiplier()));
                 properties.setProperty(prefix + "firstPersonModelPath", customItem.firstPersonModelPath());
                 properties.setProperty(prefix + "sourceEnemyId", customItem.sourceEnemyId());
                 LanternDefinition lantern = customItem.lanternDefinition();
@@ -272,7 +307,7 @@ public final class MapDesignLibrary {
                 properties.setProperty(prefix + "modelIcon.offsetY", String.valueOf(icon.offsetY()));
             }
 
-            properties.setProperty("mob.schemaVersion", "2");
+            properties.setProperty("mob.schemaVersion", "3");
             properties.setProperty("mob.count", String.valueOf(design.customMobs().size()));
             for (int i = 0; i < design.customMobs().size(); i++) {
                 CustomMob customMob = design.customMobs().get(i);
@@ -292,6 +327,11 @@ public final class MapDesignLibrary {
                 properties.setProperty(prefix + "awarenessRadius", String.valueOf(customMob.awarenessRadius()));
                 properties.setProperty(prefix + "movementIntervalMs", String.valueOf(customMob.movementIntervalMs()));
                 properties.setProperty(prefix + "respawnDelayMs", String.valueOf(customMob.respawnDelayMs()));
+                for (CombatElement element : CombatElement.values()) {
+                    properties.setProperty(prefix + "elementMultiplier." + element.name(),
+                            String.valueOf(customMob.elementalDamageMultipliers()
+                                    .getOrDefault(element, 1.0)));
+                }
                 EnemyButcheryProfile butchery = customMob.butcheryProfile();
                 properties.setProperty(prefix + "butchery.type", butchery.type().name());
                 properties.setProperty(prefix + "butchery.leatherItemId", butchery.leatherItemId());
@@ -366,6 +406,7 @@ public final class MapDesignLibrary {
                 }
             }
 
+            properties.setProperty("furniture.schemaVersion", "2");
             properties.setProperty("furniture.count", String.valueOf(design.customFurniture().size()));
             for (int i = 0; i < design.customFurniture().size(); i++) {
                 CustomFurnitureDefinition furniture = design.customFurniture().get(i);
@@ -374,12 +415,24 @@ public final class MapDesignLibrary {
                 properties.setProperty(prefix + "displayName", furniture.displayName());
                 properties.setProperty(prefix + "category", furniture.category());
                 properties.setProperty(prefix + "modelPath", furniture.modelPath());
+                properties.setProperty(prefix + "spritePath", furniture.spritePath());
                 properties.setProperty(prefix + "defaultScale", String.valueOf(furniture.defaultScale()));
                 properties.setProperty(prefix + "defaultBlocksMovement", String.valueOf(furniture.defaultBlocksMovement()));
                 properties.setProperty(prefix + "interactionId", furniture.interactionId());
                 writeLightAttachment(properties, prefix + "light.", furniture.lightAttachment());
+                AttunementPillarDefinition pillar = furniture.attunementPillar();
+                properties.setProperty(prefix + "pillar.present", String.valueOf(pillar != null));
+                if (pillar != null) {
+                    properties.setProperty(prefix + "pillar.element", pillar.element().name());
+                    properties.setProperty(prefix + "pillar.inputItemId", pillar.inputItemId());
+                    properties.setProperty(prefix + "pillar.outputItemId", pillar.outputItemId());
+                    properties.setProperty(prefix + "pillar.requiredLevel", String.valueOf(pillar.requiredLevel()));
+                    properties.setProperty(prefix + "pillar.xpReward", String.valueOf(pillar.xpReward()));
+                    properties.setProperty(prefix + "pillar.soundPath", pillar.soundPath());
+                }
             }
 
+            properties.setProperty("gatheringNode.schemaVersion", "1");
             properties.setProperty("gatheringNode.count", String.valueOf(design.customGatheringNodes().size()));
             for (int i = 0; i < design.customGatheringNodes().size(); i++) {
                 CustomGatheringNode node = design.customGatheringNodes().get(i);
@@ -414,6 +467,7 @@ public final class MapDesignLibrary {
                 }
             }
 
+            properties.setProperty("cookingRecipe.schemaVersion", "1");
             properties.setProperty("cookingRecipe.count", String.valueOf(design.customCookingRecipes().size()));
             for (int i = 0; i < design.customCookingRecipes().size(); i++) {
                 CustomCookingRecipe recipe = design.customCookingRecipes().get(i);
@@ -427,6 +481,7 @@ public final class MapDesignLibrary {
                 properties.setProperty(prefix + "xpReward", String.valueOf(recipe.xpReward()));
             }
 
+            properties.setProperty("craftingRecipe.schemaVersion", "2");
             properties.setProperty("craftingRecipe.count", String.valueOf(design.craftingRecipes().size()));
             for (int i = 0; i < design.craftingRecipes().size(); i++) {
                 CraftingRecipe recipe = design.craftingRecipes().get(i);
@@ -452,6 +507,7 @@ public final class MapDesignLibrary {
                         ? ""
                         : recipe.outputStationType().name());
                 properties.setProperty(prefix + "stationLifetimeMs", String.valueOf(recipe.stationLifetimeMs()));
+                properties.setProperty(prefix + "requiredToolWeaponType", recipe.requiredToolWeaponType().name());
             }
         }
 
@@ -471,12 +527,33 @@ public final class MapDesignLibrary {
         return design;
     }
 
-    static MapDesign loadContentSegment(Path path) throws IOException {
-        Properties properties = new Properties();
-        try (InputStream inputStream = openMapDesignStream(path)) {
-            properties.load(inputStream);
+    /**
+     * Loads authored map geometry/entities without copying the global catalog into every chunk.
+     */
+    public static MapDesign loadGeometryOnly(Path path) throws IOException {
+        if (MapDesignContentStore.isContentCatalogPath(path)) {
+            throw new IOException("A content catalog is not map geometry: " + path);
         }
+        return loadContentSegment(path);
+    }
+
+    static MapDesign loadContentSegment(Path path) throws IOException {
+        try (InputStream inputStream = openMapDesignStream(path)) {
+            return loadContentSegment(path, inputStream);
+        }
+    }
+
+    static MapDesign loadContentSegment(Path path, InputStream inputStream) throws IOException {
+        Properties properties = new Properties();
+        properties.load(inputStream);
         validateCurrentContentSchema(path, properties);
+        if (!MapDesignContentStore.isContentCatalogPath(path)) {
+            int formatVersion = readInt(properties, "formatVersion", -1);
+            if (formatVersion != MAP_FORMAT_VERSION) {
+                throw new IOException("Unsupported map format version " + formatVersion
+                        + "; expected exactly " + MAP_FORMAT_VERSION + " for " + path + ".");
+            }
+        }
 
         int width = readInt(properties, "width", 12);
         int height = readInt(properties, "height", 12);
@@ -695,6 +772,15 @@ public final class MapDesignLibrary {
             int smithingRequiredLevel = readInt(properties, prefix + "smithingRequiredLevel", 1);
             int magicAccuracyBonus = readInt(properties, prefix + "magicAccuracyBonus", 0);
             int magicPowerBonus = readInt(properties, prefix + "magicPowerBonus", 0);
+            CombatElement elementalAffinity = readEnum(
+                    properties, prefix + "elementalAffinity", CombatElement.NEUTRAL);
+            double matchingElementSpellDamageBonus = readDouble(
+                    properties, prefix + "matchingElementSpellDamageBonus", 0.0);
+            WeaponStatOverrides weaponStatOverrides = new WeaponStatOverrides(
+                    Boolean.parseBoolean(properties.getProperty(prefix + "weaponStats.enabled", "false")),
+                    readInt(properties, prefix + "weaponStats.accuracyBonus", 0),
+                    readInt(properties, prefix + "weaponStats.powerBonus", 0),
+                    readDouble(properties, prefix + "weaponStats.attackIntervalMultiplier", 1.0));
             String firstPersonModelPath = properties.getProperty(prefix + "firstPersonModelPath", "");
             String sourceEnemyId = properties.getProperty(prefix + "sourceEnemyId", "");
             boolean lanternEnabled = Boolean.parseBoolean(properties.getProperty(prefix + "lantern.enabled", "false"));
@@ -750,7 +836,10 @@ public final class MapDesignLibrary {
                         sourceEnemyId,
                         modelIconProfile,
                         equipmentSkill,
-                        lanternDefinition
+                        lanternDefinition,
+                        weaponStatOverrides,
+                        elementalAffinity,
+                        matchingElementSpellDamageBonus
                 ));
             }
         }
@@ -890,6 +979,11 @@ public final class MapDesignLibrary {
                     properties.getProperty(prefix + "outputStationType", "")
             );
             int stationLifetimeMs = readInt(properties, prefix + "stationLifetimeMs", 300000);
+            WeaponType requiredToolWeaponType = properties.getProperty(
+                    prefix + "requiredToolWeaponType", "").isBlank()
+                    ? WeaponType.NONE
+                    : readWeaponType(properties.getProperty(prefix + "requiredToolWeaponType", ""),
+                    InventorySystem.ItemType.WEAPON);
             if (!recipeId.isBlank() && !recipeName.isBlank()) {
                 craftingRecipes.add(new CraftingRecipe(
                         recipeId,
@@ -910,7 +1004,8 @@ public final class MapDesignLibrary {
                         secondaryQuantity,
                         outputType,
                         outputStationType,
-                        stationLifetimeMs
+                        stationLifetimeMs,
+                        requiredToolWeaponType
                 ));
             }
         }
@@ -936,6 +1031,11 @@ public final class MapDesignLibrary {
             int awarenessRadius = readInt(properties, prefix + "awarenessRadius", 4);
             int movementIntervalMs = readInt(properties, prefix + "movementIntervalMs", 3000);
             int respawnDelayMs = readInt(properties, prefix + "respawnDelayMs", 300000);
+            EnumMap<CombatElement, Double> elementalDamageMultipliers = new EnumMap<>(CombatElement.class);
+            for (CombatElement element : CombatElement.values()) {
+                elementalDamageMultipliers.put(element, readDouble(
+                        properties, prefix + "elementMultiplier." + element.name(), 1.0));
+            }
             EnemyButcheryProfile.Type butcheryType;
             try {
                 butcheryType = EnemyButcheryProfile.Type.valueOf(
@@ -976,7 +1076,7 @@ public final class MapDesignLibrary {
                 customMobs.add(new CustomMob(mobId, mobName, imagePath, paperDollSourcePath, statValues,
                         xpReward, mobDescription, attackSoundPath, damageSoundPath, combatAiIntelligence,
                         awarenessRadius, movementIntervalMs, respawnDelayMs, skillIds, dropEntries,
-                        characterModel, butcheryProfile));
+                        characterModel, butcheryProfile, elementalDamageMultipliers));
             }
         }
 
@@ -1095,20 +1195,34 @@ public final class MapDesignLibrary {
             String furnitureName = properties.getProperty(prefix + "displayName", "");
             String category = properties.getProperty(prefix + "category", "");
             String modelPath = properties.getProperty(prefix + "modelPath", "");
+            String spritePath = properties.getProperty(prefix + "spritePath", "");
             double defaultScale = readDouble(properties, prefix + "defaultScale", 1.0);
             boolean defaultBlocksMovement = Boolean.parseBoolean(properties.getProperty(prefix + "defaultBlocksMovement", "false"));
             String interactionId = properties.getProperty(prefix + "interactionId", "");
             LightAttachment light = readLightAttachment(properties, prefix + "light.");
+            AttunementPillarDefinition pillar = Boolean.parseBoolean(
+                    properties.getProperty(prefix + "pillar.present", "false"))
+                    ? new AttunementPillarDefinition(
+                    readEnum(properties, prefix + "pillar.element", CombatElement.NEUTRAL),
+                    properties.getProperty(prefix + "pillar.inputItemId", ""),
+                    properties.getProperty(prefix + "pillar.outputItemId", ""),
+                    readInt(properties, prefix + "pillar.requiredLevel", 1),
+                    readInt(properties, prefix + "pillar.xpReward", 0),
+                    properties.getProperty(prefix + "pillar.soundPath", "")
+            )
+                    : null;
             if (!furnitureId.isBlank() && !furnitureName.isBlank()) {
                 customFurniture.add(new CustomFurnitureDefinition(
                         furnitureId,
                         furnitureName,
                         category,
                         modelPath,
+                        spritePath,
                         defaultScale,
                         defaultBlocksMovement,
                         interactionId,
-                        light
+                        light,
+                        pillar
                 ));
             }
         }
@@ -1150,7 +1264,7 @@ public final class MapDesignLibrary {
     }
 
     public static AuthoredContent loadSharedContent() throws IOException {
-        return MapDesignContentStore.loadSharedContent();
+        return ContentRepository.shared().snapshot().content();
     }
 
     public static AuthoredContent authoredContentOf(MapDesign design) {
@@ -1227,7 +1341,7 @@ public final class MapDesignLibrary {
     }
 
     public static void saveSharedContent(AuthoredContent content) throws IOException {
-        MapDesignContentStore.saveSharedContent(content);
+        ContentRepository.shared().saveAndReload(content);
     }
 
     public static List<Path> listSavedMaps() throws IOException {
@@ -1993,16 +2107,6 @@ public final class MapDesignLibrary {
         }
     }
 
-    private static void addPlacedObjectLight(DungeonMap dungeonMap, PlacedObjectInstance object) {
-        if (dungeonMap == null || object == null || object.lightOverride() == null) {
-            return;
-        }
-        MapLight light = object.lightOverride().toMapLight("object_" + object.instanceId(), object);
-        if (light != null) {
-            dungeonMap.addLight(light);
-        }
-    }
-
     private static void hydrateFurniture(
             DungeonMap dungeonMap,
             List<MapEntity> entities,
@@ -2538,18 +2642,19 @@ public final class MapDesignLibrary {
         }
         int expectedVersion = switch (fileName) {
             case MapDesignContentStore.DIALOGUE_FILE, MapDesignContentStore.QUEST_FILE -> 3;
-            case MapDesignContentStore.NPC_FILE -> 2;
-            case MapDesignContentStore.ITEM_FILE -> 6;
-            default -> 0;
+            case MapDesignContentStore.LIMB_FILE, MapDesignContentStore.NPC_FILE,
+                 MapDesignContentStore.FURNITURE_FILE, MapDesignContentStore.CRAFTING_RECIPE_FILE -> 2;
+            case MapDesignContentStore.GATHERING_NODE_FILE, MapDesignContentStore.COOKING_RECIPE_FILE -> 1;
+            case MapDesignContentStore.MOB_FILE -> 3;
+            case MapDesignContentStore.ITEM_FILE -> 8;
+            default -> -1;
         };
         if (expectedVersion > 0) {
             String key = root + ".schemaVersion";
             int actualVersion = readInt(properties, key, -1);
-            boolean supportedLegacyItem = fileName.equals(MapDesignContentStore.ITEM_FILE)
-                    && (actualVersion == 3 || actualVersion == 4 || actualVersion == 5);
-            if (actualVersion != expectedVersion && !supportedLegacyItem) {
+            if (actualVersion != expectedVersion) {
                 throw new IOException("Unsupported " + fileName + " schema version "
-                        + actualVersion + "; expected " + expectedVersion + ".");
+                        + actualVersion + "; expected exactly " + expectedVersion + ".");
             }
         }
     }
@@ -3274,33 +3379,84 @@ public final class MapDesignLibrary {
         }
     }
 
+    public record AttunementPillarDefinition(
+            CombatElement element,
+            String inputItemId,
+            String outputItemId,
+            int requiredLevel,
+            int xpReward,
+            String soundPath
+    ) {
+        public AttunementPillarDefinition {
+            element = element == null ? CombatElement.NEUTRAL : element;
+            inputItemId = inputItemId == null ? "" : inputItemId.trim();
+            outputItemId = outputItemId == null ? "" : outputItemId.trim();
+            requiredLevel = Math.max(1, requiredLevel);
+            xpReward = Math.max(0, xpReward);
+            soundPath = soundPath == null ? "" : soundPath.trim().replace('\\', '/');
+        }
+
+        public boolean isUsable() {
+            return element.isElemental() && !inputItemId.isBlank() && !outputItemId.isBlank();
+        }
+    }
+
     public record CustomFurnitureDefinition(
             String furnitureId,
             String displayName,
             String category,
             String modelPath,
+            String spritePath,
             double defaultScale,
             boolean defaultBlocksMovement,
             String interactionId,
-            LightAttachment lightAttachment
+            LightAttachment lightAttachment,
+            AttunementPillarDefinition attunementPillar
     ) {
+        public CustomFurnitureDefinition(
+                String furnitureId,
+                String displayName,
+                String category,
+                String modelPath,
+                double defaultScale,
+                boolean defaultBlocksMovement,
+                String interactionId,
+                LightAttachment lightAttachment
+        ) {
+            this(furnitureId, displayName, category, modelPath, "", defaultScale,
+                    defaultBlocksMovement, interactionId, lightAttachment, null);
+        }
+
         public CustomFurnitureDefinition {
             furnitureId = sanitizeIdentifier(furnitureId, "furniture");
             displayName = displayName == null || displayName.isBlank() ? "Furniture" : displayName.trim();
             category = category == null ? "" : category.trim();
             modelPath = modelPath == null ? "" : modelPath.trim().replace('\\', '/');
+            spritePath = spritePath == null ? "" : spritePath.trim().replace('\\', '/');
             defaultScale = clampFinite(defaultScale, 0.05, 20.0, 1.0);
             interactionId = interactionId == null ? "" : interactionId.trim();
+            if (attunementPillar != null && !attunementPillar.isUsable()) {
+                attunementPillar = null;
+            }
+            if (attunementPillar != null) {
+                interactionId = "attunement_pillar";
+            }
         }
 
         public MapEntity createEntity(PlacedObjectInstance instance) {
-            if (instance == null || modelPath.isBlank()) {
+            if (instance == null || modelPath.isBlank() && spritePath.isBlank()) {
                 return null;
             }
             boolean blocks = instance.blocksMovement() || defaultBlocksMovement;
-            MapEntity entity = new MapEntity(displayName, Library.EntityType.TRAP, instance.x(), instance.y())
-                    .withStaticModel(modelPath)
+            MapEntity entity = spritePath.isBlank()
+                    ? new MapEntity(displayName, Library.EntityType.TRAP, instance.x(), instance.y())
+                    : new MapEntity(displayName, Library.EntityType.TRAP, instance.x(), instance.y(),
+                    AssetLoader.loadImage(spritePath));
+            entity.withContentId(furnitureId)
                     .withVisualScale(defaultScale)
+                    .blocksMovement(blocks);
+            if (!modelPath.isBlank()) {
+                entity.withStaticModel(modelPath)
                     .withStaticModelTransform(
                             instance.offsetX(),
                             instance.offsetY(),
@@ -3310,8 +3466,8 @@ public final class MapDesignLibrary {
                             instance.rollDegrees(),
                             instance.scale()
                     )
-                    .withStaticModelBrightness(instance.modelBrightness())
-                    .blocksMovement(blocks);
+                        .withStaticModelBrightness(instance.modelBrightness());
+            }
             if (!interactionId.isBlank()) {
                 entity.withInteractionId(interactionId);
             }
@@ -3712,7 +3868,10 @@ public final class MapDesignLibrary {
             String sourceEnemyId,
             ItemModelIconProfile modelIconProfile,
             CharacterSkill equipmentSkill,
-            LanternDefinition lanternDefinition
+            LanternDefinition lanternDefinition,
+            WeaponStatOverrides weaponStatOverrides,
+            CombatElement elementalAffinity,
+            double matchingElementSpellDamageBonus
     ) {
         public CustomItem {
             itemId = itemId == null ? "" : itemId;
@@ -3745,6 +3904,55 @@ public final class MapDesignLibrary {
                     ? equipmentSkill : null;
             lanternDefinition = itemType == InventorySystem.ItemType.UTILITY && lanternDefinition != null
                     ? lanternDefinition : LanternDefinition.none();
+            weaponStatOverrides = itemType == InventorySystem.ItemType.WEAPON && weaponStatOverrides != null
+                    ? weaponStatOverrides : WeaponStatOverrides.inherited();
+            elementalAffinity = itemType == InventorySystem.ItemType.WEAPON && elementalAffinity != null
+                    ? elementalAffinity : CombatElement.NEUTRAL;
+            matchingElementSpellDamageBonus = itemType == InventorySystem.ItemType.WEAPON
+                    && elementalAffinity.isElemental() && Double.isFinite(matchingElementSpellDamageBonus)
+                    ? Math.max(0.0, Math.min(5.0, matchingElementSpellDamageBonus)) : 0.0;
+        }
+
+        /**
+         * Schema-7/source compatibility; older weapons have no elemental affinity.
+         */
+        public CustomItem(
+                String itemId, String displayName, InventorySystem.ItemType itemType, String iconPath,
+                String paperDollOverlayPath, String useSoundPath, WeaponType weaponType, boolean twoHanded,
+                GearMaterial material, int healAmount, int baseGoldValue, String examineText,
+                PlayerStat statBonusTarget, boolean stackable, boolean smithingRecipeEnabled,
+                int smithingRequiredBars, int smithingRequiredLevel, int magicAccuracyBonus,
+                int magicPowerBonus, String firstPersonModelPath, EquipmentViewModelProfile viewModelProfile,
+                String sourceEnemyId, ItemModelIconProfile modelIconProfile, CharacterSkill equipmentSkill,
+                LanternDefinition lanternDefinition, WeaponStatOverrides weaponStatOverrides
+        ) {
+            this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath,
+                    weaponType, twoHanded, material, healAmount, baseGoldValue, examineText,
+                    statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
+                    smithingRequiredLevel, magicAccuracyBonus, magicPowerBonus, firstPersonModelPath,
+                    viewModelProfile, sourceEnemyId, modelIconProfile, equipmentSkill, lanternDefinition,
+                    weaponStatOverrides, CombatElement.NEUTRAL, 0.0);
+        }
+
+        /**
+         * Schema-6/source compatibility; older items inherit their weapon-type statistics.
+         */
+        public CustomItem(
+                String itemId, String displayName, InventorySystem.ItemType itemType, String iconPath,
+                String paperDollOverlayPath, String useSoundPath, WeaponType weaponType, boolean twoHanded,
+                GearMaterial material, int healAmount, int baseGoldValue, String examineText,
+                PlayerStat statBonusTarget, boolean stackable, boolean smithingRecipeEnabled,
+                int smithingRequiredBars, int smithingRequiredLevel, int magicAccuracyBonus,
+                int magicPowerBonus, String firstPersonModelPath, EquipmentViewModelProfile viewModelProfile,
+                String sourceEnemyId, ItemModelIconProfile modelIconProfile, CharacterSkill equipmentSkill,
+                LanternDefinition lanternDefinition
+        ) {
+            this(itemId, displayName, itemType, iconPath, paperDollOverlayPath, useSoundPath,
+                    weaponType, twoHanded, material, healAmount, baseGoldValue, examineText,
+                    statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
+                    smithingRequiredLevel, magicAccuracyBonus, magicPowerBonus, firstPersonModelPath,
+                    viewModelProfile, sourceEnemyId, modelIconProfile, equipmentSkill, lanternDefinition,
+                    WeaponStatOverrides.inherited());
         }
 
         /** Schema-5/source compatibility; older items have no passive light behavior. */
@@ -3789,7 +3997,7 @@ public final class MapDesignLibrary {
             }
             return switch (itemType) {
                 case HEAD_GEAR, CHEST_ARMOR, LEG_ARMOR, SHIELD -> CharacterSkill.DEFENSE;
-                case WEAPON -> weaponType == WeaponType.STAFF
+                case WEAPON -> weaponType == WeaponType.STAFF || weaponType == WeaponType.WAND
                         ? CharacterSkill.MAGIC_ACCURACY
                         : CharacterSkill.ATTACK;
                 default -> null;
@@ -4043,6 +4251,8 @@ public final class MapDesignLibrary {
                     weaponType,
                     twoHanded
             ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus)
+                    .withWeaponStatOverrides(weaponStatOverrides)
+                    .withElementalSpellBonus(elementalAffinity, matchingElementSpellDamageBonus)
                     .withContentId(itemId)
                     .withFirstPersonModel(firstPersonModelPath)
                     .withViewModelProfile(viewModelProfile)
@@ -4077,7 +4287,10 @@ public final class MapDesignLibrary {
                     sourceId,
                     modelIconProfile,
                     equipmentSkill,
-                    lanternDefinition);
+                    lanternDefinition,
+                    weaponStatOverrides,
+                    elementalAffinity,
+                    matchingElementSpellDamageBonus);
         }
 
         public CustomItem withMaterial(GearMaterial replacement) {
@@ -4086,7 +4299,8 @@ public final class MapDesignLibrary {
                     weaponType, twoHanded, replacement, healAmount, baseGoldValue, examineText,
                     statBonusTarget, stackable, smithingRecipeEnabled, smithingRequiredBars,
                     smithingRequiredLevel, magicAccuracyBonus, magicPowerBonus, firstPersonModelPath,
-                    viewModelProfile, sourceEnemyId, modelIconProfile, equipmentSkill, lanternDefinition);
+                    viewModelProfile, sourceEnemyId, modelIconProfile, equipmentSkill, lanternDefinition,
+                    weaponStatOverrides, elementalAffinity, matchingElementSpellDamageBonus);
         }
     }
 
@@ -4107,7 +4321,8 @@ public final class MapDesignLibrary {
             List<String> skillIds,
             List<CustomDropEntry> dropEntries,
             CharacterModelDefinition characterModel,
-            EnemyButcheryProfile butcheryProfile
+            EnemyButcheryProfile butcheryProfile,
+            Map<CombatElement, Double> elementalDamageMultipliers
     ) {
         public CustomMob {
             mobId = mobId == null ? "" : mobId;
@@ -4135,6 +4350,31 @@ public final class MapDesignLibrary {
             butcheryProfile = butcheryProfile == null
                     ? EnemyButcheryProfile.defaultHumanoid()
                     : butcheryProfile;
+            EnumMap<CombatElement, Double> safeMultipliers = new EnumMap<>(CombatElement.class);
+            for (CombatElement element : CombatElement.values()) {
+                double value = elementalDamageMultipliers == null
+                        ? 1.0 : elementalDamageMultipliers.getOrDefault(element, 1.0);
+                safeMultipliers.put(element, Double.isFinite(value)
+                        ? Math.max(0.0, Math.min(5.0, value)) : 1.0);
+            }
+            elementalDamageMultipliers = Map.copyOf(safeMultipliers);
+        }
+
+        /**
+         * Schema-2/source compatibility; older creatures take normal elemental damage.
+         */
+        public CustomMob(
+                String mobId, String displayName, String imagePath, String paperDollSourcePath,
+                Map<PlayerStat, Integer> statValues, int xpReward, String description,
+                String attackSoundPath, String damageSoundPath, int combatAiIntelligence,
+                int awarenessRadius, int movementIntervalMs, int respawnDelayMs,
+                List<String> skillIds, List<CustomDropEntry> dropEntries,
+                CharacterModelDefinition characterModel, EnemyButcheryProfile butcheryProfile
+        ) {
+            this(mobId, displayName, imagePath, paperDollSourcePath, statValues, xpReward,
+                    description, attackSoundPath, damageSoundPath, combatAiIntelligence,
+                    awarenessRadius, movementIntervalMs, respawnDelayMs, skillIds, dropEntries,
+                    characterModel, butcheryProfile, Map.of());
         }
 
         public CustomMob(
@@ -4221,7 +4461,8 @@ public final class MapDesignLibrary {
                             .map(drop -> new Monster.DropEntry(drop.itemId(), drop.chance()))
                             .toList(),
                     characterModel,
-                    butcheryProfile
+                    butcheryProfile,
+                    elementalDamageMultipliers
             );
         }
 
@@ -4243,7 +4484,8 @@ public final class MapDesignLibrary {
                     skillIds,
                     dropEntries,
                     characterModel,
-                    profile);
+                    profile,
+                    elementalDamageMultipliers);
         }
     }
 
@@ -4284,7 +4526,8 @@ public final class MapDesignLibrary {
             int secondaryQuantity,
             CraftingOutputType outputType,
             CraftingStationType outputStationType,
-            int stationLifetimeMs
+            int stationLifetimeMs,
+            WeaponType requiredToolWeaponType
     ) {
         public CraftingRecipe {
             recipeId = recipeId == null ? "" : recipeId;
@@ -4308,6 +4551,27 @@ public final class MapDesignLibrary {
             stationLifetimeMs = outputType == CraftingOutputType.CRAFTING_STATION
                     ? Math.max(1, stationLifetimeMs)
                     : 0;
+            requiredToolWeaponType = requiredToolWeaponType == null
+                    ? WeaponType.NONE : requiredToolWeaponType;
+        }
+
+        /**
+         * Source compatibility; older recipes require no weapon tool.
+         */
+        public CraftingRecipe(
+                String recipeId, String displayName, CraftingRecipeCategory category,
+                String primaryItemId, String secondaryItemId, String outputItemId,
+                CharacterSkill requiredSkill, int requiredLevel, int xpReward,
+                boolean consumePrimary, boolean consumeSecondary, String smeltOutputItemId,
+                int smeltRequiredLevel, int smeltXpReward, int primaryQuantity,
+                int secondaryQuantity, CraftingOutputType outputType,
+                CraftingStationType outputStationType, int stationLifetimeMs
+        ) {
+            this(recipeId, displayName, category, primaryItemId, secondaryItemId, outputItemId,
+                    requiredSkill, requiredLevel, xpReward, consumePrimary, consumeSecondary,
+                    smeltOutputItemId, smeltRequiredLevel, smeltXpReward, primaryQuantity,
+                    secondaryQuantity, outputType, outputStationType, stationLifetimeMs,
+                    WeaponType.NONE);
         }
 
         public CraftingRecipe(
@@ -4330,7 +4594,7 @@ public final class MapDesignLibrary {
                     requiredSkill, requiredLevel, xpReward, consumePrimary, consumeSecondary,
                     smeltOutputItemId, smeltRequiredLevel, smeltXpReward,
                     1, secondaryItemId == null || secondaryItemId.isBlank() ? 0 : 1,
-                    CraftingOutputType.ITEM, null, 0);
+                    CraftingOutputType.ITEM, null, 0, WeaponType.NONE);
         }
 
         public CraftingRecipe(
@@ -4365,12 +4629,17 @@ public final class MapDesignLibrary {
                     secondaryItemId == null || secondaryItemId.isBlank() ? 0 : 1,
                     CraftingOutputType.ITEM,
                     null,
-                    0
+                    0,
+                    WeaponType.NONE
             );
         }
 
         public boolean isSingleIngredient() {
-            return secondaryItemId.isBlank();
+            return secondaryItemId.isBlank() && requiredToolWeaponType == WeaponType.NONE;
+        }
+
+        public boolean usesWeaponTool() {
+            return requiredToolWeaponType != WeaponType.NONE;
         }
 
         public boolean outputsStation() {

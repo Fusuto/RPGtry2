@@ -869,21 +869,6 @@ public final class LwjglInputController {
         return pressedKeys.contains(key);
     }
 
-    private boolean pressedBound(GameState gameState, InputBindings.Action action) {
-        if (gameState == null || action == null) {
-            return false;
-        }
-
-        InputBindings bindings = gameState.getInputBindings();
-        for (int key : pressedKeys) {
-            if (bindings.matches(action, glfwToAwtKey(key))) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private boolean consume(int key) {
         if (!pressedKeys.contains(key) || consumedKeys.contains(key)) {
             return false;

@@ -2,6 +2,10 @@ package org.main.content;
 
 import org.main.battle.BattleSkill;
 import org.main.core.Library;
+import org.main.core.CombatElement;
+import org.main.engine.AssetLoader;
+import org.main.pack.ContentPackManifest;
+import org.main.pack.ProjectManifestOverrides;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -24,9 +28,8 @@ import java.util.Set;
  * Versioned global repository for authored combat skills and statuses.
  */
 public final class BattleContentCatalog {
-    public static final int SCHEMA_VERSION = 1;
-    public static final Path CONTENT_FOLDER = Path.of(
-            "src", "main", "resources", "assets", "editor", "content");
+    public static final int SCHEMA_VERSION = 2;
+    public static final Path CONTENT_FOLDER = MapDesignLibrary.CONTENT_FOLDER;
     public static final Path SKILL_PATH = CONTENT_FOLDER.resolve("skill.properties");
     public static final Path STATUS_PATH = CONTENT_FOLDER.resolve("status.properties");
     private static final String SKILL_RESOURCE = "assets/editor/content/skill.properties";
@@ -135,6 +138,10 @@ public final class BattleContentCatalog {
         Path skillTemp = CONTENT_FOLDER.resolve("skill.properties.tmp");
         Path statusTemp = CONTENT_FOLDER.resolve("status.properties.tmp");
         try {
+            ProjectManifestOverrides.declareCatalogRecords("skill.properties",
+                    Map.of("battle_skill", snapshot.skills().keySet()));
+            ProjectManifestOverrides.declareCatalogRecords("status.properties",
+                    Map.of("battle_status", snapshot.statuses().keySet()));
             writeSkills(snapshot, skillTemp);
             writeStatuses(snapshot, statusTemp);
             moveAtomically(statusTemp, STATUS_PATH);
@@ -316,16 +323,33 @@ public final class BattleContentCatalog {
         try {
             return load();
         } catch (IOException exception) {
-            System.err.println("Battle content load warning: " + exception.getMessage());
-            return defaults();
+            throw new IllegalStateException("Battle content load failed: " + exception.getMessage(), exception);
         }
     }
 
     private static Map<String, StatusDefinition> loadStatuses() throws IOException {
-        Properties properties = loadProperties(STATUS_PATH, STATUS_RESOURCE);
-        if (properties == null) {
-            return defaults().statuses();
+        List<ContentRepository.CatalogSegment> segments =
+                ContentRepository.shared().snapshot().catalogSegments("status.properties");
+        if (segments.isEmpty()) {
+            Properties fallback = loadProperties(STATUS_PATH, STATUS_RESOURCE);
+            return fallback == null ? defaults().statuses() : parseStatuses(fallback, STATUS_RESOURCE);
         }
+        LinkedHashMap<String, StatusDefinition> values = new LinkedHashMap<>();
+        Map<String, String> origins = new LinkedHashMap<>();
+        for (ContentRepository.CatalogSegment segment : segments) {
+            for (StatusDefinition status : parseStatuses(
+                    segment.asProperties(), segment.logicalPath()).values()) {
+                mergeRecord(values, origins, status.id(), status, "battle_status", segment.manifest());
+            }
+        }
+        return values;
+    }
+
+    private static Map<String, StatusDefinition> parseStatuses(
+            Properties properties,
+            String source
+    ) throws IOException {
+        requireSchema(properties, source);
         int count = integer(properties, "status.count", 0);
         LinkedHashMap<String, StatusDefinition> values = new LinkedHashMap<>();
         for (int index = 0; index < count; index++) {
@@ -352,8 +376,13 @@ public final class BattleContentCatalog {
     }
 
     private static SkillLoadResult loadSkills() throws IOException {
-        Properties properties = loadProperties(SKILL_PATH, SKILL_RESOURCE);
-        if (properties == null) {
+        List<ContentRepository.CatalogSegment> segments =
+                ContentRepository.shared().snapshot().catalogSegments("skill.properties");
+        if (segments.isEmpty()) {
+            Properties fallback = loadProperties(SKILL_PATH, SKILL_RESOURCE);
+            if (fallback != null) {
+                return parseSkills(fallback, SKILL_RESOURCE);
+            }
             Snapshot defaults = defaults();
             return new SkillLoadResult(
                     defaults.skills(),
@@ -361,6 +390,26 @@ public final class BattleContentCatalog {
                     defaults.universalPlayerSkillIds(),
                     defaults.debugPlayerSkillIds());
         }
+        LinkedHashMap<String, SkillDefinition> skills = new LinkedHashMap<>();
+        Map<String, String> origins = new LinkedHashMap<>();
+        LinkedHashSet<String> defaultPool = new LinkedHashSet<>();
+        LinkedHashSet<String> universalPool = new LinkedHashSet<>();
+        LinkedHashSet<String> debugPool = new LinkedHashSet<>();
+        for (ContentRepository.CatalogSegment segment : segments) {
+            SkillLoadResult parsed = parseSkills(segment.asProperties(), segment.logicalPath());
+            for (SkillDefinition skill : parsed.skills().values()) {
+                mergeRecord(skills, origins, skill.id(), skill, "battle_skill", segment.manifest());
+            }
+            defaultPool.addAll(parsed.defaultPlayerSkillIds());
+            universalPool.addAll(parsed.universalPlayerSkillIds());
+            debugPool.addAll(parsed.debugPlayerSkillIds());
+        }
+        return new SkillLoadResult(skills, List.copyOf(defaultPool), List.copyOf(universalPool),
+                List.copyOf(debugPool));
+    }
+
+    private static SkillLoadResult parseSkills(Properties properties, String source) throws IOException {
+        requireSchema(properties, source);
         int count = integer(properties, "skill.count", 0);
         LinkedHashMap<String, SkillDefinition> values = new LinkedHashMap<>();
         for (int index = 0; index < count; index++) {
@@ -397,7 +446,9 @@ public final class BattleContentCatalog {
                     properties.getProperty(prefix + "presentationStyle", "AUTO"),
                     decimal(properties, prefix + "cooldownSeconds", 0),
                     Boolean.parseBoolean(properties.getProperty(prefix + "consumesAutoAction", "true")),
-                    effects);
+                    effects,
+                    enumValue(CombatElement.class,
+                            properties.getProperty(prefix + "element"), CombatElement.NEUTRAL));
             put(values, definition);
         }
         return new SkillLoadResult(
@@ -405,6 +456,41 @@ public final class BattleContentCatalog {
                 readIds(properties.getProperty("pool.default", "")),
                 readIds(properties.getProperty("pool.universal", "")),
                 readIds(properties.getProperty("pool.debug", "")));
+    }
+
+    private static <T> void mergeRecord(
+            Map<String, T> values,
+            Map<String, String> origins,
+            String rawId,
+            T incoming,
+            String contentType,
+            ContentPackManifest manifest
+    ) throws IOException {
+        String id = normalizeId(rawId);
+        T existing = values.get(id);
+        if (existing == null) {
+            if (!manifest.id().equals("aether.core") && !manifest.id().equals("aether.development")) {
+                String prefix = manifest.namespace() + "__";
+                if (!id.startsWith(prefix)) {
+                    throw new IOException("New " + contentType + " ID '" + id + "' from "
+                            + manifest.id() + " must begin with " + prefix + ".");
+                }
+            }
+            values.put(id, incoming);
+            origins.put(id, manifest.id());
+            return;
+        }
+        String target = origins.getOrDefault(id, "aether.core");
+        boolean declared = manifest.overrides().stream().anyMatch(override ->
+                override.targetPack().equals(target)
+                        && override.contentType().equals(contentType)
+                        && normalizeId(override.contentId()).equals(id));
+        if (!declared) {
+            throw new IOException("Undeclared " + contentType + " collision for '" + id
+                    + "' between " + target + " and " + manifest.id() + ".");
+        }
+        values.put(id, incoming);
+        origins.put(id, manifest.id());
     }
 
     private static Properties loadProperties(Path editablePath, String resourcePath) throws IOException {
@@ -415,12 +501,20 @@ public final class BattleContentCatalog {
             }
             return properties;
         }
-        try (InputStream input = BattleContentCatalog.class.getClassLoader().getResourceAsStream(resourcePath)) {
+        try (InputStream input = AssetLoader.openAssetStream(resourcePath)) {
             if (input == null) {
                 return null;
             }
             properties.load(input);
             return properties;
+        }
+    }
+
+    private static void requireSchema(Properties properties, String source) throws IOException {
+        int actual = integer(properties, "schemaVersion", -1);
+        if (actual != SCHEMA_VERSION) {
+            throw new IOException("Unsupported " + source + " schema " + actual
+                    + "; expected exactly " + SCHEMA_VERSION + ".");
         }
     }
 
@@ -446,6 +540,7 @@ public final class BattleContentCatalog {
             properties.setProperty(prefix + "presentationStyle", skill.presentationStyle());
             properties.setProperty(prefix + "cooldownSeconds", String.valueOf(skill.cooldownSeconds()));
             properties.setProperty(prefix + "consumesAutoAction", String.valueOf(skill.consumesAutoAction()));
+            properties.setProperty(prefix + "element", skill.element().name());
             properties.setProperty(prefix + "effect.count", String.valueOf(skill.effects().size()));
             for (int effectIndex = 0; effectIndex < skill.effects().size(); effectIndex++) {
                 SkillEffectDefinition effect = skill.effects().get(effectIndex);
@@ -584,7 +679,10 @@ public final class BattleContentCatalog {
             String presentation,
             SkillEffectDefinition... effects) {
         return new SkillDefinition(id, name, description, shape, team, mode, sound,
-                presentation, cooldown, true, List.of(effects));
+                presentation, cooldown, true, List.of(effects),
+                id != null && (id.equalsIgnoreCase("fire_bolt")
+                        || id.equalsIgnoreCase("fireball") || id.equalsIgnoreCase("fire_wave"))
+                        ? CombatElement.FIRE : CombatElement.NEUTRAL);
     }
 
     private static SkillEffectDefinition damage(int potency) {

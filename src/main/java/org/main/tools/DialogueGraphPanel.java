@@ -1,6 +1,7 @@
 package org.main.tools;
 
 import org.main.content.MapDesignLibrary;
+import org.main.engine.TextWrapping;
 
 import javax.swing.JPanel;
 import java.awt.BasicStroke;
@@ -202,30 +203,13 @@ final class DialogueGraphPanel extends JPanel {
 
     private void drawWrappedText(Graphics2D g, String text, Rectangle bounds) {
         FontMetrics metrics = g.getFontMetrics();
-        List<String> lines = wrapText(text == null ? "" : text.replace('\n', ' '), metrics, bounds.width);
+        List<String> lines = TextWrapping.wrapOrBlankLine(
+                metrics, text == null ? "" : text.replace('\n', ' '), bounds.width);
         int y = bounds.y + metrics.getAscent();
         for (String line : lines.stream().limit(2).toList()) {
             g.drawString(line, bounds.x, y);
             y += metrics.getHeight();
         }
-    }
-
-    private List<String> wrapText(String text, FontMetrics metrics, int maxWidth) {
-        List<String> lines = new ArrayList<>();
-        StringBuilder line = new StringBuilder();
-        for (String word : text.split("\\s+")) {
-            String candidate = line.isEmpty() ? word : line + " " + word;
-            if (metrics.stringWidth(candidate) <= maxWidth || line.isEmpty()) {
-                line = new StringBuilder(candidate);
-            } else {
-                lines.add(line.toString());
-                line = new StringBuilder(word);
-            }
-        }
-        if (!line.isEmpty()) {
-            lines.add(line.toString());
-        }
-        return lines.isEmpty() ? List.of("") : lines;
     }
 
     private String truncate(String value, int maxLength) {

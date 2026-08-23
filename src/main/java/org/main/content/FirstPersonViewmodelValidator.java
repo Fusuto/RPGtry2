@@ -123,7 +123,8 @@ public final class FirstPersonViewmodelValidator {
         if (!path.isBlank()) {
             try {
                 CharacterModelDefinition definition = new CharacterModelDefinition(
-                        path, rig.rigId(), 1, 0, 0, base.definition().animationBindings());
+                        path, rig.rigId(), 1, 0, 0, base.definition().animationBindings(),
+                        base.definition().namedAnimationBindings());
                 source = LwjglSkinnedModel.loadCached(definition);
                 if (!base.skeletonSignature().equals(source.skeletonSignature())) {
                     issues.add(error(owner, "Default " + side
@@ -307,7 +308,8 @@ public final class FirstPersonViewmodelValidator {
                     content, rig, WeaponType.NONE, profile, profile.wieldHand());
             LwjglSkinnedModel base = LwjglSkinnedModel.loadCached(definition);
             LwjglSkinnedModel attachment = LwjglSkinnedModel.loadCached(new CharacterModelDefinition(
-                    path, rig.rigId(), 1, 0, 0, definition.animationBindings()));
+                    path, rig.rigId(), 1, 0, 0, definition.animationBindings(),
+                    definition.namedAnimationBindings()));
             if (!base.skeletonSignature().equals(attachment.skeletonSignature())) {
                 issues.add(error(owner, label + " uses an incompatible skeleton."));
             }
@@ -338,7 +340,7 @@ public final class FirstPersonViewmodelValidator {
             case IDLE_LEFT, IDLE_RIGHT -> CharacterModelDefinition.AnimationSlot.IDLE;
             case ATTACK_LEFT, ATTACK_RIGHT -> CharacterModelDefinition.AnimationSlot.ATTACK;
             case BLOCK_LEFT, BLOCK_RIGHT -> CharacterModelDefinition.AnimationSlot.BLOCK;
-            case CAST -> CharacterModelDefinition.AnimationSlot.CAST;
+            case CAST_LEFT, CAST_RIGHT, CAST -> CharacterModelDefinition.AnimationSlot.CAST;
             case HIT -> CharacterModelDefinition.AnimationSlot.HIT;
             case DODGE -> CharacterModelDefinition.AnimationSlot.DODGE;
         };

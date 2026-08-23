@@ -40,9 +40,6 @@ public class GameState {
     private final QuestRuntime questRuntime = new QuestRuntime(this);
     private final InputBindings inputBindings = new InputBindings();
     private final WorldMessageLog worldMessageLog = new WorldMessageLog();
-    private final NavigationState navigationState = new NavigationState();
-    private final MiniMapState miniMapState = new MiniMapState();
-    private final SkillingState skillingState = new SkillingState();
     private final Map<String, ResourceNodeState> resourceNodeStates = new HashMap<>();
     private final Map<String, EnemyRespawnState> enemyRespawnStates = new HashMap<>();
     private DungeonMap dungeonMap;
@@ -861,6 +858,7 @@ public class GameState {
     }
 
     public void setOpenWorldRuntimeStates(Map<String, OpenWorldRuntimeState> states) throws IOException {
+        openWorldSessions.values().forEach(OpenWorldSession::close);
         openWorldSessions.clear();
         currentOpenWorldSession = null;
         if (states == null) {
@@ -1778,7 +1776,7 @@ public class GameState {
         double renderY = interpolate(movementStartY, playerY, progress);
         double offsetX = renderX - playerX;
         double offsetY = renderY - playerY;
-        return offsetX * forwardX() + offsetY * forwardY();
+        return offsetX * GridDirection.forwardX(direction) + offsetY * GridDirection.forwardY(direction);
     }
 
     public double getCameraOffsetSide(double interpolationAlpha) {
@@ -1791,7 +1789,7 @@ public class GameState {
         double renderY = interpolate(movementStartY, playerY, progress);
         double offsetX = renderX - playerX;
         double offsetY = renderY - playerY;
-        return offsetX * rightX() + offsetY * rightY();
+        return offsetX * GridDirection.rightX(direction) + offsetY * GridDirection.rightY(direction);
     }
 
     public double getCameraRotationRadians(double interpolationAlpha) {
@@ -1814,38 +1812,6 @@ public class GameState {
     private double interpolate(double start, double end, double progress) {
         double easedProgress = 1.0 - Math.pow(1.0 - progress, 3.0);
         return start + (end - start) * easedProgress;
-    }
-
-    private int forwardX() {
-        return switch (direction) {
-            case 1 -> 1;
-            case 3 -> -1;
-            default -> 0;
-        };
-    }
-
-    private int forwardY() {
-        return switch (direction) {
-            case 0 -> -1;
-            case 2 -> 1;
-            default -> 0;
-        };
-    }
-
-    private int rightX() {
-        return switch (direction) {
-            case 0 -> 1;
-            case 2 -> -1;
-            default -> 0;
-        };
-    }
-
-    private int rightY() {
-        return switch (direction) {
-            case 1 -> 1;
-            case 3 -> -1;
-            default -> 0;
-        };
     }
 
     private void resetMiniMapDiscovery() {
@@ -2775,46 +2741,6 @@ public class GameState {
         return getInventory().equipFromInventory(inventoryIndex, slot);
     }
 
-    private String limbExamineText(LimbItem limb) {
-        StringBuilder builder = new StringBuilder();
-
-        if (limb.getExamineText() != null && !limb.getExamineText().isBlank()) {
-            builder.append(limb.getExamineText().trim()).append("\n\n");
-        }
-
-        builder.append(limb.getName())
-                .append("\nSource: ")
-                .append(limb.getSourceCreatureName() == null || limb.getSourceCreatureName().isBlank()
-                        ? "Unknown creature"
-                        : limb.getSourceCreatureName())
-                .append("\nCondition: ")
-                .append(limb.getCondition().getDisplayName())
-                .append("\nSlot: ")
-                .append(limb.getLimbSlot().getDisplayName());
-
-        LimbItem currentLimb = playerCharacter == null ? null : playerCharacter.getEquippedLimb(limb.getLimbSlot());
-        builder.append("\n\nStats");
-        for (Map.Entry<PlayerStat, Integer> entry : limb.getBaseStatsView().entrySet()) {
-            int value = limb.getEffectiveStat(entry.getKey());
-            int currentValue = currentLimb == null ? 0 : currentLimb.getEffectiveStat(entry.getKey());
-            int delta = value - currentValue;
-            builder.append("\n")
-                    .append(entry.getKey().getDisplayName())
-                    .append(" ")
-                    .append(value)
-                    .append(delta == 0 ? "" : " (" + (delta > 0 ? "+" : "") + delta + ")");
-        }
-
-        if (!limb.getSkills().isEmpty()) {
-            builder.append("\n\nAbilities");
-            for (BattleSkill skill : limb.getSkills()) {
-                builder.append("\n+ ").append(skill.getName());
-            }
-        }
-
-        return builder.toString();
-    }
-
     private InventorySystem.EquipmentSlot preferredEquipmentSlot(InventorySystem.Item item) {
         if (item == null) {
             return null;
@@ -2831,22 +2757,6 @@ public class GameState {
                     ? InventorySystem.EquipmentSlot.RING_LEFT
                     : InventorySystem.EquipmentSlot.RING_RIGHT;
             default -> null;
-        };
-    }
-
-    private int forwardX(int direction) {
-        return switch (direction) {
-            case 1 -> 1;
-            case 3 -> -1;
-            default -> 0;
-        };
-    }
-
-    private int forwardY(int direction) {
-        return switch (direction) {
-            case 0 -> -1;
-            case 2 -> 1;
-            default -> 0;
         };
     }
 
@@ -2876,6 +2786,18 @@ public class GameState {
         return getSelectedWorldUseItem() != null;
     }
 
+    public int getResidentOpenWorldChunkCount() {
+        return currentOpenWorldSession == null ? 0 : currentOpenWorldSession.residentChunkCount();
+    }
+
+    public long getDirtyOpenWorldChunkCount() {
+        return currentOpenWorldSession == null ? 0L : currentOpenWorldSession.dirtyChunkCount();
+    }
+
+    public int getPreparedOpenWorldTerrainWindowCount() {
+        return currentOpenWorldSession == null ? 0 : currentOpenWorldSession.preparedTerrainWindowCount();
+    }
+
     public boolean tryUseSelectedWorldItemOnInventoryItem(int targetInventoryIndex) {
         InventorySystem.Item selectedItem = getSelectedWorldUseItem();
         InventorySystem.Item targetItem = getInventory().getItem(targetInventoryIndex);
@@ -2897,11 +2819,21 @@ public class GameState {
             return true;
         }
 
-        MapDesignLibrary.CraftingRecipe recipe = findCraftingRecipe(selectedItem, targetItem);
-        if (recipe == null) {
+        List<MapDesignLibrary.CraftingRecipe> toolRecipes = matchingToolRecipes(selectedItem, targetItem);
+        if (!toolRecipes.isEmpty()) {
+            openCraftingChoiceMenu("Carve " + targetItem.getName(), toolRecipes);
+            return true;
+        }
+
+        List<MapDesignLibrary.CraftingRecipe> recipes = findCraftingRecipes(selectedItem, targetItem);
+        if (recipes.isEmpty()) {
             return false;
         }
-        craftRecipe(recipe);
+        if (recipes.size() == 1) {
+            craftRecipe(recipes.get(0));
+        } else {
+            openCraftingChoiceMenu("Choose Result", recipes);
+        }
         return true;
     }
 
@@ -2954,6 +2886,50 @@ public class GameState {
         return true;
     }
 
+    private void openCraftingChoiceMenu(
+            String title,
+            List<MapDesignLibrary.CraftingRecipe> recipes
+    ) {
+        List<InteractionSystem.InteractionOption> options = new ArrayList<>();
+        for (MapDesignLibrary.CraftingRecipe recipe : recipes.stream()
+                .sorted(java.util.Comparator.comparing(MapDesignLibrary.CraftingRecipe::displayName))
+                .toList()) {
+            options.add(InteractionSystem.option(
+                    craftingChoiceLabel(recipe),
+                    () -> craftRecipe(recipe)
+            ));
+        }
+        options.add(InteractionSystem.closeOption("Close"));
+        openInteraction(InteractionSystem.prompt(
+                title,
+                recipes.stream().anyMatch(MapDesignLibrary.CraftingRecipe::usesWeaponTool)
+                        ? "Choose what you want to make. The dagger will not be consumed or damaged."
+                        : "Choose which result you want to make from these items.",
+                options.toArray(new InteractionSystem.InteractionOption[0])
+        ));
+    }
+
+    private String craftingChoiceLabel(MapDesignLibrary.CraftingRecipe recipe) {
+        InventorySystem.Item primary = createItemByNameOrId(recipe.primaryItemId());
+        InventorySystem.Item secondary = recipe.secondaryItemId().isBlank()
+                ? null : createItemByNameOrId(recipe.secondaryItemId());
+        String ingredientName = primary == null ? recipe.primaryItemId() : primary.getName();
+        int owned = primary == null ? 0 : getInventory().countItemNamed(primary.getName());
+        int secondaryOwned = secondary == null ? 0 : getInventory().countItemNamed(secondary.getName());
+        int level = playerCharacter == null ? 1
+                : playerCharacter.getSkillLevel(recipe.requiredSkill());
+        String availability = owned < recipe.primaryQuantity()
+                ? " - need " + recipe.primaryQuantity() + " " + ingredientName
+                : secondary != null && secondaryOwned < recipe.secondaryQuantity()
+                ? " - need " + recipe.secondaryQuantity() + " " + secondary.getName()
+                : level < recipe.requiredLevel()
+                ? " - requires " + recipe.requiredSkill().getDisplayName() + " " + recipe.requiredLevel()
+                : " - ready";
+        String requirements = recipe.primaryQuantity() + " " + ingredientName
+                + (secondary == null ? "" : " + " + recipe.secondaryQuantity() + " " + secondary.getName());
+        return recipe.displayName() + " (" + requirements + ")" + availability;
+    }
+
     private boolean craftRecipe(MapDesignLibrary.CraftingRecipe recipe) {
         if (recipe == null || playerCharacter == null) {
             return false;
@@ -2983,8 +2959,8 @@ public class GameState {
         }
 
         InventorySystem.Item output = null;
-        int stationX = playerX + forwardX(direction);
-        int stationY = playerY + forwardY(direction);
+        int stationX = playerX + GridDirection.forwardX(direction);
+        int stationY = playerY + GridDirection.forwardY(direction);
         if (recipe.outputsStation()) {
             if (recipe.outputStationType() == null
                     || dungeonMap == null
@@ -3103,20 +3079,101 @@ public class GameState {
         return matches;
     }
 
-    private MapDesignLibrary.CraftingRecipe findCraftingRecipe(
+    private List<MapDesignLibrary.CraftingRecipe> matchingToolRecipes(
+            InventorySystem.Item tool,
+            InventorySystem.Item target
+    ) {
+        if (tool == null || target == null || tool.getItemType() != InventorySystem.ItemType.WEAPON) {
+            return List.of();
+        }
+        return allCraftingRecipes().stream()
+                .filter(MapDesignLibrary.CraftingRecipe::usesWeaponTool)
+                .filter(recipe -> recipe.requiredToolWeaponType() == tool.getWeaponType())
+                .filter(recipe -> recipeItemMatches(recipe.primaryItemId(), target))
+                .toList();
+    }
+
+    public AttunementResult attuneSelectedStone(String furnitureId) {
+        MapDesignLibrary.CustomFurnitureDefinition furniture = customFurniture.get(
+                furnitureId == null ? "" : furnitureId);
+        MapDesignLibrary.AttunementPillarDefinition pillar = furniture == null
+                ? null : furniture.attunementPillar();
+        String pillarName = furniture == null ? "Attunement Pillar" : furniture.displayName();
+        if (pillar == null || !pillar.isUsable()) {
+            return new AttunementResult(false, pillarName,
+                    "This structure has no usable attunement.", "");
+        }
+
+        InventorySystem.Item inputTemplate = createItemByNameOrId(pillar.inputItemId());
+        InventorySystem.Item output = createItemByNameOrId(pillar.outputItemId());
+        InventorySystem.Item selected = getSelectedWorldUseItem();
+        String requiredName = inputTemplate == null ? pillar.inputItemId() : inputTemplate.getName();
+        if (selected == null || !recipeItemMatches(pillar.inputItemId(), selected)) {
+            return new AttunementResult(false, pillarName,
+                    "Use " + requiredName + " on this pillar to attune it to "
+                            + pillar.element().getDisplayName() + ". Crafting level "
+                            + pillar.requiredLevel() + " required.", pillar.soundPath());
+        }
+        int level = playerCharacter == null ? 1 : playerCharacter.getSkillLevel(CharacterSkill.CRAFTING);
+        if (level < pillar.requiredLevel()) {
+            return new AttunementResult(false, pillarName,
+                    "You need Crafting level " + pillar.requiredLevel() + " to use this pillar.",
+                    pillar.soundPath());
+        }
+        if (output == null) {
+            return new AttunementResult(false, pillarName,
+                    "The authored output item could not be found.", pillar.soundPath());
+        }
+        if (!getInventory().canAddItem(output)
+                && !getInventory().wouldRemovingQuantityFreeSlot(selected.getName(), 1)) {
+            return new AttunementResult(false, pillarName,
+                    "You do not have room for the attuned stone.", pillar.soundPath());
+        }
+        if (!getInventory().removeItemQuantityNamed(selected.getName(), 1)) {
+            return new AttunementResult(false, pillarName,
+                    "The stone could not be removed from your inventory.", pillar.soundPath());
+        }
+        clearSelectedWorldUseItem();
+        if (!getInventory().addItem(output)) {
+            if (inputTemplate != null) {
+                getInventory().addItem(inputTemplate);
+            }
+            return new AttunementResult(false, pillarName,
+                    "You do not have room for the attuned stone.", pillar.soundPath());
+        }
+
+        int levelsGained = playerCharacter.addSkillExperience(CharacterSkill.CRAFTING, pillar.xpReward());
+        String message = "The " + requiredName + " becomes " + output.getName() + ".";
+        if (levelsGained > 0) {
+            message += " Crafting level " + playerCharacter.getSkillLevel(CharacterSkill.CRAFTING) + "!";
+        }
+        worldMessageLog.post(WorldMessageLog.Category.SUCCESS, message);
+        return new AttunementResult(true, pillarName, message, pillar.soundPath());
+    }
+
+    public record AttunementResult(boolean success, String title, String message, String soundPath) {
+        public AttunementResult {
+            title = title == null || title.isBlank() ? "Attunement Pillar" : title;
+            message = message == null ? "" : message;
+            soundPath = soundPath == null ? "" : soundPath;
+        }
+    }
+
+    private List<MapDesignLibrary.CraftingRecipe> findCraftingRecipes(
             InventorySystem.Item first,
             InventorySystem.Item second
     ) {
+        List<MapDesignLibrary.CraftingRecipe> matches = new ArrayList<>();
         for (MapDesignLibrary.CraftingRecipe recipe : allCraftingRecipes()) {
-            if (recipe.isSingleIngredient()) {
+            if (recipe.isSingleIngredient() || recipe.usesWeaponTool()) {
                 continue;
             }
             if ((recipeItemMatches(recipe.primaryItemId(), first) && recipeItemMatches(recipe.secondaryItemId(), second))
                     || (recipeItemMatches(recipe.primaryItemId(), second) && recipeItemMatches(recipe.secondaryItemId(), first))) {
-                return recipe;
+                matches.add(recipe);
             }
         }
-        return null;
+        return List.copyOf(matches);
     }
 
     private List<MapDesignLibrary.CraftingRecipe> allCraftingRecipes() {
@@ -3656,24 +3713,6 @@ public class GameState {
         }
 
         return true;
-    }
-
-    private int countInventoryItemsNamed(String itemName) {
-        if (itemName == null || itemName.isBlank()) {
-            return 0;
-        }
-
-        int count = 0;
-        InventorySystem.Inventory inventory = getInventory();
-
-        for (int i = 0; i < InventorySystem.Inventory.SLOT_COUNT; i++) {
-            InventorySystem.Item item = inventory.getItem(i);
-            if (item != null && itemName.equalsIgnoreCase(item.getName())) {
-                count++;
-            }
-        }
-
-        return count;
     }
 
     private Map<String, ResourceNodeSnapshot> copyResourceNodeSnapshots() {

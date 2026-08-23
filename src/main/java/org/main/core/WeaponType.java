@@ -6,6 +6,7 @@ public enum WeaponType {
     SWORD("Sword", 1, 1, 1.00),
     MACE("Mace", 0, 2, 1.08),
     STAFF("Staff", 0, 0, 1.05),
+    WAND("Wand", 0, 0, 0.85),
     GREATSWORD("Greatsword", -1, 4, 1.16);
 
     private final String displayName;

@@ -7,6 +7,7 @@ import org.main.core.Library;
 import org.main.core.SaveSystem;
 import org.main.content.PlayerRegionLibrary;
 import org.main.engine.DungeonRenderContext;
+import org.main.engine.AssetRepository;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 import org.main.engine.TextureManager;
@@ -225,8 +226,15 @@ public final class LwjglDungeonPrototype {
             return;
         }
         FrameProfiler.Snapshot metrics = viewport.benchmarkProfilerSnapshot();
+        FrameProfiler.CounterValues totals = metrics.totals();
+        FrameProfiler.CounterValues maxima = metrics.maximums();
+        AssetRepository.Metrics assetMetrics = AssetRepository.shared().metrics();
+        LwjglDungeonViewport.RendererResidencyMetrics residency = viewport.rendererResidencyMetrics();
+        Runtime javaRuntime = Runtime.getRuntime();
+        long heapUsed = javaRuntime.totalMemory() - javaRuntime.freeMemory();
+        GameState gameState = runtime.gameState();
         String json = "{\n"
-                + "  \"schemaVersion\": 1,\n"
+                + "  \"schemaVersion\": 2,\n"
                 + "  \"scene\": \"" + jsonEscape(benchmarkScene) + "\",\n"
                 + "  \"width\": 1920,\n"
                 + "  \"height\": 1080,\n"
@@ -243,16 +251,50 @@ public final class LwjglDungeonPrototype {
                 + "  \"p99FrameMs\": " + formatNumber(metrics.p99Ms()) + ",\n"
                 + "  \"maximumFrameMs\": " + formatNumber(metrics.maximumMs()) + ",\n"
                 + "  \"onePercentLowFps\": " + formatNumber(metrics.onePercentLowFps()) + ",\n"
-                + "  \"gpuTimeMs\": " + formatNumber(metrics.gpuTimeMs()) + ",\n"
+                + "  \"averageGpuTimeMs\": " + formatNumber(metrics.gpuTimeMs()) + ",\n"
+                + "  \"maximumGpuTimeMs\": " + formatNumber(metrics.maximumGpuTimeMs()) + ",\n"
                 + "  \"averagePhaseMs\": " + phaseJson(metrics, false) + ",\n"
                 + "  \"slowestFramePhaseMs\": " + phaseJson(metrics, true) + ",\n"
-                + "  \"drawCalls\": " + metrics.drawCalls() + ",\n"
-                + "  \"triangles\": " + metrics.triangles() + ",\n"
-                + "  \"uploadedBytes\": " + metrics.uploadedBytes() + ",\n"
-                + "  \"skinnedVertices\": " + metrics.skinnedVertices() + ",\n"
-                + "  \"cacheHits\": " + metrics.cacheHits() + ",\n"
-                + "  \"cacheMisses\": " + metrics.cacheMisses() + ",\n"
+                + "  \"averageDrawCallsPerFrame\": " + metrics.drawCalls() + ",\n"
+                + "  \"totalDrawCalls\": " + totals.drawCalls() + ",\n"
+                + "  \"maximumDrawCallsPerFrame\": " + maxima.drawCalls() + ",\n"
+                + "  \"averageTrianglesPerFrame\": " + metrics.triangles() + ",\n"
+                + "  \"totalTriangles\": " + totals.triangles() + ",\n"
+                + "  \"maximumTrianglesPerFrame\": " + maxima.triangles() + ",\n"
+                + "  \"averageUploadedBytesPerFrame\": " + metrics.uploadedBytes() + ",\n"
+                + "  \"totalUploadedBytes\": " + totals.uploadedBytes() + ",\n"
+                + "  \"maximumUploadedBytesPerFrame\": " + maxima.uploadedBytes() + ",\n"
+                + "  \"averageSkinnedVerticesPerFrame\": " + metrics.skinnedVertices() + ",\n"
+                + "  \"totalSkinnedVertices\": " + totals.skinnedVertices() + ",\n"
+                + "  \"maximumSkinnedVerticesPerFrame\": " + maxima.skinnedVertices() + ",\n"
+                + "  \"averageCacheHitsPerFrame\": " + metrics.cacheHits() + ",\n"
+                + "  \"totalCacheHits\": " + totals.cacheHits() + ",\n"
+                + "  \"maximumCacheHitsPerFrame\": " + maxima.cacheHits() + ",\n"
+                + "  \"averageCacheMissesPerFrame\": " + metrics.cacheMisses() + ",\n"
+                + "  \"totalCacheMisses\": " + totals.cacheMisses() + ",\n"
+                + "  \"maximumCacheMissesPerFrame\": " + maxima.cacheMisses() + ",\n"
                 + "  \"averageAllocatedBytesPerFrame\": " + metrics.averageAllocatedBytes() + ",\n"
+                + "  \"maximumAllocatedBytesPerFrame\": " + metrics.maximumAllocatedBytes() + ",\n"
+                + "  \"assetFileOpens\": " + assetMetrics.fileOpens() + ",\n"
+                + "  \"decodedImages\": " + assetMetrics.imageDecodes() + ",\n"
+                + "  \"residentDecodedImages\": " + assetMetrics.decodedImageCount() + ",\n"
+                + "  \"residentTextures\": " + residency.textures() + ",\n"
+                + "  \"textureUploads\": " + residency.textureUploads() + ",\n"
+                + "  \"textureUploadedBytes\": " + residency.textureUploadedBytes() + ",\n"
+                + "  \"residentStaticModels\": " + residency.staticModels() + ",\n"
+                + "  \"pendingStaticModels\": " + residency.pendingStaticModels() + ",\n"
+                + "  \"residentSkinnedModels\": " + residency.skinnedModels() + ",\n"
+                + "  \"pendingSkinnedModels\": " + residency.pendingSkinnedModels() + ",\n"
+                + "  \"residentTerrainCells\": " + residency.terrainCells() + ",\n"
+                + "  \"preparedTerrainBuilds\": " + residency.preparedTerrainBuilds() + ",\n"
+                + "  \"pendingTerrainUploads\": " + residency.pendingTerrainUploads() + ",\n"
+                + "  \"residentOpenWorldChunks\": " + gameState.getResidentOpenWorldChunkCount() + ",\n"
+                + "  \"dirtyOpenWorldChunks\": " + gameState.getDirtyOpenWorldChunkCount() + ",\n"
+                + "  \"preparedOpenWorldWindows\": " + gameState.getPreparedOpenWorldTerrainWindowCount() + ",\n"
+                + "  \"heapUsedBytes\": " + heapUsed + ",\n"
+                + "  \"heapCommittedBytes\": " + javaRuntime.totalMemory() + ",\n"
+                + "  \"heapMaximumBytes\": " + javaRuntime.maxMemory() + ",\n"
+                + "  \"directBufferBytes\": " + directBufferBytes() + ",\n"
                 + "  \"gcEvents\": " + metrics.gcEvents() + "\n"
                 + "}\n";
         try {
@@ -266,6 +308,14 @@ public final class LwjglDungeonPrototype {
         } catch (IOException exception) {
             System.out.println("LWJGL benchmark export failed: " + exception.getMessage());
         }
+    }
+
+    private static long directBufferBytes() {
+        return java.lang.management.ManagementFactory.getPlatformMXBeans(
+                        java.lang.management.BufferPoolMXBean.class).stream()
+                .filter(pool -> pool.getName().equalsIgnoreCase("direct"))
+                .mapToLong(java.lang.management.BufferPoolMXBean::getMemoryUsed)
+                .sum();
     }
 
     private static String jsonEscape(String value) {

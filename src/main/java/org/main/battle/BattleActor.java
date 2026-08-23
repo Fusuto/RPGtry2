@@ -2,7 +2,9 @@ package org.main.battle;
 
 import org.main.core.Library;
 import org.main.core.CharacterSkill;
+import org.main.core.CombatElement;
 import org.main.core.GameConfiguration;
+import org.main.core.InventorySystem;
 import org.main.core.PlayerCharacter;
 import org.main.core.PlayerStat;
 import org.main.core.PartyRoster;
@@ -47,6 +49,10 @@ public class BattleActor {
     private int weaponAccuracyBonus = 0;
     private int weaponPowerBonus = 0;
     private double weaponSpeedMultiplier = 1.0;
+    private CombatElement weaponElement = CombatElement.NEUTRAL;
+    private double matchingElementSpellDamageBonus = 0.0;
+    private final EnumMap<CombatElement, Double> elementalDamageMultipliers =
+            defaultElementalDamageMultipliers();
     private int armorBonus = 0;
     private double attackCooldownRemainingSeconds = 0.0;
     private BattleActor preferredAutoAttackTarget;
@@ -567,6 +573,53 @@ public class BattleActor {
                 : 1.0;
     }
 
+    public CombatElement getWeaponElement() {
+        return weaponElement;
+    }
+
+    public void setWeaponElement(CombatElement weaponElement) {
+        this.weaponElement = weaponElement == null ? CombatElement.NEUTRAL : weaponElement;
+    }
+
+    public double getMatchingElementSpellDamageBonus() {
+        return matchingElementSpellDamageBonus;
+    }
+
+    public void setMatchingElementSpellDamageBonus(double bonus) {
+        matchingElementSpellDamageBonus = Double.isFinite(bonus)
+                ? Math.max(0.0, Math.min(5.0, bonus)) : 0.0;
+    }
+
+    public double matchingSpellDamageMultiplier(CombatElement spellElement) {
+        return spellElement != null && spellElement.isElemental() && spellElement == weaponElement
+                ? 1.0 + matchingElementSpellDamageBonus
+                : 1.0;
+    }
+
+    public double getElementalDamageMultiplier(CombatElement element) {
+        return elementalDamageMultipliers.getOrDefault(
+                element == null ? CombatElement.NEUTRAL : element, 1.0);
+    }
+
+    public void setElementalDamageMultiplier(CombatElement element, double multiplier) {
+        if (element != null) {
+            elementalDamageMultipliers.put(element, Double.isFinite(multiplier)
+                    ? Math.max(0.0, Math.min(5.0, multiplier)) : 1.0);
+        }
+    }
+
+    public void setElementalDamageMultipliers(Map<CombatElement, Double> multipliers) {
+        elementalDamageMultipliers.clear();
+        elementalDamageMultipliers.putAll(defaultElementalDamageMultipliers());
+        if (multipliers != null) {
+            multipliers.forEach(this::setElementalDamageMultiplier);
+        }
+    }
+
+    public Map<CombatElement, Double> getElementalDamageMultipliers() {
+        return Map.copyOf(elementalDamageMultipliers);
+    }
+
     public int getArmorBonus() {
         return armorBonus;
     }
@@ -602,13 +655,22 @@ public class BattleActor {
         setWeaponAccuracyBonus(player.getUsableWeaponAccuracyBonus());
         setWeaponPowerBonus(player.getUsableWeaponPowerBonus());
         setWeaponSpeedMultiplier(player.getUsableWeaponSpeedMultiplier());
+        InventorySystem.Item equippedWeapon = player.getInventory()
+                .getEquippedItem(InventorySystem.EquipmentSlot.WEAPON);
+        setWeaponElement(equippedWeapon == null ? CombatElement.NEUTRAL : equippedWeapon.getElementalAffinity());
+        setMatchingElementSpellDamageBonus(equippedWeapon == null
+                ? 0.0 : equippedWeapon.getMatchingElementSpellDamageBonus());
         setArmorBonus(player.getUsableArmorStatBonus());
         setCombatSkillLevel(CharacterSkill.ATTACK, player.getSkillLevel(CharacterSkill.ATTACK));
         setCombatSkillLevel(CharacterSkill.STRENGTH, player.getSkillLevel(CharacterSkill.STRENGTH));
         setCombatSkillLevel(CharacterSkill.DEFENSE, player.getSkillLevel(CharacterSkill.DEFENSE));
         setCombatSkillLevel(CharacterSkill.MAGIC_ACCURACY,
-                player.getSkillLevel(CharacterSkill.MAGIC_ACCURACY) + player.getUsableMagicAccuracyBonus());
-        setCombatSkillLevel(CharacterSkill.MAGIC_POWER, player.getSkillLevel(CharacterSkill.MAGIC_POWER));
+                player.getSkillLevel(CharacterSkill.MAGIC_ACCURACY)
+                        + player.getUsableMagicAccuracyBonus()
+                        + player.getUsableWeaponMagicAccuracyBonus());
+        setCombatSkillLevel(CharacterSkill.MAGIC_POWER,
+                player.getSkillLevel(CharacterSkill.MAGIC_POWER)
+                        + player.getUsableWeaponMagicPowerBonus());
     }
 
     public PlayerCharacter getSourcePlayer() {
@@ -687,6 +749,9 @@ public class BattleActor {
         copy.setWeaponAccuracyBonus(weaponAccuracyBonus);
         copy.setWeaponPowerBonus(weaponPowerBonus);
         copy.setWeaponSpeedMultiplier(weaponSpeedMultiplier);
+        copy.setWeaponElement(weaponElement);
+        copy.setMatchingElementSpellDamageBonus(matchingElementSpellDamageBonus);
+        copy.setElementalDamageMultipliers(elementalDamageMultipliers);
         copy.setArmorBonus(armorBonus);
         copy.setSpeciesId(speciesId);
         copy.setExperienceReward(experienceReward);
@@ -704,6 +769,14 @@ public class BattleActor {
 
     private int statValue(Map<PlayerStat, Integer> stats, PlayerStat stat) {
         return Math.max(0, stats == null ? 0 : stats.getOrDefault(stat, 0));
+    }
+
+    private static EnumMap<CombatElement, Double> defaultElementalDamageMultipliers() {
+        EnumMap<CombatElement, Double> values = new EnumMap<>(CombatElement.class);
+        for (CombatElement element : CombatElement.values()) {
+            values.put(element, 1.0);
+        }
+        return values;
     }
 
     public void addCombatSkillExperience(CharacterSkill skill, int amount) {

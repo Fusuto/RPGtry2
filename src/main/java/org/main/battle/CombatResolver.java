@@ -2,6 +2,7 @@ package org.main.battle;
 
 import org.main.core.CharacterSkill;
 import org.main.core.GameConfiguration;
+import org.main.core.CombatElement;
 
 public final class CombatResolver {
     private CombatResolver() {
@@ -33,9 +34,11 @@ public final class CombatResolver {
                         + caster.getWillpowerStat() / magicStatDamageDivisor()
                         + caster.getCombatSkillLevel(CharacterSkill.MAGIC_POWER) / magicStatDamageDivisor()
         );
-        int damage = hit ? applyOutgoingMultiplier(caster, randomDamage(maxHit)) : 0;
+        CombatElement element = skill == null ? CombatElement.NEUTRAL : skill.getElement();
+        int damage = hit ? applyElementalSpellModifiers(caster, defender, element, randomDamage(maxHit)) : 0;
 
-        return new CombatResult(hit, damage, hitChance, maxHit, hit ? "casts for " + damage : "misses");
+        return new CombatResult(hit, damage, hitChance, maxHit,
+                hit ? spellResultText(defender, element, damage) : "misses", element);
     }
 
     public static int resolveHealingAmount(BattleActor caster, BattleSkill skill) {
@@ -67,7 +70,8 @@ public final class CombatResolver {
         );
         int damage = hit ? applyOutgoingMultiplier(attacker, randomDamage(maxHit)) : 0;
 
-        return new CombatResult(hit, damage, hitChance, maxHit, hit ? verb + " for " + damage : "misses");
+        return new CombatResult(hit, damage, hitChance, maxHit,
+                hit ? verb + " for " + damage : "misses", CombatElement.NEUTRAL);
     }
 
     private static int physicalDefenseRoll(BattleActor defender) {
@@ -113,6 +117,20 @@ public final class CombatResolver {
                 * (actor == null ? 1.0 : actor.outgoingDamageMultiplier())));
     }
 
+    static int applyElementalSpellModifiers(
+            BattleActor caster, BattleActor defender, CombatElement element, int damage) {
+        double weaponMultiplier = caster == null ? 1.0 : caster.matchingSpellDamageMultiplier(element);
+        double targetMultiplier = defender == null ? 1.0 : defender.getElementalDamageMultiplier(element);
+        int elementalDamage = Math.max(0, (int) Math.round(damage * weaponMultiplier * targetMultiplier));
+        return applyOutgoingMultiplier(caster, elementalDamage);
+    }
+
+    private static String spellResultText(BattleActor defender, CombatElement element, int damage) {
+        double multiplier = defender == null ? 1.0 : defender.getElementalDamageMultiplier(element);
+        String response = multiplier > 1.000001 ? " (Weak)" : multiplier < 0.999999 ? " (Resisted)" : "";
+        return "takes " + damage + " " + element.getDisplayName().toLowerCase() + " spell damage" + response;
+    }
+
     private static double minHitChance() { return GameConfiguration.doubleValue("battle.hitChance.minimum", 0.05); }
     private static double maxHitChance() { return GameConfiguration.doubleValue("battle.hitChance.maximum", 0.95); }
     private static int minRollValue() { return GameConfiguration.intValue("battle.roll.minimum", 1); }
@@ -130,6 +148,20 @@ public final class CombatResolver {
     private static double rollComparisonDivisor() { return GameConfiguration.doubleValue("battle.rollComparison.divisor", 2.0); }
     private static double rollComparisonOffset() { return GameConfiguration.doubleValue("battle.rollComparison.offset", 2.0); }
 
-    public record CombatResult(boolean hit, int damage, double hitChance, int maxHit, String text) {
+    public record CombatResult(
+            boolean hit,
+            int damage,
+            double hitChance,
+            int maxHit,
+            String text,
+            CombatElement element
+    ) {
+        public CombatResult(boolean hit, int damage, double hitChance, int maxHit, String text) {
+            this(hit, damage, hitChance, maxHit, text, CombatElement.NEUTRAL);
+        }
+
+        public CombatResult {
+            element = element == null ? CombatElement.NEUTRAL : element;
+        }
     }
 }

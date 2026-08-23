@@ -4,6 +4,13 @@ import org.main.battle.BattleEncounter;
 import org.main.content.PlayerRegionLibrary;
 import org.main.core.*;
 import org.main.engine.AssetLoader;
+import org.main.engine.AssetRepository;
+import org.main.engine.AttributionNotices;
+import org.main.engine.TextWrapping;
+import org.main.pack.ContentMount;
+import org.main.pack.ContentPackManifest;
+import org.main.pack.ContentPackRegistry;
+import org.main.pack.ContentPackScreenModel;
 import org.main.ui.AetherMenuScreens;
 
 import java.awt.*;
@@ -11,13 +18,12 @@ import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.lwjgl.BufferUtils.createByteBuffer;
 import static org.lwjgl.opengl.GL11.*;
@@ -30,7 +36,6 @@ import static org.lwjgl.opengl.GL21.GL_PIXEL_UNPACK_BUFFER;
 
 public final class LwjglTextOverlayRenderer {
     private static final int MAX_CHARACTER_NAME_LENGTH = 16;
-    private static final String ATTRIBUTIONS_ASSET_PATH = "assets/attributions.txt";
     private static final Color PANEL = new Color(10, 10, 14, 188);
     private static final Color PANEL_BORDER = new Color(196, 168, 98, 220);
     private static final Color TEXT = new Color(236, 234, 222);
@@ -54,6 +59,8 @@ public final class LwjglTextOverlayRenderer {
     private final int[] uploadPixelBuffers = new int[2];
     private final int[] worldUploadPixelBuffers = new int[2];
     private final List<OverlayAction> overlayActions = new ArrayList<>();
+    private final ContentPackScreenModel contentPackScreenModel =
+            new ContentPackScreenModel(AssetRepository.shared().registry());
     private int textureId;
     private FixedFunctionPrimitives fixedPrimitives;
     private int textureWidth;
@@ -80,6 +87,12 @@ public final class LwjglTextOverlayRenderer {
     private boolean customMapPickerOpen = false;
     private String customMapMessage = "";
     private boolean creditsOpen = false;
+    private boolean contentPackManagerOpen = false;
+    private String selectedContentPackId = "";
+    private String draggedContentPackId = "";
+    private String contentPackMessage = "";
+    private int contentPackScroll;
+    private List<PackRow> contentPackRows = List.of();
     private String creditsText = "";
     private String creditsMessage = "";
     private int creditsScroll;
@@ -136,11 +149,11 @@ public final class LwjglTextOverlayRenderer {
         creditsScroll = 0;
         creditsMessage = "";
 
-        try (InputStream stream = AssetLoader.openAssetStream(ATTRIBUTIONS_ASSET_PATH)) {
-            creditsText = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        try {
+            creditsText = AttributionNotices.loadRendered();
         } catch (IOException exception) {
             creditsText = "";
-            creditsMessage = "Unable to load " + ATTRIBUTIONS_ASSET_PATH + ": " + exception.getMessage();
+            creditsMessage = "Unable to load credits: " + exception.getMessage();
         }
     }
 
@@ -491,6 +504,10 @@ public final class LwjglTextOverlayRenderer {
 
     public boolean handleMouseReleased(int x, int y, int button, AetherGameRuntime runtime) {
         localUiRevision++;
+        if (contentPackManagerOpen) {
+            draggedContentPackId = "";
+            return true;
+        }
         if (runtime == null || !runtime.gameState().isDungeonMode()) {
             return false;
         }
@@ -518,6 +535,15 @@ public final class LwjglTextOverlayRenderer {
 
     public boolean handleMouseDragged(int x, int y, AetherGameRuntime runtime) {
         localUiRevision++;
+        if (contentPackManagerOpen && !draggedContentPackId.isBlank()) {
+            for (PackRow row : contentPackRows) {
+                if (row.bounds().contains(x, y) && !row.packId().equals(draggedContentPackId)) {
+                    moveContentPack(draggedContentPackId, row.packId());
+                    return true;
+                }
+            }
+            return true;
+        }
         if (runtime == null || !runtime.gameState().isDungeonMode()) {
             return false;
         }
@@ -587,6 +613,10 @@ public final class LwjglTextOverlayRenderer {
             creditsScroll = Math.max(0, creditsScroll + delta);
             return true;
         }
+        if (activeScrollTarget == ScrollTarget.CONTENT_PACKS) {
+            contentPackScroll = Math.max(0, contentPackScroll + delta);
+            return true;
+        }
         return handleOverworldHudMouseWheel(yOffset, mouseX, mouseY, runtime);
     }
 
@@ -654,6 +684,10 @@ public final class LwjglTextOverlayRenderer {
         activeScrollTarget = ScrollTarget.NONE;
 
         if (gameState.isStartMenuMode()) {
+            if (contentPackManagerOpen) {
+                drawContentPackManager(graphics, width, height);
+                return;
+            }
             if (creditsOpen) {
                 drawCredits(graphics, width, height);
                 return;
@@ -1043,8 +1077,151 @@ public final class LwjglTextOverlayRenderer {
             }
         }));
         overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 2), this::openCustomMapPicker));
-        overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 3), this::openCredits));
-        overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 4), quitAction));
+        overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 3), this::openContentPackManager));
+        overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 4), this::openCredits));
+        overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 5), quitAction));
+    }
+
+    private void openContentPackManager() {
+        contentPackManagerOpen = true;
+        creditsOpen = false;
+        customMapPickerOpen = false;
+        contentPackMessage = "Changes apply on the next game start.";
+        ContentPackRegistry.Snapshot snapshot = AssetRepository.shared().registry().snapshot();
+        if (selectedContentPackId.isBlank() || !snapshot.available().containsKey(selectedContentPackId)) {
+            selectedContentPackId = visibleContentPacks(snapshot).stream()
+                    .map(mount -> mount.manifest().id())
+                    .findFirst().orElse("");
+        }
+    }
+
+    private void closeContentPackManager() {
+        contentPackManagerOpen = false;
+        draggedContentPackId = "";
+        contentPackRows = List.of();
+    }
+
+    private void drawContentPackManager(Graphics2D graphics, int width, int height) {
+        activeScrollTarget = ScrollTarget.CONTENT_PACKS;
+        AetherMenuScreens.drawMenuBackdrop(graphics, width, height, "Content Packs");
+        int panelWidth = Math.min(900, width - 70);
+        int panelHeight = Math.min(570, height - 110);
+        int x = (width - panelWidth) / 2;
+        int y = 52;
+        drawPanel(graphics, x, y, panelWidth, panelHeight, "Enabled packs load from top to bottom");
+        drawMenuButton(graphics, x + panelWidth - 82, y + 14, 58, 26, "Back", this::closeContentPackManager);
+
+        ContentPackRegistry.Snapshot snapshot = AssetRepository.shared().registry().snapshot();
+        List<ContentMount> packs = visibleContentPacks(snapshot);
+        List<String> enabledOrder = enabledContentPackIds(snapshot);
+        int rowHeight = 34;
+        int rowStartY = y + 70;
+        int maxRows = Math.max(1, (panelHeight - 165) / rowHeight);
+        contentPackScroll = clampScroll(contentPackScroll, packs.size(), maxRows);
+        List<PackRow> rows = new ArrayList<>();
+        for (int visibleIndex = 0;
+             visibleIndex < maxRows && contentPackScroll + visibleIndex < packs.size();
+             visibleIndex++) {
+            ContentMount mount = packs.get(contentPackScroll + visibleIndex);
+            String id = mount.manifest().id();
+            boolean enabled = mount.origin() == ContentMount.Origin.BUNDLED || enabledOrder.contains(id);
+            boolean selected = id.equals(selectedContentPackId);
+            String kind = mount.manifest().type() == ContentPackManifest.PackType.AUTHORING_SOURCE
+                    ? "source" : mount.origin().name().toLowerCase();
+            String label = (selected ? "> " : "  ") + (enabled ? "[x] " : "[ ] ")
+                    + mount.manifest().title() + "  " + mount.manifest().version()
+                    + "  (" + id + ", " + kind + ")";
+            Rectangle bounds = new Rectangle(x + 24, rowStartY + visibleIndex * rowHeight,
+                    panelWidth - 48, 28);
+            drawMenuButton(graphics, bounds.x, bounds.y, bounds.width, bounds.height, label, () -> {
+                selectedContentPackId = id;
+                draggedContentPackId = enabled ? id : "";
+            });
+            rows.add(new PackRow(id, bounds));
+        }
+        contentPackRows = List.copyOf(rows);
+        drawScrollHint(graphics, x + 24, y + panelHeight - 86, packs.size(), maxRows, contentPackScroll);
+
+        ContentMount selected = snapshot.available().get(selectedContentPackId);
+        int buttonY = y + panelHeight - 70;
+        if (selected != null) {
+            boolean enabled = enabledOrder.contains(selectedContentPackId);
+            String toggleLabel = selected.origin() == ContentMount.Origin.BUNDLED
+                    ? "Core (Fixed)"
+                    : selected.manifest().type() == ContentPackManifest.PackType.AUTHORING_SOURCE
+                    ? "Source Only" : enabled ? "Disable" : "Enable";
+            drawMenuButton(graphics, x + 24, buttonY, 112, 28, toggleLabel,
+                    () -> toggleContentPack(selectedContentPackId));
+            drawMenuButton(graphics, x + 146, buttonY, 90, 28, "Move Up",
+                    () -> moveContentPackBy(selectedContentPackId, -1));
+            drawMenuButton(graphics, x + 246, buttonY, 100, 28, "Move Down",
+                    () -> moveContentPackBy(selectedContentPackId, 1));
+        }
+
+        graphics.setFont(smallFont);
+        graphics.setColor(snapshot.diagnostics().isEmpty() ? MUTED : DANGER);
+        String diagnostic = snapshot.diagnostics().isEmpty()
+                ? contentPackMessage
+                : String.join(" | ", snapshot.diagnostics());
+        graphics.drawString(fitLine(graphics, diagnostic, panelWidth - 390),
+                x + 370, buttonY + 20);
+    }
+
+    private List<ContentMount> visibleContentPacks(ContentPackRegistry.Snapshot snapshot) {
+        return contentPackScreenModel.rows().stream()
+                .map(row -> snapshot.available().get(row.id()))
+                .filter(java.util.Objects::nonNull)
+                .toList();
+    }
+
+    private List<String> enabledContentPackIds(ContentPackRegistry.Snapshot snapshot) {
+        return snapshot.activeHighestPriorityFirst().stream()
+                .filter(mount -> mount.origin() == ContentMount.Origin.INSTALLED
+                        || mount.origin() == ContentMount.Origin.WORKSHOP)
+                .map(mount -> mount.manifest().id())
+                .toList();
+    }
+
+    private void toggleContentPack(String packId) {
+        ContentPackRegistry registry = AssetRepository.shared().registry();
+        ContentMount mount = registry.snapshot().available().get(packId);
+        if (mount == null || mount.origin() == ContentMount.Origin.BUNDLED) {
+            contentPackMessage = "Aether Core is immutable and fixed at the bottom of the load order.";
+            return;
+        }
+        if (mount.manifest().type() == ContentPackManifest.PackType.AUTHORING_SOURCE) {
+            contentPackMessage = "Authoring-source packs are visible only in the Construction Kit.";
+            return;
+        }
+        boolean enabled = enabledContentPackIds(registry.snapshot()).contains(packId);
+        try {
+            contentPackScreenModel.setEnabled(packId, !enabled);
+            AssetRepository.shared().clearDecodedImages();
+            contentPackMessage = (enabled ? "Disabled " : "Enabled ") + packId
+                    + ". Restart to apply gameplay changes.";
+        } catch (IOException exception) {
+            contentPackMessage = exception.getMessage();
+        }
+    }
+
+    private void moveContentPackBy(String packId, int delta) {
+        try {
+            contentPackScreenModel.move(packId, delta);
+            AssetRepository.shared().clearDecodedImages();
+            contentPackMessage = "Load order saved. Restart to apply gameplay changes.";
+        } catch (IOException exception) {
+            contentPackMessage = exception.getMessage();
+        }
+    }
+
+    private void moveContentPack(String packId, String targetPackId) {
+        try {
+            contentPackScreenModel.moveBefore(packId, targetPackId);
+            AssetRepository.shared().clearDecodedImages();
+            contentPackMessage = "Load order saved. Restart to apply gameplay changes.";
+        } catch (IOException exception) {
+            contentPackMessage = exception.getMessage();
+        }
     }
 
     private void drawCredits(Graphics2D graphics, int width, int height) {
@@ -1073,7 +1250,7 @@ public final class LwjglTextOverlayRenderer {
         String displayedCredits = creditsText == null || creditsText.isBlank()
                 ? "No attributions have been added yet."
                 : creditsText;
-        List<String> lines = wrap(graphics, displayedCredits, textWidth);
+        List<String> lines = TextWrapping.wrap(graphics.getFontMetrics(), displayedCredits, textWidth);
         creditsScroll = clampScroll(creditsScroll, lines.size(), visibleLines);
 
         java.awt.Shape previousClip = graphics.getClip();
@@ -1214,61 +1391,6 @@ public final class LwjglTextOverlayRenderer {
                 y + (height + metrics.getAscent()) / 2 - 3
         );
         overlayActions.add(new OverlayAction(bounds, action));
-    }
-
-    private List<String> wrap(Graphics2D graphics, String text, int width) {
-        List<String> lines = new ArrayList<>();
-        if (text == null || text.isBlank()) {
-            return lines;
-        }
-
-        for (String paragraph : text.split("\\R", -1)) {
-            if (paragraph.isBlank()) {
-                lines.add("");
-                continue;
-            }
-            StringBuilder current = new StringBuilder();
-            for (String word : paragraph.split("\\s+")) {
-                if (graphics.getFontMetrics().stringWidth(word) > width) {
-                    if (!current.isEmpty()) {
-                        lines.add(current.toString());
-                        current.setLength(0);
-                    }
-                    splitLongWord(graphics, lines, word, width);
-                    continue;
-                }
-                String candidate = current.isEmpty() ? word : current + " " + word;
-                if (graphics.getFontMetrics().stringWidth(candidate) <= width) {
-                    current = new StringBuilder(candidate);
-                } else {
-                    if (!current.isEmpty()) {
-                        lines.add(current.toString());
-                    }
-                    current = new StringBuilder(word);
-                }
-            }
-            if (!current.isEmpty()) {
-                lines.add(current.toString());
-            }
-        }
-        return lines;
-    }
-
-    private void splitLongWord(Graphics2D graphics, List<String> lines, String word, int width) {
-        StringBuilder segment = new StringBuilder();
-        for (int offset = 0; offset < word.length(); ) {
-            int codePoint = word.codePointAt(offset);
-            String candidate = segment + new String(Character.toChars(codePoint));
-            if (!segment.isEmpty() && graphics.getFontMetrics().stringWidth(candidate) > width) {
-                lines.add(segment.toString());
-                segment.setLength(0);
-            }
-            segment.appendCodePoint(codePoint);
-            offset += Character.charCount(codePoint);
-        }
-        if (!segment.isEmpty()) {
-            lines.add(segment.toString());
-        }
     }
 
     private String fitLine(Graphics2D graphics, String line, int width) {
@@ -1523,61 +1645,6 @@ public final class LwjglTextOverlayRenderer {
         return new Rectangle(x, y, Math.max(0, right - x), Math.max(0, bottom - y));
     }
 
-    private void uploadRegion(
-            int[] pixels,
-            int sourceWidth,
-            int x,
-            int y,
-            int width,
-            int height,
-            boolean allocateTexture
-    ) {
-        int requiredBytes = Math.multiplyExact(Math.multiplyExact(width, height), 4);
-        if (uploadBuffer == null || uploadBuffer.capacity() < requiredBytes) {
-            uploadBuffer = createByteBuffer(requiredBytes);
-        }
-
-        uploadBuffer.clear();
-        for (int row = y; row < y + height; row++) {
-            int offset = row * sourceWidth + x;
-            for (int column = 0; column < width; column++) {
-                int argb = pixels[offset + column];
-                uploadBuffer.put((byte) ((argb >>> 16) & 0xFF));
-                uploadBuffer.put((byte) ((argb >>> 8) & 0xFF));
-                uploadBuffer.put((byte) (argb & 0xFF));
-                uploadBuffer.put((byte) ((argb >>> 24) & 0xFF));
-            }
-        }
-        uploadBuffer.flip();
-
-        glBindTexture(GL_TEXTURE_2D, textureId);
-        if (allocateTexture) {
-            glTexImage2D(
-                    GL_TEXTURE_2D,
-                    0,
-                    GL_RGBA8,
-                    width,
-                    height,
-                    0,
-                    GL_RGBA,
-                    GL_UNSIGNED_BYTE,
-                    uploadBuffer
-            );
-        } else {
-            glTexSubImage2D(
-                    GL_TEXTURE_2D,
-                    0,
-                    x,
-                    y,
-                    width,
-                    height,
-                    GL_RGBA,
-                    GL_UNSIGNED_BYTE,
-                    uploadBuffer
-            );
-        }
-    }
-
     private void drawOverlayQuad(int width, int height) {
         drawOverlayTexture(textureId, width, height);
     }
@@ -1626,9 +1693,13 @@ public final class LwjglTextOverlayRenderer {
     private enum ScrollTarget {
         NONE,
         CUSTOM_MAP,
-        CREDITS
+        CREDITS,
+        CONTENT_PACKS
     }
 
     private record OverlayAction(Rectangle bounds, Runnable action) {
+    }
+
+    private record PackRow(String packId, Rectangle bounds) {
     }
 }

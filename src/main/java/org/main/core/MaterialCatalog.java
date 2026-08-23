@@ -15,13 +15,25 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.main.engine.AssetLoader;
+import org.main.content.MapDesignLibrary;
+import org.main.content.ContentRepository;
+import org.main.pack.ContentPackManifest;
+import org.main.pack.ProjectManifestOverrides;
+
 /** Versioned, refreshable catalog for data-driven material tiers. */
 public final class MaterialCatalog {
     public static final int SCHEMA_VERSION = 2;
     public static final String RESOURCE_PATH = "assets/editor/content/material.properties";
-    public static final Path SOURCE_PATH = Path.of("src", "main", "resources", RESOURCE_PATH);
+    public static final Path SOURCE_PATH = MapDesignLibrary.CONTENT_FOLDER.resolve("material.properties");
 
-    private static final AtomicReference<Snapshot> CURRENT = new AtomicReference<>(loadSnapshot());
+    // Seed first so content parsing can resolve material families while the mounted snapshot is built.
+    private static final AtomicReference<Snapshot> CURRENT =
+            new AtomicReference<>(new Snapshot(builtIns()));
+
+    static {
+        CURRENT.set(loadSnapshot());
+    }
 
     private MaterialCatalog() {
     }
@@ -49,6 +61,8 @@ public final class MaterialCatalog {
     public static List<MaterialDefinition> write(List<MaterialDefinition> definitions) throws IOException {
         validateForSave(definitions);
         List<MaterialDefinition> normalized = normalize(definitions);
+        ProjectManifestOverrides.declareCatalogRecords("material.properties", Map.of(
+                "material", normalized.stream().map(MaterialDefinition::id).toList()));
         Properties properties = new Properties();
         properties.setProperty("schemaVersion", String.valueOf(SCHEMA_VERSION));
         properties.setProperty("material.count", String.valueOf(normalized.size()));
@@ -114,30 +128,81 @@ public final class MaterialCatalog {
     }
 
     private static Snapshot loadSnapshot() {
+        try {
+            List<ContentRepository.CatalogSegment> segments =
+                    ContentRepository.shared().snapshot().catalogSegments("material.properties");
+            if (!segments.isEmpty()) {
+                Map<String, MaterialDefinition> merged = new LinkedHashMap<>();
+                Map<String, String> origins = new LinkedHashMap<>();
+                for (ContentRepository.CatalogSegment segment : segments) {
+                    for (MaterialDefinition material : parse(segment.asProperties())) {
+                        mergeMaterial(merged, origins, material, segment.manifest());
+                    }
+                }
+                return new Snapshot(normalize(new ArrayList<>(merged.values())));
+            }
+        } catch (IOException error) {
+            throw new IllegalStateException("Unable to load mounted material catalogs.", error);
+        }
         Properties properties = new Properties();
-        boolean loaded = false;
         if (Files.isRegularFile(SOURCE_PATH)) {
             try (InputStream input = Files.newInputStream(SOURCE_PATH)) {
                 properties.load(input);
-                loaded = true;
-            } catch (IOException ignored) {
-                // The packaged catalog remains available below.
+                return new Snapshot(parse(properties));
+            } catch (IOException error) {
+                throw new IllegalStateException("Unable to load editable material catalog.", error);
             }
         }
-        if (!loaded) {
-            try (InputStream input = MaterialCatalog.class.getClassLoader().getResourceAsStream(RESOURCE_PATH)) {
-                if (input != null) {
-                    properties.load(input);
-                    loaded = true;
+        try (InputStream input = AssetLoader.openAssetStream(RESOURCE_PATH)) {
+            if (input == null) {
+                throw new IllegalStateException("Packaged material catalog is missing: " + RESOURCE_PATH);
+            }
+            properties.load(input);
+            return new Snapshot(parse(properties));
+        } catch (IOException error) {
+            throw new IllegalStateException("Unable to load packaged material catalog.", error);
+        }
+    }
+
+    private static void mergeMaterial(
+            Map<String, MaterialDefinition> values,
+            Map<String, String> origins,
+            MaterialDefinition incoming,
+            ContentPackManifest manifest
+    ) throws IOException {
+        String id = incoming.id();
+        MaterialDefinition existing = values.get(id);
+        if (existing == null) {
+            if (!manifest.id().equals("aether.core") && !manifest.id().equals("aether.development")) {
+                String prefix = manifest.namespace() + "__";
+                if (!id.startsWith(prefix)) {
+                    throw new IOException("New material ID '" + id + "' from " + manifest.id()
+                            + " must begin with " + prefix + ".");
                 }
-            } catch (IOException ignored) {
-                // Built-in definitions are the final safe fallback.
             }
+            values.put(id, incoming);
+            origins.put(id, manifest.id());
+            return;
         }
-        return new Snapshot(loaded ? parse(properties) : builtIns());
+        String target = origins.getOrDefault(id, "aether.core");
+        boolean declared = manifest.overrides().stream().anyMatch(override ->
+                override.targetPack().equals(target)
+                        && override.contentType().equals("material")
+                        && MaterialDefinition.normalizeId(override.contentId()).equals(id));
+        if (!declared) {
+            throw new IOException("Undeclared material collision for '" + id + "' between "
+                    + target + " and " + manifest.id() + ".");
+        }
+        values.put(id, incoming);
+        origins.put(id, manifest.id());
     }
 
     private static List<MaterialDefinition> parse(Properties properties) {
+        int schemaVersion = parseInt(properties.getProperty("schemaVersion"), -1);
+        if (schemaVersion != SCHEMA_VERSION) {
+            throw new IllegalArgumentException("Unsupported material schema " + schemaVersion
+                    + "; expected exactly " + SCHEMA_VERSION + ".");
+        }
         int count = parseInt(properties.getProperty("material.count"), 0);
         List<MaterialDefinition> materials = new ArrayList<>();
         for (int i = 0; i < count; i++) {

@@ -4,6 +4,7 @@ import org.main.battle.DifficultyResolver;
 import org.main.engine.DungeonMap;
 import org.main.engine.MapEntity;
 import org.main.engine.TerrainGeometry;
+import org.main.engine.LineOfSight;
 import org.main.experimental.CharacterAnimationMetadataResolver;
 
 import java.awt.*;
@@ -89,7 +90,8 @@ public final class WorldCreatureSystem {
             int distance = Math.max(Math.abs(enemy.getX() - px), Math.abs(enemy.getY() - py));
             if (enemy.getAwarenessRadius() == 0
                     || distance > enemy.getAwarenessRadius()
-                    || !hasLineOfSight(map, enemy.getX(), enemy.getY(), px, py)) {
+                    || !LineOfSight.between(map, enemy.getX(), enemy.getY(), px, py,
+                    LineOfSight.Blocker.MOVEMENT, false)) {
                 wander(state, map, enemy, area, occupancy);
                 return;
             }
@@ -237,35 +239,6 @@ public final class WorldCreatureSystem {
         }
     }
 
-    private boolean hasLineOfSight(DungeonMap map, int x0, int y0, int x1, int y1) {
-        int dx = Math.abs(x1 - x0);
-        int dy = Math.abs(y1 - y0);
-        int sx = x0 < x1 ? 1 : -1;
-        int sy = y0 < y1 ? 1 : -1;
-        int error = dx - dy;
-        int x = x0;
-        int y = y0;
-        while (x != x1 || y != y1) {
-            int previousX = x;
-            int previousY = y;
-            int twice = error * 2;
-            if (twice > -dy) {
-                error -= dy;
-                x += sx;
-            }
-            if (twice < dx) {
-                error += dx;
-                y += sy;
-            }
-            if (TerrainGeometry.edgeKind(map, previousX, previousY, x, y) == org.main.engine.TerrainEdgeKind.CLIFF) {
-                return false;
-            }
-            if ((x != x1 || y != y1) && map.getTile(x, y).blocksMovement()) {
-                return false;
-            }
-        }
-        return true;
-    }
 
     private int chebyshev(int x0, int y0, int x1, int y1) {
         return Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));

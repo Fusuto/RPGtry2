@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.main.content.SkillEffectDefinition.ActivationCondition;
 import org.main.content.SkillEffectDefinition.RecipientScope;
 import org.main.core.Library;
+import org.main.core.CombatElement;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,6 +42,9 @@ class BattleContentCatalogTest {
         assertEquals(14, snapshot.skills().size());
         assertEquals(4, snapshot.statuses().size());
         assertTrue(BattleContentCatalog.validate(snapshot).isEmpty());
+        assertEquals(CombatElement.FIRE, snapshot.skills().get("fireball").element());
+        assertEquals(CombatElement.FIRE, snapshot.skills().get("fire_bolt").element());
+        assertEquals(CombatElement.NEUTRAL, snapshot.skills().get("heal").element());
     }
 
     @Test

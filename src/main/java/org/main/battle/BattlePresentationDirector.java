@@ -1,5 +1,7 @@
 package org.main.battle;
 
+import org.main.core.CombatElement;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -14,10 +16,15 @@ public final class BattlePresentationDirector {
     public enum Reaction { HIT, BLOCK, DODGE, NONE }
     public enum Phase { WINDUP, IMPACT, RECOVERY }
 
-    public record TargetReaction(BattleActor target, Reaction reaction, int damage) {
+    public record TargetReaction(BattleActor target, Reaction reaction, int damage, CombatElement element) {
+        public TargetReaction(BattleActor target, Reaction reaction, int damage) {
+            this(target, reaction, damage, CombatElement.NEUTRAL);
+        }
+
         public TargetReaction {
             reaction = reaction == null ? Reaction.NONE : reaction;
             damage = Math.max(0, damage);
+            element = element == null ? CombatElement.NEUTRAL : element;
         }
     }
 

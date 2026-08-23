@@ -51,6 +51,21 @@ final class FrameProfiler {
     private long lifetimeFrameNanos;
     private long lifetimeAllocatedBytes;
     private long lifetimeMaximumFrameNanos;
+    private long lifetimeDrawCalls;
+    private long lifetimeTriangles;
+    private long lifetimeUploadedBytes;
+    private long lifetimeSkinnedVertices;
+    private long lifetimeCacheHits;
+    private long lifetimeCacheMisses;
+    private long lifetimeGpuNanos;
+    private long maximumDrawCalls;
+    private long maximumTriangles;
+    private long maximumUploadedBytes;
+    private long maximumSkinnedVertices;
+    private long maximumCacheHits;
+    private long maximumCacheMisses;
+    private long maximumAllocatedBytes;
+    private long maximumGpuNanos;
 
     FrameProfiler() {
         lastGcCollections = totalGcCollections();
@@ -67,6 +82,7 @@ final class FrameProfiler {
         skinnedVertices = 0;
         cacheHits = 0;
         cacheMisses = 0;
+        gpuNanos = 0;
     }
 
     void begin(Phase phase) {
@@ -126,6 +142,21 @@ final class FrameProfiler {
         lifetimeFrames++;
         lifetimeFrameNanos += frameDuration;
         lifetimeAllocatedBytes += frameAllocation;
+        lifetimeDrawCalls += drawCalls;
+        lifetimeTriangles += triangles;
+        lifetimeUploadedBytes += uploadedBytes;
+        lifetimeSkinnedVertices += skinnedVertices;
+        lifetimeCacheHits += cacheHits;
+        lifetimeCacheMisses += cacheMisses;
+        lifetimeGpuNanos += gpuNanos;
+        maximumDrawCalls = Math.max(maximumDrawCalls, drawCalls);
+        maximumTriangles = Math.max(maximumTriangles, triangles);
+        maximumUploadedBytes = Math.max(maximumUploadedBytes, uploadedBytes);
+        maximumSkinnedVertices = Math.max(maximumSkinnedVertices, skinnedVertices);
+        maximumCacheHits = Math.max(maximumCacheHits, cacheHits);
+        maximumCacheMisses = Math.max(maximumCacheMisses, cacheMisses);
+        maximumAllocatedBytes = Math.max(maximumAllocatedBytes, frameAllocation);
+        maximumGpuNanos = Math.max(maximumGpuNanos, gpuNanos);
         for (int index = 0; index < currentPhases.length; index++) {
             lifetimePhaseNanos[index] += currentPhases[index];
         }
@@ -172,17 +203,21 @@ final class FrameProfiler {
                 percentileMs(ordered, 0.99),
                 ordered[ordered.length - 1] / 1_000_000.0,
                 onePercentLow,
-                drawCalls,
-                triangles,
-                uploadedBytes,
-                skinnedVertices,
-                cacheHits,
-                cacheMisses,
+                average(lifetimeDrawCalls),
+                average(lifetimeTriangles),
+                average(lifetimeUploadedBytes),
+                average(lifetimeSkinnedVertices),
+                average(lifetimeCacheHits),
+                average(lifetimeCacheMisses),
                 gcEvents,
                 allocatedSum / Math.max(1L, samples),
-                gpuNanos / 1_000_000.0,
+                lifetimeGpuNanos / (double) Math.max(1L, lifetimeFrames) / 1_000_000.0,
                 phaseMs,
-                phaseMap(slowestFramePhases, 1.0)
+                phaseMap(slowestFramePhases, 1.0),
+                counterTotals(),
+                counterMaximums(),
+                maximumAllocatedBytes,
+                maximumGpuNanos / 1_000_000.0
         );
     }
 
@@ -202,17 +237,21 @@ final class FrameProfiler {
                 p99 / 1_000_000.0,
                 lifetimeMaximumFrameNanos / 1_000_000.0,
                 1_000_000_000.0 / Math.max(1L, p99),
-                drawCalls,
-                triangles,
-                uploadedBytes,
-                skinnedVertices,
-                cacheHits,
-                cacheMisses,
+                average(lifetimeDrawCalls),
+                average(lifetimeTriangles),
+                average(lifetimeUploadedBytes),
+                average(lifetimeSkinnedVertices),
+                average(lifetimeCacheHits),
+                average(lifetimeCacheMisses),
                 gcEvents,
                 lifetimeAllocatedBytes / Math.max(1L, lifetimeFrames),
-                gpuNanos / 1_000_000.0,
+                lifetimeGpuNanos / (double) lifetimeFrames / 1_000_000.0,
                 phaseMs,
-                phaseMap(slowestFramePhases, 1.0)
+                phaseMap(slowestFramePhases, 1.0),
+                counterTotals(),
+                counterMaximums(),
+                maximumAllocatedBytes,
+                maximumGpuNanos / 1_000_000.0
         );
     }
 
@@ -230,6 +269,21 @@ final class FrameProfiler {
         lifetimeFrameNanos = 0L;
         lifetimeAllocatedBytes = 0L;
         lifetimeMaximumFrameNanos = 0L;
+        lifetimeDrawCalls = 0L;
+        lifetimeTriangles = 0L;
+        lifetimeUploadedBytes = 0L;
+        lifetimeSkinnedVertices = 0L;
+        lifetimeCacheHits = 0L;
+        lifetimeCacheMisses = 0L;
+        lifetimeGpuNanos = 0L;
+        maximumDrawCalls = 0L;
+        maximumTriangles = 0L;
+        maximumUploadedBytes = 0L;
+        maximumSkinnedVertices = 0L;
+        maximumCacheHits = 0L;
+        maximumCacheMisses = 0L;
+        maximumAllocatedBytes = 0L;
+        maximumGpuNanos = 0L;
         gcEvents = 0L;
         lastGcCollections = totalGcCollections();
     }
@@ -240,8 +294,9 @@ final class FrameProfiler {
         lines.add(String.format(Locale.ROOT,
                 "Frame %.2f ms avg | p95 %.2f | p99 %.2f | 1%% low %.0f FPS",
                 value.averageMs(), value.p95Ms(), value.p99Ms(), value.onePercentLowFps()));
-        lines.add("Draws " + value.drawCalls() + " | Triangles " + value.triangles()
-                + " | Upload " + (value.uploadedBytes() / 1024L) + " KiB"
+        lines.add("Draws " + value.drawCalls() + " avg | Triangles " + value.triangles()
+                + " | Upload " + (value.uploadedBytes() / 1024L) + " KiB/f"
+                + " (max " + (value.maximums().uploadedBytes() / 1024L) + ")"
                 + " | Skinned " + value.skinnedVertices());
         lines.add(String.format(Locale.ROOT,
                 "Scene %.2f | Terrain %.2f | Models %.2f | Battle %.2f | HUD %.2f | Swap %.2f ms",
@@ -262,6 +317,20 @@ final class FrameProfiler {
         int index = Math.max(0, Math.min(sorted.length - 1,
                 (int) Math.ceil(sorted.length * percentile) - 1));
         return sorted[index] / 1_000_000.0;
+    }
+
+    private long average(long total) {
+        return total / Math.max(1L, lifetimeFrames);
+    }
+
+    private CounterValues counterTotals() {
+        return new CounterValues(lifetimeDrawCalls, lifetimeTriangles, lifetimeUploadedBytes,
+                lifetimeSkinnedVertices, lifetimeCacheHits, lifetimeCacheMisses);
+    }
+
+    private CounterValues counterMaximums() {
+        return new CounterValues(maximumDrawCalls, maximumTriangles, maximumUploadedBytes,
+                maximumSkinnedVertices, maximumCacheHits, maximumCacheMisses);
     }
 
     private long lifetimePercentileNanos(double percentile) {
@@ -334,11 +403,16 @@ final class FrameProfiler {
             long averageAllocatedBytes,
             double gpuTimeMs,
             EnumMap<Phase, Double> phaseTimesMs,
-            EnumMap<Phase, Double> slowestPhaseTimesMs
+            EnumMap<Phase, Double> slowestPhaseTimesMs,
+            CounterValues totals,
+            CounterValues maximums,
+            long maximumAllocatedBytes,
+            double maximumGpuTimeMs
     ) {
         static final Snapshot EMPTY = new Snapshot(0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                new EnumMap<>(Phase.class), new EnumMap<>(Phase.class));
+                new EnumMap<>(Phase.class), new EnumMap<>(Phase.class),
+                CounterValues.EMPTY, CounterValues.EMPTY, 0, 0);
 
         double phaseMs(Phase phase) {
             return phaseTimesMs.getOrDefault(phase, 0.0);
@@ -347,5 +421,16 @@ final class FrameProfiler {
         double slowestPhaseMs(Phase phase) {
             return slowestPhaseTimesMs.getOrDefault(phase, 0.0);
         }
+    }
+
+    record CounterValues(
+            long drawCalls,
+            long triangles,
+            long uploadedBytes,
+            long skinnedVertices,
+            long cacheHits,
+            long cacheMisses
+    ) {
+        static final CounterValues EMPTY = new CounterValues(0, 0, 0, 0, 0, 0);
     }
 }

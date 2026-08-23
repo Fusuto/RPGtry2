@@ -1,6 +1,7 @@
 package org.main.content;
 
 import org.main.engine.AssetLoader;
+import org.main.engine.ApplicationPaths;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -22,7 +23,7 @@ public final class WorldManifestLibrary {
     public static final int DEFAULT_CHUNK_SIZE = 32;
     public static final String WORLD_RESOURCE_FOLDER = "assets/editor/worlds";
     public static final Path WORLD_FOLDER = MapDesignLibrary.EDITOR_RESOURCE_FOLDER.resolve("worlds");
-    public static final Path DATA_WORLD_FOLDER = Path.of("data", "worlds");
+    public static final Path DATA_WORLD_FOLDER = ApplicationPaths.dataFolder().resolve("worlds");
     public static final String MANIFEST_FILE_NAME = "world.properties";
 
     private WorldManifestLibrary() {
@@ -94,7 +95,11 @@ public final class WorldManifestLibrary {
             throw new IOException("Not an open-world manifest: " + path);
         }
 
-        int version = readInt(properties, "formatVersion", FORMAT_VERSION);
+        int version = readInt(properties, "formatVersion", -1);
+        if (version != FORMAT_VERSION) {
+            throw new IOException("Unsupported world format version " + version
+                    + "; expected exactly " + FORMAT_VERSION + " for " + path + ".");
+        }
         String worldId = safeId(properties.getProperty("worldId", worldIdFromPath(path)));
         String displayName = properties.getProperty("displayName", worldId).trim();
         String description = properties.getProperty("description", "").trim();
@@ -190,24 +195,7 @@ public final class WorldManifestLibrary {
             WorldManifest manifest,
             Path manifestPath
     ) throws IOException {
-        if (manifest == null) {
-            return MapDesignLibrary.authoredContentOf(null);
-        }
-
-        MapDesignLibrary.MapDesign catalog = MapDesignLibrary.createBlank(
-                3,
-                3,
-                ThemeLibrary.STONE_WOOD,
-                ThemeLibrary.SANDSTONE_GATE
-        );
-        for (Map.Entry<ChunkCoordinate, String> entry : manifest.chunks().entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .toList()) {
-            Path chunkPath = resolveChunkPath(manifestPath, entry.getValue());
-            MapDesignLibrary.MapDesign chunk = MapDesignLibrary.load(chunkPath);
-            MapDesignLibrary.mergeAuthoredContent(catalog, MapDesignLibrary.authoredContentOf(chunk));
-        }
-        return MapDesignLibrary.authoredContentOf(catalog);
+        return ContentRepository.shared().snapshot().content();
     }
 
     public static List<MapDesignLibrary.ValidationIssue> validate(WorldManifest manifest, Path manifestPath) {

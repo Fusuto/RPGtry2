@@ -598,8 +598,8 @@ public final class QuestRuntime {
 
         InventorySystem.Inventory inventory = gameState.getInventory();
         InventorySystem.Inventory.Snapshot inventorySnapshot = inventory.snapshot();
-        Map<CharacterSkill, Integer> skillLevels = gameState.getPlayerCharacter().getSkillsView();
-        Map<CharacterSkill, Integer> skillXp = gameState.getPlayerCharacter().getSkillExperienceView();
+        QuestRewardService.PlayerProgressSnapshot playerProgress =
+                QuestRewardService.capturePlayerProgress(gameState);
         transactionActive = true;
         try {
             for (Map.Entry<String, Integer> entry : consumption.entrySet()) {
@@ -617,10 +617,7 @@ public final class QuestRuntime {
             return TransitionResult.ok(successMessage);
         } catch (RuntimeException exception) {
             inventory.restore(inventorySnapshot);
-            for (CharacterSkill skill : CharacterSkill.values()) {
-                gameState.getPlayerCharacter().setSkillLevel(skill, skillLevels.getOrDefault(skill, 0));
-                gameState.getPlayerCharacter().setSkillExperience(skill, skillXp.getOrDefault(skill, 0));
-            }
+            QuestRewardService.restorePlayerProgress(gameState, playerProgress);
             return TransitionResult.failed("The quest transition could not be completed safely.");
         } finally {
             transactionActive = false;
@@ -638,16 +635,9 @@ public final class QuestRuntime {
         }
         for (RewardGrant grant : grants) {
             MapDesignLibrary.RewardDefinition reward = grant.reward();
-            if (reward.type() == MapDesignLibrary.QuestRewardType.SKILL_XP && reward.skill() == null) {
-                return TransitionResult.failed("A skill XP reward has no skill assigned.");
-            }
-            if (reward.type() != MapDesignLibrary.QuestRewardType.SKILL_XP) {
-                String itemId = reward.type() == MapDesignLibrary.QuestRewardType.GOLD
-                        ? "GOLD"
-                        : reward.itemId();
-                if (gameState.createItemByNameOrId(itemId) == null) {
-                    return TransitionResult.failed("Quest reward item is missing: " + itemId);
-                }
+            String issue = QuestRewardService.validate(gameState, reward);
+            if (!issue.isBlank()) {
+                return TransitionResult.failed(issue);
             }
         }
 
@@ -662,7 +652,7 @@ public final class QuestRuntime {
             for (RewardGrant grant : grants) {
                 MapDesignLibrary.RewardDefinition reward = grant.reward();
                 if (reward.type() != MapDesignLibrary.QuestRewardType.SKILL_XP
-                        && !grantInventoryReward(reward)) {
+                        && !QuestRewardService.grantInventory(gameState, reward)) {
                     return TransitionResult.failed(
                             "You need more inventory space before completing this quest transition."
                     );
@@ -675,38 +665,7 @@ public final class QuestRuntime {
     }
 
     private boolean grantReward(MapDesignLibrary.RewardDefinition reward) {
-        if (reward.type() == MapDesignLibrary.QuestRewardType.SKILL_XP) {
-            if (reward.skill() == null) {
-                return false;
-            }
-            gameState.getPlayerCharacter().addSkillExperience(reward.skill(), reward.amount());
-            return true;
-        }
-        return grantInventoryReward(reward);
-    }
-
-    private boolean grantInventoryReward(MapDesignLibrary.RewardDefinition reward) {
-        String itemId = reward.type() == MapDesignLibrary.QuestRewardType.GOLD
-                ? "GOLD"
-                : reward.itemId();
-        InventorySystem.Item first = gameState.createItemByNameOrId(itemId);
-        if (first == null) {
-            return false;
-        }
-        if (first.isStackable()) {
-            first.addQuantity(reward.amount() - 1);
-            return gameState.getInventory().addItem(first);
-        }
-        if (!gameState.getInventory().addItem(first)) {
-            return false;
-        }
-        for (int count = 1; count < reward.amount(); count++) {
-            InventorySystem.Item next = gameState.createItemByNameOrId(itemId);
-            if (next == null || !gameState.getInventory().addItem(next)) {
-                return false;
-            }
-        }
-        return true;
+        return QuestRewardService.grant(gameState, reward);
     }
 
     private void collectTurnIns(

@@ -7,6 +7,7 @@ import org.lwjgl.BufferUtils;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.assimp.*;
 import org.main.content.CharacterModelDefinition;
+import org.main.core.GameConfiguration;
 import org.main.engine.AssetLoader;
 
 import javax.imageio.ImageIO;
@@ -27,7 +28,8 @@ import static org.lwjgl.assimp.Assimp.*;
 public final class LwjglSkinnedModel {
     public static final int MAX_BONES_PER_VERTEX = 4;
     public static final int EXCESSIVE_VERTEX_WARNING = 100_000;
-    private static final Map<CharacterModelDefinition, LwjglSkinnedModel> SHARED_CACHE = new HashMap<>();
+    private static final Map<CharacterModelDefinition, LwjglSkinnedModel> SHARED_CACHE =
+            new LinkedHashMap<>(64, 0.75f, true);
 
     public record Material(BufferedImage texture, float red, float green, float blue, float alpha) { }
 
@@ -63,6 +65,34 @@ public final class LwjglSkinnedModel {
             return nodeIndex >= 0 && nodeIndex < nodeMatrices.length
                     ? nodeMatrices[nodeIndex]
                     : fallback;
+        }
+    }
+
+    public record NamedSample(String bindingKey, double normalizedProgress) {
+        public NamedSample {
+            bindingKey = normalizeBindingKey(bindingKey);
+            normalizedProgress = Math.max(0.0, Math.min(1.0, normalizedProgress));
+        }
+    }
+
+    /**
+     * A local-space animation layer. An empty node mask applies to the complete skeleton.
+     */
+    public record PoseLayer(
+            NamedSample from,
+            NamedSample to,
+            double blend,
+            Set<String> includedNodeNames
+    ) {
+        public PoseLayer {
+            blend = Math.max(0.0, Math.min(1.0, blend));
+            if (includedNodeNames == null || includedNodeNames.isEmpty()) {
+                includedNodeNames = Set.of();
+            } else {
+                LinkedHashSet<String> normalized = new LinkedHashSet<>();
+                includedNodeNames.forEach(name -> normalized.add(normalizeNodeName(name)));
+                includedNodeNames = Set.copyOf(normalized);
+            }
         }
     }
 
@@ -120,6 +150,7 @@ public final class LwjglSkinnedModel {
     private final List<Bone> bones;
     private final List<float[]> bindPosePositions;
     private final Map<CharacterModelDefinition.AnimationSlot, ClipBinding> bindings;
+    private final Map<String, ClipBinding> namedBindings;
     private final Map<String, AnimationClip> embeddedClipsByName;
     private final String skeletonSignature;
     private final List<String> diagnostics;
@@ -136,12 +167,14 @@ public final class LwjglSkinnedModel {
 
     private LwjglSkinnedModel(CharacterModelDefinition definition, ImportedScene base,
                               Map<CharacterModelDefinition.AnimationSlot, ClipBinding> bindings,
+                              Map<String, ClipBinding> namedBindings,
                               Set<String> availableClipNames, List<String> diagnostics) {
         this.definition = definition;
         this.nodes = base.nodes();
         this.meshes = base.meshes();
         this.bones = base.bones();
         this.bindings = Map.copyOf(bindings);
+        this.namedBindings = Map.copyOf(namedBindings);
         Map<String, AnimationClip> embeddedClips = new LinkedHashMap<>();
         for (AnimationClip clip : base.clips()) {
             embeddedClips.putIfAbsent(clip.name().toLowerCase(Locale.ROOT), clip);
@@ -222,7 +255,43 @@ public final class LwjglSkinnedModel {
             bindings.put(slot, new ClipBinding(clip, authored.playbackSpeed(), authored.impactFraction(), slot.looping()));
         }
 
-        return new LwjglSkinnedModel(safe, base, bindings, availableClipNames, diagnostics);
+        Map<String, ClipBinding> namedBindings = new LinkedHashMap<>();
+        for (Map.Entry<String, CharacterModelDefinition.AnimationBinding> entry
+                : safe.namedAnimationBindings().entrySet()) {
+            String key = normalizeBindingKey(entry.getKey());
+            CharacterModelDefinition.AnimationBinding authored = entry.getValue();
+            ImportedScene source = base;
+            if (!samePath(authored.path(), safe.modelPath())) {
+                try {
+                    source = externalScenes.computeIfAbsent(authored.path(), path -> {
+                        try {
+                            return importScene(path, false);
+                        } catch (IOException exception) {
+                            throw new ImportFailure(exception);
+                        }
+                    });
+                } catch (ImportFailure failure) {
+                    diagnostics.add(key + ": " + failure.getCause().getMessage());
+                    continue;
+                }
+                if (!base.signature().equals(source.signature())) {
+                    diagnostics.add(key + ": skeleton hierarchy does not match base model (rigId '"
+                            + safe.rigId() + "').");
+                    continue;
+                }
+            }
+            source.clips().forEach(clip -> availableClipNames.add(clip.name()));
+            AnimationClip clip = selectNamedClip(source.clips(), authored.clipName(), key);
+            if (clip == null) {
+                diagnostics.add(key + ": no compatible animation clip; layer is unavailable.");
+                continue;
+            }
+            namedBindings.put(key, new ClipBinding(clip, authored.playbackSpeed(),
+                    authored.impactFraction(), key.startsWith("IDLE_")));
+        }
+
+        return new LwjglSkinnedModel(safe, base, bindings, namedBindings,
+                availableClipNames, diagnostics);
     }
 
     public static synchronized LwjglSkinnedModel loadCached(
@@ -237,6 +306,11 @@ public final class LwjglSkinnedModel {
         }
         LwjglSkinnedModel loaded = load(safe);
         SHARED_CACHE.put(safe, loaded);
+        int maximum = Math.max(8, GameConfiguration.intValue(
+                "renderer.skinnedModel.gpuCache.maxEntries", 64));
+        while (SHARED_CACHE.size() > maximum) {
+            SHARED_CACHE.remove(SHARED_CACHE.keySet().iterator().next());
+        }
         return loaded;
     }
 
@@ -331,6 +405,8 @@ public final class LwjglSkinnedModel {
                 .forEach(name -> animated.add(name.toLowerCase(Locale.ROOT))));
         bindings.values().forEach(binding -> binding.clip().channels().keySet()
                 .forEach(name -> animated.add(name.toLowerCase(Locale.ROOT))));
+        namedBindings.values().forEach(binding -> binding.clip().channels().keySet()
+                .forEach(name -> animated.add(name.toLowerCase(Locale.ROOT))));
         List<SkeletonNodeMetadata> result = new ArrayList<>(nodes.size());
         for (int index = 0; index < nodes.size(); index++) {
             Node node = nodes.get(index);
@@ -367,7 +443,24 @@ public final class LwjglSkinnedModel {
     public List<String> meshNames() {
         return meshes.stream().map(SkinnedMesh::name).toList();
     }
-    public boolean hasClip(CharacterModelDefinition.AnimationSlot slot) { return bindings.containsKey(slot); }
+    public boolean hasClip(CharacterModelDefinition.AnimationSlot slot) { return bindings.containsKey(slot);
+    }
+
+    public boolean hasNamedClip(String key) {
+        return namedBindings.containsKey(normalizeBindingKey(key));
+    }
+
+    public double namedClipDurationSeconds(String key) {
+        ClipBinding binding = namedBindings.get(normalizeBindingKey(key));
+        return binding == null ? 0.0
+                : binding.clip().durationSeconds() / Math.max(0.0001, binding.speed());
+    }
+
+    public double namedImpactFraction(String key) {
+        ClipBinding binding = namedBindings.get(normalizeBindingKey(key));
+        return binding == null ? CharacterModelDefinition.DEFAULT_IMPACT_FRACTION
+                : binding.impactFraction();
+    }
     public double clipDurationSeconds(CharacterModelDefinition.AnimationSlot slot) {
         ClipBinding binding = bindings.get(slot);
         return binding == null ? 0.0
@@ -400,6 +493,84 @@ public final class LwjglSkinnedModel {
             return bindPose;
         }
         return pose(binding, elapsedSeconds);
+    }
+
+    public Set<String> allNodeNames() {
+        return nodes.stream().map(Node::name).collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    public Set<String> descendantNodeNames(String rootName) {
+        Integer root = baseNodeIndex(rootName);
+        if (root == null) return Set.of();
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        for (int index = 0; index < nodes.size(); index++) {
+            int current = index;
+            while (current >= 0) {
+                if (current == root) {
+                    result.add(nodes.get(index).name());
+                    break;
+                }
+                current = nodes.get(current).parent();
+            }
+        }
+        return Set.copyOf(result);
+    }
+
+    /**
+     * Composes named clips in local space, in list order, and builds one final skeletal pose.
+     */
+    public Pose composePose(List<PoseLayer> layers) {
+        PoseWorkspace workspace = poseWorkspaces.get().next();
+        for (int index = 0; index < nodes.size(); index++) {
+            workspace.locals[index].set(nodes.get(index).bindLocal());
+        }
+        double progress = 0.0;
+        if (layers != null) for (PoseLayer layer : layers) {
+            if (layer == null || layer.to() == null && layer.from() == null) continue;
+            ClipBinding target = layer.to() == null
+                    ? null : namedBindings.get(layer.to().bindingKey());
+            ClipBinding source = layer.from() == null
+                    ? null : namedBindings.get(layer.from().bindingKey());
+            if (target == null && source == null) continue;
+            double targetTime = target == null || layer.to() == null
+                    ? 0.0 : normalizedTime(target, layer.to().normalizedProgress());
+            double sourceTime = source == null || layer.from() == null
+                    ? 0.0 : normalizedTime(source, layer.from().normalizedProgress());
+            float blend = (float) smoothStep(layer.blend());
+            for (int index = 0; index < nodes.size(); index++) {
+                Node node = nodes.get(index);
+                if (!layer.includedNodeNames().isEmpty()
+                        && !layer.includedNodeNames().contains(normalizeNodeName(node.name()))) continue;
+                Matrix4f targetLocal = target == null ? workspace.locals[index] : evaluateLocal(node,
+                        target.clip().channels().get(node.name()), targetTime,
+                        index == rootMotionNodeIndex, workspace.layerLocals[index],
+                        workspace.translation, workspace.scale, workspace.rotation);
+                Matrix4f sourceLocal = source == null ? workspace.locals[index] : evaluateLocal(node,
+                        source.clip().channels().get(node.name()), sourceTime,
+                        index == rootMotionNodeIndex, workspace.fromLocals[index],
+                        workspace.fromTranslation, workspace.fromScale, workspace.fromRotation);
+                if (blend >= 0.9999f) workspace.locals[index].set(targetLocal);
+                else blendLocal(sourceLocal, targetLocal, blend, workspace.locals[index], workspace);
+            }
+            progress = layer.to() == null ? progress : layer.to().normalizedProgress();
+        }
+        for (int index = 0; index < nodes.size(); index++) {
+            Node node = nodes.get(index);
+            if (node.parent() < 0) workspace.globals[index].set(workspace.locals[index]);
+            else workspace.globals[index].set(workspace.globals[node.parent()]).mul(workspace.locals[index]);
+        }
+        return poseFromGlobals(workspace.globals, progress, workspace);
+    }
+
+    public Frame skinPose(Pose pose) {
+        Pose safe = pose == null ? bindPose : pose;
+        return new Frame(skinPositions(safe), safe.normalizedProgress());
+    }
+
+    public Matrix4f nodeTransform(Pose pose, String nodeName) {
+        Integer index = baseNodeIndex(nodeName);
+        if (pose == null || index == null || index >= pose.nodeMatrices().length) return null;
+        return new Matrix4f(pose.nodeMatrices()[index]);
     }
 
     private Frame skin(ClipBinding binding, double elapsedSeconds) {
@@ -538,15 +709,25 @@ public final class LwjglSkinnedModel {
     private static final class PoseWorkspace {
         private final Matrix4f[] globals;
         private final Matrix4f[] locals;
+        private final Matrix4f[] layerLocals;
+        private final Matrix4f[] fromLocals;
         private final Matrix4f[] skinMatrices;
         private final Matrix4f[] rootedNodes;
         private final Vector3f translation = new Vector3f();
         private final Vector3f scale = new Vector3f();
         private final Quaternionf rotation = new Quaternionf();
+        private final Vector3f fromTranslation = new Vector3f();
+        private final Vector3f fromScale = new Vector3f();
+        private final Quaternionf fromRotation = new Quaternionf();
+        private final Vector3f blendTranslation = new Vector3f();
+        private final Vector3f blendScale = new Vector3f();
+        private final Quaternionf blendRotation = new Quaternionf();
 
         private PoseWorkspace(int nodeCount, int boneCount) {
             globals = matrices(nodeCount);
             locals = matrices(nodeCount);
+            layerLocals = matrices(nodeCount);
+            fromLocals = matrices(nodeCount);
             skinMatrices = matrices(boneCount);
             rootedNodes = matrices(nodeCount);
         }
@@ -978,6 +1159,45 @@ public final class LwjglSkinnedModel {
         return clips.stream().filter(clip -> clip.name().toLowerCase(Locale.ROOT)
                         .contains(slot.name().toLowerCase(Locale.ROOT)))
                 .findFirst().orElse(clips.get(0));
+    }
+
+    private static AnimationClip selectNamedClip(List<AnimationClip> clips, String requested, String key) {
+        if (clips == null || clips.isEmpty()) return null;
+        if (requested != null && !requested.isBlank()) {
+            return clips.stream().filter(clip -> clip.name().equalsIgnoreCase(requested.trim()))
+                    .findFirst().orElse(null);
+        }
+        String token = normalizeBindingKey(key).toLowerCase(Locale.ROOT);
+        return clips.stream().filter(clip -> clip.name().toLowerCase(Locale.ROOT).contains(token))
+                .findFirst().orElse(clips.getFirst());
+    }
+
+    private static double normalizedTime(ClipBinding binding, double progress) {
+        return Math.max(0.0, Math.min(1.0, progress))
+                * Math.max(0.0001, binding.clip().durationTicks());
+    }
+
+    private static void blendLocal(Matrix4f from, Matrix4f to, float amount,
+                                   Matrix4f destination, PoseWorkspace workspace) {
+        from.getTranslation(workspace.fromTranslation);
+        to.getTranslation(workspace.translation);
+        workspace.fromTranslation.lerp(workspace.translation, amount, workspace.blendTranslation);
+        from.getScale(workspace.fromScale);
+        to.getScale(workspace.scale);
+        workspace.fromScale.lerp(workspace.scale, amount, workspace.blendScale);
+        from.getUnnormalizedRotation(workspace.fromRotation).normalize();
+        to.getUnnormalizedRotation(workspace.rotation).normalize();
+        workspace.fromRotation.slerp(workspace.rotation, amount, workspace.blendRotation).normalize();
+        destination.translationRotateScale(workspace.blendTranslation,
+                workspace.blendRotation, workspace.blendScale);
+    }
+
+    private static String normalizeBindingKey(String value) {
+        return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private static String normalizeNodeName(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     private static Matrix4f matrix(AIMatrix4x4 m) {

@@ -1,5 +1,7 @@
 package org.main.tools;
 
+import org.main.engine.TextWrapping;
+
 import javax.swing.JPanel;
 import java.awt.Color;
 import java.awt.Dimension;
@@ -91,7 +93,7 @@ final class ContentGraphPanel extends JPanel {
     private void drawWrappedNodeText(Graphics2D g, String text, Rectangle bounds) {
         FontMetrics metrics = g.getFontMetrics();
         String safeText = text == null ? "" : text;
-        List<String> lines = wrapText(safeText, metrics, bounds.width - 12);
+        List<String> lines = TextWrapping.wrapOrBlankLine(metrics, safeText, bounds.width - 12);
         int lineHeight = metrics.getHeight();
         int y = bounds.y + Math.max(metrics.getAscent() + 4, (bounds.height - lines.size() * lineHeight) / 2 + metrics.getAscent());
         for (String line : lines.stream().limit(2).toList()) {
@@ -100,21 +102,4 @@ final class ContentGraphPanel extends JPanel {
         }
     }
 
-    private List<String> wrapText(String text, FontMetrics metrics, int maxWidth) {
-        List<String> lines = new ArrayList<>();
-        StringBuilder line = new StringBuilder();
-        for (String word : text.split("\\s+")) {
-            String candidate = line.isEmpty() ? word : line + " " + word;
-            if (metrics.stringWidth(candidate) <= maxWidth || line.isEmpty()) {
-                line = new StringBuilder(candidate);
-            } else {
-                lines.add(line.toString());
-                line = new StringBuilder(word);
-            }
-        }
-        if (!line.isEmpty()) {
-            lines.add(line.toString());
-        }
-        return lines.isEmpty() ? List.of("") : lines;
-    }
 }

@@ -4,6 +4,8 @@ import org.main.core.EquipmentViewModelProfile;
 import org.main.core.InventorySystem;
 import org.main.core.WeaponType;
 import org.main.engine.AssetLoader;
+import org.main.pack.ContentPackManifest;
+import org.main.pack.ProjectManifestOverrides;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -18,12 +20,10 @@ import java.util.*;
  * runtime can never observe a half-updated combination.
  */
 public final class FirstPersonCombatLibrary {
-    public static final int SCHEMA_VERSION = 3;
-    private static final int MINIMUM_READABLE_SCHEMA_VERSION = 2;
+    public static final int SCHEMA_VERSION = 4;
     public static final String ASSET = "assets/editor/content/first_person_rig.properties";
-    public static final Path RESOURCE_PATH = Path.of(
-            "src", "main", "resources", "assets", "editor", "content",
-            "first_person_rig.properties");
+    public static final Path RESOURCE_PATH =
+            MapDesignLibrary.CONTENT_FOLDER.resolve("first_person_rig.properties");
     private static volatile Content cached;
     private static volatile long revision = 1;
 
@@ -81,8 +81,114 @@ public final class FirstPersonCombatLibrary {
     }
 
     public static Content loadFresh() {
-        Properties properties = loadProperties(ASSET);
-        return read(properties);
+        try {
+            List<ContentRepository.CatalogSegment> segments =
+                    ContentRepository.shared().snapshot().catalogSegments("first_person_rig.properties");
+            if (segments.isEmpty()) {
+                return read(loadProperties(ASSET));
+            }
+            return mergeSegments(segments);
+        } catch (IOException error) {
+            throw new IllegalStateException("Unable to load first-person catalog: " + error.getMessage(), error);
+        }
+    }
+
+    private static Content mergeSegments(List<ContentRepository.CatalogSegment> segments) throws IOException {
+        LinkedHashMap<String, RigDefinition> rigs = new LinkedHashMap<>();
+        LinkedHashMap<String, AnimationSet> sets = new LinkedHashMap<>();
+        LinkedHashMap<String, ItemProfile> profiles = new LinkedHashMap<>();
+        EnumMap<WeaponType, String> weaponDefaults = new EnumMap<>(WeaponType.class);
+        Map<String, String> rigOrigins = new HashMap<>();
+        Map<String, String> setOrigins = new HashMap<>();
+        Map<String, String> profileOrigins = new HashMap<>();
+        Map<String, String> weaponOrigins = new HashMap<>();
+        String defaultRig = "";
+        String defaultRigOrigin = "";
+        for (ContentRepository.CatalogSegment segment : segments) {
+            Content parsed = read(segment.asProperties());
+            ContentPackManifest manifest = segment.manifest();
+            for (RigDefinition rig : parsed.rigs().values()) {
+                mergeRecord(rigs, rigOrigins, rig.rigId(), rig,
+                        "first_person_rig", manifest, false);
+            }
+            for (AnimationSet set : parsed.animationSets().values()) {
+                mergeRecord(sets, setOrigins, set.id(), set,
+                        "first_person_animation_set", manifest, false);
+            }
+            for (ItemProfile profile : parsed.itemProfiles().values()) {
+                mergeRecord(profiles, profileOrigins, profile.itemId(), profile,
+                        "first_person_item_profile", manifest, true);
+            }
+            for (WeaponType type : WeaponType.values()) {
+                if (type == WeaponType.NONE
+                        || !segment.properties().containsKey("weaponDefault." + type.name())) {
+                    continue;
+                }
+                String id = parsed.weaponDefaults().get(type);
+                mergeRecord(weaponDefaults, weaponOrigins, type, id,
+                        "first_person_weapon_default", manifest, true);
+            }
+            if (segment.properties().containsKey("defaultRigId") && !parsed.defaultRigId().isBlank()) {
+                if (defaultRig.isBlank()) {
+                    defaultRig = parsed.defaultRigId();
+                    defaultRigOrigin = manifest.id();
+                } else if (declaresOverride(manifest, defaultRigOrigin,
+                        "first_person_default", "default_rig")) {
+                    defaultRig = parsed.defaultRigId();
+                    defaultRigOrigin = manifest.id();
+                } else {
+                    throw new IOException("Undeclared first-person default-rig collision between "
+                            + defaultRigOrigin + " and " + manifest.id() + ".");
+                }
+            }
+        }
+        return new Content(defaultRig, rigs, sets, profiles, weaponDefaults);
+    }
+
+    private static <K, T> void mergeRecord(
+            Map<K, T> values,
+            Map<String, String> origins,
+            K rawId,
+            T incoming,
+            String contentType,
+            ContentPackManifest manifest,
+            boolean allowDeclaredCoreExtension
+    ) throws IOException {
+        String id = normalizeId(String.valueOf(rawId));
+        T existing = values.get(rawId);
+        if (existing == null) {
+            if (!manifest.id().equals("aether.core") && !manifest.id().equals("aether.development")) {
+                String prefix = manifest.namespace() + "__";
+                boolean declaredExtension = allowDeclaredCoreExtension
+                        && declaresOverride(manifest, "aether.core", contentType, id);
+                if (!id.startsWith(prefix) && !declaredExtension) {
+                    throw new IOException("New " + contentType + " ID '" + id + "' from "
+                            + manifest.id() + " must begin with " + prefix + ".");
+                }
+            }
+            values.put(rawId, incoming);
+            origins.put(id, manifest.id());
+            return;
+        }
+        String target = origins.getOrDefault(id, "aether.core");
+        if (!declaresOverride(manifest, target, contentType, id)) {
+            throw new IOException("Undeclared " + contentType + " collision for '" + id
+                    + "' between " + target + " and " + manifest.id() + ".");
+        }
+        values.put(rawId, incoming);
+        origins.put(id, manifest.id());
+    }
+
+    private static boolean declaresOverride(
+            ContentPackManifest manifest,
+            String targetPack,
+            String contentType,
+            String contentId
+    ) {
+        return manifest.overrides().stream().anyMatch(override ->
+                override.targetPack().equals(targetPack)
+                        && override.contentType().equals(contentType)
+                        && normalizeId(override.contentId()).equals(normalizeId(contentId)));
     }
 
     public static Content load(Path path) throws IOException {
@@ -97,7 +203,16 @@ public final class FirstPersonCombatLibrary {
 
     public static void save(Path path, Content content) throws IOException {
         if (path == null) throw new IOException("First-person catalog path is missing.");
-        Properties properties = write(content == null ? emptyContent() : content);
+        Content safe = content == null ? emptyContent() : content;
+        ProjectManifestOverrides.declareCatalogRecords("first_person_rig.properties", Map.of(
+                "first_person_rig", safe.rigs().keySet(),
+                "first_person_animation_set", safe.animationSets().keySet(),
+                "first_person_item_profile", safe.itemProfiles().keySet(),
+                "first_person_weapon_default", safe.weaponDefaults().keySet().stream()
+                        .map(Enum::name).toList(),
+                "first_person_default", safe.defaultRigId().isBlank()
+                        ? List.of() : List.of("default_rig")));
+        Properties properties = write(safe);
         Files.createDirectories(path.getParent());
         Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
         try (OutputStream output = Files.newOutputStream(temporary)) {
@@ -123,10 +238,11 @@ public final class FirstPersonCombatLibrary {
         return type.name().toLowerCase(Locale.ROOT);
     }
 
-    private static Content read(Properties properties) {
+    private static Content read(Properties properties) throws IOException {
         int schemaVersion = integer(properties, "schemaVersion", 0);
-        if (schemaVersion < MINIMUM_READABLE_SCHEMA_VERSION || schemaVersion > SCHEMA_VERSION) {
-            return emptyContent();
+        if (schemaVersion != SCHEMA_VERSION) {
+            throw new IOException("Unsupported first-person schema " + schemaVersion
+                    + "; expected exactly " + SCHEMA_VERSION + ".");
         }
         LinkedHashMap<String, RigDefinition> rigs = new LinkedHashMap<>();
         int rigCount = integer(properties, "rig.count", 0);
@@ -207,6 +323,9 @@ public final class FirstPersonCombatLibrary {
                     enumValue(ArmCoverage.class, properties.getProperty(prefix + "leftCoverage", ""), ArmCoverage.OVERLAY),
                     enumValue(ArmCoverage.class, properties.getProperty(prefix + "rightCoverage", ""), ArmCoverage.OVERLAY),
                     properties.getProperty(prefix + "attachmentBone", ""),
+                    enumValue(AnimationCompositionMode.class,
+                            properties.getProperty(prefix + "animationComposition", ""),
+                            AnimationCompositionMode.AUTO),
                     readBindings(properties, prefix + "override."));
             profiles.put(itemId, profile);
         }
@@ -289,6 +408,7 @@ public final class FirstPersonCombatLibrary {
             properties.setProperty(prefix + "leftCoverage", profile.leftCoverage().name());
             properties.setProperty(prefix + "rightCoverage", profile.rightCoverage().name());
             properties.setProperty(prefix + "attachmentBone", profile.attachmentBone());
+            properties.setProperty(prefix + "animationComposition", profile.animationComposition().name());
             writeBindings(properties, prefix + "override.", profile.overrides());
         }
         content.weaponDefaults().forEach((type, id) ->
@@ -468,6 +588,27 @@ public final class FirstPersonCombatLibrary {
         HIDE_FULL_ARM
     }
 
+    public enum AnimationCompositionMode {
+        AUTO("Automatic"),
+        INDEPENDENT("Independent Arms"),
+        COUPLED("Coupled Full Rig");
+
+        private final String displayName;
+
+        AnimationCompositionMode(String displayName) {
+            this.displayName = displayName;
+        }
+
+        public boolean independent(boolean twoHanded) {
+            return this == INDEPENDENT || this == AUTO && !twoHanded;
+        }
+
+        @Override
+        public String toString() {
+            return displayName;
+        }
+    }
+
     public enum AnimationSlot {
         IDLE_LEFT(true),
         IDLE_RIGHT(true),
@@ -475,6 +616,8 @@ public final class FirstPersonCombatLibrary {
         ATTACK_RIGHT(false),
         BLOCK_LEFT(false),
         BLOCK_RIGHT(false),
+        CAST_LEFT(false),
+        CAST_RIGHT(false),
         CAST(false),
         HIT(false),
         DODGE(false);
@@ -664,6 +807,7 @@ public final class FirstPersonCombatLibrary {
             ArmCoverage leftCoverage,
             ArmCoverage rightCoverage,
             String attachmentBone,
+            AnimationCompositionMode animationComposition,
             Map<AnimationSlot, ClipBinding> overrides
     ) {
         public ItemProfile {
@@ -680,7 +824,34 @@ public final class FirstPersonCombatLibrary {
             leftCoverage = leftCoverage == null ? ArmCoverage.OVERLAY : leftCoverage;
             rightCoverage = rightCoverage == null ? ArmCoverage.OVERLAY : rightCoverage;
             attachmentBone = attachmentBone == null ? "" : attachmentBone.trim();
+            animationComposition = animationComposition == null
+                    ? AnimationCompositionMode.AUTO : animationComposition;
             overrides = immutableBindings(overrides);
+        }
+
+        /**
+         * Schema-3/source-compatible constructor.
+         */
+        public ItemProfile(
+                String itemId,
+                String rigId,
+                WieldHand wieldHand,
+                String animationSetId,
+                EquipmentViewModelProfile socketTransform,
+                double secondaryGripX,
+                double secondaryGripY,
+                double secondaryGripZ,
+                String leftArmorPath,
+                String rightArmorPath,
+                ArmCoverage leftCoverage,
+                ArmCoverage rightCoverage,
+                String attachmentBone,
+                Map<AnimationSlot, ClipBinding> overrides
+        ) {
+            this(itemId, rigId, wieldHand, animationSetId, socketTransform,
+                    secondaryGripX, secondaryGripY, secondaryGripZ,
+                    leftArmorPath, rightArmorPath, leftCoverage, rightCoverage,
+                    attachmentBone, AnimationCompositionMode.AUTO, overrides);
         }
 
         /** Schema-2/source-compatible constructor. Blank attachment inherits the selected rig hand. */
@@ -701,7 +872,8 @@ public final class FirstPersonCombatLibrary {
         ) {
             this(itemId, rigId, wieldHand, animationSetId, socketTransform,
                     secondaryGripX, secondaryGripY, secondaryGripZ,
-                    leftArmorPath, rightArmorPath, leftCoverage, rightCoverage, "", overrides);
+                    leftArmorPath, rightArmorPath, leftCoverage, rightCoverage, "",
+                    AnimationCompositionMode.AUTO, overrides);
         }
 
         public ItemProfile(
@@ -720,7 +892,8 @@ public final class FirstPersonCombatLibrary {
         ) {
             this(itemId, "", wieldHand, animationSetId, socketTransform,
                     secondaryGripX, secondaryGripY, secondaryGripZ,
-                    leftArmorPath, rightArmorPath, leftCoverage, rightCoverage, "", overrides);
+                    leftArmorPath, rightArmorPath, leftCoverage, rightCoverage, "",
+                    AnimationCompositionMode.AUTO, overrides);
         }
 
         public static EquipmentViewModelProfile socketDefaults() {
@@ -731,6 +904,10 @@ public final class FirstPersonCombatLibrary {
 
         public ClipBinding override(AnimationSlot slot) {
             return overrides.get(slot);
+        }
+
+        public boolean independent(boolean twoHanded) {
+            return animationComposition.independent(twoHanded);
         }
     }
 
@@ -824,18 +1001,34 @@ public final class FirstPersonCombatLibrary {
                 RigDefinition resolvedRig,
                 AnimationSlot slot
         ) {
+            AnimationSlot legacy = sideCastFallback(slot);
             if (profile != null) {
                 ClipBinding override = profile.override(slot);
                 if (override != null && override.present()) return override;
+                if (legacy != null) {
+                    override = profile.override(legacy);
+                    if (override != null && override.present()) return override;
+                }
             }
             AnimationSet set = animationSet(weaponType, profile);
             RigDefinition rig = resolvedRig == null ? rigFor(profile) : resolvedRig;
             if (set != null && (set.rigId().isBlank() || set.rigId().equals(rig.rigId()))) {
                 ClipBinding binding = set.binding(slot);
                 if (binding != null && binding.present()) return binding;
+                if (legacy != null) {
+                    binding = set.binding(legacy);
+                    if (binding != null && binding.present()) return binding;
+                }
             }
             ClipBinding fallback = rig.fallback(slot);
+            if (fallback != null && fallback.present()) return fallback;
+            fallback = legacy == null ? null : rig.fallback(legacy);
             return fallback != null && fallback.present() ? fallback : null;
+        }
+
+        private static AnimationSlot sideCastFallback(AnimationSlot slot) {
+            return slot == AnimationSlot.CAST_LEFT || slot == AnimationSlot.CAST_RIGHT
+                    ? AnimationSlot.CAST : null;
         }
 
         public ClipBinding resolveBinding(

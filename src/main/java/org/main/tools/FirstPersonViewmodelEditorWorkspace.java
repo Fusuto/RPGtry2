@@ -205,13 +205,6 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         };
     }
 
-    private static void populateComboEntry(JComboBox<CatalogEntry> combo, List<CatalogEntry> entries) {
-        String selected = comboEntryId(combo);
-        combo.removeAllItems();
-        entries.forEach(combo::addItem);
-        selectComboEntry(combo, selected);
-    }
-
     private static String comboEntryId(JComboBox<CatalogEntry> combo) {
         CatalogEntry entry = (CatalogEntry) combo.getSelectedItem();
         return entry == null ? "" : entry.id();
@@ -341,7 +334,7 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                 profile.animationSetId(), profile.socketTransform(), profile.secondaryGripX(),
                 profile.secondaryGripY(), profile.secondaryGripZ(), profile.leftArmorPath(),
                 profile.rightArmorPath(), profile.leftCoverage(), profile.rightCoverage(),
-                profile.attachmentBone(), profile.overrides());
+                profile.attachmentBone(), profile.animationComposition(), profile.overrides());
     }
 
     private static FirstPersonCombatLibrary.ItemProfile withAnimationSet(
@@ -349,7 +342,8 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         return new FirstPersonCombatLibrary.ItemProfile(profile.itemId(), profile.rigId(), profile.wieldHand(),
                 setId, profile.socketTransform(), profile.secondaryGripX(), profile.secondaryGripY(),
                 profile.secondaryGripZ(), profile.leftArmorPath(), profile.rightArmorPath(),
-                profile.leftCoverage(), profile.rightCoverage(), profile.attachmentBone(), profile.overrides());
+                profile.leftCoverage(), profile.rightCoverage(), profile.attachmentBone(),
+                profile.animationComposition(), profile.overrides());
     }
 
     private JComponent buildToolbar() {
@@ -927,7 +921,8 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                     base.itemId(), rigId, hand, loadedSetId,
                     base.socketTransform(), base.secondaryGripX(), base.secondaryGripY(),
                     base.secondaryGripZ(), base.leftArmorPath(), base.rightArmorPath(),
-                    base.leftCoverage(), base.rightCoverage(), base.attachmentBone(), Map.of());
+                    base.leftCoverage(), base.rightCoverage(), base.attachmentBone(),
+                    base.animationComposition(), Map.of());
         }
         if (stored != null) return stored;
         String rigId = !loadedRigId.isBlank() && draft.rigs().containsKey(loadedRigId)
@@ -1689,9 +1684,9 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         ) {
             if (loadedSlot == null) return fallback;
             return switch (loadedSlot) {
-                case IDLE_LEFT, ATTACK_LEFT, BLOCK_RIGHT -> FirstPersonCombatLibrary.WieldHand.LEFT;
-                case IDLE_RIGHT, ATTACK_RIGHT, BLOCK_LEFT -> FirstPersonCombatLibrary.WieldHand.RIGHT;
-                default -> fallback;
+                case IDLE_LEFT, ATTACK_LEFT, BLOCK_RIGHT, CAST_LEFT -> FirstPersonCombatLibrary.WieldHand.LEFT;
+                case IDLE_RIGHT, ATTACK_RIGHT, BLOCK_LEFT, CAST_RIGHT -> FirstPersonCombatLibrary.WieldHand.RIGHT;
+                case CAST, HIT, DODGE -> fallback;
             };
         }
 
@@ -1774,6 +1769,9 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         final JComboBox<CatalogEntry> set = new JComboBox<>();
         final JComboBox<FirstPersonCombatLibrary.WieldHand> hand =
                 new JComboBox<>(FirstPersonCombatLibrary.WieldHand.values());
+        final JComboBox<FirstPersonCombatLibrary.AnimationCompositionMode> composition =
+                new JComboBox<>(FirstPersonCombatLibrary.AnimationCompositionMode.values());
+        final JLabel effectiveComposition = new JLabel("Effective: Independent Arms");
         final JComboBox<AttachmentBoneOption> attachmentBone = new JComboBox<>();
         final JButton pickBone = new JButton("Pick Bone in Viewport");
         final JLabel attachmentBoneLabel;
@@ -1807,6 +1805,7 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
             row(panel, "Rig", rig);
             row(panel, "Motion Set", set);
             row(panel, "Wielding Hand", hand);
+            row(panel, "Animation Composition", compact(composition, effectiveComposition));
             attachmentBoneControls = compact(attachmentBone, pickBone);
             attachmentBoneLabel = row(panel, "Attachment Bone", attachmentBoneControls);
             row(panel, "Socket Position X / Y / Z", compact(px, py, pz));
@@ -1862,7 +1861,10 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
             for (JSpinner control : List.of(
                     px, py, pz, rx, ry, rz, scale,
                     secondaryX, secondaryY, secondaryZ)) {
-                control.addChangeListener(event -> liveSocketChanged());
+                control.addChangeListener(event -> {
+                    updateEffectiveComposition();
+                    liveSocketChanged();
+                });
             }
             hand.addActionListener(event -> {
                 if (!loading && attachmentBoneValue.isBlank()) {
@@ -1872,6 +1874,11 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                 }
                 liveSocketChanged();
             });
+            composition.addActionListener(event -> {
+                updateEffectiveComposition();
+                liveSocketChanged();
+            });
+            item.addActionListener(event -> updateEffectiveComposition());
             rig.addActionListener(event -> {
                 if (loading || activeKind != Kind.ITEM_PROFILE) return;
                 commit();
@@ -1891,6 +1898,8 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
             selectComboEntryPreserving(rig, profile.rigId(), "Unavailable rig");
             selectComboEntryPreserving(set, profile.animationSetId(), "Unavailable motion set");
             hand.setSelectedItem(profile.wieldHand());
+            composition.setSelectedItem(profile.animationComposition());
+            updateEffectiveComposition();
             attachmentBoneValue = profile.attachmentBone();
             refreshAttachmentBones(attachmentBoneValue);
             preview.setSelectedAttachmentBone(draft.resolveAttachmentBone(profile));
@@ -1938,9 +1947,29 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
                     leftArmor.getText(), rightArmor.getText(),
                     (FirstPersonCombatLibrary.ArmCoverage) leftCoverage.getSelectedItem(),
                     (FirstPersonCombatLibrary.ArmCoverage) rightCoverage.getSelectedItem(),
-                    attachmentBoneValue, overrides);
+                    attachmentBoneValue,
+                    (FirstPersonCombatLibrary.AnimationCompositionMode) composition.getSelectedItem(),
+                    overrides);
             replaceProfile(loadedProfileId, updated);
             loadedProfileId = itemId;
+        }
+
+        private void updateEffectiveComposition() {
+            CatalogEntry selected = (CatalogEntry) item.getSelectedItem();
+            boolean twoHanded = selected != null && items.stream()
+                    .filter(option -> option.id().equals(selected.id()))
+                    .findFirst().map(ItemOption::twoHanded).orElse(false);
+            FirstPersonCombatLibrary.AnimationCompositionMode mode =
+                    (FirstPersonCombatLibrary.AnimationCompositionMode) composition.getSelectedItem();
+            boolean independent = mode == null || mode.independent(twoHanded);
+            boolean missingGrip = twoHanded && mode
+                    == FirstPersonCombatLibrary.AnimationCompositionMode.INDEPENDENT
+                    && Math.abs(value(secondaryX)) + Math.abs(value(secondaryY))
+                    + Math.abs(value(secondaryZ)) < 0.0001;
+            effectiveComposition.setText(missingGrip
+                    ? "Warning: no secondary grip"
+                    : "Effective: " + (independent ? "Independent Arms" : "Coupled Full Rig"));
+            effectiveComposition.setForeground(missingGrip ? new Color(190, 70, 55) : UIManager.getColor("Label.foreground"));
         }
 
         private void liveSocketChanged() {

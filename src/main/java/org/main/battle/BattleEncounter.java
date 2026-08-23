@@ -352,6 +352,7 @@ public class BattleEncounter {
         enemy.setSpeciesId(monster.getCustomId());
         enemy.setExperienceReward(monster.getXpReward());
         enemy.setCharacterModel(monster.getCharacterModel());
+        enemy.setElementalDamageMultipliers(monster.getElementalDamageMultipliers());
         monster.getSkillIds().forEach(skillId -> enemy.addSkill(BattleContentCatalog.createSkill(skillId)));
         return enemy;
     }
@@ -536,7 +537,8 @@ public class BattleEncounter {
                 int projectedDamage = Math.max(0, result.damage());
                 outcomes.add(new PlannedSkillOutcome(target, result, projectedDamage, 0));
                 reactions.add(new BattlePresentationDirector.TargetReaction(
-                        target, reactionFor(result.hit(), projectedDamage, target), projectedDamage));
+                        target, reactionFor(result.hit(), projectedDamage, target), projectedDamage,
+                        result.element()));
             } else if (primaryHeal != null) {
                 boolean activates = primaryHeal.condition() == SkillEffectDefinition.ActivationCondition.ALWAYS
                         && (primaryHeal.chance() >= 1.0

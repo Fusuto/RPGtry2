@@ -3,6 +3,7 @@ package org.main.core;
 import org.main.engine.AssetLoader;
 import org.main.engine.MapEntity;
 import org.main.engine.SoundSystem;
+import org.main.engine.TextWrapping;
 
 import java.awt.*;
 import java.awt.event.MouseEvent;
@@ -71,6 +72,9 @@ public final class InventorySystem {
         private final boolean materialTintApplied;
         private int magicAccuracyBonus;
         private int magicPowerBonus;
+        private WeaponStatOverrides weaponStatOverrides = WeaponStatOverrides.inherited();
+        private CombatElement elementalAffinity = CombatElement.NEUTRAL;
+        private double matchingElementSpellDamageBonus;
         private String contentId = "";
         private String firstPersonModelPath = "";
         private EquipmentViewModelProfile viewModelProfile = EquipmentViewModelProfile.defaults();
@@ -283,6 +287,23 @@ public final class InventorySystem {
         public Item withMagicBonuses(int accuracyBonus, int powerBonus) {
             this.magicAccuracyBonus = Math.max(0, accuracyBonus);
             this.magicPowerBonus = Math.max(0, powerBonus);
+            return this;
+        }
+
+        public Item withWeaponStatOverrides(WeaponStatOverrides overrides) {
+            weaponStatOverrides = itemType == ItemType.WEAPON && overrides != null
+                    ? overrides
+                    : WeaponStatOverrides.inherited();
+            return this;
+        }
+
+        public Item withElementalSpellBonus(CombatElement affinity, double bonus) {
+            elementalAffinity = itemType == ItemType.WEAPON && affinity != null
+                    ? affinity : CombatElement.NEUTRAL;
+            matchingElementSpellDamageBonus = itemType == ItemType.WEAPON
+                    && elementalAffinity.isElemental() && Double.isFinite(bonus)
+                    ? Math.max(0.0, Math.min(5.0, bonus))
+                    : 0.0;
             return this;
         }
 
@@ -607,14 +628,20 @@ public final class InventorySystem {
             if (itemType != ItemType.WEAPON) {
                 return 0;
             }
-            return Math.max(0, getEffectiveStatBonus() + weaponType.getAccuracyBonus());
+            int base = weaponStatOverrides.enabled()
+                    ? weaponStatOverrides.accuracyBonus()
+                    : weaponType.getAccuracyBonus();
+            return Math.max(0, getEffectiveStatBonus() + base);
         }
 
         public int getWeaponPowerBonus() {
             if (itemType != ItemType.WEAPON) {
                 return 0;
             }
-            return Math.max(0, getEffectiveStatBonus() + weaponType.getPowerBonus());
+            int base = weaponStatOverrides.enabled()
+                    ? weaponStatOverrides.powerBonus()
+                    : weaponType.getPowerBonus();
+            return Math.max(0, getEffectiveStatBonus() + base);
         }
 
         public int getMagicAccuracyBonus() {
@@ -623,6 +650,18 @@ public final class InventorySystem {
 
         public int getMagicPowerBonus() {
             return itemType == ItemType.WEAPON ? magicPowerBonus : 0;
+        }
+
+        public WeaponStatOverrides getWeaponStatOverrides() {
+            return weaponStatOverrides;
+        }
+
+        public CombatElement getElementalAffinity() {
+            return elementalAffinity;
+        }
+
+        public double getMatchingElementSpellDamageBonus() {
+            return matchingElementSpellDamageBonus;
         }
 
         public String getContentId() {
@@ -678,7 +717,10 @@ public final class InventorySystem {
         }
 
         public double getWeaponSpeedMultiplier() {
-            return itemType == ItemType.WEAPON ? weaponType.getSpeedMultiplier() : 1.0;
+            if (itemType != ItemType.WEAPON) return 1.0;
+            return weaponStatOverrides.enabled()
+                    ? weaponStatOverrides.attackIntervalMultiplier()
+                    : weaponType.getSpeedMultiplier();
         }
 
         public int getCalculatedBuyPrice() {
@@ -722,6 +764,8 @@ public final class InventorySystem {
                     weaponType,
                     twoHanded
             ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus)
+                    .withWeaponStatOverrides(weaponStatOverrides)
+                    .withElementalSpellBonus(elementalAffinity, matchingElementSpellDamageBonus)
                     .withContentId(contentId)
                     .withFirstPersonModel(firstPersonModelPath)
                     .withViewModelProfile(viewModelProfile)
@@ -1431,6 +1475,8 @@ public final class InventorySystem {
     }
 
     public static class InventoryPanel {
+        private static final int WINDOW_WIDTH = 760;
+        private static final int WINDOW_HEIGHT = 680;
         private static final int SLOT_SIZE = 46;
         private static final int SLOT_GAP = 6;
         private static final int GRID_MARGIN_BOTTOM = 20;
@@ -1455,6 +1501,9 @@ public final class InventorySystem {
         private final List<ContextMenuOption> contextMenuOptions = new ArrayList<>();
         private final Rectangle contextMenuBounds = new Rectangle();
         private final Rectangle paperDollBounds = new Rectangle();
+        private final Rectangle windowBounds = new Rectangle();
+        private final Rectangle contentBounds = new Rectangle();
+        private final Rectangle closeBounds = new Rectangle();
         private String examineTooltipTitle;
         private String examineTooltipText;
         private Point examineTooltipPoint;
@@ -1487,27 +1536,60 @@ public final class InventorySystem {
         }
 
         public void draw(Graphics2D g, int panelWidth, int panelHeight) {
+            Rectangle window = GameUiChrome.centeredWindow(
+                    panelWidth, panelHeight, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
+            windowBounds.setBounds(window);
+            closeBounds.setBounds(GameUiChrome.closeBounds(window));
+            contentBounds.setBounds(
+                    window.x,
+                    window.y + GameUiChrome.HEADER_HEIGHT,
+                    window.width,
+                    Math.max(1, window.height - GameUiChrome.HEADER_HEIGHT)
+            );
+            GameUiChrome.drawWindow(g, windowBounds,
+                    formationTabSelected ? "Party Formation" : "Inventory & Equipment");
+
+            Graphics2D contentGraphics = (Graphics2D) g.create();
+            contentGraphics.translate(contentBounds.x, contentBounds.y);
+            drawCharacterTabs(contentGraphics, contentBounds.width);
+            contentGraphics.clipRect(0, 0, contentBounds.width, contentBounds.height);
             if (formationTabSelected) {
-                drawCharacterTabs(g, panelWidth);
-                drawFormationEditor(g, panelWidth, panelHeight);
+                drawFormationEditor(contentGraphics, contentBounds.width, contentBounds.height);
+                contentGraphics.dispose();
                 return;
             }
-            calculateBounds(panelWidth, panelHeight);
+            calculateBounds(contentBounds.width, contentBounds.height);
 
-            drawStatPreview(g);
-            drawPaperDollPreview(g);
-            drawLimbPanel(g, panelWidth);
-            drawEquipmentSlots(g);
-            drawInventoryGrid(g);
-            drawContextMenu(g);
-            drawHoverTooltip(g, panelWidth, panelHeight);
-            drawExamineTooltip(g, panelWidth, panelHeight);
-            drawDraggedItem(g);
-            drawCharacterTabs(g, panelWidth);
+            drawStatPreview(contentGraphics);
+            drawPaperDollPreview(contentGraphics);
+            drawLimbPanel(contentGraphics, contentBounds.width);
+            drawEquipmentSlots(contentGraphics);
+            drawInventoryGrid(contentGraphics);
+            drawContextMenu(contentGraphics);
+            drawHoverTooltip(contentGraphics, contentBounds.width, contentBounds.height);
+            drawExamineTooltip(contentGraphics, contentBounds.width, contentBounds.height);
+            drawDraggedItem(contentGraphics);
+            contentGraphics.dispose();
         }
 
         public boolean handleMousePressed(MouseEvent e) {
-            mousePoint = e.getPoint();
+            if (e == null) {
+                return false;
+            }
+            Point globalPoint = e.getPoint();
+            if (closeBounds.contains(globalPoint)) {
+                clearDrag();
+                closeContextMenu();
+                clearExamineTooltip();
+                if (gameState != null) {
+                    gameState.closeInventory();
+                }
+                return true;
+            }
+            if (!windowBounds.contains(globalPoint)) {
+                return false;
+            }
+            mousePoint = toContentPoint(globalPoint);
 
             if (inventoryTabBounds.contains(mousePoint)) {
                 formationTabSelected = false; clearDrag(); return true;
@@ -1787,8 +1869,8 @@ public final class InventorySystem {
                 return false;
             }
 
-            int dropX = gameState.getPlayerX() + forwardX(gameState.getDirection());
-            int dropY = gameState.getPlayerY() + forwardY(gameState.getDirection());
+            int dropX = gameState.getPlayerX() + org.main.engine.GridDirection.forwardX(gameState.getDirection());
+            int dropY = gameState.getPlayerY() + org.main.engine.GridDirection.forwardY(gameState.getDirection());
 
             if (gameState.getDungeonMap() == null || !gameState.getDungeonMap().isWalkable(dropX, dropY)) {
                 dropX = gameState.getPlayerX();
@@ -1799,29 +1881,19 @@ public final class InventorySystem {
             return true;
         }
 
-        private int forwardX(int direction) {
-            return switch (direction) {
-                case 1 -> 1;
-                case 3 -> -1;
-                default -> 0;
-            };
-        }
-
-        private int forwardY(int direction) {
-            return switch (direction) {
-                case 0 -> -1;
-                case 2 -> 1;
-                default -> 0;
-            };
-        }
-
         public boolean handleMouseDragged(MouseEvent e) {
-            if (draggedFormationMember != null) { mousePoint = e.getPoint(); return true; }
+            if (e == null) {
+                return false;
+            }
+            if (draggedFormationMember != null) {
+                mousePoint = toContentPoint(e.getPoint());
+                return true;
+            }
             if (draggedItem == null) {
                 return false;
             }
 
-            mousePoint = e.getPoint();
+            mousePoint = toContentPoint(e.getPoint());
             return true;
         }
 
@@ -1830,13 +1902,20 @@ public final class InventorySystem {
                 return false;
             }
 
-            mousePoint = e.getPoint();
+            if (!windowBounds.contains(e.getPoint())) {
+                mousePoint = null;
+                return false;
+            }
+            mousePoint = toContentPoint(e.getPoint());
             return true;
         }
 
         public boolean handleMouseReleased(MouseEvent e) {
+            if (e == null) {
+                return false;
+            }
             if (draggedFormationMember != null) {
-                mousePoint = e.getPoint();
+                mousePoint = toContentPoint(e.getPoint());
                 PartyFormation.Cell target = formationCellAt(mousePoint);
                 if (target != null && gameState != null && !gameState.isBattleMode()) {
                     gameState.getPlayerCharacter().getPartyFormation().move(draggedFormationMember, target);
@@ -1848,7 +1927,7 @@ public final class InventorySystem {
                 return false;
             }
 
-            mousePoint = e.getPoint();
+            mousePoint = toContentPoint(e.getPoint());
 
             if (draggedInventoryIndex >= 0) {
                 return finishInventoryDrag();
@@ -1907,6 +1986,10 @@ public final class InventorySystem {
 
             clearDrag();
             return true;
+        }
+
+        private Point toContentPoint(Point globalPoint) {
+            return new Point(globalPoint.x - contentBounds.x, globalPoint.y - contentBounds.y);
         }
 
         private void refuelDraggedLog(Item lantern) {
@@ -1971,7 +2054,7 @@ public final class InventorySystem {
         }
 
         private void drawCharacterTabs(Graphics2D g, int panelWidth) {
-            int width = 126, height = 30, y = 10;
+            int width = 126, height = 28, y = -35;
             inventoryTabBounds.setBounds(panelWidth / 2 - width - 3, y, width, height);
             formationTabBounds.setBounds(panelWidth / 2 + 3, y, width, height);
             drawTab(g, inventoryTabBounds, "Inventory", !formationTabSelected);
@@ -2204,6 +2287,14 @@ public final class InventorySystem {
             if (item.getItemType() != ItemType.WEAPON) {
                 return item.getExamineText();
             }
+            String elementalText = item.getElementalAffinity().isElemental()
+                    && item.getMatchingElementSpellDamageBonus() > 0.0
+                    ? "\n" + item.getElementalAffinity().getDisplayName() + " spells deal "
+                    + Math.round(item.getMatchingElementSpellDamageBonus() * 100.0) + "% more damage."
+                    : "";
+            String craftingHint = item.getWeaponType() == WeaponType.DAGGER
+                    ? "\nUse this dagger on an Oak Log in your inventory to carve wood."
+                    : "";
             return item.getExamineText()
                     + "\n\nType: " + item.getWeaponType().getDisplayName()
                     + "\nHands: " + (item.isTwoHanded() ? "Two-handed" : "One-handed")
@@ -2211,7 +2302,9 @@ public final class InventorySystem {
                     + "\nPower: " + item.getWeaponPowerBonus()
                     + "\nMagic Accuracy: " + item.getMagicAccuracyBonus()
                     + "\nMagic Power: " + item.getMagicPowerBonus()
-                    + "\nSpeed: " + Math.round(item.getWeaponSpeedMultiplier() * 100.0) + "% interval";
+                    + "\nSpeed: " + Math.round(item.getWeaponSpeedMultiplier() * 100.0) + "% interval"
+                    + elementalText
+                    + craftingHint;
         }
 
         private String limbExamineText(LimbItem limb) {
@@ -2470,7 +2563,7 @@ public final class InventorySystem {
             FontMetrics metrics = g.getFontMetrics();
 
             int maxTextWidth = 320;
-            List<String> lines = wrapText(metrics, examineTooltipText, maxTextWidth);
+            List<String> lines = TextWrapping.wrapOrBlankLine(metrics, examineTooltipText, maxTextWidth);
             String title = examineTooltipTitle == null || examineTooltipTitle.isBlank() ? "Examine" : examineTooltipTitle;
 
             int tooltipWidth = maxTextWidth + 24;
@@ -2509,38 +2602,6 @@ public final class InventorySystem {
             }
 
             g.setFont(oldFont);
-        }
-
-        private List<String> wrapText(FontMetrics metrics, String text, int maxWidth) {
-            List<String> lines = new ArrayList<>();
-
-            for (String paragraph : text.split("\\R", -1)) {
-                if (paragraph.isBlank()) {
-                    lines.add("");
-                    continue;
-                }
-
-                StringBuilder line = new StringBuilder();
-
-                for (String word : paragraph.split("\\s+")) {
-                    String candidate = line.isEmpty() ? word : line + " " + word;
-
-                    if (metrics.stringWidth(candidate) <= maxWidth) {
-                        line = new StringBuilder(candidate);
-                    } else {
-                        if (!line.isEmpty()) {
-                            lines.add(line.toString());
-                        }
-                        line = new StringBuilder(word);
-                    }
-                }
-
-                if (!line.isEmpty()) {
-                    lines.add(line.toString());
-                }
-            }
-
-            return lines;
         }
 
         private String trimTextToFit(FontMetrics metrics, String text, int maxWidth) {
@@ -2649,7 +2710,7 @@ public final class InventorySystem {
             int iconY = bounds.y + padding;
             int iconSize = bounds.width - padding * 2;
 
-            if (ItemModelIconRenderQueue.request(item, iconX, iconY, iconSize, iconSize)) {
+            if (ItemModelIconRenderQueue.request(g, item, iconX, iconY, iconSize, iconSize)) {
                 // The OpenGL overlay pass renders the authored weapon mesh here.
             } else if (item.getIcon() != null) {
                 g.drawImage(
@@ -2694,7 +2755,7 @@ public final class InventorySystem {
         }
 
         private void drawFallbackItemIcon(Graphics2D g, Item item, int x, int y, int size) {
-            g.setColor(getFallbackColor(item));
+            g.setColor(ItemPresentationPalette.fallbackColor(item));
             g.fillRoundRect(x, y, size, size, 8, 8);
 
             g.setColor(Color.BLACK);
@@ -2716,21 +2777,6 @@ public final class InventorySystem {
             g.drawString(label, textX, textY);
 
             g.setFont(oldFont);
-        }
-
-        private Color getFallbackColor(Item item) {
-            return switch (item.getItemType()) {
-                case HEAD_GEAR -> new Color(120, 120, 180);
-                case CHEST_ARMOR -> new Color(130, 90, 70);
-                case LEG_ARMOR -> new Color(90, 110, 150);
-                case RING -> new Color(200, 170, 70);
-                case WEAPON -> new Color(170, 170, 180);
-                case SHIELD -> new Color(115, 145, 165);
-                case UTILITY -> new Color(224, 164, 76);
-                case LIMB -> new Color(180, 90, 120);
-                case CONSUMABLE -> new Color(120, 180, 120);
-                case MISC -> new Color(150, 150, 150);
-            };
         }
 
         private void drawValidEquipmentHint(Graphics2D g, Rectangle bounds) {

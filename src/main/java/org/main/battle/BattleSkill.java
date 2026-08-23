@@ -3,6 +3,7 @@ package org.main.battle;
 import org.main.content.SkillDefinition;
 import org.main.content.SkillEffectDefinition;
 import org.main.core.Library;
+import org.main.core.CombatElement;
 
 import java.util.List;
 import java.util.Map;
@@ -21,6 +22,7 @@ public final class BattleSkill {
     private final String presentationStyle;
     private final String summonSpeciesOverride;
     private final String summonDisplayName;
+    private final CombatElement element;
 
     private BattleSkill(
             String name,
@@ -35,7 +37,8 @@ public final class BattleSkill {
             List<SkillEffectDefinition> effects,
             String presentationStyle,
             String summonSpeciesOverride,
-            String summonDisplayName
+            String summonDisplayName,
+            CombatElement element
     ) {
         this.name = name == null ? "" : name;
         this.description = description == null ? "" : description;
@@ -50,6 +53,7 @@ public final class BattleSkill {
         this.presentationStyle = presentationStyle == null ? "AUTO" : presentationStyle;
         this.summonSpeciesOverride = summonSpeciesOverride == null ? "" : summonSpeciesOverride;
         this.summonDisplayName = summonDisplayName == null ? "" : summonDisplayName;
+        this.element = element == null ? CombatElement.NEUTRAL : element;
     }
 
     public static BattleSkill fromDefinition(SkillDefinition definition) {
@@ -69,7 +73,8 @@ public final class BattleSkill {
                 definition.effects(),
                 definition.presentationStyle(),
                 "",
-                ""
+                "",
+                definition.element()
         );
     }
 
@@ -176,6 +181,10 @@ public final class BattleSkill {
         return presentationStyle;
     }
 
+    public CombatElement getElement() {
+        return element;
+    }
+
     public boolean hasEffect(String kindId) {
         String normalized = kindId == null ? "" : kindId.trim().toLowerCase();
         return effects.stream().anyMatch(effect -> normalized.equals(effect.kindId()));
@@ -200,7 +209,8 @@ public final class BattleSkill {
                         Map.of("potency", String.valueOf(effectPotency)))),
                 presentationStyle,
                 summonSpeciesOverride,
-                summonDisplayName
+                summonDisplayName,
+                element
         );
     }
 
@@ -218,7 +228,8 @@ public final class BattleSkill {
                 effects,
                 presentationStyle,
                 speciesId,
-                displayName
+                displayName,
+                element
         );
     }
 

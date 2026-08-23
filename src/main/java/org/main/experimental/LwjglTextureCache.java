@@ -1,11 +1,13 @@
 package org.main.experimental;
 
 import org.lwjgl.BufferUtils;
+import org.main.core.GameConfiguration;
+import org.main.engine.AssetRepository;
 
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.nio.ByteBuffer;
-import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.lwjgl.opengl.GL11.*;
@@ -13,10 +15,13 @@ import static org.lwjgl.opengl.GL13.GL_TEXTURE0;
 import static org.lwjgl.opengl.GL13.glActiveTexture;
 
 final class LwjglTextureCache {
-    private final Map<BufferedImage, Integer> textures = new IdentityHashMap<>();
+    private final Map<BufferedImage, Integer> textures = new LinkedHashMap<>(128, 0.75f, true);
     private final int[] boundTextureByUnit = new int[8];
     private int fallbackTexture;
     private int whiteTexture;
+    private long assetRevision = -1L;
+    private long uploadedBytes;
+    private long uploadCount;
 
     LwjglTextureCache() {
         invalidateBindings();
@@ -46,6 +51,7 @@ final class LwjglTextureCache {
     }
 
     private int bindToActiveUnit(BufferedImage image, int textureUnit) {
+        invalidateChangedAssets();
         if (image == null) {
             return bindFallback(textureUnit);
         }
@@ -58,6 +64,7 @@ final class LwjglTextureCache {
 
         int textureId = upload(image);
         textures.put(image, textureId);
+        trimResidency();
         bindTexture(textureId, textureUnit);
         return textureId;
     }
@@ -66,12 +73,45 @@ final class LwjglTextureCache {
         return textures.size() + (fallbackTexture == 0 ? 0 : 1);
     }
 
-    void shutdown() {
+    long uploadedBytes() {
+        return uploadedBytes;
+    }
+
+    long uploadCount() {
+        return uploadCount;
+    }
+
+    private void invalidateChangedAssets() {
+        long revision = AssetRepository.shared().revision();
+        if (assetRevision < 0L) {
+            assetRevision = revision;
+        } else if (revision != assetRevision) {
+            clearAssetTextures();
+            assetRevision = revision;
+        }
+    }
+
+    private void trimResidency() {
+        int maximum = Math.max(64, GameConfiguration.intValue(
+                "renderer.texture.gpuCache.maxEntries", 1024));
+        while (textures.size() > maximum) {
+            var iterator = textures.entrySet().iterator();
+            Map.Entry<BufferedImage, Integer> eldest = iterator.next();
+            glDeleteTextures(eldest.getValue());
+            iterator.remove();
+        }
+    }
+
+    private void clearAssetTextures() {
         for (int textureId : textures.values()) {
             glDeleteTextures(textureId);
         }
         textures.clear();
         invalidateBindings();
+    }
+
+    void shutdown() {
+        clearAssetTextures();
 
         if (fallbackTexture != 0) {
             glDeleteTextures(fallbackTexture);
@@ -133,6 +173,8 @@ final class LwjglTextureCache {
                 GL_UNSIGNED_BYTE,
                 pixels
         );
+        uploadedBytes += (long) image.getWidth() * image.getHeight() * 4L;
+        uploadCount++;
         return textureId;
     }
 
