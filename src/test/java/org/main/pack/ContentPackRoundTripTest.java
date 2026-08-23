@@ -155,6 +155,11 @@ class ContentPackRoundTripTest {
             assertThrows(IOException.class, () -> registry.requirePackLock(unavailable));
             assertEquals(firstVersion, registry.activePackLock());
         }
+        try (ContentPackRegistry restarted = new ContentPackRegistry(
+                managed, ContentPackRoundTripTest.class, null, null)) {
+            assertEquals("2.0.0", restarted.activePackLock().packs().getFirst().version(),
+                    "loading an older save version must not overwrite the player's next-start pack selection");
+        }
     }
 
     @Test

@@ -86,6 +86,10 @@ public final class LwjglTextOverlayRenderer {
     };
     private boolean customMapPickerOpen = false;
     private String customMapMessage = "";
+    private boolean savePickerOpen = false;
+    private String savePickerMessage = "";
+    private SaveSystem.SaveInfo pendingSaveWithDifferentPacks;
+    private int savePickerScroll;
     private boolean creditsOpen = false;
     private boolean contentPackManagerOpen = false;
     private String selectedContentPackId = "";
@@ -140,6 +144,54 @@ public final class LwjglTextOverlayRenderer {
 
     public boolean isCustomMapPickerOpen() {
         return customMapPickerOpen;
+    }
+
+    public void openSavePicker() {
+        localUiRevision++;
+        savePickerOpen = true;
+        savePickerMessage = "";
+        pendingSaveWithDifferentPacks = null;
+        savePickerScroll = 0;
+        customMapPickerOpen = false;
+        contentPackManagerOpen = false;
+        creditsOpen = false;
+    }
+
+    public void closeSavePicker() {
+        localUiRevision++;
+        savePickerOpen = false;
+        savePickerMessage = "";
+        pendingSaveWithDifferentPacks = null;
+    }
+
+    public boolean isSavePickerOpen() {
+        return savePickerOpen;
+    }
+
+    public boolean confirmPendingSavedGame(AetherGameRuntime runtime) {
+        if (!savePickerOpen || pendingSaveWithDifferentPacks == null || runtime == null) {
+            return false;
+        }
+        performStartMenuLoad(runtime, pendingSaveWithDifferentPacks);
+        return true;
+    }
+
+    public boolean selectSavedGame(AetherGameRuntime runtime, int choiceIndex) {
+        if (runtime == null || choiceIndex < 0) {
+            return false;
+        }
+        try {
+            List<SaveSystem.SaveInfo> saves = runtime.listSavedGames();
+            int resolvedIndex = savePickerScroll + choiceIndex;
+            if (resolvedIndex >= saves.size()) {
+                return false;
+            }
+            requestStartMenuLoad(runtime, saves.get(resolvedIndex));
+            return true;
+        } catch (IOException exception) {
+            savePickerMessage = exception.getMessage();
+            return true;
+        }
     }
 
     public void openCredits() {
@@ -609,6 +661,10 @@ public final class LwjglTextOverlayRenderer {
             customMapScroll = Math.max(0, customMapScroll + delta);
             return true;
         }
+        if (activeScrollTarget == ScrollTarget.SAVED_GAMES) {
+            savePickerScroll = Math.max(0, savePickerScroll + delta);
+            return true;
+        }
         if (activeScrollTarget == ScrollTarget.CREDITS) {
             creditsScroll = Math.max(0, creditsScroll + delta);
             return true;
@@ -682,6 +738,11 @@ public final class LwjglTextOverlayRenderer {
         lastOverlayHeight = height;
         GameState gameState = runtime.gameState();
         activeScrollTarget = ScrollTarget.NONE;
+
+        if ((gameState.isStartMenuMode() || gameState.isGameOverMode()) && savePickerOpen) {
+            drawSavePicker(graphics, runtime, width, height);
+            return;
+        }
 
         if (gameState.isStartMenuMode()) {
             if (contentPackManagerOpen) {
@@ -883,10 +944,11 @@ public final class LwjglTextOverlayRenderer {
 
     private void saveGameFromHud(AetherGameRuntime runtime, GameState gameState) {
         try {
-            runtime.saveGame();
+            Path path = runtime.saveGame();
             gameState.openInteraction(InteractionSystem.prompt(
                     "Saved",
-                    "Game saved to " + org.main.core.SaveSystem.getSavePath() + ".",
+                    "Saved " + gameState.getPlayerCharacter().getName() + " to " + path.getFileName() + ". "
+                            + "Saving this player name again overwrites this slot.",
                     InteractionSystem.closeOption("Close")
             ));
         } catch (IOException exception) {
@@ -900,23 +962,18 @@ public final class LwjglTextOverlayRenderer {
 
     private void openLoadMenu(AetherGameRuntime runtime, GameState gameState) {
         List<InteractionSystem.InteractionOption> options = new ArrayList<>();
-        options.add(InteractionSystem.option("Saved Game", () -> {
-            try {
-                runtime.loadGame();
-                mapChangedAction.run();
-                gameState.openInteraction(InteractionSystem.prompt(
-                        "Loaded",
-                        "Saved game loaded.",
-                        InteractionSystem.closeOption("Close")
-                ));
-            } catch (IOException exception) {
-                gameState.openInteraction(InteractionSystem.prompt(
-                        "Load Failed",
-                        exception.getMessage(),
-                        InteractionSystem.closeOption("Close")
-                ));
+        try {
+            List<SaveSystem.SaveInfo> saves = runtime.listSavedGames();
+            if (saves.isEmpty()) {
+                options.add(InteractionSystem.closeOption("No saved characters found"));
             }
-        }));
+            for (SaveSystem.SaveInfo save : saves) {
+                options.add(InteractionSystem.option("Character: " + save.playerName(),
+                        () -> requestLoadFromMenu(runtime, gameState, save)));
+            }
+        } catch (IOException exception) {
+            options.add(InteractionSystem.closeOption("Unable to read saved characters"));
+        }
 
         try {
             for (Path mapPath : runtime.listAvailableMaps()) {
@@ -948,6 +1005,47 @@ public final class LwjglTextOverlayRenderer {
                 "Choose what to load.",
                 options.toArray(new InteractionSystem.InteractionOption[0])
         ));
+    }
+
+    private void requestLoadFromMenu(
+            AetherGameRuntime runtime,
+            GameState gameState,
+            SaveSystem.SaveInfo save
+    ) {
+        SaveSystem.PackDifference difference = runtime.compareActivePacks(save);
+        if (difference.differs()) {
+            gameState.openInteraction(InteractionSystem.prompt(
+                    "Content Packs Differ",
+                    difference.playerMessage(),
+                    InteractionSystem.option("Load with saved packs",
+                            () -> loadSaveFromMenu(runtime, gameState, save)),
+                    InteractionSystem.option("Back", () -> openLoadMenu(runtime, gameState))
+            ));
+            return;
+        }
+        loadSaveFromMenu(runtime, gameState, save);
+    }
+
+    private void loadSaveFromMenu(
+            AetherGameRuntime runtime,
+            GameState gameState,
+            SaveSystem.SaveInfo save
+    ) {
+        try {
+            runtime.loadGame(save);
+            mapChangedAction.run();
+            gameState.openInteraction(InteractionSystem.prompt(
+                    "Loaded",
+                    "Loaded " + save.playerName() + ".",
+                    InteractionSystem.closeOption("Close")
+            ));
+        } catch (IOException exception) {
+            gameState.openInteraction(InteractionSystem.prompt(
+                    "Load Failed",
+                    exception.getMessage(),
+                    InteractionSystem.closeOption("Close")
+            ));
+        }
     }
 
     private void drawDebugHud(Graphics2D graphics, AetherGameRuntime runtime, int width) {
@@ -1053,29 +1151,14 @@ public final class LwjglTextOverlayRenderer {
                 runtime.returnToMainMenu();
             }));
             overlayActions.add(new OverlayAction(AetherMenuScreens.gameOverButtonBounds(width, height, 1), () -> {
-                try {
-                    runtime.loadGame();
-                    gameOverMessage = "";
-                    mapChangedAction.run();
-                } catch (IOException exception) {
-                    gameOverMessage = exception.getMessage();
-                }
+                openSavePicker();
             }));
             return;
         }
 
         AetherMenuScreens.drawStartMenu(graphics, width, height, customMapMessage);
         overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 0), () -> beginCharacterCreation(runtime.gameState())));
-        overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 1), () -> {
-            try {
-                runtime.loadGame();
-                customMapPickerOpen = false;
-                customMapMessage = "";
-                mapChangedAction.run();
-            } catch (IOException exception) {
-                customMapMessage = exception.getMessage();
-            }
-        }));
+        overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 1), this::openSavePicker));
         overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 2), this::openCustomMapPicker));
         overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 3), this::openContentPackManager));
         overlayActions.add(new OverlayAction(AetherMenuScreens.startMenuButtonBounds(width, height, 4), this::openCredits));
@@ -1334,6 +1417,106 @@ public final class LwjglTextOverlayRenderer {
             graphics.setFont(smallFont);
             graphics.setColor(DANGER);
             graphics.drawString(fitLine(graphics, customMapMessage, panelWidth - 48), x + 24, y + panelHeight - 18);
+        }
+    }
+
+    private void drawSavePicker(Graphics2D graphics, AetherGameRuntime runtime, int width, int height) {
+        activeScrollTarget = ScrollTarget.SAVED_GAMES;
+        int panelWidth = Math.min(780, width - 80);
+        int panelHeight = Math.min(560, height - 100);
+        int x = (width - panelWidth) / 2;
+        int y = Math.max(32, (height - panelHeight) / 2);
+        drawPanel(graphics, x, y, panelWidth, panelHeight, "Saved Characters");
+        drawMenuButton(graphics, x + panelWidth - 82, y + 14, 58, 26, "Back", this::closeSavePicker);
+
+        List<SaveSystem.SaveInfo> saves;
+        try {
+            saves = runtime.listSavedGames();
+        } catch (IOException exception) {
+            saves = List.of();
+            savePickerMessage = exception.getMessage();
+        }
+
+        graphics.setFont(smallFont);
+        graphics.setColor(MUTED);
+        graphics.drawString("Each player name has its own slot; saving the same name overwrites it.",
+                x + 24, y + 56);
+
+        int rowY = y + 76;
+        int rowHeight = 38;
+        int footerHeight = pendingSaveWithDifferentPacks == null ? 72 : 182;
+        int maxRows = Math.max(1, (panelHeight - 82 - footerHeight) / rowHeight);
+        savePickerScroll = clampScroll(savePickerScroll, saves.size(), maxRows);
+        if (saves.isEmpty()) {
+            graphics.setFont(bodyFont);
+            graphics.setColor(TEXT);
+            graphics.drawString("No saved characters found.", x + 24, rowY + 24);
+        }
+
+        java.time.format.DateTimeFormatter timestamp = java.time.format.DateTimeFormatter
+                .ofPattern("yyyy-MM-dd HH:mm")
+                .withZone(java.time.ZoneId.systemDefault());
+        for (int visibleIndex = 0;
+             visibleIndex < maxRows && savePickerScroll + visibleIndex < saves.size();
+             visibleIndex++) {
+            int index = savePickerScroll + visibleIndex;
+            SaveSystem.SaveInfo save = saves.get(index);
+            String label = (index + 1) + ". " + save.playerName() + "  —  " + timestamp.format(save.modifiedAt());
+            drawMenuButton(graphics, x + 24, rowY + visibleIndex * rowHeight,
+                    panelWidth - 48, 30, label, () -> requestStartMenuLoad(runtime, save));
+        }
+
+        int footerY = y + panelHeight - footerHeight;
+        drawScrollHint(graphics, x + 24, footerY - 8, saves.size(), maxRows, savePickerScroll);
+        if (pendingSaveWithDifferentPacks != null) {
+            graphics.setFont(smallFont);
+            graphics.setColor(DANGER);
+            List<String> warningLines = TextWrapping.wrap(
+                    graphics.getFontMetrics(), savePickerMessage, panelWidth - 48);
+            int lineY = footerY + 20;
+            for (int index = 0; index < Math.min(5, warningLines.size()); index++) {
+                graphics.drawString(warningLines.get(index), x + 24, lineY);
+                lineY += 16;
+            }
+            drawMenuButton(graphics, x + 24, y + panelHeight - 42, 240, 28,
+                    "Load without newly enabled packs",
+                    () -> performStartMenuLoad(runtime, pendingSaveWithDifferentPacks));
+            drawMenuButton(graphics, x + 274, y + panelHeight - 42, 92, 28,
+                    "Cancel", () -> {
+                        pendingSaveWithDifferentPacks = null;
+                        savePickerMessage = "";
+                    });
+        } else if (savePickerMessage != null && !savePickerMessage.isBlank()) {
+            graphics.setFont(smallFont);
+            graphics.setColor(DANGER);
+            graphics.drawString(fitLine(graphics, savePickerMessage, panelWidth - 48),
+                    x + 24, y + panelHeight - 18);
+        }
+    }
+
+    private void requestStartMenuLoad(AetherGameRuntime runtime, SaveSystem.SaveInfo save) {
+        SaveSystem.PackDifference difference = runtime.compareActivePacks(save);
+        if (difference.differs()) {
+            pendingSaveWithDifferentPacks = save;
+            savePickerMessage = difference.playerMessage();
+            return;
+        }
+        performStartMenuLoad(runtime, save);
+    }
+
+    private void performStartMenuLoad(AetherGameRuntime runtime, SaveSystem.SaveInfo save) {
+        if (save == null) {
+            return;
+        }
+        try {
+            runtime.loadGame(save);
+            closeSavePicker();
+            customMapMessage = "";
+            gameOverMessage = "";
+            mapChangedAction.run();
+        } catch (IOException exception) {
+            pendingSaveWithDifferentPacks = null;
+            savePickerMessage = exception.getMessage();
         }
     }
 
@@ -1693,6 +1876,7 @@ public final class LwjglTextOverlayRenderer {
     private enum ScrollTarget {
         NONE,
         CUSTOM_MAP,
+        SAVED_GAMES,
         CREDITS,
         CONTENT_PACKS
     }

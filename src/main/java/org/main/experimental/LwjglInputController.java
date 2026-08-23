@@ -356,18 +356,27 @@ public final class LwjglInputController {
             return false;
         }
 
+        if (overlayRenderer != null && overlayRenderer.isSavePickerOpen()) {
+            if (consume(GLFW_KEY_ENTER) && overlayRenderer.confirmPendingSavedGame(runtime)) {
+                return true;
+            }
+            for (int key = GLFW_KEY_1; key <= GLFW_KEY_9; key++) {
+                if (consume(key)) {
+                    overlayRenderer.selectSavedGame(runtime, key - GLFW_KEY_1);
+                    return true;
+                }
+            }
+            if (consume(GLFW_KEY_B) || consume(GLFW_KEY_BACKSPACE) || consume(GLFW_KEY_ESCAPE)) {
+                overlayRenderer.closeSavePicker();
+                return true;
+            }
+            return false;
+        }
+
         if (gameState.isGameOverMode()) {
             if (consume(GLFW_KEY_ENTER)) {
-                try {
-                    runtime.loadGame();
-                    if (overlayRenderer != null) {
-                        overlayRenderer.setGameOverMessage("");
-                    }
-                    mapChangedAction.run();
-                } catch (java.io.IOException exception) {
-                    if (overlayRenderer != null) {
-                        overlayRenderer.setGameOverMessage(exception.getMessage());
-                    }
+                if (overlayRenderer != null) {
+                    overlayRenderer.openSavePicker();
                 }
                 return true;
             }
@@ -635,10 +644,11 @@ public final class LwjglInputController {
 
     private void saveGameFromMenu(AetherGameRuntime runtime, GameState gameState) {
         try {
-            runtime.saveGame();
+            java.nio.file.Path path = runtime.saveGame();
             gameState.openInteraction(InteractionSystem.prompt(
                     "Saved",
-                    "Game saved to " + SaveSystem.getSavePath() + ".",
+                    "Saved " + gameState.getPlayerCharacter().getName() + " to " + path.getFileName() + ". "
+                            + "Saving this player name again overwrites this slot.",
                     InteractionSystem.closeOption("Close")
             ));
         } catch (java.io.IOException exception) {
@@ -652,7 +662,18 @@ public final class LwjglInputController {
 
     private void loadGameFromMenu(AetherGameRuntime runtime, GameState gameState) {
         List<InteractionSystem.InteractionOption> options = new ArrayList<>();
-        options.add(InteractionSystem.option("Saved Game", () -> loadSavedGameFromMenu(runtime, gameState)));
+        try {
+            List<SaveSystem.SaveInfo> saves = runtime.listSavedGames();
+            if (saves.isEmpty()) {
+                options.add(InteractionSystem.closeOption("No saved characters found"));
+            }
+            for (SaveSystem.SaveInfo save : saves) {
+                options.add(InteractionSystem.option("Character: " + save.playerName(),
+                        () -> requestLoadSavedGameFromMenu(runtime, gameState, save)));
+            }
+        } catch (java.io.IOException exception) {
+            options.add(InteractionSystem.closeOption("Unable to read saved characters"));
+        }
 
         try {
             List<Path> mapPaths = runtime.listAvailableMaps();
@@ -678,13 +699,36 @@ public final class LwjglInputController {
         ));
     }
 
-    private void loadSavedGameFromMenu(AetherGameRuntime runtime, GameState gameState) {
+    private void requestLoadSavedGameFromMenu(
+            AetherGameRuntime runtime,
+            GameState gameState,
+            SaveSystem.SaveInfo save
+    ) {
+        SaveSystem.PackDifference difference = runtime.compareActivePacks(save);
+        if (difference.differs()) {
+            gameState.openInteraction(InteractionSystem.prompt(
+                    "Content Packs Differ",
+                    difference.playerMessage(),
+                    InteractionSystem.option("Load with saved packs",
+                            () -> loadSavedGameFromMenu(runtime, gameState, save)),
+                    InteractionSystem.option("Back", () -> loadGameFromMenu(runtime, gameState))
+            ));
+            return;
+        }
+        loadSavedGameFromMenu(runtime, gameState, save);
+    }
+
+    private void loadSavedGameFromMenu(
+            AetherGameRuntime runtime,
+            GameState gameState,
+            SaveSystem.SaveInfo save
+    ) {
         try {
-            runtime.loadGame();
+            runtime.loadGame(save);
             mapChangedAction.run();
             gameState.openInteraction(InteractionSystem.prompt(
                     "Loaded",
-                    "Saved game loaded.",
+                    "Loaded " + save.playerName() + ".",
                     InteractionSystem.closeOption("Close")
             ));
         } catch (java.io.IOException exception) {

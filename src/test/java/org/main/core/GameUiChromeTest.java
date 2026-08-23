@@ -8,6 +8,7 @@ import java.awt.Graphics2D;
 import java.awt.Rectangle;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
+import java.lang.reflect.Field;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -52,5 +53,32 @@ class GameUiChromeTest {
 
         assertTrue(panel.handleMousePressed(click));
         assertFalse(gameState.isInventoryOpen());
+    }
+
+    @Test
+    void settingsMenusReserveHalfTheWindowForOptions() throws Exception {
+        InteractionSystem.InteractionWindow window = new InteractionSystem.InteractionWindow(null);
+        GameState gameState = new GameState(DungeonMap.testMap());
+        InteractionSystem.Interaction interaction = InteractionSystem.configMenu(
+                null, gameState, () -> { }, () -> { }, () -> { }, () -> { });
+        BufferedImage image = new BufferedImage(1280, 720, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = image.createGraphics();
+        window.draw(graphics, interaction, image.getWidth(), image.getHeight());
+        graphics.dispose();
+
+        Rectangle windowBounds = rectangleField(window, "lastWindowBounds");
+        Rectangle bodyClip = rectangleField(window, "lastBodyClip");
+        Rectangle optionsClip = rectangleField(window, "lastOptionsClip");
+
+        assertTrue(optionsClip.height >= windowBounds.height * 0.45,
+                "settings options should receive approximately the lower half of the menu");
+        assertTrue(bodyClip.y + bodyClip.height <= optionsClip.y,
+                "settings text and options should not overlap");
+    }
+
+    private static Rectangle rectangleField(Object target, String name) throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return new Rectangle((Rectangle) field.get(target));
     }
 }

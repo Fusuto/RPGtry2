@@ -427,6 +427,7 @@ final class FirstPersonViewmodelEditorWorkspace extends JDialog {
         apply.addActionListener(event -> applyDraft());
         close.addActionListener(event -> closeWorkspace());
         actions.add(stateLabel);
+        actions.add(ConstructionKitUi.fullScreenButton(this));
         actions.add(validate);
         actions.add(revert);
         actions.add(apply);

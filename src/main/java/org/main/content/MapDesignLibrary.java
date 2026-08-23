@@ -1427,18 +1427,32 @@ public final class MapDesignLibrary {
     }
 
     public static GeneratedDungeon toGeneratedDungeon(MapDesign design, int playerX, int playerY) {
+        return toGeneratedDungeon(design, authoredContentOf(design), playerX, playerY);
+    }
+
+    public static GeneratedDungeon toGeneratedDungeon(MapDesign design, AuthoredContent content) {
+        return toGeneratedDungeon(design, content, design.spawnX(), design.spawnY());
+    }
+
+    private static GeneratedDungeon toGeneratedDungeon(
+            MapDesign design,
+            AuthoredContent content,
+            int playerX,
+            int playerY
+    ) {
+        AuthoredContent resolvedContent = content == null ? authoredContentOf(design) : content;
         DungeonMap dungeonMap = toDungeonMap(design);
         List<MapEntity> entities = new ArrayList<>();
         List<GeneratedDungeon.TileInteraction> tileInteractions = new ArrayList<>();
 
         for (MapPlacement placement : design.placements()) {
-            hydratePlacement(dungeonMap, entities, tileInteractions, design.customItems(), design.customMobs(),
-                    design.customLimbs(), design.customNpcs(), design.customFurniture(),
-                    design.customGatheringNodes(), placement);
+            hydratePlacement(dungeonMap, entities, tileInteractions, resolvedContent.customItems(),
+                    resolvedContent.customMobs(), resolvedContent.customLimbs(), resolvedContent.customNpcs(),
+                    resolvedContent.customFurniture(), resolvedContent.customGatheringNodes(), placement);
         }
 
         for (PlacedObjectInstance object : design.placedObjects()) {
-            hydratePlacedObject(dungeonMap, entities, tileInteractions, design, object);
+            hydratePlacedObject(dungeonMap, entities, tileInteractions, resolvedContent, object);
         }
 
         GridPoint spawn = resolveSpawn(dungeonMap, playerX, playerY);
@@ -1448,14 +1462,14 @@ public final class MapDesignLibrary {
                 spawn.x(),
                 spawn.y(),
                 tileInteractions,
-                design.authoredDialogues(),
-                design.authoredQuests(),
-                design.customItems(),
-                design.customLimbs(),
-                design.customFurniture(),
-                design.customGatheringNodes(),
-                design.customCookingRecipes(),
-                design.craftingRecipes(),
+                resolvedContent.authoredDialogues(),
+                resolvedContent.authoredQuests(),
+                resolvedContent.customItems(),
+                resolvedContent.customLimbs(),
+                resolvedContent.customFurniture(),
+                resolvedContent.customGatheringNodes(),
+                resolvedContent.customCookingRecipes(),
+                resolvedContent.craftingRecipes(),
                 design.triggers()
         );
     }
@@ -1984,7 +1998,7 @@ public final class MapDesignLibrary {
             DungeonMap dungeonMap,
             List<MapEntity> entities,
             List<GeneratedDungeon.TileInteraction> tileInteractions,
-            MapDesign design,
+            AuthoredContent content,
             PlacedObjectInstance object
     ) {
         if (object == null || !isInside(dungeonMap, object.x(), object.y())) {
@@ -1992,7 +2006,7 @@ public final class MapDesignLibrary {
         }
 
         if (object.kind() == PlacementKind.FURNITURE) {
-            CustomFurnitureDefinition furniture = findCustomFurniture(object.id(), design.customFurniture());
+            CustomFurnitureDefinition furniture = findCustomFurniture(object.id(), content.customFurniture());
             if (furniture != null) {
                 hydrateFurniture(dungeonMap, entities, furniture, object);
             }
@@ -2000,7 +2014,7 @@ public final class MapDesignLibrary {
         }
 
         if (object.kind() == PlacementKind.GATHERING_NODE) {
-            hydrateGatheringNodeObject(dungeonMap, entities, tileInteractions, design.customGatheringNodes(), object);
+            hydrateGatheringNodeObject(dungeonMap, entities, tileInteractions, content.customGatheringNodes(), object);
             return;
         }
 
@@ -2008,12 +2022,12 @@ public final class MapDesignLibrary {
                 dungeonMap,
                 entities,
                 tileInteractions,
-                design.customItems(),
-                design.customMobs(),
-                design.customLimbs(),
-                design.customNpcs(),
-                design.customFurniture(),
-                design.customGatheringNodes(),
+                content.customItems(),
+                content.customMobs(),
+                content.customLimbs(),
+                content.customNpcs(),
+                content.customFurniture(),
+                content.customGatheringNodes(),
                 new MapPlacement(object.kind(), object.id(), object.x(), object.y())
         );
     }

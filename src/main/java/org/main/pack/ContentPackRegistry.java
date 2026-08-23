@@ -141,6 +141,9 @@ public final class ContentPackRegistry implements AutoCloseable {
                         + expected.describe() + "; resolved: " + actual.describe() + ". Diagnostics: "
                         + String.join(" ", snapshot.diagnostics()) + ".");
             }
+            // Keep the save's exact pack set mounted for this running session, but preserve the
+            // player's configured enablement/load order for the next application start.
+            writeActiveState(previousState);
         } catch (IOException error) {
             try {
                 installedProvider.selectLockedVersions(previousLock);

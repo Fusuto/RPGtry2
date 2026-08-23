@@ -21,31 +21,133 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.text.Normalizer;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public final class SaveSystem {
     private static final int SAVE_SCHEMA_VERSION = 1;
-    private static final Path SAVE_PATH = ApplicationPaths.dataFolder().resolve("saves").resolve("save.properties");
+    private static final String LEGACY_SAVE_FILE = "save.properties";
 
     private SaveSystem() {
     }
 
     public static Path getSavePath() {
-        return SAVE_PATH;
+        try {
+            return listSaves().stream().findFirst().map(SaveInfo::path).orElse(legacySavePath());
+        } catch (IOException ignored) {
+            return legacySavePath();
+        }
+    }
+
+    public static Path getSavePath(String playerName) {
+        return savesFolder().resolve(saveFileName(playerName));
     }
 
     public static boolean hasSave() {
-        return Files.exists(SAVE_PATH);
+        try {
+            return !listSaves().isEmpty();
+        } catch (IOException ignored) {
+            return Files.isRegularFile(legacySavePath());
+        }
+    }
+
+    /**
+     * Lists one save per player name, newest first. Names are compared case-insensitively,
+     * so saving the same character name replaces that character's slot.
+     */
+    public static List<SaveInfo> listSaves() throws IOException {
+        Path folder = savesFolder();
+        if (!Files.isDirectory(folder)) {
+            return List.of();
+        }
+        List<Path> candidates;
+        try (Stream<Path> paths = Files.list(folder)) {
+            candidates = paths.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".properties"))
+                    .filter(path -> !path.getFileName().toString().endsWith(".new"))
+                    .toList();
+        }
+        Map<String, SaveInfo> newestByPlayer = new LinkedHashMap<>();
+        List<IOException> failures = new ArrayList<>();
+        for (Path path : candidates) {
+            try {
+                SaveInfo info = inspect(path);
+                String key = canonicalPlayerName(info.playerName());
+                SaveInfo previous = newestByPlayer.get(key);
+                if (previous == null || info.modifiedAt().isAfter(previous.modifiedAt())) {
+                    newestByPlayer.put(key, info);
+                }
+            } catch (IOException error) {
+                failures.add(error);
+            }
+        }
+        if (newestByPlayer.isEmpty() && !failures.isEmpty()) {
+            throw failures.getFirst();
+        }
+        return newestByPlayer.values().stream()
+                .sorted(Comparator.comparing(SaveInfo::modifiedAt).reversed()
+                        .thenComparing(SaveInfo::playerName, String.CASE_INSENSITIVE_ORDER))
+                .toList();
+    }
+
+    public static SaveInfo inspect(Path path) throws IOException {
+        Path safePath = validatedSavePath(path);
+        Properties properties = readSaveProperties(safePath);
+        int schemaVersion = readRequiredInt(properties, "save.schemaVersion");
+        if (schemaVersion != SAVE_SCHEMA_VERSION) {
+            throw new IOException("Unsupported save schema " + schemaVersion + "; expected exactly "
+                    + SAVE_SCHEMA_VERSION + ". Old and unversioned saves are not supported.");
+        }
+        String playerName = properties.getProperty("player.name", "Player").trim();
+        if (playerName.isBlank()) {
+            playerName = "Player";
+        }
+        PackLock lock = PackLock.readFrom(properties, "packLock.");
+        return new SaveInfo(safePath, playerName, Instant.ofEpochMilli(Files.getLastModifiedTime(safePath).toMillis()), lock);
+    }
+
+    public static PackDifference compareActivePacks(SaveInfo save) {
+        PackLock active = AssetRepository.shared().registry().activePackLock();
+        PackLock recorded = save == null
+                ? new PackLock(active.contentApiVersion(), List.of())
+                : save.packLock();
+        if (active.packs().equals(recorded.packs())) {
+            return PackDifference.none();
+        }
+        Set<String> recordedIds = recorded.packs().stream().map(PackLock.Entry::packId).collect(Collectors.toSet());
+        Set<String> activeIds = active.packs().stream().map(PackLock.Entry::packId).collect(Collectors.toSet());
+        List<String> newlyEnabled = active.packs().stream()
+                .filter(entry -> !recordedIds.contains(entry.packId()))
+                .map(SaveSystem::shortPackName)
+                .toList();
+        List<String> requiredBySave = recorded.packs().stream()
+                .filter(entry -> !activeIds.contains(entry.packId()))
+                .map(SaveSystem::shortPackName)
+                .toList();
+        List<String> changed = recorded.packs().stream()
+                .filter(entry -> active.packs().stream().anyMatch(current -> current.packId().equals(entry.packId())
+                        && (!current.version().equals(entry.version()) || !current.digest().equals(entry.digest()))))
+                .map(SaveSystem::shortPackName)
+                .toList();
+        return new PackDifference(true, newlyEnabled, requiredBySave, changed);
     }
 
     public static void save(GameState gameState) throws IOException {
@@ -53,10 +155,10 @@ public final class SaveSystem {
             return;
         }
 
-        Files.createDirectories(SAVE_PATH.getParent());
-
         Properties properties = new Properties();
         PlayerCharacter player = gameState.getPlayerCharacter();
+        Path savePath = getSavePath(player.getName());
+        Files.createDirectories(savePath.getParent());
 
         properties.setProperty("save.schemaVersion", String.valueOf(SAVE_SCHEMA_VERSION));
         AssetRepository.shared().registry().activePackLock().writeTo(properties, "packLock.");
@@ -109,28 +211,36 @@ public final class SaveSystem {
 
         saveQuestRuntime(properties, gameState.getQuestRuntime().snapshots());
 
-        Path temporary = SAVE_PATH.resolveSibling(SAVE_PATH.getFileName() + ".new");
+        Path temporary = savePath.resolveSibling(savePath.getFileName() + ".new");
         try (OutputStream outputStream = Files.newOutputStream(temporary)) {
             properties.store(outputStream, "Aether save");
         }
         try {
-            Files.move(temporary, SAVE_PATH, StandardCopyOption.REPLACE_EXISTING,
+            Files.move(temporary, savePath, StandardCopyOption.REPLACE_EXISTING,
                     StandardCopyOption.ATOMIC_MOVE);
         } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
-            Files.move(temporary, SAVE_PATH, StandardCopyOption.REPLACE_EXISTING);
+            Files.move(temporary, savePath, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
     public static void load(GameState gameState) throws IOException {
-        if (gameState == null || !hasSave()) {
+        List<SaveInfo> saves = listSaves();
+        if (gameState == null || saves.isEmpty()) {
             throw new IOException("No saved game found.");
         }
 
-        Properties properties = new Properties();
+        load(gameState, saves.getFirst());
+    }
 
-        try (InputStream inputStream = Files.newInputStream(SAVE_PATH)) {
-            properties.load(inputStream);
+    public static LoadResult load(GameState gameState, SaveInfo save) throws IOException {
+        if (gameState == null || save == null) {
+            throw new IOException("No saved game selected.");
         }
+
+        PackDifference packDifference = compareActivePacks(save);
+        Path savePath = validatedSavePath(save.path());
+
+        Properties properties = readSaveProperties(savePath);
 
         int schemaVersion = readRequiredInt(properties, "save.schemaVersion");
         if (schemaVersion != SAVE_SCHEMA_VERSION) {
@@ -245,6 +355,7 @@ public final class SaveSystem {
         }
 
         gameState.setGameMode(GameState.GameMode.DUNGEON);
+        return new LoadResult(save, packDifference);
     }
 
     private static void saveDungeonMap(Properties properties, DungeonMap dungeonMap) {
@@ -1813,5 +1924,141 @@ public final class SaveSystem {
 
     private static String nullToBlank(String value) {
         return value == null ? "" : value;
+    }
+
+    private static Path savesFolder() {
+        return ApplicationPaths.dataFolder().resolve("saves").toAbsolutePath().normalize();
+    }
+
+    private static Path legacySavePath() {
+        return savesFolder().resolve(LEGACY_SAVE_FILE);
+    }
+
+    private static Path validatedSavePath(Path path) throws IOException {
+        if (path == null) {
+            throw new IOException("No saved game selected.");
+        }
+        Path folder = savesFolder();
+        Path normalized = path.toAbsolutePath().normalize();
+        if (!normalized.getParent().equals(folder)
+                || !normalized.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".properties")) {
+            throw new IOException("Save path is outside the Aether saves folder.");
+        }
+        if (!Files.isRegularFile(normalized)) {
+            throw new IOException("Saved game no longer exists: " + normalized.getFileName());
+        }
+        if (Files.exists(folder) && !normalized.toRealPath().getParent().equals(folder.toRealPath())) {
+            throw new IOException("Save path resolves outside the Aether saves folder.");
+        }
+        return normalized;
+    }
+
+    private static Properties readSaveProperties(Path path) throws IOException {
+        Properties properties = new Properties();
+        try (InputStream inputStream = Files.newInputStream(path)) {
+            properties.load(inputStream);
+        }
+        return properties;
+    }
+
+    private static String saveFileName(String playerName) {
+        String canonical = canonicalPlayerName(playerName);
+        StringBuilder slug = new StringBuilder();
+        boolean separator = false;
+        for (int index = 0; index < canonical.length();) {
+            int codePoint = canonical.codePointAt(index);
+            index += Character.charCount(codePoint);
+            if (Character.isLetterOrDigit(codePoint)) {
+                if (separator && !slug.isEmpty()) {
+                    slug.append('-');
+                }
+                slug.appendCodePoint(codePoint);
+                separator = false;
+            } else {
+                separator = true;
+            }
+            if (slug.length() >= 40) {
+                break;
+            }
+        }
+        if (slug.isEmpty()) {
+            slug.append("player");
+        }
+        return slug + "-" + shortHash(canonical) + ".properties";
+    }
+
+    private static String canonicalPlayerName(String playerName) {
+        String safe = playerName == null || playerName.isBlank() ? "Player" : playerName;
+        return Normalizer.normalize(safe.trim(), Normalizer.Form.NFKC)
+                .replaceAll("\\s+", " ")
+                .toLowerCase(Locale.ROOT);
+    }
+
+    private static String shortHash(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder result = new StringBuilder(12);
+            for (int index = 0; index < 6; index++) {
+                result.append(String.format(Locale.ROOT, "%02x", digest[index] & 0xff));
+            }
+            return result.toString();
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable.", impossible);
+        }
+    }
+
+    private static String shortPackName(PackLock.Entry entry) {
+        return entry.packId() + "@" + entry.version();
+    }
+
+    public record SaveInfo(Path path, String playerName, Instant modifiedAt, PackLock packLock) {
+        public SaveInfo {
+            path = path == null ? null : path.toAbsolutePath().normalize();
+            playerName = playerName == null || playerName.isBlank() ? "Player" : playerName.trim();
+            modifiedAt = modifiedAt == null ? Instant.EPOCH : modifiedAt;
+            packLock = packLock == null
+                    ? new PackLock(org.main.pack.ContentPackManifest.CURRENT_CONTENT_API_VERSION, List.of())
+                    : packLock;
+        }
+    }
+
+    public record PackDifference(
+            boolean differs,
+            List<String> newlyEnabled,
+            List<String> requiredBySave,
+            List<String> changedVersions
+    ) {
+        public PackDifference {
+            newlyEnabled = newlyEnabled == null ? List.of() : List.copyOf(newlyEnabled);
+            requiredBySave = requiredBySave == null ? List.of() : List.copyOf(requiredBySave);
+            changedVersions = changedVersions == null ? List.of() : List.copyOf(changedVersions);
+        }
+
+        public static PackDifference none() {
+            return new PackDifference(false, List.of(), List.of(), List.of());
+        }
+
+        public String playerMessage() {
+            if (!differs) {
+                return "";
+            }
+            List<String> details = new ArrayList<>();
+            if (!newlyEnabled.isEmpty()) {
+                details.add("Newly enabled packs that will not be loaded: " + String.join(", ", newlyEnabled) + ".");
+            }
+            if (!requiredBySave.isEmpty()) {
+                details.add("Packs recorded by the save: " + String.join(", ", requiredBySave) + ".");
+            }
+            if (!changedVersions.isEmpty()) {
+                details.add("Packs whose saved version or content differs: "
+                        + String.join(", ", changedVersions) + ".");
+            }
+            return "This save was created with a different content-pack set. It will load with the packs "
+                    + "recorded in the save, without newly enabled content packs. " + String.join(" ", details);
+        }
+    }
+
+    public record LoadResult(SaveInfo save, PackDifference packDifference) {
     }
 }

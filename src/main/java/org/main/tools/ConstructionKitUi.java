@@ -37,6 +37,9 @@ final class ConstructionKitUi {
     static final int SECTION_GAP = 10;
     static final int LABEL_WIDTH = 170;
     static final int ROW_HEIGHT = 28;
+    private static final String FULL_SCREEN_ACTION = "construction-kit-toggle-full-screen";
+    private static final String RESTORE_BOUNDS_PROPERTY = "construction-kit.restore-bounds";
+    private static final String FULL_SCREEN_HEADER_PROPERTY = "construction-kit.full-screen-header";
 
     enum DialogProfile {
         COMPACT(new Dimension(560, 380), new Dimension(500, 300)),
@@ -141,6 +144,7 @@ final class ConstructionKitUi {
         JButton okButton = new JButton("OK");
         JButton cancelButton = new JButton("Cancel");
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, GAP, 0));
+        buttons.add(fullScreenButton(dialog));
         buttons.add(okButton);
         buttons.add(cancelButton);
         root.add(buttons, BorderLayout.SOUTH);
@@ -194,6 +198,7 @@ final class ConstructionKitUi {
             return;
         }
         dialog.setResizable(true);
+        addFullScreenHeader(dialog);
         configureComponentTree(dialog.getContentPane());
         dialog.pack();
 
@@ -252,6 +257,22 @@ final class ConstructionKitUi {
         Rectangle workArea = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
         workspace.setMinimumSize(bounded(DialogProfile.LARGE.minimumSize, workArea));
         workspace.setPreferredSize(bounded(DialogProfile.LARGE.initialSize, workArea));
+        installFullScreenAction(workspace);
+    }
+
+    static JButton fullScreenButton(JDialog workspace) {
+        installFullScreenAction(workspace);
+        JButton button = new JButton("Full Screen");
+        button.setToolTipText("Fill the usable screen (F11); press again to restore the window.");
+        button.addActionListener(event -> {
+            javax.swing.Action action = workspace.getRootPane().getActionMap().get(FULL_SCREEN_ACTION);
+            if (action != null) {
+                action.actionPerformed(new ActionEvent(button, ActionEvent.ACTION_PERFORMED, FULL_SCREEN_ACTION));
+                button.setText(workspace.getRootPane().getClientProperty(RESTORE_BOUNDS_PROPERTY) == null
+                        ? "Full Screen" : "Restore");
+            }
+        });
+        return button;
     }
 
     static void configureComponentTree(Component component) {
@@ -290,6 +311,43 @@ final class ConstructionKitUi {
             return form;
         }
         return form;
+    }
+
+    private static void installFullScreenAction(JDialog workspace) {
+        if (workspace == null || workspace.getRootPane().getActionMap().get(FULL_SCREEN_ACTION) != null) {
+            return;
+        }
+        workspace.getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(
+                KeyStroke.getKeyStroke(KeyEvent.VK_F11, 0), FULL_SCREEN_ACTION);
+        workspace.getRootPane().getActionMap().put(FULL_SCREEN_ACTION, new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                Object stored = workspace.getRootPane().getClientProperty(RESTORE_BOUNDS_PROPERTY);
+                if (stored instanceof Rectangle restoreBounds) {
+                    workspace.setBounds(restoreBounds);
+                    workspace.getRootPane().putClientProperty(RESTORE_BOUNDS_PROPERTY, null);
+                    return;
+                }
+                workspace.getRootPane().putClientProperty(
+                        RESTORE_BOUNDS_PROPERTY, new Rectangle(workspace.getBounds()));
+                Rectangle workArea = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+                workspace.setBounds(workArea);
+            }
+        });
+    }
+
+    private static void addFullScreenHeader(JDialog dialog) {
+        if (dialog == null || Boolean.TRUE.equals(dialog.getRootPane().getClientProperty(FULL_SCREEN_HEADER_PROPERTY))) {
+            return;
+        }
+        Container original = dialog.getContentPane();
+        JPanel wrapper = new JPanel(new BorderLayout());
+        JPanel header = new JPanel(new FlowLayout(FlowLayout.RIGHT, GAP, 2));
+        header.add(fullScreenButton(dialog));
+        wrapper.add(header, BorderLayout.NORTH);
+        wrapper.add(original, BorderLayout.CENTER);
+        dialog.setContentPane(wrapper);
+        dialog.getRootPane().putClientProperty(FULL_SCREEN_HEADER_PROPERTY, Boolean.TRUE);
     }
 
     private static DialogProfile profileFor(Component form) {

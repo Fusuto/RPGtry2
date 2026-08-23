@@ -13,6 +13,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OpenWorldDirtyChunkTransitionTest {
     @TempDir
@@ -61,6 +62,41 @@ class OpenWorldDirtyChunkTransitionTest {
                 returned.window().map().getTile(
                         session.windowXForGlobal(1),
                         session.windowYForGlobal(1)));
+    }
+
+    @Test
+    void geometryOnlyChunkHydratesPlacementsFromSharedContentSnapshot() throws Exception {
+        MapDesignLibrary.CustomMob mob = MapDesignLibrary.loadSharedContent().customMobs().getFirst();
+        MapDesignLibrary.MapDesign chunk = floorChunk();
+        chunk.placements().add(new MapDesignLibrary.MapPlacement(
+                MapDesignLibrary.PlacementKind.ENEMY,
+                mob.mobId(),
+                1,
+                1));
+
+        Path chunkPath = temporaryWorld.resolve("chunks/0_0.properties");
+        MapDesignLibrary.save(chunk, chunkPath);
+        Map<ChunkCoordinate, String> chunks = Map.of(
+                new ChunkCoordinate(0, 0),
+                "chunks/0_0.properties");
+        WorldManifestLibrary.WorldManifest manifest = new WorldManifestLibrary.WorldManifest(
+                WorldManifestLibrary.FORMAT_VERSION,
+                "placement_test",
+                "Placement Test",
+                "",
+                3,
+                3,
+                1,
+                1,
+                chunks);
+        Path manifestPath = temporaryWorld.resolve("world.properties");
+        WorldManifestLibrary.save(manifest, manifestPath);
+
+        try (OpenWorldSession session = new OpenWorldSession(manifestPath, manifest)) {
+            OpenWorldSession.WindowState window = session.openAtGlobal(1, 1);
+            assertTrue(window.entities().stream().anyMatch(entity -> entity.getMonster() != null),
+                    "The geometry-only chunk should resolve its enemy placement through shared content.");
+        }
     }
 
     private static MapDesignLibrary.MapDesign floorChunk() {

@@ -741,6 +741,7 @@ public final class QuestDialogueEditorWorkspace extends JDialog {
             }
         });
         buttons.add(revert);
+        buttons.add(ConstructionKitUi.fullScreenButton(this));
         buttons.add(validate);
         buttons.add(apply);
         buttons.add(close);

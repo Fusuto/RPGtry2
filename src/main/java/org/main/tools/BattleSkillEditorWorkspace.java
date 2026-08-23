@@ -220,6 +220,7 @@ public final class BattleSkillEditorWorkspace extends JDialog {
         revert.addActionListener(event -> loadSelection());
         save.addActionListener(event -> saveCatalogs());
         close.addActionListener(event -> dispose());
+        buttons.add(ConstructionKitUi.fullScreenButton(this));
         buttons.add(apply);
         buttons.add(revert);
         buttons.add(save);

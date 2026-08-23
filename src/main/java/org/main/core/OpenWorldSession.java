@@ -63,6 +63,7 @@ public final class OpenWorldSession implements AutoCloseable {
     private final Object chunkLoadLock = new Object();
     private final Set<ChunkCoordinate> loadedCoordinates = new HashSet<>();
     private volatile ChunkCoordinate center;
+    private volatile MapDesignLibrary.AuthoredContent contentSnapshot;
     private List<EnvironmentTheme> currentEnvironmentThemes = List.of();
     private int resumeGlobalX;
     private int resumeGlobalY;
@@ -727,7 +728,7 @@ public final class OpenWorldSession implements AutoCloseable {
             if (design.width() != manifest.chunkWidth() || design.height() != manifest.chunkHeight()) {
                 throw new IOException("Chunk " + coordinate + " has incompatible dimensions.");
             }
-            GeneratedDungeon generated = MapDesignLibrary.toGeneratedDungeon(design);
+            GeneratedDungeon generated = MapDesignLibrary.toGeneratedDungeon(design, worldContent());
             Map<String, String> interactions = new HashMap<>();
             for (GeneratedDungeon.TileInteraction interaction : generated.tileInteractions()) {
                 interactions.put(key(interaction.x(), interaction.y()), interaction.interactionId());
@@ -1001,7 +1002,12 @@ public final class OpenWorldSession implements AutoCloseable {
     }
 
     private MapDesignLibrary.AuthoredContent worldContent() throws IOException {
-        return ContentRepository.shared().snapshot().content();
+        MapDesignLibrary.AuthoredContent current = contentSnapshot;
+        if (current == null) {
+            current = ContentRepository.shared().snapshot().content();
+            contentSnapshot = current;
+        }
+        return current;
     }
 
     private int themeIndex(List<EnvironmentTheme> themes, ThemeLibrary theme) {

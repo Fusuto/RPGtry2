@@ -189,18 +189,36 @@ public final class AetherGameRuntime {
         return mapDesign;
     }
 
-    public void loadGame() throws IOException {
+    public List<SaveSystem.SaveInfo> listSavedGames() throws IOException {
+        return SaveSystem.listSaves();
+    }
+
+    public SaveSystem.PackDifference compareActivePacks(SaveSystem.SaveInfo save) {
+        return SaveSystem.compareActivePacks(save);
+    }
+
+    public SaveSystem.LoadResult loadGame() throws IOException {
+        List<SaveSystem.SaveInfo> saves = SaveSystem.listSaves();
+        if (saves.isEmpty()) {
+            throw new IOException("No saved game found.");
+        }
+        return loadGame(saves.getFirst());
+    }
+
+    public SaveSystem.LoadResult loadGame(SaveSystem.SaveInfo save) throws IOException {
         gameState.getWorldMessageLog().clear();
-        SaveSystem.load(gameState);
+        SaveSystem.LoadResult result = SaveSystem.load(gameState, save);
         invalidateActiveMapDesignCache();
         gameOverMusicStarted = false;
         soundSystem.stopAll();
         lastChunkAmbienceKey = "";
         refreshChunkAmbienceIfNeeded();
+        return result;
     }
 
-    public void saveGame() throws IOException {
+    public Path saveGame() throws IOException {
         SaveSystem.save(gameState);
+        return SaveSystem.getSavePath(gameState.getPlayerCharacter().getName());
     }
 
     public void returnToMainMenu() {

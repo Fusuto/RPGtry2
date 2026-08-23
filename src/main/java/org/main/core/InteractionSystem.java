@@ -1078,7 +1078,7 @@ public final class InteractionSystem {
                 int textWidth
         ) {
             int portraitBottom = windowBounds.y + CONTENT_PADDING + 34 + PORTRAIT_SIZE + 18;
-            int optionsTop = calculateOptionsClip(windowBounds, textX, textWidth).y;
+            int optionsTop = calculateOptionsClip(model, windowBounds, textX, textWidth).y;
             int clipY = textY + 40;
             int clipBottom = Math.max(clipY + 24, optionsTop - 10);
 
@@ -1089,7 +1089,17 @@ public final class InteractionSystem {
             return new Rectangle(textX, clipY, textWidth, Math.max(24, clipBottom - clipY));
         }
 
-        private Rectangle calculateOptionsClip(Rectangle windowBounds, int x, int width) {
+        private Rectangle calculateOptionsClip(
+                InteractionModel model,
+                Rectangle windowBounds,
+                int x,
+                int width
+        ) {
+            if (model != null && model.isMenu()) {
+                int y = windowBounds.y + windowBounds.height / 2;
+                int bottom = windowBounds.y + windowBounds.height - CONTENT_PADDING;
+                return new Rectangle(x, y, width, Math.max(OPTION_HEIGHT, bottom - y));
+            }
             int y = windowBounds.y + windowBounds.height - CONTENT_PADDING - 118;
             int height = 118;
 
@@ -1283,7 +1293,7 @@ public final class InteractionSystem {
             int totalOptionHeight = options.size() * OPTION_HEIGHT
                     + Math.max(0, options.size() - 1) * OPTION_GAP;
 
-            Rectangle optionsClip = calculateOptionsClip(windowBounds, textX, optionWidth);
+            Rectangle optionsClip = calculateOptionsClip(model, windowBounds, textX, optionWidth);
             lastOptionsClip = optionsClip;
             lastOptionsContentHeight = totalOptionHeight;
             optionScrollOffset = clampScroll(optionScrollOffset, lastOptionsContentHeight, optionsClip.height);
