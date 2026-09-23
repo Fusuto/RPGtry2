@@ -101,6 +101,83 @@ public final class ProjectManifestOverrides {
         publishManifest(properties, manifestPath);
     }
 
+    public static void declareWorldResource(
+            String logicalPath,
+            String worldId,
+            ContentPackManifest sourcePack
+    ) throws IOException {
+        if (ApplicationPaths.developmentResourcesFolder() != null) return;
+        Path project = ApplicationPaths.activeProjectFolder();
+        if (project == null) return;
+        Path manifestPath = project.resolve(ContentPackManifest.MANIFEST_PATH);
+        if (!Files.isRegularFile(manifestPath)) return;
+
+        String normalizedPath = PackPaths.normalize(logicalPath);
+        String normalizedWorldId = normalize(worldId);
+        if (normalizedWorldId.isBlank()) {
+            throw new IOException("A copied world must have an ID.");
+        }
+        Properties properties = new Properties();
+        ContentPackManifest projectManifest;
+        try (InputStream input = Files.newInputStream(manifestPath)) {
+            properties.load(input);
+        }
+        try (InputStream input = Files.newInputStream(manifestPath)) {
+            projectManifest = ContentPackManifest.read(input);
+        }
+
+        int worldCount = integer(properties, "world.count");
+        boolean declared = false;
+        for (int index = 0; index < worldCount; index++) {
+            if (normalizedPath.equals(properties.getProperty("world." + index + ".path", ""))) {
+                declared = true;
+                break;
+            }
+        }
+        if (!declared) {
+            properties.setProperty("world." + worldCount++ + ".path", normalizedPath);
+            properties.setProperty("world.count", String.valueOf(worldCount));
+        }
+
+        if (sourcePack != null && !sourcePack.id().equals(projectManifest.id())) {
+            int dependencyCount = integer(properties, "dependency.count");
+            boolean dependencyDeclared = false;
+            for (int index = 0; index < dependencyCount; index++) {
+                if (sourcePack.id().equals(normalize(properties.getProperty("dependency." + index + ".id")))) {
+                    dependencyDeclared = true;
+                    break;
+                }
+            }
+            if (!dependencyDeclared) {
+                String prefix = "dependency." + dependencyCount++ + ".";
+                properties.setProperty(prefix + "id", sourcePack.id());
+                properties.setProperty(prefix + "minVersion", sourcePack.version());
+                properties.setProperty(prefix + "maxVersionExclusive", "");
+                properties.setProperty("dependency.count", String.valueOf(dependencyCount));
+            }
+
+            int overrideCount = integer(properties, "override.count");
+            boolean overrideDeclared = false;
+            for (int index = 0; index < overrideCount; index++) {
+                String prefix = "override." + index + ".";
+                if (sourcePack.id().equals(normalize(properties.getProperty(prefix + "targetPack")))
+                        && "world".equals(normalize(properties.getProperty(prefix + "type")))
+                        && normalizedWorldId.equals(normalize(properties.getProperty(prefix + "id")))) {
+                    overrideDeclared = true;
+                    break;
+                }
+            }
+            if (!overrideDeclared) {
+                String prefix = "override." + overrideCount++ + ".";
+                properties.setProperty(prefix + "targetPack", sourcePack.id());
+                properties.setProperty(prefix + "type", "world");
+                properties.setProperty(prefix + "id", normalizedWorldId);
+                properties.setProperty("override.count", String.valueOf(overrideCount));
+            }
+        }
+        publishManifest(properties, manifestPath);
+    }
+
     private static Map<String, Target> lowerLayerTargets(
             String catalogFile,
             Set<String> contentTypes,

@@ -2,10 +2,13 @@ package org.main.tools;
 
 import org.main.engine.ApplicationPaths;
 import org.main.engine.AssetLoader;
+import org.main.engine.AssetRepository;
 import org.main.pack.ContentPackManifest;
 import org.main.pack.PackExportService;
 import org.main.pack.PackInstaller;
+import org.main.pack.ProjectManifestOverrides;
 import org.main.pack.WorkshopExportService;
+import org.main.content.WorldManifestLibrary;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +30,7 @@ public final class ConstructionKitProjectService {
     private final PackExportService exporter = new PackExportService();
     private final PackInstaller installer = new PackInstaller(ApplicationPaths.contentPacksFolder());
     private final WorkshopExportService workshopExporter = new WorkshopExportService();
+    private final WorldProjectCopyService worldCopier = new WorldProjectCopyService();
 
     private ConstructionKitProjectService(
             Path projectRoot,
@@ -76,6 +80,30 @@ public final class ConstructionKitProjectService {
         return resourcePath("assets/packs/" + namespace + "/" + packRelativePath);
     }
 
+    public EditableWorld editableWorld(Path sourceManifestPath) throws IOException {
+        if (sourceManifestPath == null) {
+            throw new IOException("No world was selected.");
+        }
+        Path source = sourceManifestPath.toAbsolutePath().normalize();
+        if (Files.isRegularFile(source) && source.startsWith(resourceRoot)) {
+            return new EditableWorld(source, false);
+        }
+
+        WorldManifestLibrary.WorldManifest sourceWorld = WorldManifestLibrary.load(sourceManifestPath);
+        Path destination = packAssetPath("editor/worlds/" + sourceWorld.worldId() + "/"
+                + WorldManifestLibrary.MANIFEST_FILE_NAME);
+        if (Files.isRegularFile(destination)) {
+            return new EditableWorld(destination, false);
+        }
+
+        ContentPackManifest sourcePack = sourcePack(sourceManifestPath);
+        worldCopier.copy(sourceManifestPath, destination);
+        String projectPath = projectRoot.relativize(destination).toString().replace('\\', '/');
+        ProjectManifestOverrides.declareWorldResource(projectPath, sourceWorld.worldId(), sourcePack);
+        AssetLoader.refreshContentPacks();
+        return new EditableWorld(destination, true);
+    }
+
     public PackExportService.ExportResult exportActiveProject(Path destination) throws IOException {
         if (coreDevelopment) {
             throw new IOException("Core development resources are packaged by Maven, not exported as a user pack.");
@@ -94,6 +122,16 @@ public final class ConstructionKitProjectService {
             throw new IOException("Core development resources are packaged by Maven, not exported as a Workshop item.");
         }
         return workshopExporter.exportValidatedFolder(projectRoot, destination);
+    }
+
+    private static ContentPackManifest sourcePack(Path sourceManifestPath) throws IOException {
+        String logicalPath = sourceManifestPath.toString().replace('\\', '/');
+        if (!logicalPath.startsWith("assets/")) {
+            return null;
+        }
+        return AssetRepository.shared().registry().resolve(logicalPath)
+                .map(resolved -> resolved.mount().manifest())
+                .orElse(null);
     }
 
     private static ConstructionKitProjectService create() {
@@ -145,5 +183,8 @@ public final class ConstructionKitProjectService {
                     override.count=0
                     """, StandardCharsets.UTF_8);
         }
+    }
+
+    public record EditableWorld(Path manifestPath, boolean copied) {
     }
 }

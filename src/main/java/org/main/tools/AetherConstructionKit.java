@@ -13369,17 +13369,47 @@ public class AetherConstructionKit extends JFrame {
 
     private void openWorld() {
         try {
-            Files.createDirectories(WorldManifestLibrary.WORLD_FOLDER);
-            JFileChooser chooser = new JFileChooser(WorldManifestLibrary.WORLD_FOLDER.toFile());
-            chooser.setFileFilter(new FileNameExtensionFilter("Aether world manifest", "properties"));
-            if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+            List<WorldOpenOption> options = new ArrayList<>();
+            for (Path path : WorldManifestLibrary.listSavedWorlds()) {
+                try {
+                    WorldManifest manifest = WorldManifestLibrary.load(path);
+                    String origin = AssetRepository.shared().describe(path.toString())
+                            .map(resource -> resource.origin().name().toLowerCase(Locale.ROOT)
+                                    .replace('_', ' '))
+                            .orElse(Files.isRegularFile(path) ? "file" : "mounted content");
+                    options.add(new WorldOpenOption(path,
+                            manifest.displayName() + " [" + origin + "] — " + manifest.worldId()));
+                } catch (IOException ignored) {
+                    // An invalid world is reported by validation/import rather than hiding all valid worlds.
+                }
+            }
+            options.add(new WorldOpenOption(null, "Browse for a world.properties file..."));
+            JComboBox<WorldOpenOption> worldBox = new JComboBox<>(options.toArray(WorldOpenOption[]::new));
+            if (showScrollableFormDialog(formRow("World", worldBox), "Open World") != JOptionPane.OK_OPTION) {
                 return;
             }
-            Path path = chooser.getSelectedFile().toPath();
+            WorldOpenOption selection = (WorldOpenOption) worldBox.getSelectedItem();
+            if (selection == null) {
+                return;
+            }
+            Path sourcePath = selection.path();
+            if (sourcePath == null) {
+                Files.createDirectories(WorldManifestLibrary.WORLD_FOLDER);
+                JFileChooser chooser = new JFileChooser(WorldManifestLibrary.WORLD_FOLDER.toFile());
+                chooser.setFileFilter(new FileNameExtensionFilter("Aether world manifest", "properties"));
+                if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+                    return;
+                }
+                sourcePath = chooser.getSelectedFile().toPath();
+            }
+
+            ConstructionKitProjectService.EditableWorld editable = PROJECTS.editableWorld(sourcePath);
+            Path path = editable.manifestPath();
             WorldManifest manifest = WorldManifestLibrary.load(path);
             ChunkCoordinate start = manifest.chunkForGlobal(manifest.startX(), manifest.startY());
             activateWorld(path, manifest, start);
-            setStatus("Opened world " + manifest.displayName() + " at chunk " + start + ".");
+            setStatus((editable.copied() ? "Created an editable project copy and opened " : "Opened ")
+                    + manifest.displayName() + " at chunk " + start + ".");
         } catch (IOException exception) {
             setStatus("Open world failed: " + exception.getMessage());
         }
@@ -14491,6 +14521,13 @@ public class AetherConstructionKit extends JFrame {
             imagePath = imagePath == null ? "" : imagePath;
             modelPath = modelPath == null ? "" : modelPath;
             note = note == null ? "" : note;
+        }
+    }
+
+    private record WorldOpenOption(Path path, String label) {
+        @Override
+        public String toString() {
+            return label;
         }
     }
 

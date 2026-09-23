@@ -177,9 +177,10 @@ public final class WorldManifestLibrary {
     public static List<Path> listSavedWorlds() throws IOException {
         List<Path> worlds = new ArrayList<>();
         addWorldFiles(worlds, WORLD_FOLDER);
-        for (String resourcePath : AssetLoader.listAssetFiles(WORLD_RESOURCE_FOLDER)) {
-            if (resourcePath.toLowerCase(Locale.ROOT).endsWith("/" + MANIFEST_FILE_NAME)
-                    || resourcePath.equalsIgnoreCase(WORLD_RESOURCE_FOLDER + "/" + MANIFEST_FILE_NAME)) {
+        for (String resourcePath : AssetLoader.listAssetFiles("assets")) {
+            String normalized = resourcePath.replace('\\', '/').toLowerCase(Locale.ROOT);
+            if (normalized.contains("/editor/worlds/")
+                    && normalized.endsWith("/" + MANIFEST_FILE_NAME)) {
                 Path resourceWorld = Path.of(resourcePath);
                 if (worlds.stream().noneMatch(existing -> worldListingKey(existing).equals(worldListingKey(resourceWorld)))) {
                     worlds.add(resourceWorld);

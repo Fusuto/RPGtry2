@@ -50,6 +50,30 @@ class ContentPackRoundTripTest {
     }
 
     @Test
+    void activeProjectShadowsInstalledExportWithSamePackId() throws Exception {
+        Path project = createProject("aether.user", "aether_user");
+        Path asset = project.resolve("assets/packs/aether_user/readme.txt");
+        Files.createDirectories(asset.getParent());
+        Files.writeString(asset, "editable project");
+
+        Path archive = temporaryFolder.resolve("aether-user.aetherpack");
+        new PackExportService().export(project, archive);
+        Path managed = temporaryFolder.resolve("project-shadow-managed");
+        new PackInstaller(managed).install(archive);
+
+        try (ContentPackRegistry registry = new ContentPackRegistry(
+                managed, ContentPackRoundTripTest.class, null, project)) {
+            ContentMount selected = registry.snapshot().available().get("aether.user");
+            assertEquals(ContentMount.Origin.PROJECT, selected.origin());
+            assertEquals(1, registry.snapshot().activeHighestPriorityFirst().stream()
+                    .filter(mount -> mount.manifest().id().equals("aether.user"))
+                    .count());
+            assertTrue(registry.snapshot().diagnostics().stream()
+                    .anyMatch(message -> message.contains("Ignored duplicate content pack 'aether.user'")));
+        }
+    }
+
+    @Test
     void unsafeAndExecutablePathsAreRejected() throws Exception {
         assertThrows(IOException.class, () -> PackPaths.normalize("../escape.txt"));
         assertThrows(IOException.class, () -> PackPaths.normalize("/absolute.txt"));

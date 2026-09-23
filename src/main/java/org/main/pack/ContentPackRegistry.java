@@ -76,6 +76,7 @@ public final class ContentPackRegistry implements AutoCloseable {
             project.refresh();
         }
         Map<String, ContentMount> discovered = new LinkedHashMap<>();
+        List<String> diagnostics = new ArrayList<>();
         discovered.put(bundled.manifest().id(), bundled);
         if (development != null) {
             discovered.put(development.manifest().id(), development);
@@ -89,13 +90,14 @@ public final class ContentPackRegistry implements AutoCloseable {
                 ContentMount previous = discovered.putIfAbsent(mount.manifest().id(), mount);
                 if (previous != null) {
                     mount.close();
-                    throw new IOException("Duplicate installed content-pack ID: " + mount.manifest().id());
+                    diagnostics.add("Ignored duplicate content pack '" + mount.manifest().id()
+                            + "' from " + mount.origin() + " because the " + previous.origin()
+                            + " copy has priority.");
                 }
             }
         }
 
         ActiveState activeState = readActiveState();
-        List<String> diagnostics = new ArrayList<>();
         providers.forEach(provider -> diagnostics.addAll(provider.diagnostics()));
         List<ContentMount> active = orderActive(discovered, activeState, diagnostics);
         Snapshot next = new Snapshot(revision.incrementAndGet(), active, Map.copyOf(discovered), diagnostics);
