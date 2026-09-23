@@ -1,0 +1,6 @@
+{
+  "model_type": "standard",
+  "should_remesh": true,
+  "topology": "triangle",
+  "target_polycount": 2500
+}

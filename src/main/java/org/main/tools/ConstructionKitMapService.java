@@ -68,7 +68,17 @@ public final class ConstructionKitMapService {
 
     /** Never truncates the destination; requires atomic replacement support from the filesystem. */
     public void save(MapDesign map, String path, boolean replace) throws IOException {
-        if (validate(map).stream().anyMatch(i -> i.severity() == ValidationSeverity.ERROR)) {
+        save(map, path, replace, List.of());
+    }
+
+    public static boolean noNewErrors(List<ValidationIssue> baseline, List<ValidationIssue> current) {
+        java.util.ArrayList<ValidationIssue> remaining = new java.util.ArrayList<>(baseline);
+        return current.stream().filter(i -> i.severity() == ValidationSeverity.ERROR)
+                .allMatch(remaining::remove);
+    }
+
+    public void save(MapDesign map, String path, boolean replace, List<ValidationIssue> baseline) throws IOException {
+        if (!noNewErrors(baseline, validate(map))) {
             throw new IOException("Map has validation errors; nothing was saved");
         }
         Path destination = resolve(path);

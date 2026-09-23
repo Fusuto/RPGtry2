@@ -57,7 +57,7 @@ public final class InventorySystem {
     public static class Item {
         private final String name;
         private final ItemType itemType;
-        private final BufferedImage icon;
+        private BufferedImage icon;
         private final String useSoundPath;
         private final int healAmount;
         private final GearMaterial material;
@@ -498,6 +498,36 @@ public final class InventorySystem {
             graphics.fillRect(0, 0, source.getWidth(), source.getHeight());
             graphics.dispose();
             return tinted;
+        }
+
+        /** Optional icon.png -> icon.tint-mask.png convention, white marks tintable metal. */
+        public Item withMaskedMaterialIcon(String sourcePath) {
+            if (sourcePath == null || !sourcePath.endsWith(".png")) return this;
+            String maskPath = sourcePath.substring(0, sourcePath.length() - 4) + ".tint-mask.png";
+            try {
+                var assets = org.main.engine.AssetRepository.shared();
+                BufferedImage mask = assets.image(maskPath);
+                if (mask == null) return this;
+                BufferedImage source = assets.image(sourcePath);
+                if (source == null || source.getWidth() != mask.getWidth() || source.getHeight() != mask.getHeight()) return this;
+                icon = maskedMaterialTint(source, mask, material);
+            } catch (java.io.IOException ignored) { /* Preserve the normal icon fallback. */ }
+            return this;
+        }
+
+        static BufferedImage maskedMaterialTint(BufferedImage source, BufferedImage mask, GearMaterial material) {
+            Color tint = material.getTintColor();
+            if (tint == null) return source;
+            BufferedImage result = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+            for (int y=0; y<source.getHeight(); y++) for (int x=0; x<source.getWidth(); x++) {
+                int pixel = source.getRGB(x,y);
+                float amount = ((mask.getRGB(x,y) >> 16) & 255) / 255f * material.getTintStrength();
+                int r = Math.round(((pixel >> 16) & 255) * (1 - amount + amount * tint.getRed()/255f));
+                int g = Math.round(((pixel >> 8) & 255) * (1 - amount + amount * tint.getGreen()/255f));
+                int b = Math.round((pixel & 255) * (1 - amount + amount * tint.getBlue()/255f));
+                result.setRGB(x,y,(pixel & 0xff000000) | (r << 16) | (g << 8) | b);
+            }
+            return result;
         }
 
         public static BufferedImage applyBurntTint(BufferedImage source) {

@@ -98,4 +98,12 @@ class ConstructionKitAgentCliTest {
         assertEquals(station, response.getProperty("placement.0.id"));
         run(1, "place", "--kind", "CRAFTING_NODE", "--id", station, "--x", "2", "--y", "3");
     }
+
+    @Test void acceptingExistingErrorsDoesNotAcceptNewOrDuplicateErrors() {
+        var oldError = new MapDesignLibrary.ValidationIssue(MapDesignLibrary.ValidationSeverity.ERROR, "old");
+        var newError = new MapDesignLibrary.ValidationIssue(MapDesignLibrary.ValidationSeverity.ERROR, "new");
+        assertTrue(ConstructionKitMapService.noNewErrors(List.of(oldError), List.of(oldError)));
+        assertFalse(ConstructionKitMapService.noNewErrors(List.of(oldError), List.of(oldError, newError)));
+        assertFalse(ConstructionKitMapService.noNewErrors(List.of(oldError), List.of(oldError, oldError)));
+    }
 }

@@ -1,0 +1,8 @@
+{
+  "generator": "Blender local procedural",
+  "triangles": 2492,
+  "heightMeters": 0.6945,
+  "tierMaterial": "tier_metal",
+  "gripNode": "FP_GRIP_PRIMARY",
+  "model": "assets/3D/weapons/mace/gritty_mace.glb"
+}

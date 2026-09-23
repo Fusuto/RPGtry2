@@ -40,6 +40,7 @@ import static org.lwjgl.assimp.Assimp.aiProcess_Triangulate;
 import static org.lwjgl.assimp.Assimp.aiReleaseImport;
 
 public final class LwjglStaticModel {
+    private final java.util.Map<String, LwjglStaticModel> tierVariants = new java.util.HashMap<>();
     private final List<Mesh> meshes;
     private final float minX;
     private final float minY;
@@ -148,7 +149,8 @@ public final class LwjglStaticModel {
                         appearance.red(),
                         appearance.green(),
                         appearance.blue(),
-                        appearance.alpha()
+                        appearance.alpha(),
+                        appearance.tierTintable()
                 ));
             }
 
@@ -229,7 +231,15 @@ public final class LwjglStaticModel {
         if (texture == null && embeddedTextures.size() == 1) {
             texture = embeddedTextures.get(0);
         }
-        return new MaterialAppearance(texture, color[0], color[1], color[2], color[3]);
+        boolean tierTintable = false;
+        if (material != null) try (AIString name = AIString.calloc()) {
+            if (org.lwjgl.assimp.Assimp.aiGetMaterialString(material,
+                    org.lwjgl.assimp.Assimp.AI_MATKEY_NAME, 0, 0, name) == aiReturn_SUCCESS) {
+                tierTintable = name.dataString().equals("tier_metal")
+                        || name.dataString().startsWith("tier_metal.");
+            }
+        }
+        return new MaterialAppearance(texture, color[0], color[1], color[2], color[3], tierTintable);
     }
 
     private static float[] resolveBaseColor(AIMaterial material) {
@@ -328,6 +338,27 @@ public final class LwjglStaticModel {
         return meshes;
     }
 
+    /** Shares geometry/textures; only explicitly tagged metal materials receive the tier color. */
+    public synchronized LwjglStaticModel withMaterial(org.main.core.GearMaterial material) {
+        if (material == null || material.getTintColor() == null
+                || meshes.stream().noneMatch(Mesh::tierTintable)) return this;
+        java.awt.Color tint = material.getTintColor();
+        float strength = material.getTintStrength();
+        String key = tint.getRGB() + ":" + strength;
+        return tierVariants.computeIfAbsent(key, ignored -> new LwjglStaticModel(
+                meshes.stream().map(mesh -> tintMesh(mesh, tint, strength)).toList(),
+                minX, minY, minZ, maxX, maxY, maxZ));
+    }
+
+    static Mesh tintMesh(Mesh mesh, java.awt.Color tint, float strength) {
+        if (!mesh.tierTintable() || tint == null) return mesh;
+        float amount = Math.max(0, Math.min(1, strength));
+        return new Mesh(mesh.positions(), mesh.texCoords(), mesh.indices(), mesh.texture(),
+                mesh.red() * (1 - amount + amount * tint.getRed() / 255f),
+                mesh.green() * (1 - amount + amount * tint.getGreen() / 255f),
+                mesh.blue() * (1 - amount + amount * tint.getBlue() / 255f), mesh.alpha(), true);
+    }
+
     public double normalizedScaleForHeight(double targetHeight) {
         return targetHeight / Math.max(0.0001, maxY - minY);
     }
@@ -356,10 +387,16 @@ public final class LwjglStaticModel {
             float red,
             float green,
             float blue,
-            float alpha
+            float alpha,
+            boolean tierTintable
     ) {
+        public Mesh(float[] positions, float[] texCoords, int[] indices, BufferedImage texture,
+                    float red, float green, float blue, float alpha) {
+            this(positions, texCoords, indices, texture, red, green, blue, alpha, false);
+        }
     }
 
-    private record MaterialAppearance(BufferedImage texture, float red, float green, float blue, float alpha) {
+    private record MaterialAppearance(BufferedImage texture, float red, float green, float blue, float alpha,
+                                      boolean tierTintable) {
     }
 }

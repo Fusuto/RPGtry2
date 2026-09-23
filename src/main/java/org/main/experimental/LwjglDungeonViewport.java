@@ -1947,6 +1947,7 @@ public class LwjglDungeonViewport implements RealtimeDungeonViewport {
 
                 LwjglStaticModel model = getStaticModel(request.modelPath());
                 if (model == null) continue;
+                model = model.withMaterial(request.material());
                 ItemModelIconProfile profile = request.profile();
                 ModelIconBounds rotated = modelIconBounds(model, profile);
                 double largestExtent = Math.max(0.000001,

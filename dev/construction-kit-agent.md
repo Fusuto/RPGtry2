@@ -39,7 +39,44 @@ messages and severities. Inspection returns tile rows, spawn, and placements.
 This dependency-free protocol is the initial transport; a JSON/MCP adapter can
 wrap the service later without coupling editing logic to that transport.
 
-Current scope excludes content-definition authoring, prefab placement, world
+Current scope excludes general content-definition authoring, prefab placement, world
 operations, pack export, batch transactions, and live editor synchronization.
 `ConstructionKitMapService` owns reusable map operations; the existing Swing
 handlers have not yet been migrated to this service.
+
+## Weapon authoring test: iron mace
+
+`create-weapon` now supports source resource roots (not installed user packs yet).
+It inherits economy, smithing requirements, and equipment skill from an existing
+weapon, uses the requested weapon type/material, and calculates a first-person
+socket from the model's grip marker and the current arm rig. Existing IDs are
+rejected. The item catalog is reloaded and compared before publication.
+
+```powershell
+./dev/construction-kit-agent.ps1 create-weapon --root ./src/main/resources --template IRON_SWORD --id custom_item_iron_mace --name 'Iron Mace' --weapon-type MACE --material iron --model assets/3D/weapons/mace/gritty_mace.glb --icon assets/3D/weapons/mace/mace_icon.png --dry-run true
+./dev/construction-kit-agent.ps1 place --root ./src/main/resources --map assets/editor/maps/Bryan_TestMap.properties --kind ITEM --id custom_item_iron_mace --x 11 --y 14 --allow-existing-errors true
+```
+
+These exact mutations have already been applied; rerunning creation/placement
+will reject duplicates. Omit `--dry-run true` when creating a new weapon ID.
+For another tier, use a new ID/name/material and reuse the same GLB and icon.
+Review inherited smithing level/value when balancing additional tiers.
+
+`--allow-existing-errors true` is supported only for additive placement. It
+compares error messages and multiplicities before/after, rejects new errors,
+and reports `existingErrorsAccepted=true` and `valid=false` when old errors remain.
+Weapon creation similarly refuses new errors in the shared content catalog.
+
+The mace was built locally in Blender after Meshy's free-plan API rejected
+generation. It has 2,492 triangles and a `FP_GRIP_PRIMARY` marker. Source and
+preview: `asset-source/weapons/mace/`. Rebuild with Blender using
+`--background --python dev/create-gritty-mace.py`.
+
+Material names `tier_metal` or `tier_metal.*` opt a GLB mesh into gear-material
+tinting for equipped weapons and live model icons. Other meshes share their
+original appearance. Optional `icon.tint-mask.png` beside `icon.png` supplies a
+white metal / black grip mask for ground sprites and bitmap fallback icons.
+
+Known pre-existing test-map errors: missing BURNT_FISH and copper-dagger item
+definitions, plus four incompatible kobold animation bindings. This edit leaves
+those errors unchanged. The mace uses the existing MACE animation default.

@@ -35,7 +35,7 @@ public final class ItemModelIconRenderQueue {
         requests.add(new Request(
                 item.getFirstPersonModelPath(),
                 item.getModelIconProfile(),
-                new Rectangle(x, y, width, height)));
+                new Rectangle(x, y, width, height), item.getMaterial()));
         return true;
     }
 
@@ -64,8 +64,12 @@ public final class ItemModelIconRenderQueue {
     public record Request(
             String modelPath,
             ItemModelIconProfile profile,
-            Rectangle bounds
+            Rectangle bounds,
+            GearMaterial material
     ) {
+        public Request(String modelPath, ItemModelIconProfile profile, Rectangle bounds) {
+            this(modelPath, profile, bounds, GearMaterial.NONE);
+        }
         public Request {
             modelPath = modelPath == null ? "" : modelPath.trim().replace('\\', '/');
             profile = profile == null ? ItemModelIconProfile.defaults() : profile;

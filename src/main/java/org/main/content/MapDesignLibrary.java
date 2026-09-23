@@ -1344,6 +1344,25 @@ public final class MapDesignLibrary {
         ContentRepository.shared().saveAndReload(content);
     }
 
+    /** Writes just the item segment, using the canonical content serializer. */
+    public static void saveItemCatalog(List<CustomItem> items, Path path) throws IOException {
+        MapDesign segment = createBlank(3, 3, null, null);
+        segment.customItems().addAll(items);
+        // The legacy serializer chooses its segment by filename, so staging must keep item.properties.
+        Path staging = Files.createTempDirectory(path.toAbsolutePath().getParent(), ".item-catalog-");
+        Path stagedFile = staging.resolve("item.properties");
+        try {
+            saveContentSegment(segment, stagedFile);
+            MapDesign verified = loadContentSegment(stagedFile);
+            if (!verified.customItems().equals(items)) throw new IOException("Item catalog failed round-trip verification");
+            Files.move(stagedFile, path, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(stagedFile);
+            Files.deleteIfExists(staging);
+        }
+    }
+
     public static List<Path> listSavedMaps() throws IOException {
         List<Path> maps = new ArrayList<>();
         addMapFiles(maps, MAP_FOLDER);
@@ -4264,7 +4283,7 @@ public final class MapDesignLibrary {
                     paperDollOverlayPath,
                     weaponType,
                     twoHanded
-            ).withMagicBonuses(magicAccuracyBonus, magicPowerBonus)
+            ).withMaskedMaterialIcon(iconPath).withMagicBonuses(magicAccuracyBonus, magicPowerBonus)
                     .withWeaponStatOverrides(weaponStatOverrides)
                     .withElementalSpellBonus(elementalAffinity, matchingElementSpellDamageBonus)
                     .withContentId(itemId)

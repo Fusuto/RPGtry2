@@ -23,7 +23,8 @@ public final class ConstructionKitAgentCli {
         int status = 0;
         try {
             if (args.length == 0 || args[0].equals("help")) {
-                response.setProperty("commands", "list-assets,inspect,create,set-tile,place,validate");
+                response.setProperty("commands", "list-assets,inspect,create,set-tile,place,validate,create-weapon");
+                response.setProperty("create-weapon.options", "--template ID --id ID --name NAME --weapon-type ENUM --material ID --model assets/...glb --icon assets/...png [--dry-run true]");
                 response.setProperty("usage", "COMMAND --root RESOURCE_ROOT --map assets/.../map.properties [options]");
                 response.setProperty("create.options", "--width N --height N [--dry-run true]");
                 response.setProperty("set-tile.options", "--x N --y N --tile ENUM [--dry-run true]");
@@ -36,7 +37,8 @@ public final class ConstructionKitAgentCli {
                 switch (command) {
                     case "create" -> allowed.addAll(Set.of("width", "height", "dry-run"));
                     case "set-tile" -> allowed.addAll(Set.of("x", "y", "tile", "dry-run"));
-                    case "place" -> allowed.addAll(Set.of("x", "y", "kind", "id", "dry-run"));
+                    case "place" -> allowed.addAll(Set.of("x", "y", "kind", "id", "dry-run", "allow-existing-errors"));
+                    case "create-weapon" -> allowed.addAll(Set.of("template", "id", "name", "weapon-type", "material", "model", "icon", "dry-run"));
                     case "inspect", "validate", "list-assets" -> { }
                     default -> throw new IllegalArgumentException("Unknown command: " + command);
                 }
@@ -53,6 +55,10 @@ public final class ConstructionKitAgentCli {
                 String dry = options.getOrDefault("dry-run", "false");
                 if (!dry.equals("true") && !dry.equals("false")) {
                     throw new IllegalArgumentException("dry-run must be true or false");
+                }
+                String allowExisting = options.getOrDefault("allow-existing-errors", "false");
+                if (!allowExisting.equals("true") && !allowExisting.equals("false")) {
+                    throw new IllegalArgumentException("allow-existing-errors must be true or false");
                 }
                 Path root = Path.of(required(options, "root")).toRealPath();
                 // Configure the same asset/catalog resolution used by the Construction Kit.
@@ -79,11 +85,30 @@ public final class ConstructionKitAgentCli {
                     response.store(output, "Aether Construction Kit agent response");
                     return 0;
                 }
+                if (command.equals("create-weapon")) {
+                    var result = new ConstructionKitWeaponService().create(root, required(options, "template"),
+                            required(options, "id"), required(options, "name"),
+                            org.main.core.WeaponType.valueOf(required(options, "weapon-type")),
+                            org.main.core.GearMaterial.valueOf(required(options, "material")),
+                            required(options, "model"), required(options, "icon"), Boolean.parseBoolean(dry));
+                    response.setProperty("item.id", result.item().itemId());
+                    response.setProperty("saved", String.valueOf(result.saved()));
+                    response.setProperty("issue.count", String.valueOf(result.issues().size()));
+                    for (int i = 0; i < result.issues().size(); i++) {
+                        response.setProperty("issue." + i + ".severity", result.issues().get(i).severity().name());
+                        response.setProperty("issue." + i + ".message", result.issues().get(i).message());
+                    }
+                    response.setProperty("protocol.version", "1");
+                    response.setProperty("ok", "true");
+                    response.store(output, "Aether weapon authoring response");
+                    return 0;
+                }
                 String path = required(options, "map");
                 ConstructionKitMapService service = new ConstructionKitMapService(root);
                 service.resolve(path);
                 MapDesign map = command.equals("create")
                         ? service.create(number(options, "width"), number(options, "height")) : service.load(path);
+                List<ValidationIssue> baseline = Boolean.parseBoolean(allowExisting) ? service.validate(map) : List.of();
                 if (command.equals("set-tile")) {
                     service.setTile(map, number(options, "x"), number(options, "y"),
                             Library.TileType.valueOf(required(options, "tile")));
@@ -100,8 +125,10 @@ public final class ConstructionKitAgentCli {
                 boolean valid = issues.stream().noneMatch(i -> i.severity() == ValidationSeverity.ERROR);
                 response.setProperty("valid", String.valueOf(valid));
                 boolean mutation = Set.of("create", "set-tile", "place").contains(command);
-                boolean saved = mutation && valid && !Boolean.parseBoolean(dry);
-                if (saved) service.save(map, path, !command.equals("create"));
+                boolean accepted = valid || ConstructionKitMapService.noNewErrors(baseline, issues);
+                boolean saved = mutation && accepted && !Boolean.parseBoolean(dry);
+                if (saved) service.save(map, path, !command.equals("create"), baseline);
+                response.setProperty("existingErrorsAccepted", String.valueOf(!valid && accepted));
                 response.setProperty("saved", String.valueOf(saved));
                 response.setProperty("width", String.valueOf(map.width()));
                 response.setProperty("height", String.valueOf(map.height()));
@@ -121,7 +148,7 @@ public final class ConstructionKitAgentCli {
                         response.setProperty("placement." + i + ".y", String.valueOf(p.y()));
                     }
                 }
-                if (!valid) status = 2;
+                if (!accepted) status = 2;
             }
         } catch (Exception | LinkageError error) {
             status = 1;

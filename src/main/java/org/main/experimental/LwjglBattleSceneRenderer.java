@@ -741,6 +741,7 @@ final class LwjglBattleSceneRenderer {
     ) {
         if (item == null || transform == null || rigModel == null) return;
         LwjglStaticModel model = getStaticModel(item.getFirstPersonModelPath());
+        if (model != null) model = model.withMaterial(item.getMaterial());
         Matrix4f socket = composedPose == null
                 ? animatedNodeTransform(rigModel, handBone, animation)
                 : socketTransformWithoutScale(rigModel.nodeTransform(composedPose, handBone));
@@ -1138,6 +1139,7 @@ final class LwjglBattleSceneRenderer {
 
     private void drawEquipmentModel(InventorySystem.Item item, FirstPersonEquipmentRig.Pose pose) {
         LwjglStaticModel model = getStaticModel(item.getFirstPersonModelPath());
+        if (model != null) model = model.withMaterial(item.getMaterial());
         if (model == null) return;
         glPushMatrix();
         glTranslated(pose.x(), pose.y(), pose.z());
